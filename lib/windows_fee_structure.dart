@@ -23,18 +23,42 @@ class WindowsFeeStructure {
     return {};
   }
 
-  static Future<void> save(String className, String session, Map<String, double> fees) async {
+  /// Explicit order excludes retired names even when older clients merge the
+  /// fees map. Zero tombstones also prevent those clients charging a retired fee.
+  static List<String> heads(Map<String, dynamic> data) {
+    final fees = Map<String, dynamic>.from(data['fees'] as Map? ?? {});
+    final order = data['feeHeadOrder'];
+    return order is List ? order.whereType<String>().where(fees.containsKey).toSet().toList() : fees.keys.toList();
+  }
+
+  static Future<void> save(String className, String session, Map<String, double> fees, {bool replaceHeads = false}) async {
+    final normalized = <String, double>{};
+    final names = <String>{};
+    for (final entry in fees.entries) {
+      final name = entry.key.trim();
+      if (name.isEmpty || name.length > 100 || !names.add(name.toLowerCase()) || !entry.value.isFinite || entry.value < 0) {
+        throw ArgumentError('Fee names must be unique and amounts must be finite and non-negative.');
+      }
+      normalized[name] = entry.value;
+    }
     final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
     await db.ensureDurableSchoolRecords();
     final old = await load(className, session: session);
     if (db.activeProfileId != origin) throw StateError('School changed.');
-    final merged = {...Map<String, dynamic>.from(old['fees'] as Map? ?? {}), ...fees};
+    final previous = Map<String, dynamic>.from(old['fees'] as Map? ?? {});
+    final merged = <String, dynamic>{
+      for (final key in previous.keys) key: replaceHeads ? 0.0 : previous[key],
+      ...normalized,
+    };
     final heads = merged.entries.where((e) => e.value is num && e.value > 0).map((e) => e.key).toList();
     final retained = Map<String, dynamic>.from(old)..removeWhere((key, _) => key.startsWith('_sync') || key == 'operationId');
     final batch = db.batch();
     batch.set(db.collection('fee_settings').doc(documentId(className, session)), {
       ...retained, 'className': className, 'academicSession': session, 'fees': merged,
-      'configured': heads.isNotEmpty, 'configuredHeads': heads, 'updatedAt': FieldValue.serverTimestamp(),
+      'configured': heads.isNotEmpty, 'configuredHeads': heads,
+      if (replaceHeads) 'feeHeadOrder': normalized.keys.toList(),
+      if (replaceHeads) 'feeStructureSaved': true,
+      'updatedAt': FieldValue.serverTimestamp(),
     }, const SetOptions(merge: true));
     batch.delete(db.collection('_local_fee_edit_locks').doc(documentId(className, session)));
     await batch.commit();

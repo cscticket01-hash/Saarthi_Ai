@@ -1,3 +1,4 @@
+import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
@@ -10754,28 +10755,10 @@ class FeesCollectionScreen extends StatefulWidget {
 }
 
 class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
-  static const List<String> _feeHeads = [
-    'Tuition Fees',
-    'Admission Fees',
-    'Registration Fees',
-    'Nobikaron Fees',
-    'Bidya Bharati Sahojog Rashi',
-    'Building Fees',
-    'Shishu Bharati Fees',
-    'Library Fees',
-    'Medical Fees',
-    'Game Fees',
-    'Development Fees',
-    'Electric Fees',
-    'Cultural Fees',
-    'Computer Fees',
-    'Computer Lab Fees',
-    'Educational Development Fees',
-    'Exam Fees',
-    'Miscellaneous Fees',
-    'Late Fees',
-    'Vehicle Fees',
-  ];
+  List<String> get _feeHeads {
+    final saved = _activeLedger?['feeItems'];
+    return {..._activeFeeAmounts.keys.where((head) => (_activeFeeAmounts[head] ?? 0) > 0), if (saved is Map) ...saved.keys.map((key) => key.toString())}.toList();
+  }
 
   final TextEditingController _nameSearchController = TextEditingController();
   final TextEditingController _rollSearchController = TextEditingController();
@@ -11005,11 +10988,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   final fees = <String, double>{};
 
-  for (final head in _feeHeads) {
+  for (final head in WindowsFeeStructure.heads(data)) {
     fees[head] = _toDouble(rawFees[head]);
   }
 
-  final configuredHeads = _feeHeads
+  final configuredHeads = fees.keys
       .where((head) => (fees[head] ?? 0) > 0)
       .toList();
 
@@ -11084,7 +11067,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     try {
       final settings = await _getClassFeeSettings(studentClass);
       final fees = Map<String, double>.from(settings['fees'] as Map);
-      final configured = settings['configured'] == true;
+      final configured = settings['configured'] == true || _toDouble(ledger?['expectedAmount']) > 0;
+      if (_toDouble(ledger?['expectedAmount']) > 0 && ledger?['feeItems'] is Map) {
+        fees..clear()..addAll(Map<String, dynamic>.from(ledger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value))));
+      }
 
       if (!configured) {
         if (!mounted) return;
@@ -11666,6 +11652,22 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     context,
                     MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
                   );
+                  if (!mounted || _activeStudentId == null) return;
+                  final currentClass = _selectedClass;
+                  final currentStudent = _activeStudentId;
+                  final updated = await _getClassFeeSettings(currentClass);
+                  if (!mounted || currentStudent != _activeStudentId || currentClass != _selectedClass) return;
+                  setState(() {
+                    _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
+                    _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
+                    if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
+                      _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
+                    }
+                    if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
+                      _selectedFeeHeads.clear();
+                      _receivedAmountController.clear();
+                    }
+                  });
                 },
                 icon: const Icon(Icons.settings_rounded, size: 16),
                 label: const Text('Settings'),
@@ -12667,12 +12669,63 @@ class _FeeCollectionSettingsScreenState
     'Late Fees',
     'Vehicle Fees',
   ];
-  List<String> _customFeeHeads = [];
-  List<String> get _feeHeads => [..._standardFeeHeads, ..._customFeeHeads];
+  final List<String> _classes = List.generate(12, (index) => 'Class ${index + 1}');
+  final List<_EditableSchoolFee> _rows = [];
+  final ScrollController _feeScroll = ScrollController();
+  int _nextRowId = 0;
+  int _loadGeneration = 0;
+  bool _loadFailed = false;
+  bool _dirty = false;
 
-  final List<String> _classes =
-      List.generate(12, (index) => 'Class ${index + 1}');
-  final Map<String, TextEditingController> _controllers = {};
+  void _clearRows() {
+    for (final row in _rows) { row.dispose(); }
+    _rows.clear();
+  }
+
+  void _addFee() {
+    if (!_editing || _saving || _loading || _loadFailed) return;
+    setState(() { _rows.add(_EditableSchoolFee(_nextRowId++)); _dirty = true; });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _feeScroll.hasClients) _feeScroll.animateTo(_feeScroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    });
+  }
+
+  Future<void> _deleteFee(_EditableSchoolFee row) async {
+    if (!_editing || _saving) return;
+    final remove = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+      title: const Text('Remove fee row?'),
+      content: Text('Remove "${row.name.text.trim().isEmpty ? 'New fee' : row.name.text.trim()}" from this fee structure? Existing payments and receipts stay unchanged.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove'))],
+    ));
+    if (remove != true || !mounted || !_editing || _saving || !_rows.contains(row)) return;
+    setState(() { _rows.remove(row); _dirty = true; });
+    // Dispose after the old text fields leave the tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) => row.dispose());
+  }
+
+  Future<bool> _discardChanges() async {
+    if (!_dirty) return true;
+    return await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+      title: const Text('Discard unsaved changes?'),
+      content: const Text('Your fee changes have not been saved.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep editing')),
+        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Discard'))],
+    )) == true;
+  }
+
+  Future<void> _selectClass(String value) async {
+    if (_saving || _loading || value == _selectedClass || !await _discardChanges() || !mounted) return;
+    setState(() => _selectedClass = value);
+    await _loadSettings();
+  }
+
+  Future<void> _selectSession(String value) async {
+    if (_saving || _loading || value == _academicSession || !await _discardChanges() || !mounted) return;
+    setState(() => _academicSession = value);
+    await _loadSettings();
+  }
 
   String _selectedClass = 'Class 1';
   String _academicSession = '';
@@ -12693,6 +12746,7 @@ class _FeeCollectionSettingsScreenState
       return;
     }
     final selected = _selectedClass;
+    final session = _academicSession;
     await FirebaseFirestore.instance.ensureDurableSchoolRecords();
     if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
     final lock = FirebaseFirestore.instance.collection('_local_fee_edit_locks').doc(_docId(selected));
@@ -12701,27 +12755,23 @@ class _FeeCollectionSettingsScreenState
         ? DateTime.fromMillisecondsSinceEpoch((old!['unlockAt'] as num).toInt())
         : DateTime.now().add(const Duration(seconds: 30));
     if (old == null) await lock.set({'unlockAt': deadline.millisecondsSinceEpoch});
-    if (!mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    if (!mounted || selected != _selectedClass || session != _academicSession || FirebaseFirestore.instance.activeProfileId != _profile) return;
     final authorized = await showDialog<bool>(context: context, barrierDismissible: false,
       builder: (_) => _DriveUnlinkSecurityDialog(deadline: deadline));
-    if (authorized != true || !mounted || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    if (authorized != true || !mounted || selected != _selectedClass || session != _academicSession || FirebaseFirestore.instance.activeProfileId != _profile) return;
     setState(() => _editing = true);
   }
 
   @override
   void initState() {
     super.initState();
-    for (final head in _feeHeads) {
-      _controllers[head] = TextEditingController();
-    }
     _loadSettings();
   }
 
   @override
   void dispose() {
-    for (final controller in _controllers.values) {
-      controller.dispose();
-    }
+    _feeScroll.dispose();
+    _clearRows();
     super.dispose();
   }
 
@@ -12732,86 +12782,66 @@ class _FeeCollectionSettingsScreenState
     return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 
-  int get _configuredCount {
-    var count = 0;
-    for (final head in _feeHeads) {
-      final amount = double.tryParse(_controllers[head]!.text.trim()) ?? 0.0;
-      if (amount > 0) count++;
-    }
-    return count;
-  }
-
   Future<void> _loadSettings() async {
     final selected = _selectedClass;
-    setState(() => _loading = true);
+    final generation = ++_loadGeneration;
+    setState(() { _loading = true; _loadFailed = false; });
     try {
       if (_academicSession.isEmpty) _academicSession = await WindowsFeeStructure.currentSession();
       final session = _academicSession;
       final data = await WindowsFeeStructure.load(selected, session: session);
-      if (!mounted || session != _academicSession || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
+      if (!mounted || generation != _loadGeneration || session != _academicSession || selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) return;
       final fees = Map<String, dynamic>.from(data['fees'] ?? {});
-      _customFeeHeads = fees.keys.where((head) => !_standardFeeHeads.contains(head)).toList();
-      for (final head in _customFeeHeads) {
-        _controllers.putIfAbsent(head, () => TextEditingController());
-      }
-      _editing = data['configured'] != true && fees.values.every((v) => _toDouble(v) == 0);
-
-      for (final head in _feeHeads) {
+      final heads = data.containsKey('feeHeadOrder')
+          ? WindowsFeeStructure.heads(data)
+          : {..._standardFeeHeads, ...fees.keys}.toList();
+      _clearRows();
+      for (final head in heads) {
         final amount = _toDouble(fees[head]);
-        _controllers[head]!.text = amount > 0 ? (amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toString()) : '';
+        _rows.add(_EditableSchoolFee(_nextRowId++, name: head,
+          amount: amount > 0 ? (amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toString()) : ''));
       }
+      _editing = data['feeStructureSaved'] != true && data['configured'] != true && fees.values.every((v) => _toDouble(v) == 0);
+      _dirty = false;
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Settings load error: $e')),
-        );
+      if (mounted && generation == _loadGeneration) {
+        _loadFailed = true;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Settings load error: $e')));
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _loadGeneration) setState(() => _loading = false);
     }
   }
 
   Future<void> _saveSettings() async {
-    if (_saving || !_editing || _loading || FirebaseFirestore.instance.activeProfileId != _profile) return;
+    if (_saving || !_editing || _loading || _loadFailed || FirebaseFirestore.instance.activeProfileId != _profile) return;
     final selected = _selectedClass;
 
     final fees = <String, double>{};
-    for (final head in _feeHeads) {
-      final raw = _controllers[head]!.text.trim();
+    final names = <String>{};
+    for (final row in _rows) {
+      final head = row.name.text.trim();
+      final raw = row.amount.text.trim();
       final amount = raw.isEmpty ? 0.0 : double.tryParse(raw);
-      if (amount == null || !amount.isFinite || amount < 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text('$head ka amount valid nahi hai.'),
-          ),
-        );
+      String? error;
+      if (head.isEmpty) { error = 'Enter a name for every fee row, or remove the empty row.'; }
+      else if (head.length > 100) { error = 'Fee names must be 100 characters or fewer.'; }
+      else if (!names.add(head.toLowerCase())) { error = 'Duplicate fee name: $head'; }
+      else if (amount == null || !amount.isFinite || amount < 0) { error = '$head ka amount valid nahi hai.'; }
+      if (error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text(error)));
         return;
       }
-      fees[head] = amount;
-    }
-
-    final configuredHeads = _feeHeads.where((head) => (fees[head] ?? 0) > 0).toList();
-    if (configuredHeads.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
-          content: Text(
-            'Kam se kam ek fee type ka fixed amount set karein. Tabhi collection panel active hoga.',
-          ),
-        ),
-      );
-      return;
+      fees[head] = amount!;
     }
 
     setState(() => _saving = true);
     try {
       await FirebaseFirestore.instance.ensureDurableSchoolRecords();
       if (selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) throw StateError('School or class changed.');
-      await WindowsFeeStructure.save(selected, _academicSession, fees);
+      await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true);
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
-      setState(() => _editing = false);
-
+      setState(() { _editing = false; _dirty = false; });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -12837,192 +12867,38 @@ class _FeeCollectionSettingsScreenState
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B141A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF1F2C34),
-        title: const Text('Payment Collection Settings'),
-      ),
-      body: Row(
-        children: [
-          SizedBox(
-            width: 190,
-            child: Material(
-              color: const Color(0xFF121B22),
-              child: ListView.builder(
-              padding: const EdgeInsets.all(10),
-              itemCount: _classes.length,
-              itemBuilder: (context, index) {
-                final cls = _classes[index];
-                final selected = cls == _selectedClass;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: ListTile(
-                    selected: selected,
-                    selectedTileColor: const Color(0x2200A884),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    leading: Icon(
-                      Icons.class_rounded,
-                      color: selected ? const Color(0xFF00D9A5) : Colors.white38,
-                    ),
-                    title: Text(
-                      cls,
-                      style: TextStyle(
-                        color: selected ? Colors.white : Colors.white60,
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
-                      ),
-                    ),
-                    onTap: () async {
-                      if (cls == _selectedClass || _saving) return;
-                      setState(() => _selectedClass = cls);
-                      await _loadSettings();
-                    },
-                  ),
-                );
-              },
-              ),
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(color: Color(0xFF00A884)),
-                  )
-                : Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '$_selectedClass Fee Structure',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        const Text(
-                          'Koi default amount nahi hai. School yahan fixed amount save karega. Jis fee type me amount 0/blank hai, wo collection panel me nahi aayega.',
-                          style: TextStyle(color: Colors.white54),
-                        ),
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                          decoration: BoxDecoration(
-                            color: _configuredCount > 0
-                                ? const Color(0xFF00A884).withOpacity(0.08)
-                                : Colors.orangeAccent.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            _configuredCount > 0
-                                ? '$_configuredCount fee types configured. Save karne ke baad Fees Collection panel automatic active hoga.'
-                                : 'Abhi fixed fee amount set nahi hai. Fees Collection disabled rahega.',
-                            style: TextStyle(
-                              color: _configuredCount > 0
-                                  ? const Color(0xFF00D9A5)
-                                  : Colors.orangeAccent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        if (_academicSession.isNotEmpty)
-                          DropdownButtonFormField<String>(
-                            value: _academicSession,
-                            decoration: const InputDecoration(labelText: 'Academic session'),
-                            items: _sessions.map((session) => DropdownMenuItem(value: session, child: Text(session))).toList(),
-                            onChanged: _saving ? null : (session) { if (session != null) { setState(() => _academicSession = session); _loadSettings(); } },
-                          ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child: ListView.separated(
-                            itemCount: _feeHeads.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 8),
-                            itemBuilder: (context, index) {
-                              final head = _feeHeads[index];
-                              return Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF172229),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        head,
-                                        style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 190,
-                                      child: !_editing
-                                          ? Text('₹ ${_controllers[head]!.text.isEmpty ? '0' : _controllers[head]!.text}', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))
-                                          : TextField(
-                                        enabled: !_saving,
-                                        controller: _controllers[head],
-                                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                        style: const TextStyle(color: Colors.white),
-                                        onChanged: (_) => setState(() {}),
-                                        decoration: InputDecoration(
-                                          prefixText: '₹ ',
-                                          prefixStyle: const TextStyle(color: Color(0xFF00D9A5)),
-                                          hintText: 'Fixed amount',
-                                          hintStyle: const TextStyle(color: Colors.white24),
-                                          filled: true,
-                                          fillColor: const Color(0xFF0B141A),
-                                          border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(9),
-                                            borderSide: BorderSide.none,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF00A884),
-                              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
-                            ),
-                            onPressed: _saving ? null : _editing ? _saveSettings : _editSettings,
-                            icon: _saving
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                  )
-                                : Icon(_editing ? Icons.save_rounded : Icons.edit_rounded, color: Colors.white),
-                            label: Text(
-                              _saving ? 'Saving...' : _editing ? 'Save / Update Fee Structure' : 'Edit Fee Structure',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving && !_dirty,
+    onPopInvokedWithResult: (didPop, result) async {
+      if (didPop || _saving) return;
+      if (await _discardChanges() && mounted) {
+        setState(() => _dirty = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) Navigator.pop(context); });
+      }
+    },
+    child: WindowsFeeSettingsLayout(
+      scrollController: _feeScroll, classes: _classes, selectedClass: _selectedClass, session: _academicSession,
+      sessions: _sessions, loading: _loading, failed: _loadFailed, saving: _saving, editing: _editing,
+      rows: _rows.map((row) => WindowsFeeEditorRow(id: row.id, name: row.name, amount: row.amount,
+        onDelete: () => _deleteFee(row))).toList(),
+      onClass: _selectClass, onSession: _selectSession, onAdd: _addFee,
+      onChanged: () { if (!_dirty) setState(() => _dirty = true); },
+      onSave: _saveSettings, onEdit: _editSettings,
+      onCancel: () async { if (await _discardChanges() && mounted) await _loadSettings(); },
+      onRetry: _loadSettings,
+    ),
+  );
 }
+
+class _EditableSchoolFee {
+  _EditableSchoolFee(this.id, {String name = '', String amount = ''})
+      : name = TextEditingController(text: name), amount = TextEditingController(text: amount);
+  final int id;
+  final TextEditingController name;
+  final TextEditingController amount;
+  void dispose() { name.dispose(); amount.dispose(); }
+}
+
 
 
 
