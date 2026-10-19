@@ -2244,7 +2244,7 @@ void _startInlineScanner() {
                           Text(
                             'Student verify ho raha hai...',
                             style: TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white),
+                              color: Colors.white,
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
