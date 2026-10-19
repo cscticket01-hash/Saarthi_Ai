@@ -29,7 +29,10 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
   static const _border = Color(0xFF334D68);
 
   InputDecoration _input(String hint, {String? prefix}) => InputDecoration(
-    hintText: hint, prefixText: prefix, hintStyle: const TextStyle(color: _muted),
+    hintText: hint,
+    prefixIcon: prefix == null ? null : Center(child: Text(prefix.trim(), style: const TextStyle(color: Colors.white))),
+    prefixIconConstraints: prefix == null ? null : const BoxConstraints(minWidth: 38, maxWidth: 38),
+    hintStyle: const TextStyle(color: _muted),
     prefixStyle: const TextStyle(color: Colors.white), isDense: true,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     filled: true, fillColor: const Color(0xFF0D2035),
@@ -66,11 +69,12 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700))),
               Expanded(child: ListView(children: classes.map((item) => Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                child: ListTile(selected: item == selectedClass, selectedTileColor: const Color(0xFF126C73),
+                child: Material(color: item == selectedClass ? const Color(0xFF126C73) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10), child: ListTile(selected: item == selectedClass,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   title: Text(item, style: TextStyle(color: item == selectedClass ? Colors.white : _muted,
                     fontWeight: item == selectedClass ? FontWeight.w700 : FontWeight.normal)),
-                  onTap: saving || loading ? null : () => onClass(item)),
+                  onTap: saving || loading ? null : () => onClass(item))),
               )).toList())),
             ]),
           )),
@@ -111,7 +115,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 12, runSpacing: 12,
                   children: [const Text('Fee details', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
                     if (editing) OutlinedButton.icon(key: const ValueKey('add-fee'), onPressed: saving ? null : onAdd,
-                      style: OutlinedButton.styleFrom(foregroundColor: _teal, side: const BorderSide(color: _teal)),
+                      style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: _teal, side: const BorderSide(color: _teal)),
                       icon: const Icon(Icons.add), label: const Text('Add fee')),
                   ]),
                 const Divider(height: 28, color: _border),
@@ -129,7 +133,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 Wrap(alignment: WrapAlignment.end, spacing: 16, runSpacing: 12, children: [
                   if (editing) TextButton(onPressed: saving ? null : onCancel, child: const Text('Cancel', style: TextStyle(color: _muted))),
                   FilledButton.icon(onPressed: saving ? null : editing ? onSave : onEdit,
-                    style: FilledButton.styleFrom(backgroundColor: _teal, foregroundColor: const Color(0xFF05202A),
+                    style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), backgroundColor: _teal, foregroundColor: const Color(0xFF05202A),
                       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18)),
                     icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : Icon(editing ? Icons.save_outlined : Icons.lock_open),
@@ -160,7 +164,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
       : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text('₹ ${row.amount.text.isEmpty ? '0' : row.amount.text}', style: const TextStyle(color: Colors.white)));
     final action = SizedBox(width: 48, child: editing ? IconButton.outlined(key: ValueKey('delete-fee-${row.id}'),
       tooltip: 'Delete fee row ${index + 1}', onPressed: saving ? null : row.onDelete,
-      style: IconButton.styleFrom(foregroundColor: const Color(0xFFFF5B6C), side: const BorderSide(color: Color(0xFFAF4054))),
+      style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: const Color(0xFFFF5B6C), side: const BorderSide(color: Color(0xFFAF4054))),
       icon: const Icon(Icons.delete_outline)) : const SizedBox());
     if (!wide) return Container(padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(border: Border.all(color: _border), borderRadius: BorderRadius.circular(10)),
