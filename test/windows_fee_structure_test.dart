@@ -113,7 +113,7 @@ void main() {
   });
   test('invalid fee names and amounts cannot queue writes', () async {
     final session = await WindowsFeeStructure.currentSession();
-    for(final fees in [<String,double>{' ':1}, {'Fee':1,' fee ':2}, {'Fee':double.nan}, {'Fee':-1}]) {
+    for(final fees in <Map<String,double>>[{' ':1}, {'Fee':1,' fee ':2}, {'Fee':double.nan}, {'Fee':-1}]) {
       await expectLater(WindowsFeeStructure.save('Class 1',session,fees,replaceHeads:true),throwsArgumentError);
     }
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);

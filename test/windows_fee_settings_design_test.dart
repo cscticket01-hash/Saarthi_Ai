@@ -35,7 +35,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Add fee'));expect(actions.last,'add');
       await tester.ensureVisible(find.byKey(const ValueKey('fee-name-0')));
-      await tester.enterText(find.byKey(const ValueKey('fee-name-0')),'Monthly Tuition');expect(actions.last,'change');
+      await tester.enterText(find.byKey(const ValueKey('fee-name-0')),'${spec.$1} Tuition');expect(actions.last,'change');
       await tester.ensureVisible(find.byKey(const ValueKey('delete-fee-0')));
       await tester.tap(find.byKey(const ValueKey('delete-fee-0')));expect(actions.last,'delete-0');
       await tester.ensureVisible(find.text('Save changes'));await tester.tap(find.text('Save changes'));expect(actions.last,'save');
