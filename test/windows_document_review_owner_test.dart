@@ -278,28 +278,30 @@ void main() {
     await db.collection('_windows_document_outbox').doc(card('conflicted')).set({'schoolId': school, 'syncState': 'conflict'});
     final result = await WindowsDocumentTemplates.missingIdCardTargets();
     expect(result, {'studentId': {'missing'}});
-    expect((await db.collection('_windows_document_outbox').get()).docs.length, 2);
+    expect((await db.collection('_windows_document_outbox').get()).docs.map((d) => d.id).toSet(), {id, card('queued'), card('conflicted')});
   });
   test('unpublished original is requeued with exactly its original operation, path and CAS baseline', () async {
-    final retained = {...local, 'syncState': 'Local', 'baseCloudRevision': 'original-baseline'};
-    await db.collection('_local_student_documents').doc(id).set(retained);
-    await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
+    const recoveryId = 'RECOVERY-original';
+    final retained = {...local, 'documentId': recoveryId, 'syncState': 'Local', 'baseCloudRevision': 'original-baseline'};
+    await db.collection('_local_student_documents').doc(recoveryId).set(retained);
+    await WindowsBackendBridge.requeueUnpublishedIdCard(recoveryId, readPublished: () async =>
       {'schoolId': school, 'syncProtocol': 2, 'records': {}});
-    final queued = (await db.collection('_windows_document_outbox').doc(id).get()).data()!;
+    final queued = (await db.collection('_windows_document_outbox').doc(recoveryId).get()).data()!;
     expect(queued['documentRevision'], retained['documentRevision']);
     expect(queued['localPath'], retained['localPath']);
     expect(queued['baseCloudRevision'], 'original-baseline');
     expect(await File(retained['localPath'] as String).readAsBytes(), [1,2,3]);
   });
   test('cloud deletion or foreign inventory can never recreate an ID queue', () async {
-    await db.collection('_local_student_documents').doc(id).set({...local, 'syncState': 'Local'});
-    await expectLater(WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
+    const recoveryId = 'RECOVERY-deleted';
+    await db.collection('_local_student_documents').doc(recoveryId).set({...local, 'documentId': recoveryId, 'syncState': 'Local'});
+    await expectLater(WindowsBackendBridge.requeueUnpublishedIdCard(recoveryId, readPublished: () async =>
       {'schoolId': 'foreign-school', 'syncProtocol': 2, 'records': {}}), throwsStateError);
-    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
-    await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
-      {'schoolId': school, 'syncProtocol': 2, 'records': {id: {...cloud, '_syncDeleted': true}}});
-    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
-    expect((await db.collection('documents').doc(id).get()).data()?['_syncDeleted'], true);
+    expect((await db.collection('_windows_document_outbox').doc(recoveryId).get()).exists, false);
+    await WindowsBackendBridge.requeueUnpublishedIdCard(recoveryId, readPublished: () async =>
+      {'schoolId': school, 'syncProtocol': 2, 'records': {recoveryId: {...cloud, 'id': recoveryId, 'documentId': recoveryId, '_syncDeleted': true}}});
+    expect((await db.collection('_windows_document_outbox').doc(recoveryId).get()).exists, false);
+    expect((await db.collection('documents').doc(recoveryId).get()).data()?['_syncDeleted'], true);
   });
   test('a second PC reuses the published ID despite a different optimized photo cache', () async {
     await CentralSchoolCloud.updateSession(school, {'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
