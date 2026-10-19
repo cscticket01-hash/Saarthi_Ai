@@ -130,7 +130,8 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     ]);
     final dropdown = DropdownButtonHideUnderline(child: DropdownButton<int>(
       value: month, isExpanded: true, dropdownColor: const Color(0xFF11253C),
-      borderRadius: BorderRadius.circular(12), style: const TextStyle(color: Colors.white, fontSize: 15),
+      borderRadius: BorderRadius.circular(12),
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white, fontSize: 15),
       icon: loadingYear ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
           : const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFFC2D8FA)),
       items: const [DropdownMenuItem(value: 1, child: Text('January')), DropdownMenuItem(value: 4, child: Text('April'))],
