@@ -1,6 +1,7 @@
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
+import '../attendance_schedule.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -40,6 +41,7 @@ class AttendanceRejected extends StateError {
     'ATTENDANCE_LOCATION_ACCURACY': 'Location accuracy or school location settings do not meet the attendance policy.',
     'ATTENDANCE_OUTSIDE_SCHOOL':
         'The captured location is outside the school attendance radius.',
+    'ATTENDANCE_SCHEDULE_CLOSED': 'Student attendance is outside the school schedule.',
     'ATTENDANCE_CAPTURE_REVIEW': 'Attendance capture date needs school review.',
   };
   static String? reason(Map<String, dynamic> response, int status) {
@@ -240,6 +242,42 @@ class SchoolSession {
         )
       : null;
 
+  String _attendanceStatusDay = '';
+  String? _attendanceStatusOwner;
+  bool _capturedToday = false;
+  String get attendanceLockReason {
+    final day = attendanceDay(DateTime.now());
+    if (!attendanceStatusReady || _attendanceStatusOwner != _attendanceOwner || _attendanceStatusDay != day) {
+      return 'Checking today’s attendance…';
+    }
+    final status = dashboard['attendanceStatus'];
+    if (_capturedToday || status is Map && status['day'] == day && status['recorded'] == true) {
+      return 'Attendance captured today. Locked until tomorrow, including pending submissions.';
+    }
+    if (link?.role == 'student') {
+      if (status is! Map) {
+        return 'Refresh school attendance settings before marking attendance.';
+      }
+      if (status['version'] != 1) {
+        return 'School attendance update required. Ask the school to update its attendance backend.';
+      }
+      if (!attendanceWindowAllows(status['schedule'], DateTime.now())) {
+        return 'Student attendance is locked outside the school schedule (India time).';
+      }
+    }
+    return '';
+  }
+
+  String get attendanceScheduleLabel {
+    final status = dashboard['attendanceStatus'];
+    if (link?.role != 'student' || status is! Map || status['version'] != 1) return '';
+    final w = status['schedule'];
+    if (w == null || w is Map && w['enabled'] == false) return 'Student attendance: no daily time limit.';
+    if (w is! Map || w['startMinute'] is! int || w['endMinute'] is! int) return '';
+    String clock(int n) => '${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}';
+    return 'Student attendance: ${clock(w['startMinute'])}–${clock(w['endMinute'])} IST. Locks at closing time.';
+  }
+
   Future<void> refreshAttendanceStatus() async {
     final owner = _attendanceOwner;
     if (owner == null) {
@@ -247,9 +285,14 @@ class SchoolSession {
       attendanceAccepted = 0;
       return;
     }
+    final day = attendanceDay(DateTime.now());
+    final captured = await _attendanceStore.capturedOn(owner, day);
     final rows = await _attendanceStore.pending(owner);
     final summary = await _attendanceStore.summary(owner);
     if (owner != _attendanceOwner) return;
+    _attendanceStatusOwner = owner;
+    _attendanceStatusDay = day;
+    _capturedToday = captured;
     attendanceStatusReady = true;
     attendancePending = (summary['pending'] as num).toInt();
     attendanceAccepted = (summary['accepted'] as num? ?? 0).toInt();
@@ -282,7 +325,11 @@ class SchoolSession {
     final owner = _attendanceOwner, current = link, generation = _generation;
     if (owner == null || current == null || !cachedAccessAllowed)
       throw SchoolAccessDenied('Verified school access required.');
-    if (!['entry', 'exit'].contains(mode) || capturedAt <= 0)
+    await refreshAttendanceStatus();
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
+    if (attendanceLockReason.isNotEmpty) throw StateError(attendanceLockReason);
+    if (mode != 'entry' || capturedAt <= 0)
       throw StateError('Invalid attendance capture.');
     final day = DateTime.fromMillisecondsSinceEpoch(
       capturedAt,
@@ -290,6 +337,12 @@ class SchoolSession {
     ).add(const Duration(hours: 5, minutes: 30));
     final date =
         '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    if (date != attendanceDay(DateTime.now()) ||
+        current.role == 'student' && !attendanceWindowAllows(
+          (dashboard['attendanceStatus'] as Map?)?['schedule'],
+          DateTime.fromMillisecondsSinceEpoch(capturedAt))) {
+      throw StateError('Attendance capture is outside today’s school schedule.');
+    }
     final approval = <String, dynamic>{};
     if (_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
       final permit = _currentAttendancePermit, offline = _cardOfflineLease;
@@ -320,7 +373,7 @@ class SchoolSession {
       ...gps,
       ...approval,
       if (current.cardIssueId.isNotEmpty) 'cardIssueId': current.cardIssueId,
-    });
+    }, oncePerDay: true);
     if (generation != _generation || !identical(current, link))
       throw SchoolAccessDenied(
         'School session changed; original capture retained.',
@@ -736,6 +789,9 @@ class SchoolSession {
         _policyExpiresAt = (d['policyExpiresAt'] as num).toInt();
       if (action != 'mobile_login' && d['attendancePermit'] is String)
         _cachedAttendancePermit = d['attendancePermit'] as String;
+      if (d['attendanceStatus'] is Map) {
+        dashboard = {...dashboard, 'attendanceStatus': d['attendanceStatus']};
+      }
       return Map<String, dynamic>.from(d);
     }
     final r = await _client
@@ -1351,6 +1407,9 @@ class SchoolSession {
     _refreshFailures = 0;
     syncPaused = false;
     _cachedAttendancePermit = null;
+    _attendanceStatusDay = '';
+    _capturedToday = false;
+    attendanceStatusReady = false;
     _cardAuthorizationToken = null;
     _cardOfflineLease = null;
     _cardOfflineUntil = 0;

@@ -28,6 +28,7 @@ class SchoolAttendanceOverview extends StatefulWidget {
 }
 
 class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
+  late final String _profileId;
   DateTime _day = DateTime.now();
   String _role = 'student';
   bool _loading = true;
@@ -37,34 +38,106 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
   @override
   void initState() {
     super.initState();
+    _profileId = FirebaseFirestore.instance.activeProfileId;
     _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final day = _day, role = _role;
+    bool current() => mounted && origin == FirebaseFirestore.instance.activeProfileId && day == _day && role == _role;
     try {
       final records = await FirebaseFirestore.instance
           .collection('attendance_records')
           .get();
       final calendar = await FirebaseFirestore.instance
           .collection('school_calendar')
-          .doc(schoolDateKey(_day))
+          .doc(schoolDateKey(day))
           .get();
-      if (mounted)
+      if (current())
         setState(() {
           _records = records.docs
               .map((d) => {'id': d.id, ...d.data()})
               .where(
-                (d) => d['date'] == schoolDateKey(_day) && d['role'] == _role,
+                (d) => d['date'] == schoolDateKey(day) && d['role'] == role,
               )
               .toList();
           _calendar = calendar.data() ?? {};
           _error = null;
         });
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (current()) setState(() => _error = '$e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (current()) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _editSchedule() async {
+    final profile = _profileId;
+    bool sameSchool() => FirebaseFirestore.instance.activeProfileId == profile;
+    if (!sameSchool()) return;
+    try {
+      final doc = await FirebaseFirestore.instance.collection('school_settings')
+          .doc('attendance_schedule').get();
+      if (!mounted || !sameSchool()) return;
+      final data = doc.data() ?? {};
+      var enabled = data['enabled'] == true;
+      TimeOfDay fromMinute(dynamic n, int fallback) {
+        final m = n is int && n >= 0 && n < 1440 ? n : fallback;
+        return TimeOfDay(hour: m ~/ 60, minute: m % 60);
+      }
+      var start = fromMinute(data['startMinute'], 8 * 60);
+      var end = fromMinute(data['endMinute'], 10 * 60);
+      int minute(TimeOfDay t) => t.hour * 60 + t.minute;
+      final save = await showDialog<bool>(context: context, builder: (ctx) =>
+        StatefulBuilder(builder: (ctx, update) {
+          WindowsAppearance.watch(ctx);
+          return AlertDialog(
+            title: const Text('Student attendance schedule'),
+            content: SizedBox(width: 380, child: Column(
+              mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('Only this school • Every day • India time (IST). Teachers can mark their own attendance once daily.'),
+                SwitchListTile(contentPadding: EdgeInsets.zero,
+                  title: const Text('Limit student attendance time'), value: enabled,
+                  onChanged: (v) => update(() => enabled = v)),
+                ListTile(title: const Text('Opens at'), trailing: Text(start.format(ctx)),
+                  enabled: enabled, onTap: !enabled ? null : () async {
+                    final t = await showTimePicker(context: ctx, initialTime: start);
+                    if (t != null && ctx.mounted) update(() => start = t);
+                  }),
+                ListTile(title: const Text('Locks at'), trailing: Text(end.format(ctx)),
+                  enabled: enabled, onTap: !enabled ? null : () async {
+                    final t = await showTimePicker(context: ctx, initialTime: end);
+                    if (t != null && ctx.mounted) update(() => end = t);
+                  }),
+                if (enabled && minute(start) >= minute(end))
+                  const Text('Lock time must be after opening time on the same day.',
+                    style: TextStyle(color: Colors.redAccent)),
+                const Text('Pending captures stay locked and continue syncing after the window closes.'),
+              ],
+            )),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+              FilledButton(onPressed: enabled && minute(start) >= minute(end) ? null :
+                () => Navigator.pop(ctx, true), child: const Text('Save schedule')),
+            ],
+          );
+        }));
+      if (save != true || !mounted || !sameSchool()) return;
+      await FirebaseFirestore.instance.collection('school_settings').doc('attendance_schedule').set({
+        'enabled': enabled, 'startMinute': minute(start), 'endMinute': minute(end),
+        'timeZone': 'Asia/Kolkata', 'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      });
+      if (!mounted || !sameSchool()) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Schedule saved locally. Syncing to this school’s student app…')));
+      await WindowsConnectionCenter.refreshProfileAndSync();
+    } catch (e) {
+      if (mounted && sameSchool()) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Schedule save/sync failed: $e')));
     }
   }
 
@@ -80,9 +153,11 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
   }
 
   Future<void> _calendarEdit() async {
+    final origin = _profileId, day = _day;
+    if (FirebaseFirestore.instance.activeProfileId != origin) return;
     bool open = _calendar['isOpen'] is bool
         ? _calendar['isOpen']
-        : _day.weekday != DateTime.sunday;
+        : day.weekday != DateTime.sunday;
     final reason = TextEditingController(
       text: _calendar['reason']?.toString() ?? '',
     );
@@ -90,7 +165,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
         builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  AlertDialog(
-          title: Text('School calendar • ${schoolDateKey(_day)}'),
+          title: Text('School calendar • ${schoolDateKey(day)}'),
           content: SizedBox(
             width: 400,
             child: Column(
@@ -126,12 +201,16 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
         ); },
       ); },
     );
+    if (FirebaseFirestore.instance.activeProfileId != origin) {
+      reason.dispose();
+      return;
+    }
     if (saved == true) {
       await FirebaseFirestore.instance
           .collection('school_calendar')
-          .doc(schoolDateKey(_day))
+          .doc(schoolDateKey(day))
           .set({
-            'date': schoolDateKey(_day),
+            'date': schoolDateKey(day),
             'isOpen': open,
             'reason': reason.text.trim(),
             'updatedAt': FieldValue.serverTimestamp(),
@@ -144,7 +223,11 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
   }
 
   @override
-  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context);
+    if (FirebaseFirestore.instance.activeProfileId != _profileId) {
+      return const Scaffold(body: Center(child: Text('School changed. Reopen Attendance.')));
+    }
+    return Scaffold(
     appBar: AppBar(
       title: const Text('Attendance & school calendar'),
       actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
@@ -205,6 +288,12 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                PopupMenuButton<String>(
+                  tooltip: 'Attendance options', icon: const Icon(Icons.more_vert),
+                  onSelected: (_) => _editSchedule(),
+                  itemBuilder: (_) => const [PopupMenuItem(value: 'schedule', child: Text('Schedule'))],
+                ),
                 SegmentedButton<String>(
                   segments: const [
                     ButtonSegment(value: 'student', label: Text('Students')),
@@ -216,6 +305,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
                     _load();
                   },
                 ),
+                ]),
               ],
             ),
             const SizedBox(height: 18),
