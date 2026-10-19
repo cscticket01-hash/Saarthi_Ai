@@ -24,6 +24,7 @@ import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
 import 'mobile/startup_gate.dart';
 import 'mobile/attendance_background.dart';
+import 'attendance_schedule.dart';
 import 'school_document_renderer.dart';
 
 @pragma('vm:entry-point')
@@ -460,7 +461,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month),
       _selectedDay = DateTime.now();
   Timer? _timer;
-  String _attendanceMode = 'entry';
+  Timer? _attendanceClock;
   bool get _teacher => _s.link?.role == 'teacher';
   List<Map<String, dynamic>> _list(dynamic value) => value is List
       ? value.whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList()
@@ -474,6 +475,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _s.attendanceChanges.addListener(_attendanceChanged);
+    unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
+    var previousLock = _s.attendanceLockReason;
+    var previousAttendanceDay = attendanceDay(DateTime.now());
+    _attendanceClock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+      final day = attendanceDay(DateTime.now());
+      if (day != previousAttendanceDay) {
+        previousAttendanceDay = day;
+        unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
+      }
+      final lock = _s.attendanceLockReason;
+      if (mounted && lock != previousLock) {
+        previousLock = lock;
+        setState(() {});
+      }
+    });
     _s.connectionChanges.addListener(_connectionChanged);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
@@ -492,6 +509,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _attendanceClock?.cancel();
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     _s.attendanceChanges.removeListener(_attendanceChanged);
@@ -524,6 +542,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
       return;
     try {
+      await _s.refreshAttendanceStatus();
       await _s.refreshIfIdleDue();
     } catch (_) {
       /* Session publishes its retained-cache error state. */
@@ -626,12 +645,16 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   }
 
   Future<void> _markAttendance() async {
-    if (_busy) return;
+    if (_busy || _s.attendanceLockReason.isNotEmpty) return;
+    setState(() => _busy = true);
+    final activeLink = _s.link;
+    try {
     final qr = await Navigator.push<SchoolLink>(
       context,
       MaterialPageRoute(builder: (_) => const _QrScanner()),
     );
     if (qr == null || !mounted) return;
+    if (!identical(activeLink, _s.link)) throw StateError('School session changed. Scan again.');
     final scanCapturedAt = DateTime.now().millisecondsSinceEpoch;
     if (qr.projectId != _s.link!.projectId ||
         qr.role != _s.link!.role ||
@@ -643,8 +666,6 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       );
       return;
     }
-    setState(() => _busy = true);
-    try {
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied)
         permission = await Geolocator.requestPermission();
@@ -662,7 +683,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           'accuracy': position.accuracy,
         },
         scanCapturedAt,
-        _attendanceMode,
+        'entry',
       );
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1024,7 +1045,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     ],
   );
   Widget _attendancePage() {
-    final today = DateTime.now();
+    final today = attendanceIndiaTime(DateTime.now());
+    final lockReason = _s.attendanceLockReason;
     var working = 0;
     for (
       var d = DateTime(_month.year, _month.month);
@@ -1047,7 +1069,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading('Attendance', 'Daily check-in and check-out at your school'),
+        _heading('Attendance', 'One attendance per day at your school'),
         Row(
           children: [
             IconButton(
@@ -1130,23 +1152,15 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
             ],
           ),
         ),
+        if (_s.attendanceScheduleLabel.isNotEmpty) _card(Text(_s.attendanceScheduleLabel)),
         if (!_open(today))
           _card(const Text('School is closed today. Attendance is disabled.'))
         else ...[
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'entry', label: Text('Check in')),
-              ButtonSegment(value: 'exit', label: Text('Check out')),
-            ],
-            selected: {_attendanceMode},
-            onSelectionChanged: (v) =>
-                setState(() => _attendanceMode = v.first),
-          ),
-          const SizedBox(height: 12),
+          if (lockReason.isNotEmpty) _card(Text(lockReason)),
           FilledButton.icon(
-            onPressed: _busy ? null : _markAttendance,
+            onPressed: _busy || lockReason.isNotEmpty ? null : _markAttendance,
             icon: const Icon(Icons.qr_code_scanner),
-            label: Text(_busy ? 'Verifying…' : 'Scan ID & mark attendance'),
+            label: Text(_busy ? 'Verifying…' : lockReason.isNotEmpty ? 'Attendance locked' : 'Scan ID & mark attendance'),
           ),
           const SizedBox(height: 18),
         ],
