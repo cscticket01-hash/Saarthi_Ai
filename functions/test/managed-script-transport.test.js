@@ -64,3 +64,10 @@ test('redirect completion still rejects foreign school response',async()=>{
  let calls=0;const f=fixture(async()=>++calls===1?{status:302,headers:new Headers({location:'https://script.googleusercontent.com/result'})}:{status:200,ok:true,text:async()=>JSON.stringify({success:true,schoolId:'foreign'})});
  await assert.rejects(f.call(body),e=>e.code==='SCRIPT_IDENTITY_MISMATCH');assert.equal(f.sent.length,2);
 });
+
+test('Apps Script lock timeout is retryable 504 without replay, raw errors or false ACK',async()=>{
+ const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,code:'SCRIPT_TIMEOUT',message:'NEVER_EXPOSE'})}));
+ await assert.rejects(f.call(body),e=>e.status===504&&e.code==='SCRIPT_TIMEOUT'&&e.message.includes('pending changes are retained')&&!e.message.includes('NEVER_EXPOSE'));
+ assert.equal(f.sent.length,1);
+ assert.equal(JSON.parse(JSON.parse(f.sent[0].opt.body).payload).operationId,operationId);
+});
