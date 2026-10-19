@@ -649,7 +649,7 @@ class _WindowsLicenseSettingsPanelState
     if (_saving || _licenceLocked) return;
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         title: const Text('Remove Licensing Key'),
         content: const Text(
@@ -665,7 +665,7 @@ class _WindowsLicenseSettingsPanelState
             child: const Text('Remove'),
           ),
         ],
-      ),
+      ); },
     );
     if (confirm != true || _licenceLocked) return;
 
@@ -877,9 +877,9 @@ Future<bool> _requireWindowsSectionPassword(
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (dialogContext) {
+    builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
       return StatefulBuilder(
-        builder: (context, setDialogState) {
+        builder: (context, setDialogState) {WindowsAppearance.watch(context);
           Future<void> verifyPassword() async {
             if (verifying) return;
 
@@ -1118,7 +1118,7 @@ Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
     message: 'Auto logout after 30 minutes of inactivity',
     child: ValueListenableBuilder<int>(
       valueListenable: secondsListenable,
-      builder: (context, seconds, _) {
+      builder: (context, seconds, _) {WindowsAppearance.watch(context);
         final isLow = seconds <= 300;
         final color = isLow ? Colors.orangeAccent : const Color(0xFF00D9A5);
 
@@ -1592,7 +1592,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
   required VoidCallback onLogout, VoidCallback? onAnalytics}) => WindowsAdminSidebar(
     onSelected: onSelected, onLogout: onLogout,
     header: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: _schoolProfileCacheRef().snapshots(), builder: (ctx, snapshot) {
+      stream: _schoolProfileCacheRef().snapshots(), builder: (ctx, snapshot) {WindowsAppearance.watch(ctx);
         final profile = _mergeSchoolProfile(snapshot.data?.data());
         final logo = profile['logoUrl']?.toString() ?? '';
         return Padding(padding: const EdgeInsets.all(12), child: Material(
@@ -1606,10 +1606,10 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
           )));
       }));
 Future<void> _windowsConfirmLogout(BuildContext context) async {
-  final confirmed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+  final confirmed = await showDialog<bool>(context: context, builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
     title: const Text('Logout Admin?'), content: const Text('Logout karne ke baad App Lock dikhega.'),
     actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]));
+      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Logout'))]); });
   if (confirmed != true) return;
   _clearPortalSession();
   await WindowsLocalSession.logout();
@@ -1813,7 +1813,7 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
         await Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => const AdminDashboardScreen(),
+            builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const AdminDashboardScreen(); },
           ),
         );
 
@@ -1843,10 +1843,10 @@ class _SchoolAdminLoginScreenState extends State<SchoolAdminLoginScreen> {
 
         await Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => StudentPortalScreen(
+            builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  StudentPortalScreen(
               studentId: studentId,
               studentClass: studentClass,
-            ),
+            ); },
           ),
         );
 
@@ -2625,8 +2625,8 @@ errorBuilder: (context, error, stackTrace) {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) =>
-                const AdminDashboardScreen(),
+            builder: (context) { WindowsAppearance.watch(context); return
+                const AdminDashboardScreen(); },
           ),
         );
         return;
@@ -2726,10 +2726,10 @@ if (!passwordMatched) {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => StudentPortalScreen(
+          builder: (context) { WindowsAppearance.watch(context); return  StudentPortalScreen(
             studentId: studentRoll,
             studentClass: _selectedClass,
-          ),
+          ); },
         ),
       );
     } on FirebaseAuthException catch (e) {
@@ -3934,10 +3934,10 @@ void _handleLoginBack(bool didPop) {
     final mobileController = TextEditingController();
     showDialog(
       context: context,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         bool isSaving = false;
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             return AlertDialog(
               backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -4232,7 +4232,7 @@ errorBuilder: (context, error, stackTrace) {
           children: [
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance.collection('school_notices').snapshots(),
-              builder: (context, snapshot) {
+              builder: (context, snapshot) {WindowsAppearance.watch(context);
                 final count = snapshot.hasData ? snapshot.data!.docs.length : 0;
                 return Row(
                   children: [
@@ -4279,7 +4279,7 @@ errorBuilder: (context, error, stackTrace) {
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
-                builder: (context, snapshot) {
+                builder: (context, snapshot) {WindowsAppearance.watch(context);
                   if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884), strokeWidth: 2.5));
                   if (snapshot.hasError) return Center(child: _emptyNoticeState(icon: Icons.error_outline_rounded, title: 'Notice load nahi ho paya', subtitle: 'Internet ya Firebase check karein.'));
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return Center(child: _emptyNoticeState(icon: Icons.notifications_none_rounded, title: 'Abhi koi notice nahi hai', subtitle: 'School jab notice publish karega, yahan dikhega.'));
@@ -4435,7 +4435,7 @@ body: PopScope(
     _handleLoginBack(didPop);
   },
   child: LayoutBuilder(
-        builder: (context, constraints) {
+        builder: (context, constraints) {WindowsAppearance.watch(context);
           final isMobile = constraints.maxWidth < 800;
           if (isMobile) {
             return SingleChildScrollView(
@@ -4857,9 +4857,9 @@ void _handleLoginBack(bool didPop) {
     showDialog(
       context: context,
       barrierDismissible: !isSaving,
-      builder: (dialogContext) {
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
         return StatefulBuilder(
-          builder: (context, setDlgState) {
+          builder: (context, setDlgState) {WindowsAppearance.watch(context);
             return AlertDialog(
               backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -5362,14 +5362,14 @@ void _handleLoginBack(bool didPop) {
   void _openAddTeacherDialog() {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
         title:  Text('Add Teacher', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
         content:  Text('Teacher database fields baad mein connect kiye ja sakte hain.', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close', style: TextStyle(color: Color(0xFF00A884)))),
         ],
-      ),
+      ); },
     );
   }
 
@@ -5377,14 +5377,14 @@ void _handleLoginBack(bool didPop) {
     final user = FirebaseAuth.instance.currentUser;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
         title:  Text('Admin Profile', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
         content: Text(user?.email ?? 'Admin', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70))),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close', style: TextStyle(color: Color(0xFF00A884)))),
         ],
-      ),
+      ); },
     );
   }
 
@@ -5675,7 +5675,7 @@ Future<void> _printIdCard() async {
   Future<void> _confirmAdminLogoutFromHeader() async {
     final shouldLogout = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
@@ -5716,7 +5716,7 @@ Future<void> _printIdCard() async {
             label: const Text('Logout'),
           ),
         ],
-      ),
+      ); },
     );
 
     if (shouldLogout != true) return;
@@ -5740,7 +5740,7 @@ Future<void> _printIdCard() async {
   /// Firebase Admin re-authenticates successfully. No password is stored.
   Future<void> _openAdminAnalyticsGate() async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => const AdminAnalyticsScreen()));
+      builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const AdminAnalyticsScreen(); }));
   }
 
   void _openAdminDrawerPage(
@@ -5762,7 +5762,7 @@ Future<void> _printIdCard() async {
       }
 
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => page),
+        MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  page; }),
       );
     });
   }
@@ -5780,7 +5780,7 @@ Future<void> _printIdCard() async {
     if (!unlocked || !mounted) return;
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => page),
+      MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  page; }),
     );
   }
 
@@ -5921,7 +5921,7 @@ Future<void> _printIdCard() async {
               await Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const SettingsScreen(),
+                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const SettingsScreen(); },
                 ),
               );
               if (mounted) setState(() {});
@@ -5963,7 +5963,7 @@ Future<void> _printIdCard() async {
             );
         },
         child: LayoutBuilder(
-        builder: (context, constraints) {
+        builder: (context, constraints) {WindowsAppearance.watch(context);
           final isWide = constraints.maxWidth >= 1080;
 
           return SingleChildScrollView(
@@ -6020,7 +6020,7 @@ Future<void> _printIdCard() async {
 
   Widget _buildVidyaSaarthiBrandHeader() {
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (context, constraints) {WindowsAppearance.watch(context);
         final width = constraints.maxWidth;
         final isPhone = width < 600;
         final isTablet = width >= 600 && width < 900;
@@ -6362,7 +6362,7 @@ Future<void> _printIdCard() async {
           const SizedBox(height: 13),
           StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
             stream: _schoolProfileCacheRef().snapshots(),
-            builder: (context, snapshot) {
+            builder: (context, snapshot) {WindowsAppearance.watch(context);
               final profile = _mergeSchoolProfile(snapshot.data?.data());
               final schoolName = _schoolName(profile);
               return Text(
@@ -6403,7 +6403,7 @@ Future<void> _printIdCard() async {
 
 Widget _buildOverviewCards() {
   return LayoutBuilder(
-    builder: (context, constraints) {
+    builder: (context, constraints) {WindowsAppearance.watch(context);
       final maxWidth = constraints.maxWidth;
       final columns = maxWidth >= 1000 ? 4 : (maxWidth >= 620 ? 2 : 1);
       final spacing = 12.0;
@@ -6420,7 +6420,7 @@ Widget _buildOverviewCards() {
             stream: FirebaseFirestore.instance
                 .collection('students_directory')
                 .snapshots(),
-            builder: (context, snapshot) {
+            builder: (context, snapshot) {WindowsAppearance.watch(context);
               final count = snapshot.data?.docs.length;
 
               return _overviewCard(
@@ -6454,7 +6454,7 @@ Widget _buildOverviewCards() {
               sectionTitle: 'Fees Collection',
             ),
           ),
-              
+
           _overviewCard(
             width: itemWidth,
             icon: Icons.fact_check_rounded,
@@ -6465,7 +6465,7 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ExamCenterScreen(),
+                  builder: (context) { WindowsAppearance.watch(context); return  const ExamCenterScreen(); },
                 ),
               );
             },
@@ -6481,7 +6481,7 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
+                  builder: (context) { WindowsAppearance.watch(context); return  const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()); },
                 ),
               );
             },
@@ -6601,7 +6601,7 @@ Widget _buildOverviewCards() {
           child: Column(
             children: [
               LayoutBuilder(
-                builder: (context, constraints) {
+                builder: (context, constraints) {WindowsAppearance.watch(context);
                   final compact = constraints.maxWidth < 560;
 
                   final category = DropdownButtonFormField<String>(
@@ -6828,7 +6828,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                 ),
               ],
               LayoutBuilder(
-                builder: (context, constraints) {
+                builder: (context, constraints) {WindowsAppearance.watch(context);
                   final compact = constraints.maxWidth < 520;
 
                   final classField = DropdownButtonFormField<String>(
@@ -6933,7 +6933,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               ),
               const SizedBox(height: 13),
               LayoutBuilder(
-                builder: (context, constraints) {
+                builder: (context, constraints) {WindowsAppearance.watch(context);
                   final compact = constraints.maxWidth < 520;
 
                   final searchButton = _dashboardActionButton(
@@ -6991,7 +6991,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   .collection('school_notices')
                   .orderBy('timestamp', descending: true)
                   .snapshots(),
-              builder: (context, snapshot) {
+              builder: (context, snapshot) {WindowsAppearance.watch(context);
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(
                     child: CircularProgressIndicator(
@@ -7434,7 +7434,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B21)),
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
@@ -7514,7 +7514,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
             ),
           ),
         ],
-      ),
+      ); },
     );
   }
 
@@ -8366,14 +8366,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       if (lock != null) {
         _openAnalyticsModule(module, sectionKey: lock, sectionTitle: _windowsAdminModuleTitle(page));
       } else {
-        Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => module));
+        Navigator.of(context).push(MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  module; }));
       }
     });
 
   Future<void> _openAnalyticsSettings() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const AdminSettingsScreen(),
+        builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const AdminSettingsScreen(); },
       ),
     );
 
@@ -8395,7 +8395,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     if (!unlocked || !mounted) return;
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => page),
+      MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  page; }),
     );
   }
 
@@ -8426,7 +8426,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         ],
       ),
       body: LayoutBuilder(
-        builder: (context, constraints) {
+        builder: (context, constraints) {WindowsAppearance.watch(context);
           final horizontal = constraints.maxWidth < 700 ? 12.0 : 22.0;
           final content = SingleChildScrollView(
             padding: EdgeInsets.fromLTRB(horizontal, 18, horizontal, 30),
@@ -8435,7 +8435,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 constraints: const BoxConstraints(maxWidth: 1450),
                 child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                   stream: _schoolProfileCacheRef().snapshots(),
-                  builder: (context, profileSnapshot) {
+                  builder: (context, profileSnapshot) {WindowsAppearance.watch(context);
                     final profile = _mergeSchoolProfile(
                       profileSnapshot.data?.data(),
                     );
@@ -8627,7 +8627,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   Widget _buildMetrics(_AdminAnalyticsData data, double maxWidth) {
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (context, constraints) {WindowsAppearance.watch(context);
         final columns = constraints.maxWidth >= 1200
             ? 4
             : (constraints.maxWidth >= 700 ? 2 : 1);
@@ -8720,7 +8720,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   Widget _buildCharts(_AdminAnalyticsData data, double maxWidth) {
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (context, constraints) {WindowsAppearance.watch(context);
         final gap = 14.0;
         final columns = constraints.maxWidth >= 1100 ? 2 : 1;
         final width = columns == 1
@@ -9618,7 +9618,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                       ),
                       const SizedBox(height: 16),
                       LayoutBuilder(
-                        builder: (context, constraints) {
+                        builder: (context, constraints) {WindowsAppearance.watch(context);
                           final cards = <Widget>[
                             _assetCard(
                               title: 'School Logo',
@@ -10046,7 +10046,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   Future<void> _unlinkGmail() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title:  Row(
@@ -10077,7 +10077,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             child: const Text('Continue'),
           ),
         ],
-      ),
+      ); },
     );
 
     if (confirmed != true || !mounted) return;
@@ -10167,9 +10167,9 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             if (!countdownStarted) {
               countdownStarted = true;
 
@@ -10567,13 +10567,13 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       onMonthChanged: _saveAcademicYearRolloverMonth,
       onDevices: () => Navigator.of(context).pushNamed('/admin/device-management'),
       onSchool: () async {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) => const SchoolSettingsScreen()));
+        await Navigator.push(context, MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const SchoolSettingsScreen(); }));
         if (mounted) setState(() {});
       },
       onPasswords: () => Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const PasswordManagementScreen())),
+        MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const PasswordManagementScreen(); })),
       onAdvanced: () async {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) => const AdvancedSettingsScreen()));
+        await Navigator.push(context, MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const AdvancedSettingsScreen(); }));
         if (mounted) _fetchLinkedAccount();
       },
     );
@@ -11049,7 +11049,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
         final cachedSettings = await _getClassFeeSettings(studentClass);
         if (!mounted) return;
-    
+
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
         _nameSearchController.text = studentName;
@@ -11146,7 +11146,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   }) async {
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
         title:  Row(
           children: [
@@ -11170,7 +11170,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             child:  Text('Yes, Collect', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
           ),
         ],
-      ),
+      ); },
     );
 
     return result == true;
@@ -11652,7 +11652,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 onPressed: () async {
                   await Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const FeeCollectionSettingsScreen()),
+                    MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
                   );
                   if (!mounted || _activeStudentId == null) return;
                   final currentClass = _selectedClass;
@@ -12075,7 +12075,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           ),
           const SizedBox(height: 12),
           LayoutBuilder(
-            builder: (context, constraints) {
+            builder: (context, constraints) {WindowsAppearance.watch(context);
               final wide = constraints.maxWidth >= 850;
               final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
               final feePanel = _feeStructurePanel(
@@ -12235,7 +12235,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _studentsStream,
-        builder: (context, studentSnapshot) {
+        builder: (context, studentSnapshot) {WindowsAppearance.watch(context);
           if (studentSnapshot.connectionState == ConnectionState.waiting &&
               !studentSnapshot.hasData) {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
@@ -12253,7 +12253,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _ledgerStream,
-            builder: (context, ledgerSnapshot) {
+            builder: (context, ledgerSnapshot) {WindowsAppearance.watch(context);
               if (!ledgerSnapshot.hasData && !ledgerSnapshot.hasError) {
                 return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
               }
@@ -12402,8 +12402,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) =>
-                                      const FeeTransactionHistoryScreen(),
+                                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return
+                                      const FeeTransactionHistoryScreen(); },
                                 ),
                               );
                             },
@@ -12582,7 +12582,7 @@ child: Row(
     ),
   ],
 ),
-),                      
+),
                     const SizedBox(height: 12),
                     _mainPaymentPanel(activeStudentDoc, activeLedger),
                     const SizedBox(height: 12),
@@ -12712,12 +12712,12 @@ class _FeeCollectionSettingsScreenState
 
   Future<void> _deleteFee(_EditableSchoolFee row) async {
     if (!_editing || _saving) return;
-    final remove = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+    final remove = await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
       title: const Text('Remove fee row?'),
       content: Text('Remove "${row.name.text.trim().isEmpty ? 'New fee' : row.name.text.trim()}" from this fee structure? Existing payments and receipts stay unchanged.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
         TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove'))],
-    ));
+    ); });
     if (remove != true || !mounted || !_editing || _saving || !_rows.contains(row)) return;
     setState(() { _rows.remove(row); _dirty = true; });
     // Dispose after the old text fields leave the tree.
@@ -12726,12 +12726,12 @@ class _FeeCollectionSettingsScreenState
 
   Future<bool> _discardChanges() async {
     if (!_dirty) return true;
-    return await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+    return await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
       title: const Text('Discard unsaved changes?'),
       content: const Text('Your fee changes have not been saved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep editing')),
         TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Discard'))],
-    )) == true;
+    ); }) == true;
   }
 
   Future<void> _selectClass(String value) async {
@@ -12776,7 +12776,7 @@ class _FeeCollectionSettingsScreenState
     if (old == null) await lock.set({'unlockAt': deadline.millisecondsSinceEpoch});
     if (!mounted || selected != _selectedClass || session != _academicSession || FirebaseFirestore.instance.activeProfileId != _profile) return;
     final authorized = await showDialog<bool>(context: context, barrierDismissible: false,
-      builder: (_) => _DriveUnlinkSecurityDialog(deadline: deadline));
+      builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  _DriveUnlinkSecurityDialog(deadline: deadline); });
     if (authorized != true || !mounted || selected != _selectedClass || session != _academicSession || FirebaseFirestore.instance.activeProfileId != _profile) return;
     setState(() => _editing = true);
   }
@@ -13090,9 +13090,9 @@ errorBuilder: (
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             Widget scheduleField(
               String day,
               TextEditingController controller,
@@ -13545,12 +13545,12 @@ errorBuilder: (
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         return StatefulBuilder(
           builder: (
             context,
             setDialogState,
-          ) {
+          ) {WindowsAppearance.watch(context);
             InputDecoration input(
               String label,
               IconData icon,
@@ -14422,12 +14422,12 @@ errorBuilder: (_, __, ___) => _teacherFallback(
         await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         return StatefulBuilder(
           builder: (
             context,
             setDialogState,
-          ) {
+          ) {WindowsAppearance.watch(context);
             return AlertDialog(
               backgroundColor:
                   WindowsAppearance.resolve(const Color(0xFF172229)),
@@ -14822,8 +14822,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) =>
-                        const AddTeacherScreen(),
+                    builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return
+                        const AddTeacherScreen(); },
                   ),
                 );
               },
@@ -14944,7 +14944,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       )
                       .snapshots(),
               builder:
-                  (context, snapshot) {
+                  (context, snapshot) {WindowsAppearance.watch(context);
                 if (snapshot
                         .connectionState ==
                     ConnectionState
@@ -16529,7 +16529,7 @@ class _AddTeacherScreenState
     );
   }
 }
-            
+
 // ============================================================
 // ALL STUDENTS LIST
 // ============================================================
@@ -16770,11 +16770,11 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final force = direction > 0 && status == 'FAIL';
     final decision = direction < 0 ? 'FAIL' : status;
     var overrideReason='';
-    final yes = await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setDialog)=>AlertDialog(
+    final yes = await showDialog<bool>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return StatefulBuilder(builder:(ctx,setDialog){ WindowsAppearance.watch(ctx); return AlertDialog(
       title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
       content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
         if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))])));
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
     if(yes!=true||!mounted)return;
     setState(()=>_movingStudentIds.add(docId));
     try {
@@ -16794,9 +16794,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             return AlertDialog(
               backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -17037,9 +17037,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
+      builder: (ctx) {WindowsAppearance.watch(ctx);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             Widget studentEditPhotoPreview() {
               if (selectedPhotoBytes != null) {
                 return Image.memory(
@@ -17490,7 +17490,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       .collection('students_directory')
                       .where('class', isEqualTo: _selectedClassFilter)
                       .snapshots(),
-              builder: (context, snapshot) {
+              builder: (context, snapshot) {WindowsAppearance.watch(context);
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(
                     child: CircularProgressIndicator(
@@ -17848,10 +17848,10 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                          builder: (_) => StudentDocumentsScreen(
+                                          builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  StudentDocumentsScreen(
                                             studentId: doc.id,
                                             studentData: Map<String, dynamic>.from(student),
-                                          ),
+                                          ); },
                                         ),
                                       );
                                     },
@@ -18148,7 +18148,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     final sure = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         title:  Text(
           'Are you sure?',
@@ -18172,14 +18172,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
             child: const Text('Continue'),
           ),
         ],
-      ),
+      ); },
     );
     if (sure != true || !mounted) return;
 
     final verified = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _DriveUnlinkSecurityDialog(),
+      builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const _DriveUnlinkSecurityDialog(); },
     );
     if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
 
@@ -18474,9 +18474,9 @@ class _WindowsSectionPasswordLocksPanelState
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             Future<void> save() async {
               if (saving) return;
 
@@ -18963,9 +18963,9 @@ class _AdvancedStudentUidSettingsPanelState
     final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             if (!countdownStarted) {
               countdownStarted = true;
 
@@ -19869,7 +19869,7 @@ class _StudentDocumentsScreenState
   }
 
   Future<String?> _askName(String? current) => showDialog<String>(
-    context: context, builder: (_) => DocumentNameDialog(current: current ?? ''));
+    context: context, builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DocumentNameDialog(current: current ?? ''); });
 
   Future<void> _upload({Map<String, dynamic>? replace}) async {
     if (_uploading) return;
@@ -19879,8 +19879,8 @@ class _StudentDocumentsScreenState
     setState(() => _uploading = true);
     try {
       final file = await showDialog<SelectedDocument>(context: context,
-        builder: (_) => DocumentUploadDialog(name: docName, scope: _schoolProfile,
-          isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile));
+        builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DocumentUploadDialog(name: docName, scope: _schoolProfile,
+          isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile); });
       if (file == null || !mounted) return;
       if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) throw StateError('School changed. Reopen documents.');
       final mime = file.mime;
@@ -19923,7 +19923,7 @@ class _StudentDocumentsScreenState
   Future<void> _delete(Map<String, dynamic> document) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         title:  Text('Delete Document?',
             style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
@@ -19943,7 +19943,7 @@ class _StudentDocumentsScreenState
                 style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
           ),
         ],
-      ),
+      ); },
     );
     if (ok != true || !mounted) return;
     try {
@@ -19976,10 +19976,10 @@ class _StudentDocumentsScreenState
       final bytes=await WindowsBackendBridge.documentBytes(document);
       if(!mounted || FirebaseFirestore.instance.activeProfileId!=_schoolProfile)return;
       final mime=(document['optimizedMimeType']??document['mimeType']??'').toString();
-      await showDialog<void>(context:context,builder:(ctx)=>Dialog(child:SizedBox(
+      await showDialog<void>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return Dialog(child:SizedBox(
         width:900,height:650,child:Column(children:[
           Expanded(child:mime.contains('pdf')?FittedDocumentPreview(bytes:bytes):Image.memory(bytes,fit:BoxFit.contain)),
-          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]))));
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))]))); });
     } catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Document preview unavailable: $e')));}
   }
 
@@ -20399,7 +20399,7 @@ class _FeeTransactionHistoryScreenState
                       ),
                       const SizedBox(height: 14),
                       LayoutBuilder(
-                        builder: (context, c) {
+                        builder: (context, c) {WindowsAppearance.watch(context);
                           final compact = c.maxWidth < 760;
                           final search = TextField(
                             controller: _search,
@@ -20794,9 +20794,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ExamMarksEntryScreen(
+        builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  ExamMarksEntryScreen(
           exam: Map<String, dynamic>.from(exam),
-        ),
+        ); },
       ),
     );
     if (mounted) await _load();
@@ -20838,8 +20838,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     final payloads = await showDialog<List<Map<String, dynamic>>>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
+      builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  StatefulBuilder(
+        builder: (context, setDialogState) {WindowsAppearance.watch(context);
           final selectedSorted = selectedClasses.toList()
             ..sort((a, b) => _classNumber(a).compareTo(_classNumber(b)));
 
@@ -21218,7 +21218,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             ],
           );
         },
-      ),
+      ); },
     );
 
     examName.dispose();
@@ -21411,7 +21411,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B22)),
         insetPadding: const EdgeInsets.all(18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -21572,7 +21572,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             ),
           ),
         ),
-      ),
+      ); },
     );
   }
 
@@ -21846,7 +21846,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     ),
                     Expanded(
                       child: LayoutBuilder(
-                        builder: (context, constraints) => Stack(
+                        builder: (context, constraints) { WindowsAppearance.watch(context); return  Stack(
                           children: [
                             Container(
                               height: 8,
@@ -21864,7 +21864,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               ),
                             ),
                           ],
-                        ),
+                        ); },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -22129,7 +22129,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           ),
                         ),
                         child: LayoutBuilder(
-                          builder: (context, constraints) {
+                          builder: (context, constraints) {WindowsAppearance.watch(context);
                             final compact = constraints.maxWidth < 680;
                             final intro = Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -22202,7 +22202,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       ),
                       const SizedBox(height: 18),
                       LayoutBuilder(
-                        builder: (context, constraints) {
+                        builder: (context, constraints) {WindowsAppearance.watch(context);
                           final wide = constraints.maxWidth >= 980;
 
                           final main = Container(
@@ -22422,8 +22422,8 @@ class _ExamMarksEntryScreenState
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
+        builder: (context, setDialogState) { WindowsAppearance.watch(context); return  AlertDialog(
           backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -22589,8 +22589,8 @@ class _ExamMarksEntryScreenState
               ),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
 
     for (final controller in controllers.values) {
@@ -22691,7 +22691,7 @@ class _ExamMarksEntryScreenState
                     .collection('students_directory')
                     .where('class', isEqualTo: _studentClass)
                     .snapshots(),
-                builder: (context, snapshot) {
+                builder: (context, snapshot) {WindowsAppearance.watch(context);
                   if (snapshot.connectionState ==
                           ConnectionState.waiting &&
                       !snapshot.hasData) {
@@ -22933,8 +22933,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     final route = DialogRoute<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDlg) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
+        builder: (context, setDlg) { WindowsAppearance.watch(context); return  AlertDialog(
           backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
           title:  Text('Add School Expense', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
           content: SizedBox(
@@ -22984,8 +22984,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
               child: Text(saving ? 'Saving...' : 'Save Expense'),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
     final saved = await Navigator.of(context, rootNavigator: true).push(route);
     // The popped dialog remains mounted during its exit transition.

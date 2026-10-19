@@ -1,3 +1,7 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -52,7 +56,10 @@ void main() {
         tester.view.devicePixelRatio = 1;
         for (final mode in [ThemeMode.dark, ThemeMode.light]) {
           WindowsAppearance.mode.value = mode;
-          await tester.pumpWidget(app(const SettingsScreen()));
+          final renderKey = GlobalKey();
+          await tester.pumpWidget(
+            app(RepaintBoundary(key: renderKey, child: const SettingsScreen())),
+          );
           await tester.pumpAndSettle();
           expect(
             tester.getTopLeft(find.byType(WindowsAppearanceCard)).dy,
@@ -68,6 +75,23 @@ void main() {
                 : const Color(0xFF0B141A),
           );
           expect(tester.takeException(), isNull);
+          if (Platform.isWindows) {
+            await tester.runAsync(() async {
+              final image =
+                  await (renderKey.currentContext!.findRenderObject()
+                          as RenderRepaintBoundary)
+                      .toImage();
+              final bytes = await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              );
+              final file = File(
+                'build/appearance-preview/settings-${mode.name}-${size.width.toInt()}.png',
+              );
+              await file.parent.create(recursive: true);
+              await file.writeAsBytes(bytes!.buffer.asUint8List());
+              image.dispose();
+            });
+          }
         }
       }
       addTearDown(tester.view.resetPhysicalSize);
@@ -93,12 +117,25 @@ void main() {
     final route = ModalRoute.of(tester.element(find.byType(TextField)));
     showDialog<void>(
       context: tester.element(find.byType(TextField)),
-      builder: (_) => const AlertDialog(title: Text('Open dialog')),
+      builder: (context) {
+        WindowsAppearance.watch(context);
+        return AlertDialog(
+          backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+          title: Text(
+            'Open dialog',
+            style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+          ),
+        );
+      },
     );
     await tester.pumpAndSettle();
     WindowsAppearance.mode.value = ThemeMode.light;
     await tester.pumpAndSettle();
     expect(find.text('Open dialog'), findsOneWidget);
+    expect(
+      tester.widget<AlertDialog>(find.byType(AlertDialog)).backgroundColor,
+      WindowsAppearance.resolve(const Color(0xFF172229)),
+    );
     expect(controller.text, 'Unsaved student draft');
     nav.currentState!.pop();
     await tester.pumpAndSettle();

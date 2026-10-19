@@ -34,7 +34,7 @@ class WindowsTrialBanner extends StatelessWidget {
     if (licenseSkipped) {
       return Material(
         key: const ValueKey('license-not-activated-banner'),
-        color: const Color(0xFF661B24),
+        color: WindowsAppearance.resolve(const Color(0xFF661B24)),
         child: InkWell(
           onTap: onActivate,
           child: SafeArea(
@@ -81,7 +81,7 @@ class WindowsTrialBanner extends StatelessWidget {
       );
     }
     return Material(
-      color: const Color(0xFF661B24),
+      color: WindowsAppearance.resolve(const Color(0xFF661B24)),
       child: InkWell(
         onTap: onActivate,
         child: SafeArea(
@@ -297,7 +297,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
     BuildContext context,
   ) { WindowsAppearance.watch(context); return  ValueListenableBuilder<WindowsLicenseState>(
     valueListenable: WindowsPlatformClient.instance.state,
-    builder: (context, s, _) {
+    builder: (context, s, _) {WindowsAppearance.watch(context);
       // Fresh installs see ONLY the licence key screen first.
       if (!_resolved)
         return const Scaffold(body: Center(child: CircularProgressIndicator()));

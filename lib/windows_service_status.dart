@@ -131,7 +131,7 @@ class WindowsStatusLed extends StatelessWidget {
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return AnimatedBuilder(
       animation: WindowsServiceStatus.instance,
-      builder: (context, _) {
+      builder: (context, _) {WindowsAppearance.watch(context);
         final health =
             WindowsServiceStatus.instance.health(
           service,

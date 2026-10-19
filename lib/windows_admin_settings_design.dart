@@ -25,7 +25,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
       decoration:  BoxDecoration(gradient: LinearGradient(
         begin: Alignment.topLeft, end: Alignment.bottomRight,
         colors: [WindowsAppearance.resolve(Color(0xFF0B1B32)), WindowsAppearance.resolve(Color(0xFF071323))])),
-      child: LayoutBuilder(builder: (context, viewport) => SingleChildScrollView(
+      child: LayoutBuilder(builder: (context, viewport) { WindowsAppearance.watch(context); return  SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(viewport.maxWidth < 600 ? 16 : 32, 24,
           viewport.maxWidth < 600 ? 16 : 32, 28),
         child: Center(child: ConstrainedBox(
@@ -50,7 +50,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
               subtitle: 'Choose January or April as the session change month',
               child: _academic(context)),
             const SizedBox(height: 18),
-            LayoutBuilder(builder: (context, size) {
+            LayoutBuilder(builder: (context, size) {WindowsAppearance.watch(context);
               final passwords = _panel(icon: Icons.lock_outline_rounded, color: amber,
                 title: 'Password Management', subtitle: 'Manage section locks and passwords',
                 child: _action('Open Password Management', Icons.lock_outline_rounded, onPasswords));
@@ -67,7 +67,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
             }),
           ]),
         )),
-      )),
+      ); }),
     ),
   ); }
 
@@ -85,7 +85,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     ),
   ));
 
-  Widget _profile(BuildContext context) => LayoutBuilder(builder: (context, size) {
+  Widget _profile(BuildContext context) => LayoutBuilder(builder: (context, size) {WindowsAppearance.watch(context);
     final displayName = name.trim();
     final showName = displayName.isNotEmpty && displayName != 'School Administrator' &&
         displayName.toLowerCase() != email.trim().toLowerCase();
@@ -141,7 +141,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     final field = Container(padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: _decoration(inset: true), child: dropdown);
     return Container(padding: const EdgeInsets.all(16), decoration: _decoration(inset: true),
-      child: LayoutBuilder(builder: (context, size) {
+      child: LayoutBuilder(builder: (context, size) {WindowsAppearance.watch(context);
         if (size.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 480) {
           return Column(crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [label, const SizedBox(height: 14), field]);
@@ -181,7 +181,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     child: Icon(icon, color: color, size: small ? 26 : 30));
   BoxDecoration _decoration({bool inset = false}) => BoxDecoration(
     borderRadius: BorderRadius.circular(inset ? 12 : 16),
-    border: Border.all(color: const Color(0xFF294969)),
+    border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF294969))),
     gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
       colors: inset ?  [WindowsAppearance.resolve(Color(0xFF0B1C30)), WindowsAppearance.resolve(Color(0xFF0B1A2B))]
           :  [WindowsAppearance.resolve(Color(0xFF10263F)), WindowsAppearance.resolve(Color(0xFF0C1D30))]));

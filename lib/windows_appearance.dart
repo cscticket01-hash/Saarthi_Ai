@@ -77,7 +77,7 @@ class WindowsAppearance {
     final r = source.r, g = source.g, b = source.b;
     final high = [r, g, b].reduce((a, b) => a > b ? a : b);
     final low = [r, g, b].reduce((a, b) => a < b ? a : b);
-    if (high <= .36 && high - low < .25) {
+    if (high <= .46 && high - low < .42) {
       final light = .97 - high * .24;
       return Color.from(alpha: source.a, red: light, green: light, blue: light);
     }

@@ -237,6 +237,7 @@ jobs:
       with:
         name: windows-settings-ui-comparison
         path: |
+          build/appearance-preview
           build/settings-preview
           build/fee-settings-preview
           build/admin-settings-preview

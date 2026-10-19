@@ -28,6 +28,7 @@ class WindowsSettingsBody extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          WindowsAppearance.watch(context);
           final inset = constraints.maxWidth < 700
               ? 16.0
               : constraints.maxWidth * .067;
@@ -94,6 +95,7 @@ class WindowsSettingsCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          WindowsAppearance.watch(context);
           final compact = constraints.maxWidth < 480;
           final accent = sync
               ? const Color(0xFF57E6C4)
@@ -130,10 +132,17 @@ class WindowsSettingsCard extends StatelessWidget {
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: sync
-                            ? [const Color(0xFF087B83), const Color(0xFF084452)]
+                            ? [
+                                const Color(0xFF087B83),
+                                WindowsAppearance.resolve(
+                                  const Color(0xFF084452),
+                                ),
+                              ]
                             : [
                                 const Color(0xFF294FAD),
-                                const Color(0xFF102653),
+                                WindowsAppearance.resolve(
+                                  const Color(0xFF102653),
+                                ),
                               ],
                       ),
                       boxShadow: [
@@ -194,61 +203,32 @@ class WindowsSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: LinearGradient(
-          colors: onPressed == null
-              ? [
-                  WindowsAppearance.resolve(const Color(0xFF273750)),
-                  WindowsAppearance.resolve(const Color(0xFF29314B)),
-                ]
-              : purple
-              ? [
-                  WindowsAppearance.resolve(const Color(0xFF1A2853)),
-                  WindowsAppearance.resolve(const Color(0xFF27224E)),
-                  const Color(0xFF223565),
-                ]
-              : [
-                  const Color(0xFF17366B),
-                  const Color(0xFF292F7C),
-                  const Color(0xFF193C91),
-                ],
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+        disabledForegroundColor: WindowsAppearance.resolve(
+          const Color(0xFFADBBD4),
         ),
+        minimumSize: const Size(double.infinity, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
       ),
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: WindowsAppearance.resolve(Colors.white),
-          disabledForegroundColor: WindowsAppearance.resolve(
-            const Color(0xFFADBBD4),
-          ),
-          minimumSize: const Size(double.infinity, 40),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          side: BorderSide(
-            color: purple ? const Color(0xFF6B5FC1) : const Color(0xFF5B91EF),
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            icon,
-            const SizedBox(width: 12),
-            Flexible(
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          icon,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

@@ -124,8 +124,8 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+      builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  StatefulBuilder(
+        builder: (context, setDialogState) { WindowsAppearance.watch(context); return  AlertDialog(
           backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
           title:  Text(
             'App Lock',
@@ -173,8 +173,8 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               child: const Text('Unlock'),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
 
     controller.dispose();
@@ -192,8 +192,8 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+      builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  StatefulBuilder(
+        builder: (context, setDialogState) { WindowsAppearance.watch(context); return  AlertDialog(
           backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
           title:  Text(
             'Set / Change App Lock',
@@ -269,8 +269,8 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               child: const Text('Save'),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
 
     current.dispose();
@@ -406,7 +406,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
 
     final yes = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         title:  Text('Disconnect Firebase?', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
         content:  Text(
@@ -417,7 +417,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Disconnect')),
         ],
-      ),
+      ); },
     );
     if (yes != true) return;
 
@@ -555,7 +555,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           ),
           const SizedBox(height: 11),
           LayoutBuilder(
-            builder: (context, constraints) {
+            builder: (context, constraints) {WindowsAppearance.watch(context);
               final compact = constraints.maxWidth < 650;
               final email = TextField(
                 controller: _firebaseEmail,
@@ -853,7 +853,7 @@ class WindowsAppUpdateCard extends StatelessWidget {
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return ValueListenableBuilder<WindowsUpdateRuntimeState>(
       valueListenable: WindowsUpdateService.state,
-      builder: (context, state, _) {
+      builder: (context, state, _) {WindowsAppearance.watch(context);
         final update = state.update;
         final progressText = state.progress == null
             ? ''
@@ -986,8 +986,8 @@ class WindowsSyncStatusCard extends StatelessWidget {
   const WindowsSyncStatusCard({super.key});
   @override Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final engine=WindowsSyncEngine.instance;
-    return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_)=>
-      ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {
+    return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_){ WindowsAppearance.watch(context); return
+      ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {WindowsAppearance.watch(context);
         final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
         final label=engine.isPaused?'Paused':state==SchoolCloudState.offline?'Offline':
           state==SchoolCloudState.authRequired?'Sign-in required':state==SchoolCloudState.driveDisconnected?'Drive disconnected':
@@ -1002,19 +1002,19 @@ class WindowsSyncStatusCard extends StatelessWidget {
               style: TextStyle(color:WindowsAppearance.resolve(Color(0xFFB7C3DA)),fontSize:14,height:1.5)),
             const SizedBox(height:8),
             ValueListenableBuilder<String>(valueListenable:WindowsUiLanguage.changed,
-              builder:(context,language,_)=>material.Text.rich(TextSpan(
+              builder:(context,language,_){ WindowsAppearance.watch(context); return material.Text.rich(TextSpan(
                 text:WindowsUiLanguage.translate('Pending: '),
                 style: TextStyle(color:WindowsAppearance.resolve(Color(0xFFB7C3DA)),fontSize:15),
                 children:[TextSpan(text:'$pending',style:TextStyle(
                   color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
-              ))),
+              )); }),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
               child:Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent,fontSize:14))),
           ]),
           actions:WindowsSettingsButton(purple:true,
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)))),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)); })),
             icon: const Icon(Icons.grid_view_rounded,size:19), label: 'Open Sync & Backup Control Center'),
         );
-      }));
+      }); });
   }
 }

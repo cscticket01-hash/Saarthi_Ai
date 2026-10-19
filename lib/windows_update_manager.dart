@@ -352,9 +352,9 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     await showDialog<void>(
       context: context,
       barrierDismissible: !update.forceUpdate,
-      builder: (dialogContext) {
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (context, setDialogState) {WindowsAppearance.watch(context);
             Future<void> startInstall() async {
               if (downloading) return;
 

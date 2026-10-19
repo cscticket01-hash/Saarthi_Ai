@@ -164,7 +164,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   }
   Future<void> _editor(String title, List<Widget> Function(StateSetter) fields, Future<void> Function() save) async {
     bool saving = false; String? error;
-    final changed = await showDialog<bool>(context: context, barrierDismissible: false, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => PopScope(
+    final changed = await showDialog<bool>(context: context, barrierDismissible: false, builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  PopScope(
       canPop: !saving, child: AlertDialog(title: Text(title), content: SizedBox(width: 470,
         child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [...fields(setD).expand((w) => [w, const SizedBox(height: 14)]),
@@ -174,7 +174,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             setD(() { saving = true; error = null; });
             try { await save(); if (ctx.mounted) Navigator.pop(ctx, true); }
             catch (e) { if (ctx.mounted) setD(() { saving = false; error = '$e'; }); }
-          }, child: Text(saving ? 'Saving…' : 'Save'))]))));
+          }, child: Text(saving ? 'Saving…' : 'Save'))])); }); });
     if (changed == true && mounted) await _load();
   }
   Future<void> _salary(Map<String, dynamic> person, Map<String, dynamic>? old) async {
@@ -217,13 +217,13 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   }
   void _history(Map<String, dynamic> row) {
     final payments = row['payments'] as List? ?? [];
-    showDialog<void>(context: context, builder: (ctx) => AlertDialog(title: Text('Payment history • ${row['name']}'),
+    showDialog<void>(context: context, builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(title: Text('Payment history • ${row['name']}'),
       content: SizedBox(width: 480, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         Text('${row['month']} • Net ₹${StaffPayroll.format(StaffPayroll.total(row))} • Paid ₹${StaffPayroll.format(StaffPayroll.paid(row))}'),
         if (payments.isEmpty) const Padding(padding: EdgeInsets.all(20), child: Text('No payments recorded.')),
         for (final p in payments) ListTile(title: Text('₹${StaffPayroll.format((p['amountPaise'] as num).toInt())} • ${p['mode']}'),
           subtitle: Text('${p['date'].toString().split('T').first}\n${p['reference'] ?? ''}')),
-      ]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))]));
+      ]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))]); });
   }
   List<Map<String,dynamic>> get _monthRows => _rows.where((r) => r['month'] == StaffPayroll.monthKey(_month)).toList();
   Future<void> _output({bool csv = false, Map<String,dynamic>? row}) async {
@@ -270,7 +270,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     finally { if(mounted) setState(() => _working=false); }
   }
   Future<void> _calculatePayroll() async {
-    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx)=>SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]));
+    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
   }
   Future<void> _paySelected() async {
@@ -295,7 +295,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Staff Salary',style:TextStyle(fontSize:25,fontWeight:FontWeight.bold)),
           Text('Manage monthly salaries for teachers, office staff and school workers.',style:TextStyle(fontSize:12,color:WindowsAppearance.resolve(Colors.white70)))])]),
       actions:[IconButton(tooltip:'Refresh',onPressed:_load,icon:const Icon(Icons.refresh))]),
-      body:_loading ? const Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints)=>
+      body:_loading ? const Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints){ WindowsAppearance.watch(context); return
         ListView(padding:const EdgeInsets.all(20),children:[
           Wrap(spacing:12,runSpacing:12,crossAxisAlignment:WrapCrossAlignment.center,children:[
             IconButton(tooltip:'Previous month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month-1);_selected.clear();}),icon:const Icon(Icons.chevron_left)),
@@ -336,7 +336,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(constraints.maxWidth<1350)_monthSummary(net,paid,deductions,paidCount,rows.length),
           for(final row in rows.where((r)=>!_staff.any((s)=>s['id']==r['staffId'])))
             Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'}'),trailing:IconButton(icon:const Icon(Icons.history),onPressed:()=>_history(row)))),
-        ]))));
+        ]); })));
   }
   Widget _metric(String label,String value,Color color,IconData icon,String detail)=>SizedBox(width:205,child:Container(
     padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:color.withValues(alpha:.12),border:Border.all(color:color.withValues(alpha:.35)),borderRadius:BorderRadius.circular(10)),

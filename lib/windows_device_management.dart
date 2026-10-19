@@ -145,12 +145,12 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     final identity = row['deviceIdentity'];
     final session = ManagedSchoolSession.changed.value;
     if (!verified || !canRevoke || revoking || identity == current || identity is! String || !identityPattern.hasMatch(identity)) return;
-    final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+    final approved = await showDialog<bool>(context: context, builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
       title: const Text('Revoke this PC?'),
       content: Text('${row['name'] ?? 'PC'} will lose online school access. An offline PC receives this change when it reconnects; its existing offline authorization policy still applies. Local records will remain preserved.'),
       actions: [TextButton(onPressed: () => Navigator.pop(context,false), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Revoke'))],
-    ));
+    ); });
     if (approved != true || !mounted || session != ManagedSchoolSession.changed.value || !verified || !canRevoke || revoking || identity==current) return;
     readGeneration++; // A prior list response cannot undo this mutation.
     setState(() { busy = true; revoking=true; error = null; });
@@ -169,7 +169,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   }
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
-    final muted = WindowsAppearance.resolve(Color(0xff9caac0));
+    const muted = Color(0xff9caac0);
     final active = devices.where((r) => r['status'] == 'active').length;
     final recent = devices.where(recentlyActive).length;
     return Scaffold(
@@ -184,38 +184,38 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
             style:  TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:15)),
           const SizedBox(height:20),
           if(busy && !hasSnapshot) const LinearProgressIndicator(minHeight:2),
-          if(hasSnapshot && !verified) const Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(color:muted,fontSize:12))),
+          if(hasSnapshot && !verified)  Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(color:WindowsAppearance.resolve(muted),fontSize:12))),
           if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:const TextStyle(color:Color(0xffffb4ab)))),
           Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xff121f34)),borderRadius:BorderRadius.circular(16),border:Border.all(color:WindowsAppearance.resolve(const Color(0xff26364f)))),
             child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
                Padding(padding:EdgeInsets.all(20),child:Text('Devices',style:TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:18,fontWeight:FontWeight.w600))),
-              LayoutBuilder(builder:(context,constraints) {
+              LayoutBuilder(builder:(context,constraints) {WindowsAppearance.watch(context);
                 final compact = constraints.maxWidth < 700 || MediaQuery.textScalerOf(context).scale(14) > 21;
                 Widget name(Map<String,dynamic> row) => Row(children:[
                   const Icon(Icons.computer_outlined,color:Color(0xff8aade8),size:22),const SizedBox(width:12),
                   Expanded(child:Text(row['name'] is String && (row['name'] as String).isNotEmpty ? row['name'] as String : 'Unnamed PC',style: TextStyle(color:WindowsAppearance.resolve(Colors.white)))),
-                  if(row['deviceIdentity']==current) Container(margin:const EdgeInsets.only(left:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:const Color(0xff233d64),borderRadius:BorderRadius.circular(6)),child:const Text('This PC',style:TextStyle(color:Color(0xffa6caff),fontSize:11))),
+                  if(row['deviceIdentity']==current) Container(margin:const EdgeInsets.only(left:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xff233d64)),borderRadius:BorderRadius.circular(6)),child:const Text('This PC',style:TextStyle(color:Color(0xffa6caff),fontSize:11))),
                 ]);
                 Widget activity(Map<String,dynamic> row) => Row(children:[
-                  Icon(Icons.circle,key:ValueKey('activity-${row['deviceIdentity']}'),size:8,color:recentlyActive(row)?const Color(0xff6ed6aa):muted),
-                  const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(color:recentlyActive(row)?const Color(0xff6ed6aa):muted))),
+                  Icon(Icons.circle,key:ValueKey('activity-${row['deviceIdentity']}'),size:8,color:recentlyActive(row)?const Color(0xff6ed6aa):WindowsAppearance.resolve(muted)),
+                  const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(color:recentlyActive(row)?const Color(0xff6ed6aa):WindowsAppearance.resolve(muted)))),
                 ]);
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
                   ? TextButton(onPressed:revoking || !verified || !canRevoke ? null:()=>revoke(row),child:const Text('Revoke'))
-                  : const Text('—',style:TextStyle(color:muted));
+                  :  Text('—',style:TextStyle(color:WindowsAppearance.resolve(muted)));
                 return Column(children:[
-                  if(!compact) const Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
-                    Expanded(flex:4,child:Text('Device name',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Activity',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Last seen',style:TextStyle(color:muted))),SizedBox(width:80,child:Text('Action',style:TextStyle(color:muted))),
+                  if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
+                    Expanded(flex:4,child:Text('Device name',style:TextStyle(color:WindowsAppearance.resolve(muted)))),Expanded(flex:3,child:Text('Activity',style:TextStyle(color:WindowsAppearance.resolve(muted)))),Expanded(flex:3,child:Text('Last seen',style:TextStyle(color:WindowsAppearance.resolve(muted)))),SizedBox(width:80,child:Text('Action',style:TextStyle(color:WindowsAppearance.resolve(muted)))),
                   ])),
                   for(final row in devices) Container(key:ValueKey('device-${row['deviceIdentity']}'),padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration: BoxDecoration(border:Border(top:BorderSide(color:WindowsAppearance.resolve(Color(0xff26364f))))),child:compact
-                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style:const TextStyle(color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
-                    : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
-                  if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style:const TextStyle(color:muted))),
+                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style: TextStyle(color:WindowsAppearance.resolve(muted))),Align(alignment:Alignment.centerRight,child:action(row))])
+                    : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style: TextStyle(color:WindowsAppearance.resolve(muted)))),SizedBox(width:80,child:action(row))])),
+                  if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style: TextStyle(color:WindowsAppearance.resolve(muted)))),
                 ]);
               }),
             ])),
-          if(verified && !canRevoke) const Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(color:muted,fontSize:12))),
-          const Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. A missing heartbeat does not confirm a PC is offline.',style:TextStyle(color:muted,fontSize:12))),
+          if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(color:WindowsAppearance.resolve(muted),fontSize:12))),
+           Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. A missing heartbeat does not confirm a PC is offline.',style:TextStyle(color:WindowsAppearance.resolve(muted),fontSize:12))),
         ]),
       )),
     );

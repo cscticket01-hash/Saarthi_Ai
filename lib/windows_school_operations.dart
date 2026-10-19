@@ -88,8 +88,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
     );
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
+        builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  AlertDialog(
           title: Text('School calendar • ${schoolDateKey(_day)}'),
           content: SizedBox(
             width: 400,
@@ -123,8 +123,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
               child: const Text('Save date'),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
     if (saved == true) {
       await FirebaseFirestore.instance
@@ -150,7 +150,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
       actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
     ),
     body: LayoutBuilder(
-      builder: (ctx, c) {
+      builder: (ctx, c) {WindowsAppearance.watch(ctx);
         final cal = Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -381,13 +381,13 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     ),
       Positioned(top: 28, right: 28, child: AnimatedBuilder(
         animation: _inbox,
-        builder: (context, _) => IconButton(
+        builder: (context, _) { WindowsAppearance.watch(context); return  IconButton(
           tooltip: 'Developer notifications',
           onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => DeveloperInboxScreen(inbox: _inbox))),
+            builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DeveloperInboxScreen(inbox: _inbox); })),
           icon: Badge(isLabelVisible: _inbox.unread > 0,
             label: Text('${_inbox.unread}'), child: const Icon(Icons.notifications_outlined)),
-        ),
+        ); },
       )),
     ]),
   ); }

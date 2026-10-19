@@ -541,7 +541,7 @@ class WindowsDocumentTemplates {
     VoidCallback? onPrint,
   }) => showDialog<void>(
     context: context,
-    builder: (ctx) => Dialog(
+    builder: (ctx) { WindowsAppearance.watch(ctx); return  Dialog(
       child: SizedBox(
         width: 900,
         height: 680,
@@ -587,7 +587,7 @@ class WindowsDocumentTemplates {
           ],
         ),
       ),
-    ),
+    ); },
   );
   static Future<bool> previewReport(
     BuildContext context,
@@ -883,7 +883,7 @@ class _SchoolDocumentTemplatesScreenState
                             child: Center(
                               child: FutureBuilder<Uint8List>(
                                 future: _thumbnail(i),
-                                builder: (context, snapshot) => snapshot.hasData
+                                builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
                                     ? Image.memory(
                                         snapshot.data!,
                                         fit: BoxFit.contain,
@@ -892,7 +892,7 @@ class _SchoolDocumentTemplatesScreenState
                                     ? const Text(
                                         'Use Preview to view this design',
                                       )
-                                    : const CircularProgressIndicator(),
+                                    : const CircularProgressIndicator(); },
                               ),
                             ),
                           ),
