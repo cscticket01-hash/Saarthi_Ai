@@ -12676,6 +12676,7 @@ class _FeeCollectionSettingsScreenState
   int _loadGeneration = 0;
   bool _loadFailed = false;
   bool _dirty = false;
+  Map<String, dynamic> _loadedConfiguration = {};
 
   void _clearRows() {
     for (final row in _rows) { row.dispose(); }
@@ -12795,6 +12796,7 @@ class _FeeCollectionSettingsScreenState
       final heads = data.containsKey('feeHeadOrder')
           ? WindowsFeeStructure.heads(data)
           : {..._standardFeeHeads, ...fees.keys}.toList();
+      _loadedConfiguration = Map<String, dynamic>.from(data);
       _clearRows();
       for (final head in heads) {
         final amount = _toDouble(fees[head]);
@@ -12839,7 +12841,7 @@ class _FeeCollectionSettingsScreenState
     try {
       await FirebaseFirestore.instance.ensureDurableSchoolRecords();
       if (selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) throw StateError('School or class changed.');
-      await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true);
+      await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true, expectedConfiguration: _loadedConfiguration);
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
       setState(() { _editing = false; _dirty = false; });
 

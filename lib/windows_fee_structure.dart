@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show mapEquals, listEquals;
 import 'promotion_session_policy.dart';
 import 'windows_local_firestore.dart';
 
@@ -31,7 +32,7 @@ class WindowsFeeStructure {
     return order is List ? order.whereType<String>().where(fees.containsKey).toSet().toList() : fees.keys.toList();
   }
 
-  static Future<void> save(String className, String session, Map<String, double> fees, {bool replaceHeads = false}) async {
+  static Future<void> save(String className, String session, Map<String, double> fees, {bool replaceHeads = false, Map<String, dynamic>? expectedConfiguration}) async {
     final normalized = <String, double>{};
     final names = <String>{};
     for (final entry in fees.entries) {
@@ -45,6 +46,14 @@ class WindowsFeeStructure {
     await db.ensureDurableSchoolRecords();
     final old = await load(className, session: session);
     if (db.activeProfileId != origin) throw StateError('School changed.');
+    if (expectedConfiguration != null &&
+        (!mapEquals(Map<String, dynamic>.from(old['fees'] as Map? ?? {}),
+          Map<String, dynamic>.from(expectedConfiguration['fees'] as Map? ?? {})) ||
+         !listEquals(heads(old), heads(expectedConfiguration)) ||
+         old['configured'] != expectedConfiguration['configured'] ||
+         old['feeStructureSaved'] != expectedConfiguration['feeStructureSaved'])) {
+      throw StateError('Fee structure changed on another device. Cancel and reload before editing again.');
+    }
     final previous = Map<String, dynamic>.from(old['fees'] as Map? ?? {});
     final merged = <String, dynamic>{
       for (final key in previous.keys) key: replaceHeads ? 0.0 : previous[key],

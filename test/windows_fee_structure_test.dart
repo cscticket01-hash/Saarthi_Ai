@@ -101,6 +101,16 @@ void main() {
     final pending = (await db.collection('_windows_firebase_outbox').get()).docs;
     expect(pending.any((row) => row.data()['collection']=='fee_settings'),true);
   });
+  test('an edit opened before another device update cannot erase that update', () async {
+    final session = await WindowsFeeStructure.currentSession();
+    await WindowsFeeStructure.save('Class 1',session,{'Tuition':100},replaceHeads:true);
+    final opened = await WindowsFeeStructure.load('Class 1',session:session);
+    await WindowsFeeStructure.save('Class 1',session,{'Tuition':110,'Transport':40},replaceHeads:true);
+    await expectLater(WindowsFeeStructure.save('Class 1',session,{'Tuition':120},replaceHeads:true,expectedConfiguration:opened),throwsStateError);
+    final latest = await WindowsFeeStructure.load('Class 1',session:session);
+    expect(WindowsFeeStructure.heads(latest),['Tuition','Transport']);
+    expect((latest['fees'] as Map)['Tuition'],110);
+  });
   test('invalid fee names and amounts cannot queue writes', () async {
     final session = await WindowsFeeStructure.currentSession();
     for(final fees in [<String,double>{' ':1}, {'Fee':1,' fee ':2}, {'Fee':double.nan}, {'Fee':-1}]) {

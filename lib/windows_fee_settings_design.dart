@@ -39,12 +39,14 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
   );
 
   Widget _selector(BuildContext context, {required String label, required String value,
-    required List<String> options, required ValueChanged<String> onChanged}) => DropdownButtonFormField<String>(
-      value: options.contains(value) ? value : null, isExpanded: true,
-      dropdownColor: _navy, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
+    required List<String> options, required ValueChanged<String> onChanged}) => InputDecorator(
       decoration: _input(label).copyWith(labelText: label, labelStyle: const TextStyle(color: _muted)),
-      items: options.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
-      onChanged: saving || loading ? null : (value) { if (value != null) onChanged(value); },
+      child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+        value: options.contains(value) ? value : null, isExpanded: true, isDense: true,
+        dropdownColor: _navy, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
+        items: options.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
+        onChanged: saving || loading ? null : (value) { if (value != null) onChanged(value); },
+      )),
     );
 
   @override
