@@ -12798,6 +12798,7 @@ class _FeeCollectionSettingsScreenState
           : {..._standardFeeHeads, ...fees.keys}.toList();
       _loadedConfiguration = Map<String, dynamic>.from(data);
       _clearRows();
+      _nextRowId = 0;
       for (final head in heads) {
         final amount = _toDouble(fees[head]);
         _rows.add(_EditableSchoolFee(_nextRowId++, name: head,
@@ -12844,6 +12845,7 @@ class _FeeCollectionSettingsScreenState
       await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true, expectedConfiguration: _loadedConfiguration);
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
       setState(() { _editing = false; _dirty = false; });
+      await _loadSettings();
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
