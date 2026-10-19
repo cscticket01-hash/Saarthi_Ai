@@ -50,7 +50,7 @@ void main() {
         await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes())))).load();
       await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
     });
-    local.FirebaseAuth.instance.useManagedIdentity('dasmohit339@gmail.com');
+    local.FirebaseAuth.instance.useManagedIdentity('admin@school.example');
     addTearDown(()=>tester.binding.setSurfaceSize(null));
     for(final spec in [('desktop',const Size(1280,900),1.0),('compact',const Size(360,800),1.5)]) {
       await tester.binding.setSurfaceSize(spec.$2);
@@ -61,7 +61,7 @@ void main() {
         home:RepaintBoundary(key:key,child:const AdminSettingsScreen())));
       await tester.pumpAndSettle();
       expect(find.text('Student Import Sheet'),findsNothing);
-      expect(find.text('dasmohit339@gmail.com'),findsOneWidget);
+      expect(find.text('admin@school.example'),findsOneWidget);
       expect(find.text('Authenticated'),findsOneWidget);
       expect(tester.takeException(),isNull);
       await tester.runAsync(() async {
