@@ -12576,8 +12576,7 @@ child: Row(
                     const SizedBox(height: 12),
                     _mainPaymentPanel(activeStudentDoc, activeLedger),
                     const SizedBox(height: 12),
-                    Expanded(
-                      child: Container(
+                    Container(
                         decoration: BoxDecoration(
                           color: const Color(0xFF101D24),
                           borderRadius: BorderRadius.circular(14),
@@ -12629,7 +12628,6 @@ child: Row(
                             ),
                           ],
                         ),
-                      ),
                     ),
                   ],
                 ),
