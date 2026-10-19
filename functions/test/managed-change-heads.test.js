@@ -48,6 +48,22 @@ test('signed change discovery opens no Sheets/Drive, mutates no properties and g
   JSON.stringify(JSON.parse(before).filter(([k])=>!k.startsWith('VS_NONCE_'))));
 });
 
+test('head hints do not reacquire a contended writer lock after nonce verification',()=>{
+ const s=storage();let acquired=0,released=0;
+ s.context.LockService.getScriptLock=()=>({waitLock(){
+  if(++acquired>1)throw Error('Lock timeout from concurrent writer');
+ },releaseLock(){released++;}});
+ const out=s.call({action:'managed_delta',headOnly:true,collections:['fee_payments']});
+ assert.equal(out.success,true);assert.equal(out.revisions.fee_payments,'legacy');
+ assert.equal(acquired,1);assert.equal(released,1);
+ assert.equal(out.records,undefined);assert.equal(out.recordRevision,undefined);
+ // Record reads still require the second, authoritative lock.
+ acquired=0;released=0;
+ const full=s.call({action:'managed_delta',collections:['fee_payments'],knownRevisions:{}});
+ assert.equal(full.success,false);assert.equal(full.code,'SCRIPT_TIMEOUT');
+ assert.equal(acquired,2);assert.equal(released,1);
+});
+
 test('head discovery uses bounded lock and rejects invalid/duplicate collections',()=>{
  const s=storage();let waited;
  s.context.LockService.getScriptLock=()=>({waitLock(ms){waited=ms;throw Error('Lock busy');},releaseLock(){}});
