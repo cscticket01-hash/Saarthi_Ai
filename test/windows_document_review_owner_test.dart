@@ -266,6 +266,41 @@ void main() {
       expect(await file.exists(), true);
     } finally { PrintingPlatform.instance = printing; }
   });
+  test('missing package discovery targets only own undeleted owners without a card or retained queue', () async {
+    for (final id in ['missing', 'published', 'deleted', 'queued', 'conflicted', 'foreign']) {
+      await db.collection('students_directory').doc(id).set({'name': id,
+        if (id == 'foreign') 'schoolId': 'foreign-school'});
+    }
+    String card(String id) => WindowsBackendBridge.publishedIdCardOwnerId('student', id);
+    await db.collection('documents').doc(card('published')).set({'schoolId': school, 'documentKind': 'idCard'});
+    await db.collection('documents').doc(card('deleted')).set({'schoolId': school, '_syncDeleted': true});
+    await db.collection('_windows_document_outbox').doc(card('queued')).set({'schoolId': school, 'syncState': 'Pending'});
+    await db.collection('_windows_document_outbox').doc(card('conflicted')).set({'schoolId': school, 'syncState': 'conflict'});
+    final result = await WindowsDocumentTemplates.missingIdCardTargets();
+    expect(result, {'studentId': {'missing'}});
+    expect((await db.collection('_windows_document_outbox').get()).docs.length, 2);
+  });
+  test('unpublished original is requeued with exactly its original operation, path and CAS baseline', () async {
+    final retained = {...local, 'syncState': 'Local', 'baseCloudRevision': 'original-baseline'};
+    await db.collection('_local_student_documents').doc(id).set(retained);
+    await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
+      {'schoolId': school, 'syncProtocol': 2, 'records': {}});
+    final queued = (await db.collection('_windows_document_outbox').doc(id).get()).data()!;
+    expect(queued['documentRevision'], retained['documentRevision']);
+    expect(queued['localPath'], retained['localPath']);
+    expect(queued['baseCloudRevision'], 'original-baseline');
+    expect(await File(retained['localPath'] as String).readAsBytes(), [1,2,3]);
+  });
+  test('cloud deletion or foreign inventory can never recreate an ID queue', () async {
+    await db.collection('_local_student_documents').doc(id).set({...local, 'syncState': 'Local'});
+    await expectLater(WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
+      {'schoolId': 'foreign-school', 'syncProtocol': 2, 'records': {}}), throwsStateError);
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+    await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () async =>
+      {'schoolId': school, 'syncProtocol': 2, 'records': {id: {...cloud, '_syncDeleted': true}}});
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+    expect((await db.collection('documents').doc(id).get()).data()?['_syncDeleted'], true);
+  });
   test('a second PC reuses the published ID despite a different optimized photo cache', () async {
     await CentralSchoolCloud.updateSession(school, {'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
     final original=Uint8List.fromList(img.encodePng(img.Image(width:16,height:24)));
