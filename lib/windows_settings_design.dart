@@ -97,9 +97,8 @@ class WindowsSettingsCard extends StatelessWidget {
         builder: (context, constraints) {
           WindowsAppearance.watch(context);
           final compact = constraints.maxWidth < 480;
-          final accent = sync
-              ? const Color(0xFF57E6C4)
-              : const Color(0xFF7DABFF);
+          final scheme = Theme.of(context).colorScheme;
+          final accent = scheme.primary;
           final heading = Text(
             title,
             style: TextStyle(
@@ -128,23 +127,7 @@ class WindowsSettingsCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(compact ? 14 : 18),
                       border: Border.all(color: accent.withValues(alpha: .55)),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: sync
-                            ? [
-                                const Color(0xFF087B83),
-                                WindowsAppearance.resolve(
-                                  const Color(0xFF084452),
-                                ),
-                              ]
-                            : [
-                                const Color(0xFF294FAD),
-                                WindowsAppearance.resolve(
-                                  const Color(0xFF102653),
-                                ),
-                              ],
-                      ),
+                      color: scheme.primaryContainer,
                       boxShadow: [
                         BoxShadow(
                           color: accent.withValues(alpha: .08),
@@ -152,7 +135,11 @@ class WindowsSettingsCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Icon(icon, color: accent, size: compact ? 22 : 26),
+                    child: Icon(
+                      icon,
+                      color: scheme.onPrimaryContainer,
+                      size: compact ? 22 : 26,
+                    ),
                   ),
                   SizedBox(width: compact ? 12 : 20),
                   Expanded(

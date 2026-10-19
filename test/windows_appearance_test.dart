@@ -1,3 +1,5 @@
+import 'package:flutter/services.dart';
+
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
@@ -51,6 +53,21 @@ void main() {
   testWidgets(
     'Settings has Appearance above Update in both modes without overflow',
     (tester) async {
+      if (Platform.isWindows) {
+        await tester.runAsync(() async {
+          await (FontLoader('Segoe UI')..addFont(
+                Future.value(
+                  ByteData.sublistView(
+                    await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes(),
+                  ),
+                ),
+              ))
+              .load();
+          await (FontLoader('MaterialIcons')
+                ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+              .load();
+        });
+      }
       for (final size in [const Size(1280, 800), const Size(360, 800)]) {
         tester.view.physicalSize = size;
         tester.view.devicePixelRatio = 1;

@@ -57,7 +57,7 @@ class WindowsTrialBanner extends StatelessWidget {
                          Text(
                           'License not activated — Activate now',
                           style: TextStyle(
-                            color: WindowsAppearance.resolve(Colors.white),
+                            color: Colors.white,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -72,7 +72,7 @@ class WindowsTrialBanner extends StatelessWidget {
                     ),
                   ),
                   if (onActivate != null)
-                     Icon(Icons.chevron_right, color: WindowsAppearance.resolve(Colors.white)),
+                     Icon(Icons.chevron_right, color: Colors.white),
                 ],
               ),
             ),
