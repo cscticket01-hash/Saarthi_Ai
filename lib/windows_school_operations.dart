@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
@@ -143,7 +144,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
     appBar: AppBar(
       title: const Text('Attendance & school calendar'),
       actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
@@ -220,7 +221,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
             const SizedBox(height: 18),
             Text(
               '${_records.length} check-ins • ${_records.where((r) => r['checkOut'] != null).length} check-outs',
-              style: const TextStyle(color: Colors.white54),
+              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
             ),
             const SizedBox(height: 16),
             if (_loading) const LinearProgressIndicator(),
@@ -279,7 +280,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
         );
       },
     ),
-  );
+  ); }
 }
 
 class WindowsSupportScreen extends StatefulWidget {
@@ -335,7 +336,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
     appBar: AppBar(title: const Text('Report app problem')),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
@@ -389,7 +390,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
         ),
       )),
     ]),
-  );
+  ); }
 }
 
 class SchoolPromotionService {
@@ -708,7 +709,7 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
   }
 
   @override
-  Widget build(BuildContext context) => SwitchListTile(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  SwitchListTile(
     value: _enabled,
     title: const Text('Allow force promotion of retained students'),
     subtitle: const Text(
@@ -725,5 +726,5 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
           });
       if (mounted) setState(() => _enabled = v);
     },
-  );
+  ); }
 }

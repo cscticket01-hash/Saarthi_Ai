@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'windows_other_staff.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -281,20 +282,18 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   static const _months=['January','February','March','April','May','June','July','August','September','October','November','December'];
   String get _monthLabel => '${_months[_month.month-1]} ${_month.year}';
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final rows=_monthRows;
     final net=rows.fold<int>(0,(v,r)=>v+StaffPayroll.total(r));
     final paid=rows.fold<int>(0,(v,r)=>v+StaffPayroll.paid(r));
     final deductions=rows.fold<int>(0,(v,r)=>v+((r['deductionPaise'] as num?)?.toInt() ?? 0));
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
     final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
-    final dark=ThemeData.dark(useMaterial3:true).copyWith(scaffoldBackgroundColor:const Color(0xff061826),
-      colorScheme:const ColorScheme.dark(primary:Color(0xff7260ff),onPrimary:Colors.white,surface:Color(0xff102338)),
-      dividerColor:const Color(0xff284157),cardColor:const Color(0xff102338));
-    return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:const Color(0xff0c233e),
-      title:const Row(children:[Icon(Icons.account_balance_wallet,color:Colors.lightBlueAccent),SizedBox(width:16),
+    final dark=Theme.of(context);
+    return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:WindowsAppearance.resolve(const Color(0xff0c233e)),
+      title: Row(children:[Icon(Icons.account_balance_wallet,color:Colors.lightBlueAccent),SizedBox(width:16),
         Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Staff Salary',style:TextStyle(fontSize:25,fontWeight:FontWeight.bold)),
-          Text('Manage monthly salaries for teachers, office staff and school workers.',style:TextStyle(fontSize:12,color:Colors.white70))])]),
+          Text('Manage monthly salaries for teachers, office staff and school workers.',style:TextStyle(fontSize:12,color:WindowsAppearance.resolve(Colors.white70)))])]),
       actions:[IconButton(tooltip:'Refresh',onPressed:_load,icon:const Icon(Icons.refresh))]),
       body:_loading ? const Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints)=>
         ListView(padding:const EdgeInsets.all(20),children:[
@@ -320,17 +319,17 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             _metric('Pending','₹${StaffPayroll.format(net-paid)}',Colors.orange,Icons.hourglass_empty,'Remaining balance'),
           ]),const SizedBox(height:18),
           if(!_local) const Padding(padding:EdgeInsets.all(12),child:Text('Local Data is OFF. Unsynced salary changes stay in this session only. Enable Local Data to keep them on this computer.')),
-          const Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(color:Colors.white54,fontSize:12)),
+           Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:12)),
           if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:const TextStyle(color:Colors.redAccent))),
           const SizedBox(height:16),
           Wrap(spacing:10,runSpacing:10,children:[
             for(final role in ['All staff','Teacher','Office staff','Driver','Guard','Support staff','Other'])
-              ChoiceChip(selectedColor:const Color(0xff6252ee),labelStyle:const TextStyle(color:Colors.white),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
+              ChoiceChip(selectedColor:const Color(0xff6252ee),labelStyle: TextStyle(color:WindowsAppearance.resolve(Colors.white)),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
             SizedBox(width:320,child:TextField(onChanged:(v)=>setState(()=>_search=v),decoration:const InputDecoration(hintText:'Search by name, ID or department...',prefixIcon:Icon(Icons.search)))),
           ]),const SizedBox(height:16),
           if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add teachers in Teachers and non-teaching staff in Other Staff.')),
           Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:Card(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(
-            headingRowColor:WidgetStateProperty.all(const Color(0xff172c42)),columnSpacing:14,dataRowMinHeight:64,dataRowMaxHeight:76,
+            headingRowColor:WidgetStateProperty.all(WindowsAppearance.resolve(const Color(0xff172c42))),columnSpacing:14,dataRowMinHeight:64,dataRowMaxHeight:76,
             columns:[for(final label in ['Name / Employee ID','Role / Department','Attendance','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
             rows:[for(final person in people)_tableRow(person,rows)],
           )))),if(constraints.maxWidth>=1350)...[const SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
@@ -341,8 +340,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   }
   Widget _metric(String label,String value,Color color,IconData icon,String detail)=>SizedBox(width:205,child:Container(
     padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:color.withValues(alpha:.12),border:Border.all(color:color.withValues(alpha:.35)),borderRadius:BorderRadius.circular(10)),
-    child:Row(children:[CircleAvatar(backgroundColor:color.withValues(alpha:.6),child:Icon(icon,color:Colors.white)),const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text(label,style:const TextStyle(fontSize:12,color:Colors.white70)),const SizedBox(height:8),FittedBox(child:Text(value,style:const TextStyle(fontSize:22,fontWeight:FontWeight.bold))),const SizedBox(height:8),Text(detail,style:const TextStyle(fontSize:10,color:Colors.white54))]))])));
+    child:Row(children:[CircleAvatar(backgroundColor:color.withValues(alpha:.6),child:Icon(icon,color:WindowsAppearance.resolve(Colors.white))),const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text(label,style: TextStyle(fontSize:12,color:WindowsAppearance.resolve(Colors.white70))),const SizedBox(height:8),FittedBox(child:Text(value,style:const TextStyle(fontSize:22,fontWeight:FontWeight.bold))),const SizedBox(height:8),Text(detail,style: TextStyle(fontSize:10,color:WindowsAppearance.resolve(Colors.white54)))]))])));
   Widget _monthSummary(int net,int paid,int deductions,int count,int total)=>Card(child:Padding(padding:const EdgeInsets.all(18),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
     Text('$_monthLabel Summary',style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),const SizedBox(height:20),
     Center(child:SizedBox(width:110,height:110,child:Stack(alignment:Alignment.center,children:[
@@ -358,8 +357,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final status=row?['status']?.toString()??'Not set';
     final color=status=='Paid'?Colors.green:Colors.orange;
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style:const TextStyle(fontSize:11,color:Colors.white54))])),
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style:const TextStyle(fontSize:11,color:Colors.white54))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style: TextStyle(fontSize:11,color:WindowsAppearance.resolve(Colors.white54)))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style: TextStyle(fontSize:11,color:WindowsAppearance.resolve(Colors.white54)))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),

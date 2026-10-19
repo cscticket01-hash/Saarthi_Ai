@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'sync_recovery_policy.dart' as failure_policy;
 
 import 'dart:convert';
@@ -613,8 +614,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Widget _panelBox(Widget child) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFF132D46), Color(0xFF0C1F34)],
+      gradient:  LinearGradient(
+        colors: [WindowsAppearance.resolve(Color(0xFF132D46)), WindowsAppearance.resolve(Color(0xFF0C1F34))],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -635,7 +636,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Text(
               name,
-              style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+              style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
             ),
             const SizedBox(height: 6),
             Text(
@@ -839,8 +840,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 const SizedBox(height: 6),
                                 Text(
                                   '${details['pending'] ?? 'Unknown'} pending',
-                                  style: const TextStyle(
-                                    color: Color(0xFF9AB4C9),
+                                  style:  TextStyle(
+                                    color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                   ),
                                 ),
                               ],
@@ -866,9 +867,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ),
                                         SelectableText(
                                           localDataPath!,
-                                          style: const TextStyle(
+                                          style:  TextStyle(
                                             fontSize: 12,
-                                            color: Color(0xFF9AB4C9),
+                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -878,9 +879,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ),
                                         SelectableText(
                                           localFilesPath ?? 'Unknown',
-                                          style: const TextStyle(
+                                          style:  TextStyle(
                                             fontSize: 12,
-                                            color: Color(0xFF9AB4C9),
+                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -929,9 +930,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ]);
                   }),
                   const SizedBox(height: 12),
-                  const Text(
+                   Text(
                     'Live state from the durable queue • No estimated percentages',
-                    style: TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+                    style: TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
                   ),
                 ],
               ),
@@ -1191,7 +1192,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     margin: const EdgeInsets.only(bottom: 8),
     padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
-      color: _panel,
+      color: WindowsAppearance.resolve(_panel),
       borderRadius: BorderRadius.circular(14),
       border: Border.all(color: const Color(0xFF21475D)),
     ),
@@ -1207,7 +1208,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               const SizedBox(height: 4),
               Text(
                 status,
-                style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+                style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
               ),
               if (details != null) details,
             ],
@@ -1218,37 +1219,19 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   );
 
   @override
-  Widget build(BuildContext context) => Theme(
-    data: ThemeData.dark(useMaterial3: true).copyWith(
-      textTheme: ThemeData.dark().textTheme.apply(
-        fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-      ),
-      colorScheme: const ColorScheme.dark(
-        primary: _cyan,
-        secondary: _cyan,
-        surface: _panel,
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _cyan,
-          side: const BorderSide(color: Color(0xFF285369)),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        ),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: _cyan,
-          foregroundColor: const Color(0xFF071626),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-        ),
-      ),
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Theme(
+    data: Theme.of(context).copyWith(
+      outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10))),
+      filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8))),
     ),
     child: Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFF071626),
+      backgroundColor: WindowsAppearance.resolve(const Color(0xFF071626)),
 
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0A1D30),
+        backgroundColor: WindowsAppearance.resolve(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
         title: const Text('Sync Engine 3.0'),
@@ -1834,7 +1817,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
       ),
     ),
-  );
+  ); }
 }
 
 String syncFailureReason(Map item) {

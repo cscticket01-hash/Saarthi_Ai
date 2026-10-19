@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
 import 'windows_ui_localization.dart';
@@ -14,7 +15,7 @@ class WindowsTrialBanner extends StatelessWidget {
   final VoidCallback? onActivate;
   final bool licenseSkipped;
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final licensed = state.allowed && state.status == 'licensed';
     // A skipped licence keeps showing a red warning until real activation.
     if (licensed) return const SizedBox.shrink();
@@ -53,17 +54,17 @@ class WindowsTrialBanner extends StatelessWidget {
                       spacing: 18,
                       runSpacing: 4,
                       children: [
-                        const Text(
+                         Text(
                           'License not activated — Activate now',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: WindowsAppearance.resolve(Colors.white),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                         Text(
                           dateLabel,
-                          style: const TextStyle(
-                            color: Color(0xFFFFC4C4),
+                          style:  TextStyle(
+                            color: WindowsAppearance.resolve(Color(0xFFFFC4C4)),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -71,7 +72,7 @@ class WindowsTrialBanner extends StatelessWidget {
                     ),
                   ),
                   if (onActivate != null)
-                    const Icon(Icons.chevron_right, color: Colors.white),
+                     Icon(Icons.chevron_right, color: WindowsAppearance.resolve(Colors.white)),
                 ],
               ),
             ),
@@ -102,14 +103,14 @@ class WindowsTrialBanner extends StatelessWidget {
                         : state.allowed
                         ? 'Free trial: ${state.daysLeft} days remaining. Ends $date. Add a licence key to continue.'
                         : 'Free trial or licence ended. Add a valid school licence key to continue.',
-                    style: const TextStyle(
-                      color: Color(0xFFFFB4B4),
+                    style:  TextStyle(
+                      color: WindowsAppearance.resolve(Color(0xFFFFB4B4)),
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
                 if (onActivate != null)
-                  const Icon(Icons.chevron_right, color: Color(0xFFFFB4B4)),
+                   Icon(Icons.chevron_right, color: WindowsAppearance.resolve(Color(0xFFFFB4B4))),
               ],
             ),
           ),
@@ -294,7 +295,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
   @override
   Widget build(
     BuildContext context,
-  ) => ValueListenableBuilder<WindowsLicenseState>(
+  ) { WindowsAppearance.watch(context); return  ValueListenableBuilder<WindowsLicenseState>(
     valueListenable: WindowsPlatformClient.instance.state,
     builder: (context, s, _) {
       // Fresh installs see ONLY the licence key screen first.
@@ -331,5 +332,5 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
         ],
       );
     },
-  );
+  ); }
 }

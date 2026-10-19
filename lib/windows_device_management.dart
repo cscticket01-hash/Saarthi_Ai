@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -167,32 +168,32 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     }
   }
   @override
-  Widget build(BuildContext context) {
-    const muted = Color(0xff9caac0);
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
+    final muted = WindowsAppearance.resolve(Color(0xff9caac0));
     final active = devices.where((r) => r['status'] == 'active').length;
     final recent = devices.where(recentlyActive).length;
     return Scaffold(
-      backgroundColor: const Color(0xff0b1425),
-      appBar: AppBar(backgroundColor: const Color(0xff0b1425), title: const Text('Device Management'), actions:[
+      backgroundColor: WindowsAppearance.resolve(const Color(0xff0b1425)),
+      appBar: AppBar(backgroundColor: WindowsAppearance.resolve(const Color(0xff0b1425)), title: const Text('Device Management'), actions:[
         IconButton(tooltip:'Refresh devices', onPressed:busy?null:load,icon:const Icon(Icons.refresh)),
       ]),
       body: Align(alignment: Alignment.topCenter, child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth:1100),
         child: ListView(padding:const EdgeInsets.all(24), children:[
           Text('Authorized PCs: ${hasSnapshot ? active : '—'} / 5   |   Recently active: ${verified ? recent : '—'}',
-            style: const TextStyle(color:Colors.white,fontSize:15)),
+            style:  TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:15)),
           const SizedBox(height:20),
           if(busy && !hasSnapshot) const LinearProgressIndicator(minHeight:2),
           if(hasSnapshot && !verified) const Padding(padding:EdgeInsets.only(bottom:10),child:Text('Saved device list • Activity not verified',style:TextStyle(color:muted,fontSize:12))),
           if(error!=null) Padding(padding:const EdgeInsets.symmetric(vertical:12),child:Text(error!,style:const TextStyle(color:Color(0xffffb4ab)))),
-          Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:const Color(0xff121f34),borderRadius:BorderRadius.circular(16),border:Border.all(color:const Color(0xff26364f))),
+          Container(key:const ValueKey('device-directory-panel'),decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xff121f34)),borderRadius:BorderRadius.circular(16),border:Border.all(color:WindowsAppearance.resolve(const Color(0xff26364f)))),
             child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-              const Padding(padding:EdgeInsets.all(20),child:Text('Devices',style:TextStyle(color:Colors.white,fontSize:18,fontWeight:FontWeight.w600))),
+               Padding(padding:EdgeInsets.all(20),child:Text('Devices',style:TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:18,fontWeight:FontWeight.w600))),
               LayoutBuilder(builder:(context,constraints) {
                 final compact = constraints.maxWidth < 700 || MediaQuery.textScalerOf(context).scale(14) > 21;
                 Widget name(Map<String,dynamic> row) => Row(children:[
                   const Icon(Icons.computer_outlined,color:Color(0xff8aade8),size:22),const SizedBox(width:12),
-                  Expanded(child:Text(row['name'] is String && (row['name'] as String).isNotEmpty ? row['name'] as String : 'Unnamed PC',style:const TextStyle(color:Colors.white))),
+                  Expanded(child:Text(row['name'] is String && (row['name'] as String).isNotEmpty ? row['name'] as String : 'Unnamed PC',style: TextStyle(color:WindowsAppearance.resolve(Colors.white)))),
                   if(row['deviceIdentity']==current) Container(margin:const EdgeInsets.only(left:8),padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),decoration:BoxDecoration(color:const Color(0xff233d64),borderRadius:BorderRadius.circular(6)),child:const Text('This PC',style:TextStyle(color:Color(0xffa6caff),fontSize:11))),
                 ]);
                 Widget activity(Map<String,dynamic> row) => Row(children:[
@@ -206,7 +207,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   if(!compact) const Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
                     Expanded(flex:4,child:Text('Device name',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Activity',style:TextStyle(color:muted))),Expanded(flex:3,child:Text('Last seen',style:TextStyle(color:muted))),SizedBox(width:80,child:Text('Action',style:TextStyle(color:muted))),
                   ])),
-                  for(final row in devices) Container(key:ValueKey('device-${row['deviceIdentity']}'),padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration:const BoxDecoration(border:Border(top:BorderSide(color:Color(0xff26364f)))),child:compact
+                  for(final row in devices) Container(key:ValueKey('device-${row['deviceIdentity']}'),padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration: BoxDecoration(border:Border(top:BorderSide(color:WindowsAppearance.resolve(Color(0xff26364f))))),child:compact
                     ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style:const TextStyle(color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
                     : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style:const TextStyle(color:muted))),SizedBox(width:80,child:action(row))])),
                   if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style:const TextStyle(color:muted))),

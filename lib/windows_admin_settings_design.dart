@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_ui_localization.dart';
 
@@ -18,12 +19,12 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
   static const amber = Color(0xFFFFB536), muted = Color(0xFFAABDD7);
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF09172B),
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
+    backgroundColor: WindowsAppearance.resolve(const Color(0xFF09172B)),
     body: Container(
-      decoration: const BoxDecoration(gradient: LinearGradient(
+      decoration:  BoxDecoration(gradient: LinearGradient(
         begin: Alignment.topLeft, end: Alignment.bottomRight,
-        colors: [Color(0xFF0B1B32), Color(0xFF071323)])),
+        colors: [WindowsAppearance.resolve(Color(0xFF0B1B32)), WindowsAppearance.resolve(Color(0xFF071323))])),
       child: LayoutBuilder(builder: (context, viewport) => SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(viewport.maxWidth < 600 ? 16 : 32, 24,
           viewport.maxWidth < 600 ? 16 : 32, 28),
@@ -31,12 +32,12 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 1120),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const BackButton(color: Color(0xFFC2D8FA)),
+               BackButton(color: WindowsAppearance.resolve(Color(0xFFC2D8FA))),
               const SizedBox(width: 12),
-              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Settings', style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w700)),
+               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Settings', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 26, fontWeight: FontWeight.w700)),
                 SizedBox(height: 4),
-                Text('Manage your school preferences', style: TextStyle(color: muted, fontSize: 14)),
+                Text('Manage your school preferences', style: TextStyle(color: WindowsAppearance.resolve(muted), fontSize: 14)),
               ])),
             ]),
             const SizedBox(height: 28),
@@ -68,16 +69,16 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
         )),
       )),
     ),
-  );
+  ); }
 
   Widget _deviceTile() => Material(color: Colors.transparent, child: Ink(
     decoration: _decoration(),
     child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onDevices,
       child: Padding(padding: const EdgeInsets.all(22), child: Row(children: [
         _icon(Icons.desktop_windows_outlined, blue), const SizedBox(width: 20),
-        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Device Management', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-          SizedBox(height: 5), Text('Manage your devices and access', style: TextStyle(color: muted, fontSize: 14)),
+         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Device Management', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 18, fontWeight: FontWeight.w700)),
+          SizedBox(height: 5), Text('Manage your devices and access', style: TextStyle(color: WindowsAppearance.resolve(muted), fontSize: 14)),
         ])),
         const SizedBox(width: 8), const Icon(Icons.chevron_right_rounded, color: blue),
       ])),
@@ -95,10 +96,10 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
       const SizedBox(width: 18),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (showName) ...[
-          Text(displayName, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+          Text(displayName, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
         ],
-        Text(email, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600)),
+        Text(email, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.w600)),
         const SizedBox(height: 9),
         if (authenticated) Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(color: teal.withValues(alpha: .08),
@@ -124,16 +125,16 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     final label = Row(children: [
       const Icon(Icons.event_repeat_rounded, color: blue, size: 26), const SizedBox(width: 14),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Session Change Month', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 5), Text('Current: $year', style: const TextStyle(color: muted, fontSize: 13)),
+         Text('Session Change Month', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 15, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 5), Text('Current: $year', style:  TextStyle(color: WindowsAppearance.resolve(muted), fontSize: 13)),
       ])),
     ]);
     final dropdown = DropdownButtonHideUnderline(child: DropdownButton<int>(
-      value: month, isExpanded: true, dropdownColor: const Color(0xFF11253C),
+      value: month, isExpanded: true, dropdownColor: WindowsAppearance.resolve(const Color(0xFF11253C)),
       borderRadius: BorderRadius.circular(12),
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white, fontSize: 15),
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: WindowsAppearance.resolve(Colors.white), fontSize: 15),
       icon: loadingYear ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFFC2D8FA)),
+          :  Icon(Icons.keyboard_arrow_down_rounded, color: WindowsAppearance.resolve(Color(0xFFC2D8FA))),
       items: const [DropdownMenuItem(value: 1, child: Text('January')), DropdownMenuItem(value: 4, child: Text('April'))],
       onChanged: loadingYear ? null : (value) { if (value != null) onMonthChanged(value); },
     ));
@@ -155,12 +156,12 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Row(children: [_icon(icon, color, small: true), const SizedBox(width: 16),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 5), Text(subtitle, style: const TextStyle(color: muted, fontSize: 13, height: 1.35)),
+          Text(title, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 5), Text(subtitle, style:  TextStyle(color: WindowsAppearance.resolve(muted), fontSize: 13, height: 1.35)),
         ])),
       ]),
       const SizedBox(height: 16),
-      if (title == 'Admin Profile') ...[const Divider(color: Color(0xFF24405A), height: 1), const SizedBox(height: 18)],
+      if (title == 'Admin Profile') ...[ Divider(color: WindowsAppearance.resolve(Color(0xFF24405A)), height: 1), const SizedBox(height: 18)],
       child,
     ]),
   );
@@ -169,9 +170,9 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
       foregroundColor: amber, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       side: BorderSide(color: amber.withValues(alpha: .35)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      backgroundColor: const Color(0xFF0B1B2E)),
+      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B1B2E))),
     child: Row(children: [Icon(icon, size: 22), const SizedBox(width: 14),
-      Expanded(child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600))),
+      Expanded(child: Text(text, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 14, fontWeight: FontWeight.w600))),
       const SizedBox(width: 8), const Icon(Icons.arrow_forward_rounded, size: 22),
     ]));
   Widget _icon(IconData icon, Color color, {bool small = false}) => Container(
@@ -182,6 +183,6 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     borderRadius: BorderRadius.circular(inset ? 12 : 16),
     border: Border.all(color: const Color(0xFF294969)),
     gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
-      colors: inset ? const [Color(0xFF0B1C30), Color(0xFF0B1A2B)]
-          : const [Color(0xFF10263F), Color(0xFF0C1D30)]));
+      colors: inset ?  [WindowsAppearance.resolve(Color(0xFF0B1C30)), WindowsAppearance.resolve(Color(0xFF0B1A2B))]
+          :  [WindowsAppearance.resolve(Color(0xFF10263F)), WindowsAppearance.resolve(Color(0xFF0C1D30))]));
 }

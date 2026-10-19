@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart' hide Text;
@@ -65,7 +66,7 @@ class _WindowsOnlineStartupGateState extends State<WindowsOnlineStartupGate> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
     if (_opened) return widget.child;
 
     return Scaffold(
@@ -108,9 +109,9 @@ class _WindowsOnlineStartupGateState extends State<WindowsOnlineStartupGate> {
                     child: const Text('Retry online check'),
                   ),
                 const SizedBox(height: 12),
-                const Text('Your saved password and licence still apply.',
+                 Text('Your saved password and licence still apply.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 12)),
               ],
             ),
           ),
