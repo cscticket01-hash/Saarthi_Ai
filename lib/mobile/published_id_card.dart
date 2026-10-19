@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
@@ -9,19 +10,24 @@ class PublishedIdCard extends StatefulWidget {
     required this.load,
     required this.refresh,
     required this.open,
+    this.openExternally,
     this.rasterize,
+    this.loadTimeout = const Duration(seconds: 30),
+    this.previewTimeout = const Duration(seconds: 8),
   });
   final Future<Uint8List?> Function() load;
   final Future<void> Function() refresh;
   final Future<void> Function(Uint8List) open;
+  final Future<void> Function(Uint8List)? openExternally;
   final Future<Uint8List> Function(Uint8List)? rasterize;
+  final Duration loadTimeout, previewTimeout;
   @override
   State<PublishedIdCard> createState() => _PublishedIdCardState();
 }
 
 class _PublishedIdCardState extends State<PublishedIdCard> {
   Uint8List? _pdf, _image;
-  bool _loading = true, _failed = false;
+  bool _loading = true, _failed = false, _previewFailed = false;
   int _generation = 0;
   @override
   void initState() {
@@ -34,34 +40,44 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
     setState(() {
       _loading = true;
       _failed = false;
+      _previewFailed = false;
     });
     try {
-      if (refresh) await widget.refresh();
-      final pdf = await widget.load();
-      Uint8List? image;
-      if (pdf != null) {
-        try {
-          image = widget.rasterize != null
-              ? await widget.rasterize!(pdf)
-              : await (await Printing.raster(
-                  pdf,
-                  pages: [0],
-                  dpi: 100,
-                ).first).toPng();
-        } catch (_) {
-          /* A preview failure must not disable the actual PDF. */
-        }
-      }
+      final pdf = await (() async {
+        if (refresh) await widget.refresh();
+        return widget.load();
+      })().timeout(widget.loadTimeout);
       if (!mounted || generation != _generation) return;
+      // Publish verified bytes before waiting on the native raster plugin.
       setState(() {
         _pdf = pdf;
-        _image = image;
+        _image = null;
+        _loading = false;
       });
+      if (pdf != null) unawaited(_preview(pdf, generation));
     } catch (_) {
       if (mounted && generation == _generation) setState(() => _failed = true);
     } finally {
       if (mounted && generation == _generation)
         setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _preview(Uint8List pdf, int generation) async {
+    try {
+      final image =
+          await (widget.rasterize != null
+                  ? widget.rasterize!(pdf)
+                  : (() async => (await Printing.raster(
+                      pdf,
+                      pages: [0],
+                      dpi: 100,
+                    ).first).toPng())())
+              .timeout(widget.previewTimeout);
+      if (mounted && generation == _generation) setState(() => _image = image);
+    } catch (_) {
+      if (mounted && generation == _generation)
+        setState(() => _previewFailed = true);
     }
   }
 
@@ -92,6 +108,12 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
           onPressed: () => widget.open(_pdf!),
           icon: const Icon(Icons.badge_outlined),
           label: const Text('Open my ID card'),
+        ),
+      if (_pdf != null && _previewFailed && widget.openExternally != null)
+        TextButton.icon(
+          onPressed: () => widget.openExternally!(_pdf!),
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('Open PDF viewer'),
         ),
       TextButton.icon(
         onPressed: _loading ? null : () => _load(true),

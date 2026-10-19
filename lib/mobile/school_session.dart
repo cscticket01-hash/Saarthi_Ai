@@ -340,15 +340,63 @@ class SchoolSession {
     attendanceChanges.value++;
   }
 
-  Future<List<Map<String, dynamic>>> attendanceHistory(String month) async {
+  Map<String, dynamic> _attendanceHistoryCache = {};
+  final _attendanceHistoryFlights =
+      <String, Future<List<Map<String, dynamic>>>>{};
+  List<Map<String, dynamic>>? cachedAttendanceHistory(String month) {
+    if (!cachedAccessAllowed || _attendanceHistoryCache[month] is! List)
+      return null;
+    return (_attendanceHistoryCache[month] as List)
+        .whereType<Map>()
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> attendanceHistory(String month) {
+    if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(month))
+      throw StateError('Select a month.');
+    final existing = _attendanceHistoryFlights[month];
+    if (existing != null) return existing;
+    final pending = _fetchAttendanceHistory(month);
+    _attendanceHistoryFlights[month] = pending;
+    return pending.whenComplete(() {
+      if (identical(_attendanceHistoryFlights[month], pending))
+        _attendanceHistoryFlights.remove(month);
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAttendanceHistory(
+    String month,
+  ) async {
     final current = link, generation = _generation;
     final result = await schoolCall('mobile_attendance_list', {'month': month});
     if (generation != _generation || !identical(current, link))
       throw SchoolAccessDenied('School session changed.');
-    final rows = (result['attendance'] as List? ?? [])
-        .whereType<Map>()
-        .map((r) => Map<String, dynamic>.from(r))
-        .toList();
+    final value = result['attendance'];
+    if (value is! List ||
+        value.any(
+          (r) =>
+              r is! Map ||
+              r['date'] is! String ||
+              !(r['date'] as String).startsWith('$month-'),
+        ))
+      throw StateError(
+        'Invalid school attendance history; saved history retained.',
+      );
+    final rows = value.map((r) => Map<String, dynamic>.from(r as Map)).toList();
+    final before = _attendanceHistoryCache;
+    final updated = {...before, month: rows};
+    final months = updated.keys.toList()..sort();
+    while (months.length > 18) updated.remove(months.removeAt(0));
+    _attendanceHistoryCache = updated;
+    try {
+      await _persist();
+    } catch (_) {
+      if (generation == _generation) _attendanceHistoryCache = before;
+      rethrow;
+    }
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
     final day = attendanceDay(DateTime.now());
     if (month == day.substring(0, 7)) {
       _historyDay = day;
@@ -734,6 +782,10 @@ class SchoolSession {
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        if (d['cacheRole'] == link!.role)
+          _attendanceHistoryCache = Map<String, dynamic>.from(
+            d['attendanceHistory'] as Map? ?? {},
+          );
         if (d['lastDashboardVerifiedAt'] is num)
           lastDashboardVerifiedAt = DateTime.fromMillisecondsSinceEpoch(
             (d['lastDashboardVerifiedAt'] as num).toInt(),
@@ -1032,6 +1084,8 @@ class SchoolSession {
       if (_cardOfflineLease != null) 'cardOfflineLease': _cardOfflineLease,
       'cacheSchool': link!.projectId,
       'cachePerson': link!.personId,
+      'cacheRole': link!.role,
+      'attendanceHistory': _attendanceHistoryCache,
       'dashboard': dashboard,
       'syncPaused': syncPaused,
       'lastDashboardVerifiedAt':
@@ -1499,6 +1553,8 @@ class SchoolSession {
     person = {};
     schoolName = '';
     dashboard = {};
+    _attendanceHistoryCache = {};
+    _attendanceHistoryFlights.clear();
     connectionState = SchoolConnectionState.cachedOffline;
     lastDashboardVerifiedAt = null;
     dashboardCleanupDeferred = false;
