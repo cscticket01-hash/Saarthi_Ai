@@ -31,7 +31,8 @@ class ManagedSchoolSession {
   static Map<String,dynamic> deviceRegistrationBody({bool web=kIsWeb,
       String Function()? hostname}) {
     if(web) return {'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':'Web browser','deviceOs':'Web','type':'pc'};
-    final name=(hostname ?? (()=>Platform.localHostname))();
+    String name;
+    try { name=(hostname ?? (()=>Platform.localHostname))(); } catch (_) { name='Windows PC'; }
     return {'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':name.isNotEmpty&&name.length<=100?name:'Windows PC','deviceOs':'Windows','type':'pc'};
   }
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
@@ -41,7 +42,9 @@ class ManagedSchoolSession {
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
       client:_transportFor(saved),closeClient:false);
     try {
-      final result = await cloud.api({'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
+      final metadata = action=='managed/session' || action=='managed/device/list'
+          ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
+      final result = await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
       final currentIdentity = await CentralSchoolCloud.saved();
       if (currentIdentity['schoolId'] != saved['schoolId'] || currentIdentity['uid'] != saved['uid']) {
         throw StateError('School changed during operation. Retry login.');

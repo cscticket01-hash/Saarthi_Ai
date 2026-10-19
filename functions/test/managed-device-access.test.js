@@ -132,3 +132,55 @@ test('enrollment still enforces school isolation, fresh registration and five-PC
  await assert.rejects(f.call('managed/device/list',f.proof(7),{schoolId:B}),{code:'DEVICE_SCHOOL_MISMATCH'});
  assert.deepEqual(await f.call('managed/records',{}),{handled:false,mode:'legacy_unenforced',deviceEnforced:false});
 });
+
+test('restored school sessions enroll two real proofs without fresh password login',async()=>{
+ const f=fixture(false,false,true),one=f.proof(1),two=f.proof(2);
+ f.setTime(f.time()+3600000); // Refreshed Firebase tokens retain their old auth_time.
+ const a=(await f.call('managed/device/list',one,{deviceName:'Office PC',deviceOs:'Windows'})).result;
+ assert.equal(a.devices.length,1);assert.equal(a.devices[0].current,true);
+ assert.equal(a.devices[0].name,'Office PC');assert.equal(a.canRevoke,false);
+ await f.access.observeSession({headers:two},{action:'managed/session',schoolId:A,deviceName:'Accounts PC'},f.identity,f.entitlement);
+ const b=(await f.call('managed/device/list',one)).result;
+ assert.equal(b.devices.length,2);assert.equal(b.devices.filter(d=>d.current).length,1);
+ assert.equal(b.devices.find(d=>d.current).deviceIdentity,a.devices[0].deviceIdentity);
+ const other=(await f.call('managed/device/list',two)).result;
+ assert.equal(other.devices.find(d=>d.current).name,'Accounts PC');
+ assert.equal(f.audit.length,2);
+ f.setTime(f.time()+61000);
+ const again=(await f.call('managed/device/list',one,{deviceName:'Renamed office'})).result;
+ const current=again.devices.find(d=>d.current);
+ assert.equal(current.lastSeenAt,f.time());assert.equal(current.name,'Renamed office');
+ assert.equal(current.generationHash,a.devices[0].generationHash);assert.equal(f.audit.length,2);
+});
+test('session migration never repairs revoked, pruned or conflicting device credentials',async()=>{
+ const f=fixture(false,false,true),one=f.proof(1),two=f.proof(2);
+ await f.call('managed/device/list',one);const second=(await f.call('managed/device/list',two)).result.devices.find(d=>d.current);
+ const registry=createManagedDeviceRegistry({store:f.store,schoolId:A,now:f.time});
+ const actor={...f.identity,role:'school_admin'};
+ await registry.revoke(actor,{currentDeviceId:one['x-vidya-device-id'],currentCredential:one['x-vidya-device-credential'],targetDeviceIdentity:second.deviceIdentity});
+ const before=structuredClone(f.rows.get(A));
+ await assert.rejects(f.call('managed/device/list',two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...two,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...one,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_CREDENTIAL_CONFLICT'});
+ assert.deepEqual(f.rows.get(A),before);
+ f.setTime(f.time()+86400001);f.entitlement.expiresAt=f.time()+86400000;
+ await registry.list(actor); // Prune revoked display row, retaining revocation filter.
+ assert.equal(f.rows.get(A).devices[second.deviceIdentity],undefined);
+ await assert.rejects(f.call('managed/device/list',two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...two,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+});
+test('restored-session admission retains transactional five-PC limit and identity guards',async()=>{
+ const f=fixture(false,false,true);f.setTime(f.time()+3600000);
+ const attempts=await Promise.allSettled(Array.from({length:6},(_,n)=>f.call('managed/device/list',f.proof(n+1))));
+ assert.equal(attempts.filter(r=>r.status==='fulfilled').length,5);
+ assert.equal(attempts.find(r=>r.status==='rejected').reason.code,'DEVICE_LIMIT_REACHED');
+ assert.equal(Object.keys(f.rows.get(A).devices).length,5);
+ await assert.rejects(f.call('managed/device/list',{}),{code:'DEVICE_PROOF_REQUIRED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{},f.identity,{allowed:false,expiresAt:f.time()+10000}),{code:'DEVICE_ENTITLEMENT_EXPIRED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{schoolId:B}),{code:'DEVICE_SCHOOL_MISMATCH'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{},{...f.identity,authenticatedAt:undefined}),{code:'DEVICE_FRESH_LOGIN_REQUIRED'});
+ for(const mode of [fixture(),fixture(false,true)]){
+  await assert.rejects(mode.call('managed/device/list',mode.proof(1)),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+  assert.equal(mode.rows.size,0);
+ }
+});

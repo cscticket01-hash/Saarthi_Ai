@@ -36,6 +36,7 @@ test('enrollment preserves legacy session/presence even when directory storage f
  const f=fixture(undefined,{deviceEnrollmentEnabled:true,deviceStore,now:()=>clock,scheduleHint:fn=>scheduled.push(fn)});
  const session=await f.call({action:'managed/session'});
  assert.equal(session.allowed,true);assert.equal(session.deviceEnforced,false);
+ await scheduled.shift()(); // No device proof: optional migration does nothing.
  const headers={authorization:'Bearer A','x-vidya-device-id':'E'.repeat(32),'x-vidya-device-credential':'F'.repeat(43)};
  const call=(action,body={})=>f.handle({method:'POST',headers,body:{action,schoolId:A,...body}});
  await assert.rejects(call('managed/device/register'),{code:'DEVICE_ROLLOUT_DISABLED'});
@@ -53,4 +54,30 @@ test('enrollment preserves legacy session/presence even when directory storage f
  await scheduled.shift()(); // Optional failure is contained, never changes the ACK.
  assert.equal((await f.call({action:'managed/session'})).allowed,true);
  assert.equal(f.docs.get('school_memberships/A').active,true);
+});
+
+test('two restored school sessions enroll in the background without touching school records or sync ACKs',async()=>{
+ const {time}=require('./helpers/managed-school-broker');
+ const states=new Map(),scheduled=[];let tail=Promise.resolve(),broken=false;
+ const store={transaction(school,work){const p=tail.then(async()=>{
+  if(broken)throw Error('Metadata unavailable');
+  const change=await work(states.has(school)?structuredClone(states.get(school)):null);
+  states.set(school,structuredClone(change.state));return change.result;
+ });tail=p.catch(()=>{});return p;}};
+ const f=fixture(undefined,{deviceEnrollmentEnabled:true,deviceStore:store,now:()=>time+3600000,scheduleHint:fn=>scheduled.push(fn)});
+ const headers=n=>({authorization:'Bearer A','x-vidya-device-id':String(n).repeat(32),'x-vidya-device-credential':String(n).repeat(43)});
+ const call=(n,action)=>f.handle({method:'POST',headers:headers(n),body:{schoolId:A,action,deviceName:n===1?'Office':'Accounts'}});
+ for(const n of [1,2]) assert.equal((await call(n,'managed/session')).allowed,true);
+ assert.equal(states.size,0);
+ while(scheduled.length)await scheduled.shift()();
+ const directory=await call(1,'managed/device/list');
+ assert.equal(directory.devices.length,2);assert.equal(directory.devices.filter(r=>r.current).length,1);
+ assert.equal(directory.devices.find(r=>r.current).name,'Office');assert.equal(directory.canRevoke,false);
+ assert.equal((await call(2,'managed/device/list')).devices.find(r=>r.current).name,'Accounts');
+ assert.equal(f.sent.length,0); // No Drive/Script write, fake ACK or queue operation.
+ assert.equal(f.docs.get('school_memberships/A').active,true);
+ broken=true;assert.equal((await call(1,'managed/session')).allowed,true);
+ while(scheduled.length)await scheduled.shift()();
+ assert.equal((await call(2,'managed/session')).allowed,true);
+ while(scheduled.length)await scheduled.shift()();
 });
