@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:convert';
 import 'windows_sync_projection.dart';
 
@@ -540,7 +541,7 @@ class WindowsDocumentTemplates {
     VoidCallback? onPrint,
   }) => showDialog<void>(
     context: context,
-    builder: (ctx) => Dialog(
+    builder: (ctx) { WindowsAppearance.watch(ctx); return  Dialog(
       child: SizedBox(
         width: 900,
         height: 680,
@@ -586,7 +587,7 @@ class WindowsDocumentTemplates {
           ],
         ),
       ),
-    ),
+    ); },
   );
   static Future<bool> previewReport(
     BuildContext context,
@@ -781,7 +782,7 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
     appBar: AppBar(title: const Text('School document templates')),
     body: Padding(
       padding: const EdgeInsets.all(20),
@@ -811,9 +812,9 @@ class _SchoolDocumentTemplatesScreenState
                 .toList(),
           ),
           const SizedBox(height: 14),
-          const Text(
+           Text(
             'Preview first, then select one layout for the whole school. Student and teacher ID layouts are stored separately.',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
           ),
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
@@ -849,7 +850,7 @@ class _SchoolDocumentTemplatesScreenState
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                     side: BorderSide(
-                      color: active ? const Color(0xFF00D9A5) : Colors.white12,
+                      color: active ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white12),
                       width: active ? 2 : 1,
                     ),
                   ),
@@ -882,7 +883,7 @@ class _SchoolDocumentTemplatesScreenState
                             child: Center(
                               child: FutureBuilder<Uint8List>(
                                 future: _thumbnail(i),
-                                builder: (context, snapshot) => snapshot.hasData
+                                builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
                                     ? Image.memory(
                                         snapshot.data!,
                                         fit: BoxFit.contain,
@@ -891,7 +892,7 @@ class _SchoolDocumentTemplatesScreenState
                                     ? const Text(
                                         'Use Preview to view this design',
                                       )
-                                    : const CircularProgressIndicator(),
+                                    : const CircularProgressIndicator(); },
                               ),
                             ),
                           ),
@@ -910,8 +911,8 @@ class _SchoolDocumentTemplatesScreenState
                               : _kind.endsWith('Id')
                               ? 'Front | Back • each 85.6 × 54 mm'
                               : 'Printable school document',
-                          style: const TextStyle(
-                            color: Colors.white54,
+                          style:  TextStyle(
+                            color: WindowsAppearance.resolve(Colors.white54),
                             fontSize: 12,
                           ),
                         ),
@@ -943,5 +944,5 @@ class _SchoolDocumentTemplatesScreenState
         ],
       ),
     ),
-  );
+  ); }
 }

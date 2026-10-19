@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'sync_recovery_policy.dart' as failure_policy;
 
 import 'dart:convert';
@@ -318,7 +319,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Future<void> _administratorBinaryRetry() async {
     final approved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
         title: const Text('Review file recovery retry'),
         content: const Text(
           'Retry one retained file with a new bounded attempt budget? Original usable files and record operations remain unchanged.',
@@ -333,7 +334,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             child: const Text('Administrator: retry'),
           ),
         ],
-      ),
+      ); },
     );
     if (approved == true && mounted) await _run(() => _binaryAction('retry'));
   }
@@ -564,7 +565,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     if (parent == null || !mounted || db.activeProfileId != origin) return;
     final approved = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) { WindowsAppearance.watch(context); return  AlertDialog(
         title: const Text('Verify backup restore?'),
         content: const Text(
           'Copy the backup into restore_rehearsal in the selected folder and verify every file hash. An interrupted copy of this same backup can resume. Pending operations and original files remain unchanged. This does not activate restored data, send cloud records, or replace the current school database.',
@@ -579,7 +580,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             child: const Text('Verify restore copy'),
           ),
         ],
-      ),
+      ); },
     );
     if (approved != true || db.activeProfileId != origin) return;
     final target = Directory(
@@ -613,13 +614,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   Widget _panelBox(Widget child) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFF132D46), Color(0xFF0C1F34)],
+      gradient:  LinearGradient(
+        colors: [WindowsAppearance.resolve(Color(0xFF132D46)), WindowsAppearance.resolve(Color(0xFF0C1F34))],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFF21475D)),
+      border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF21475D))),
     ),
     child: child,
   );
@@ -635,7 +636,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Text(
               name,
-              style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+              style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
             ),
             const SizedBox(height: 6),
             Text(
@@ -788,7 +789,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
         const SizedBox(height: 10),
         LayoutBuilder(
-          builder: (context, constraints) {
+          builder: (context, constraints) {WindowsAppearance.watch(context);
             final progress = _panelBox(
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -798,7 +799,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
-                  LayoutBuilder(builder: (context, space) {
+                  LayoutBuilder(builder: (context, space) {WindowsAppearance.watch(context);
                     final scale = MediaQuery.textScalerOf(context).scale(1);
                     final horizontal = space.maxWidth / scale >= 620;
                     final indicatorExtent = 144.0 * scale.clamp(1.0, 2.0);
@@ -817,7 +818,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 value: syncing ? null : 0,
                                 strokeWidth: 6,
                                 color: phaseColor,
-                                backgroundColor: const Color(0xFF24445D),
+                                backgroundColor: WindowsAppearance.resolve(const Color(0xFF24445D)),
                               ),
                             ),
                             Column(
@@ -839,8 +840,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 const SizedBox(height: 6),
                                 Text(
                                   '${details['pending'] ?? 'Unknown'} pending',
-                                  style: const TextStyle(
-                                    color: Color(0xFF9AB4C9),
+                                  style:  TextStyle(
+                                    color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                   ),
                                 ),
                               ],
@@ -866,9 +867,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ),
                                         SelectableText(
                                           localDataPath!,
-                                          style: const TextStyle(
+                                          style:  TextStyle(
                                             fontSize: 12,
-                                            color: Color(0xFF9AB4C9),
+                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -878,9 +879,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         ),
                                         SelectableText(
                                           localFilesPath ?? 'Unknown',
-                                          style: const TextStyle(
+                                          style:  TextStyle(
                                             fontSize: 12,
-                                            color: Color(0xFF9AB4C9),
+                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -929,9 +930,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ]);
                   }),
                   const SizedBox(height: 12),
-                  const Text(
+                   Text(
                     'Live state from the durable queue • No estimated percentages',
-                    style: TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+                    style: TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
                   ),
                 ],
               ),
@@ -1109,7 +1110,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               ? null
               : () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (_) => const WindowsDisasterRehearsal(),
+                    builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const WindowsDisasterRehearsal(); },
                   ),
                 ),
           child: const Text('TEST Disaster Recovery'),
@@ -1119,7 +1120,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ? null
             : () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => const WindowsRecycleBin(),
+                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const WindowsRecycleBin(); },
                 ),
               ),
         child: const Text('Recycle Bin'),
@@ -1161,7 +1162,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         Icons.delete_outline,
         'Recycle Bin',
         () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const WindowsRecycleBin()),
+          MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const WindowsRecycleBin(); }),
         ),
       ),
       _nav(
@@ -1191,9 +1192,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     margin: const EdgeInsets.only(bottom: 8),
     padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
-      color: _panel,
+      color: WindowsAppearance.resolve(_panel),
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFF21475D)),
+      border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF21475D))),
     ),
     child: Row(
       children: [
@@ -1207,7 +1208,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               const SizedBox(height: 4),
               Text(
                 status,
-                style: const TextStyle(color: Color(0xFF9AB4C9), fontSize: 12),
+                style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
               ),
               if (details != null) details,
             ],
@@ -1218,44 +1219,26 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   );
 
   @override
-  Widget build(BuildContext context) => Theme(
-    data: ThemeData.dark(useMaterial3: true).copyWith(
-      textTheme: ThemeData.dark().textTheme.apply(
-        fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
-      ),
-      colorScheme: const ColorScheme.dark(
-        primary: _cyan,
-        secondary: _cyan,
-        surface: _panel,
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _cyan,
-          side: const BorderSide(color: Color(0xFF285369)),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        ),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: _cyan,
-          foregroundColor: const Color(0xFF071626),
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-        ),
-      ),
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Theme(
+    data: Theme.of(context).copyWith(
+      outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10))),
+      filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8))),
     ),
     child: Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFF071626),
+      backgroundColor: WindowsAppearance.resolve(const Color(0xFF071626)),
 
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0A1D30),
+        backgroundColor: WindowsAppearance.resolve(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
         title: const Text('Sync Engine 3.0'),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details]),
-            builder: (context, _) => Padding(
+            builder: (context, _) { WindowsAppearance.watch(context); return  Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: FilledButton.icon(
                 onPressed: busy || db.activeProfileId != origin
@@ -1280,7 +1263,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       : 'Sync Now',
                 ),
               ),
-            ),
+            ); },
           ),
           PopupMenuButton<int>(
             tooltip: 'Schedule sync pause',
@@ -1300,12 +1283,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ],
       ),
       body: LayoutBuilder(
-        builder: (context, constraints) => Row(
+        builder: (context, constraints) { WindowsAppearance.watch(context); return  Row(
           children: [
             Expanded(
               child: AnimatedBuilder(
                 animation: Listenable.merge([engine.state, engine.details]),
-                builder: (context, _) {
+                builder: (context, _) {WindowsAppearance.watch(context);
                   final details = engine.details.value;
                   final ownSchool = db.activeProfileId == origin;
                   final items = ownSchool
@@ -1415,7 +1398,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               ),
                             for (final raw in items)
                               Builder(
-                                builder: (context) {
+                                builder: (context) {WindowsAppearance.watch(context);
                                   final item = Map<String, dynamic>.from(
                                     raw as Map,
                                   );
@@ -1452,8 +1435,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                                           MaterialPageRoute<
                                                             void
                                                           >(
-                                                            builder: (_) =>
-                                                                const WindowsRecycleBin(),
+                                                            builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return
+                                                                const WindowsRecycleBin(); },
                                                           ),
                                                         );
                                                       } else {
@@ -1780,7 +1763,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                               db.activeProfileIdentity['schoolSyncId'],
                                     ))
                               Builder(
-                                builder: (context) {
+                                builder: (context) {WindowsAppearance.watch(context);
                                   final row = Map<String, dynamic>.from(
                                     raw as Map,
                                   );
@@ -1831,10 +1814,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               ),
             ),
           ],
-        ),
+        ); },
       ),
     ),
-  );
+  ); }
 }
 
 String syncFailureReason(Map item) {

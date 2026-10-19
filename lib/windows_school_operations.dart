@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
@@ -87,8 +88,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
     );
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
+      builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
+        builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  AlertDialog(
           title: Text('School calendar • ${schoolDateKey(_day)}'),
           content: SizedBox(
             width: 400,
@@ -122,8 +123,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
               child: const Text('Save date'),
             ),
           ],
-        ),
-      ),
+        ); },
+      ); },
     );
     if (saved == true) {
       await FirebaseFirestore.instance
@@ -143,13 +144,13 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
     appBar: AppBar(
       title: const Text('Attendance & school calendar'),
       actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
     ),
     body: LayoutBuilder(
-      builder: (ctx, c) {
+      builder: (ctx, c) {WindowsAppearance.watch(ctx);
         final cal = Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -220,7 +221,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
             const SizedBox(height: 18),
             Text(
               '${_records.length} check-ins • ${_records.where((r) => r['checkOut'] != null).length} check-outs',
-              style: const TextStyle(color: Colors.white54),
+              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
             ),
             const SizedBox(height: 16),
             if (_loading) const LinearProgressIndicator(),
@@ -279,7 +280,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
         );
       },
     ),
-  );
+  ); }
 }
 
 class WindowsSupportScreen extends StatefulWidget {
@@ -335,7 +336,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
     appBar: AppBar(title: const Text('Report app problem')),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
@@ -380,16 +381,16 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
     ),
       Positioned(top: 28, right: 28, child: AnimatedBuilder(
         animation: _inbox,
-        builder: (context, _) => IconButton(
+        builder: (context, _) { WindowsAppearance.watch(context); return  IconButton(
           tooltip: 'Developer notifications',
           onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => DeveloperInboxScreen(inbox: _inbox))),
+            builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DeveloperInboxScreen(inbox: _inbox); })),
           icon: Badge(isLabelVisible: _inbox.unread > 0,
             label: Text('${_inbox.unread}'), child: const Icon(Icons.notifications_outlined)),
-        ),
+        ); },
       )),
     ]),
-  );
+  ); }
 }
 
 class SchoolPromotionService {
@@ -708,7 +709,7 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
   }
 
   @override
-  Widget build(BuildContext context) => SwitchListTile(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  SwitchListTile(
     value: _enabled,
     title: const Text('Allow force promotion of retained students'),
     subtitle: const Text(
@@ -725,5 +726,5 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
           });
       if (mounted) setState(() => _enabled = v);
     },
-  );
+  ); }
 }

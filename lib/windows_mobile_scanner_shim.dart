@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'package:flutter/material.dart';
 
 class Barcode {
@@ -21,11 +22,11 @@ class MobileScanner extends StatelessWidget {
   final void Function(BarcodeCapture capture)? onDetect;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Container(
-      color: const Color(0xFF0C171D),
+      color: WindowsAppearance.resolve(const Color(0xFF0C171D)),
       alignment: Alignment.center,
-      child: const Column(
+      child:  Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
@@ -37,7 +38,7 @@ class MobileScanner extends StatelessWidget {
           Text(
             'Student scanner Windows Admin app me disabled hai.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 11),
+            style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 11),
           ),
         ],
       ),

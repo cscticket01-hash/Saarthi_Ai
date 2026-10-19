@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'windows_ui_localization.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
@@ -127,10 +128,10 @@ class WindowsStatusLed extends StatelessWidget {
   final bool compact;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return AnimatedBuilder(
       animation: WindowsServiceStatus.instance,
-      builder: (context, _) {
+      builder: (context, _) {WindowsAppearance.watch(context);
         final health =
             WindowsServiceStatus.instance.health(
           service,
@@ -226,7 +227,7 @@ class WindowsStatusLed extends StatelessWidget {
         return Colors.orangeAccent;
 
       case WindowsHealthState.unknown:
-        return Colors.blueGrey;
+        return WindowsAppearance.resolve(Colors.blueGrey);
     }
   }
 

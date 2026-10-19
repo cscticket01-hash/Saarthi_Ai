@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +38,6 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
       if(mounted&&own())setState(()=>bytes=response.bodyBytes);
     }catch(_){/* Keep the letter fallback when Google supplies no usable image. */}
   }
-  @override Widget build(BuildContext context)=>bytes==null?Text(widget.initial,style:const TextStyle(color:Colors.white,fontSize:25,fontWeight:FontWeight.w800)):
-    ClipOval(child:Image.memory(bytes!,width:64,height:64,fit:BoxFit.cover,errorBuilder:(_,__,___)=>Text(widget.initial)));
+  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return bytes==null?Text(widget.initial,style: TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:25,fontWeight:FontWeight.w800)):
+    ClipOval(child:Image.memory(bytes!,width:64,height:64,fit:BoxFit.cover,errorBuilder:(_,__,___)=>Text(widget.initial))); }
 }

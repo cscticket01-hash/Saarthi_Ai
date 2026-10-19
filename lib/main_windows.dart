@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'windows_device_management.dart';
 import 'windows_student_import.dart';
 import 'windows_clean_install_entry.dart';
@@ -5,7 +6,9 @@ import 'windows_connect/managed_school_session.dart';
 import 'windows_managed_school_gate.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
+
 import 'dart:async';
+
 import 'windows_platform_client.dart';
 import 'windows_license_gate.dart';
 
@@ -24,28 +27,40 @@ import 'windows_admin_setup.dart';
 import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
-final _schoolNavigatorKey=GlobalKey<NavigatorState>();
+final _schoolNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await WindowsAppearance.restore();
   await recoverLocalActivationBeforeStorage();
-  try {await WindowsLocalSecurity.initialize();}catch(_){debugPrint('App Lock storage will be retried by the startup lock.');}
+  try {
+    await WindowsLocalSecurity.initialize();
+  } catch (_) {
+    debugPrint('App Lock storage will be retried by the startup lock.');
+  }
   await WindowsLocalStorage.initialize();
   try {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
   await WindowsLocalSession.initialize();
-  try {await FirebaseAuth.instance.bootstrapLocalUser();}catch(_){debugPrint('Saved identity will be retried by the school startup gate.');}
+  try {
+    await FirebaseAuth.instance.bootstrapLocalUser();
+  } catch (_) {
+    debugPrint('Saved identity will be retried by the school startup gate.');
+  }
 
   if (WindowsLocalSession.loggedOut) {
     await FirebaseAuth.instance.signOut();
   }
 
   windows_html.setSchoolStorageNamespace('local');
-  unawaited(WindowsPlatformClient.instance.initialize().catchError((Object e) {debugPrint('Platform startup verification deferred.');}));
+  unawaited(
+    WindowsPlatformClient.instance.initialize().catchError((Object e) {
+      debugPrint('Platform startup verification deferred.');
+    }),
+  );
   runApp(const VidyaSaarthiWindowsApp());
-
 }
 
 class VidyaSaarthiWindowsApp extends StatelessWidget {
@@ -58,65 +73,77 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<String>(valueListenable: WindowsUiLanguage.changed,
-      builder: (context, language, _) => MaterialApp(
-      navigatorKey:_schoolNavigatorKey,
-      locale: Locale(language),
-      supportedLocales: const [Locale('en'), Locale('hi'), Locale('bn'), Locale('as')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      title: 'Vidya Saarthi',
-      debugShowCheckedModeBanner: false,
+    WindowsAppearance.watch(context);
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: WindowsAppearance.mode,
+      builder: (context, mode, _) => ValueListenableBuilder<String>(
+        valueListenable: WindowsUiLanguage.changed,
+        builder: (context, language, _) => MaterialApp(
+          navigatorKey: _schoolNavigatorKey,
+          locale: Locale(language),
+          supportedLocales: const [
+            Locale('en'),
+            Locale('hi'),
+            Locale('bn'),
+            Locale('as'),
+          ],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
+          title: 'Vidya Saarthi',
+          debugShowCheckedModeBanner: false,
 
-      // Website main.dart ka theme intentionally same rakha gaya hai.
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        fontFamily: 'Segoe UI',
-        fontFamilyFallback: const ['Nirmala UI', 'Arial'],
-        scaffoldBackgroundColor: const Color(0xFF0B141A),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1F2C34),
-          elevation: 1,
+          themeMode: mode,
+          theme: WindowsAppearance.theme(Brightness.light),
+          darkTheme: WindowsAppearance.theme(Brightness.dark),
+          builder: (context, child) {
+            final content = Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => windows_html.document.dispatchClick(),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned.fill(child: child ?? const SizedBox.shrink()),
+                  const _WindowsGlobalUpdateProgress(),
+                ],
+              ),
+            );
+            return WindowsManagedSchoolGate(
+              child: content,
+              legacy: WindowsLicenseGate(child: content),
+              onAuthenticated: () => _schoolNavigatorKey.currentState
+                  ?.pushNamedAndRemoveUntil('/', (route) => false),
+            );
+          },
+          routes: {
+            '/admin/device-management': (_) =>
+                const WindowsStartupGate(child: WindowsDeviceManagement()),
+            '/admin/student-import': (_) =>
+                const WindowsStartupGate(child: WindowsStudentImport()),
+            '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
+            '/admin-setup': (_) => const WindowsAdminSetupScreen(),
+            '/local-login': (_) =>
+                const WindowsStartupGate(child: WindowsLocalDashboardGate()),
+            '/dashboard': (_) => const WindowsLocalDashboardGate(),
+          },
+          home: WindowsStartupFlow(
+            initializeConnections: initializeConnections,
+            offerRestore: true,
+          ),
         ),
       ),
-      builder: (context, child) {
-        final content = Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (_) => windows_html.document.dispatchClick(),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Positioned.fill(
-                  child: child ?? const SizedBox.shrink(),
-                ),
-                const _WindowsGlobalUpdateProgress(),
-              ],
-            ),
-          );
-        return WindowsManagedSchoolGate(child:content,legacy:WindowsLicenseGate(child:content),onAuthenticated:()=>_schoolNavigatorKey.currentState?.pushNamedAndRemoveUntil('/',(route)=>false));
-      },
-      routes: {
-        '/admin/device-management': (_) => const WindowsStartupGate(child: WindowsDeviceManagement()),
-        '/admin/student-import': (_) => const WindowsStartupGate(child: WindowsStudentImport()),
-        '/first-run': (_) => const WindowsFirstRunSecuritySetup(),
-        '/admin-setup': (_) => const WindowsAdminSetupScreen(),
-        '/local-login': (_) => const WindowsStartupGate(child: WindowsLocalDashboardGate()),
-        '/dashboard': (_) => const WindowsLocalDashboardGate(),
-      },
-      home: WindowsStartupFlow(
-        initializeConnections: initializeConnections,
-        offerRestore:true,
-      ),
-    ));
+    );
   }
 }
 
 /// After central account/licence verification, select the exact tenant cache
 /// and resolve saved registration before allowing first setup or the dashboard.
 class WindowsStartupFlow extends StatefulWidget {
-  const WindowsStartupFlow(
-      {super.key,
-      this.initializeConnections = WindowsConnectionCenter.initialize,
-      this.checkSetup = WindowsAdminSetup.completed,this.offerRestore=false,this.freshInstallationProbe});
+  const WindowsStartupFlow({
+    super.key,
+    this.initializeConnections = WindowsConnectionCenter.initialize,
+    this.checkSetup = WindowsAdminSetup.completed,
+    this.offerRestore = false,
+    this.freshInstallationProbe,
+  });
 
   final Future<void> Function() initializeConnections;
   final Future<bool> Function() checkSetup;
@@ -140,21 +167,34 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     _prepare();
   }
 
-  Future<void> _prepare({bool skipRestoreChoice=false}) async {
-    if (mounted) setState(() { _loading = true; _restoreError = null; });
+  Future<void> _prepare({bool skipRestoreChoice = false}) async {
+    if (mounted)
+      setState(() {
+        _loading = true;
+        _restoreError = null;
+      });
     try {
       // Offer recovery before cloud cache hydration can populate a fresh install.
-      final saved=await CentralSchoolCloud.saved();
-      if(widget.offerRestore && !skipRestoreChoice && saved['managed']==true && await (widget.freshInstallationProbe!=null ? widget.freshInstallationProbe!() : (await localRecoveryService()).isFreshInstallation())) {
-        if(mounted)setState((){_chooseFresh=true;_loading=false;});
+      final saved = await CentralSchoolCloud.saved();
+      if (widget.offerRestore &&
+          !skipRestoreChoice &&
+          saved['managed'] == true &&
+          await (widget.freshInstallationProbe != null
+              ? widget.freshInstallationProbe!()
+              : (await localRecoveryService()).isFreshInstallation())) {
+        if (mounted)
+          setState(() {
+            _chooseFresh = true;
+            _loading = false;
+          });
         return;
       }
-      _chooseFresh=false;
+      _chooseFresh = false;
       // Select the authenticated tenant cache before inspecting registration.
       await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
       final done = await widget.checkSetup();
-      final managed=(await CentralSchoolCloud.saved())['managed']==true;
+      final managed = (await CentralSchoolCloud.saved())['managed'] == true;
       if (!mounted) return;
       setState(() {
         _setupDone = done;
@@ -172,35 +212,74 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF0B141A),
+      return Scaffold(
+        backgroundColor: WindowsAppearance.resolve(Color(0xFF0B141A)),
         body: Center(
           child: CircularProgressIndicator(color: Color(0xFF00A884)),
         ),
       );
     }
-    if (_chooseFresh) return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[
-      const Text('Set up this Windows installation'),
-      FilledButton(onPressed:()=>openCleanInstallRestore(context),child:const Text('Restore Existing School')),
-      TextButton(onPressed:()=>_prepare(skipRestoreChoice:true),child:const Text('Continue school setup')),
-    ])));
-    if (_restoreError != null) return Scaffold(body:Center(child:Padding(
-      padding:const EdgeInsets.all(24), child:Column(mainAxisSize:MainAxisSize.min,children:[
-        Text(_restoreError!),
-        FilledButton(onPressed:_prepare,child:const Text('Retry school profile restore')),
-        TextButton(onPressed:() async {
-          await ManagedSchoolSession.logout();
-        },child:const Text('Sign out and choose school account')),
-      ]))));
+    if (_chooseFresh)
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Set up this Windows installation'),
+              FilledButton(
+                onPressed: () => openCleanInstallRestore(context),
+                child: const Text('Restore Existing School'),
+              ),
+              TextButton(
+                onPressed: () => _prepare(skipRestoreChoice: true),
+                child: const Text('Continue school setup'),
+              ),
+            ],
+          ),
+        ),
+      );
+    if (_restoreError != null)
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_restoreError!),
+                FilledButton(
+                  onPressed: _prepare,
+                  child: const Text('Retry school profile restore'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await ManagedSchoolSession.logout();
+                  },
+                  child: const Text('Sign out and choose school account'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     if (_managed) {
       if (!_setupDone) return const WindowsAdminSetupScreen();
-      return Column(children: [
-        if (WindowsAdminSetup.restoreNotice.isNotEmpty)
-          Material(child: Padding(padding: const EdgeInsets.all(12),
-            child: Text(WindowsAdminSetup.restoreNotice))),
-        const Expanded(child: WindowsStartupGate(child: WindowsLocalDashboardGate())),
-      ]);
+      return Column(
+        children: [
+          if (WindowsAdminSetup.restoreNotice.isNotEmpty)
+            Material(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(WindowsAdminSetup.restoreNotice),
+              ),
+            ),
+          const Expanded(
+            child: WindowsStartupGate(child: WindowsLocalDashboardGate()),
+          ),
+        ],
+      );
     }
     // Fresh install: local-first Admin Setup before the dashboard.
     if (!_setupDone && !WindowsLocalSecurity.configured) {
@@ -217,7 +296,12 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
 /// Requires the existing local password before showing a saved dashboard.
 /// Central authentication and licensing are enforced by the outer startup gate.
 class WindowsStartupGate extends StatefulWidget {
-  const WindowsStartupGate({super.key, required this.child, this.prepareLock, this.completeUnlock});
+  const WindowsStartupGate({
+    super.key,
+    required this.child,
+    this.prepareLock,
+    this.completeUnlock,
+  });
 
   final Widget child;
   final Future<bool> Function()? prepareLock;
@@ -249,19 +333,29 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
 
   Future<void> _prepare() async {
     try {
-      if(widget.prepareLock!=null) {
-        final locked=await widget.prepareLock!();
-        if(mounted)setState((){_locked=locked;_loading=false;});
+      if (widget.prepareLock != null) {
+        final locked = await widget.prepareLock!();
+        if (mounted)
+          setState(() {
+            _locked = locked;
+            _loading = false;
+          });
         return;
       }
       await WindowsLocalSecurity.initialize();
       final shouldLock = WindowsLocalSecurity.configured;
-      _schoolName=WindowsAdminSetup.schoolName;
+      _schoolName = WindowsAdminSetup.schoolName;
       if (shouldLock) {
-        final origin=FirebaseFirestore.instance.activeProfileId;
-        final profile=(await FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache').get()).data();
-        if (FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen the app.');
-        _schoolName=profile?['schoolName']?.toString().trim()??_schoolName;
+        final origin = FirebaseFirestore.instance.activeProfileId;
+        final profile =
+            (await FirebaseFirestore.instance
+                    .collection('school_config')
+                    .doc('school_profile_cache')
+                    .get())
+                .data();
+        if (FirebaseFirestore.instance.activeProfileId != origin)
+          throw StateError('School changed. Reopen the app.');
+        _schoolName = profile?['schoolName']?.toString().trim() ?? _schoolName;
       }
       if (!mounted) return;
       setState(() {
@@ -283,11 +377,16 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
       _unlocking = true;
-      final origin=FirebaseFirestore.instance.activeProfileId;
-      void own() {if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed. Reopen the app.');}
+      final origin = FirebaseFirestore.instance.activeProfileId;
+      void own() {
+        if (FirebaseFirestore.instance.activeProfileId != origin)
+          throw StateError('School changed. Reopen the app.');
+      }
+
       try {
         own();
-        if(widget.completeUnlock!=null)await widget.completeUnlock!();
+        if (widget.completeUnlock != null)
+          await widget.completeUnlock!();
         else {
           await WindowsLocalSession.markLoggedIn();
           own();
@@ -295,13 +394,26 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
         }
         own();
         if (!mounted) return;
-        setState(() { _success = true; _error = null; });
+        setState(() {
+          _success = true;
+          _error = null;
+        });
         _password.clear();
         await Future<void>.delayed(const Duration(milliseconds: 850));
         own();
-        if (mounted) setState(() { _locked=false; _success=false; _unlocking=false; });
+        if (mounted)
+          setState(() {
+            _locked = false;
+            _success = false;
+            _unlocking = false;
+          });
       } catch (e) {
-        if (mounted) setState(() { _success=false; _unlocking=false; _error='$e'; });
+        if (mounted)
+          setState(() {
+            _success = false;
+            _unlocking = false;
+            _error = '$e';
+          });
       }
       return;
     }
@@ -310,9 +422,10 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF0B141A),
+      return Scaffold(
+        backgroundColor: WindowsAppearance.resolve(Color(0xFF0B141A)),
         body: Center(
           child: CircularProgressIndicator(color: Color(0xFF00A884)),
         ),
@@ -320,38 +433,66 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     }
 
     if (!_locked) return widget.child;
-    if (_success) return Scaffold(body:Center(child:TweenAnimationBuilder<double>(tween:Tween(begin:0,end:1),duration:const Duration(milliseconds:500),builder:(context,value,child)=>Opacity(opacity:value,child:Transform.scale(scale:0.85+value*0.15,child:child)),child:const Column(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.check_circle,color:Color(0xFF00D9A5),size:76),SizedBox(height:18),Text('Login Successful',style:TextStyle(fontSize:26,fontWeight:FontWeight.bold))]))));
+    if (_success)
+      return Scaffold(
+        body: Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 500),
+            builder: (context, value, child) => Opacity(
+              opacity: value,
+              child: Transform.scale(scale: 0.85 + value * 0.15, child: child),
+            ),
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, color: Color(0xFF00D9A5), size: 76),
+                SizedBox(height: 18),
+                Text(
+                  'Login Successful',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B141A),
+      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 430),
           child: Card(
-            color: const Color(0xFF172229),
+            color: WindowsAppearance.resolve(const Color(0xFF172229)),
             child: Padding(
               padding: const EdgeInsets.all(26),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.lock_rounded,
-                      color: Color(0xFF00D9A5), size: 42),
+                  const Icon(
+                    Icons.lock_rounded,
+                    color: Color(0xFF00D9A5),
+                    size: 42,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     _schoolName.isEmpty ? 'Vidya Saarthi' : _schoolName,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: WindowsAppearance.resolve(Colors.white),
                       fontSize: 21,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
+                  Text(
                     'App Lock • Enter your saved local password.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white60),
+                    style: TextStyle(
+                      color: WindowsAppearance.resolve(Colors.white60),
+                    ),
                   ),
                   const SizedBox(height: 20),
                   TextField(
@@ -359,13 +500,17 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     autofocus: true,
                     obscureText: true,
                     onSubmitted: (_) => _unlock(),
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(
+                      color: WindowsAppearance.resolve(Colors.white),
+                    ),
                     decoration: InputDecoration(
                       labelText: 'App Lock Password',
                       errorText: _error,
                       prefixIcon: const Icon(Icons.password_rounded),
                       filled: true,
-                      fillColor: const Color(0xFF0F191F),
+                      fillColor: WindowsAppearance.resolve(
+                        const Color(0xFF0F191F),
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
@@ -397,6 +542,7 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     return ValueListenableBuilder<update_service.WindowsUpdateRuntimeState>(
       valueListenable: update_service.WindowsUpdateService.state,
       builder: (context, state, _) {
@@ -417,9 +563,11 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
                 margin: const EdgeInsets.all(12),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF172229),
+                  color: WindowsAppearance.resolve(const Color(0xFF172229)),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white10),
+                  border: Border.all(
+                    color: WindowsAppearance.resolve(Colors.white10),
+                  ),
                   boxShadow: const [
                     BoxShadow(
                       color: Colors.black38,
@@ -445,8 +593,8 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
                             state.launching
                                 ? 'Update ready'
                                 : 'App update downloading${percent == null ? '' : ' • $percent%'}',
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: WindowsAppearance.resolve(Colors.white),
                               fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                             ),
@@ -459,15 +607,17 @@ class _WindowsGlobalUpdateProgress extends StatelessWidget {
                       value: state.launching ? 1 : state.progress,
                       minHeight: 5,
                       color: const Color(0xFF4DA3FF),
-                      backgroundColor: Colors.white10,
+                      backgroundColor: WindowsAppearance.resolve(
+                        Colors.white10,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       state.message,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white54,
+                      style: TextStyle(
+                        color: WindowsAppearance.resolve(Colors.white54),
                         fontSize: 9.5,
                       ),
                     ),
@@ -487,6 +637,7 @@ class WindowsLocalDashboardGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     // The startup App Lock already protects entry. No intermediate button.
     return const WindowsAdminAccessGate(child: WindowsAdminSessionDashboard());
   }
@@ -496,19 +647,28 @@ class WindowsLocalDashboardGate extends StatelessWidget {
 class WindowsAdminSessionDashboard extends StatefulWidget {
   const WindowsAdminSessionDashboard({super.key});
   @override
-  State<WindowsAdminSessionDashboard> createState() => _WindowsAdminSessionDashboardState();
+  State<WindowsAdminSessionDashboard> createState() =>
+      _WindowsAdminSessionDashboardState();
 }
-class _WindowsAdminSessionDashboardState extends State<WindowsAdminSessionDashboard> {
+
+class _WindowsAdminSessionDashboardState
+    extends State<WindowsAdminSessionDashboard> {
   @override
   void initState() {
     super.initState();
     final storage = windows_html.window.localStorage;
     storage['saarthi_portal_role_v1'] = 'admin';
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(minutes: 30)).millisecondsSinceEpoch.toString();
+        .add(const Duration(minutes: 30))
+        .millisecondsSinceEpoch
+        .toString();
   }
+
   @override
-  Widget build(BuildContext context) => const AdminDashboardScreen();
+  Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
+    return const AdminDashboardScreen();
+  }
 }
 
 class WindowsLocalLoginScreen extends StatefulWidget {
@@ -547,10 +707,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
       await WindowsLocalSession.markLoggedIn();
       if (!mounted) return;
       final navigator = Navigator.of(context);
-      navigator.pushNamedAndRemoveUntil(
-        '/dashboard',
-        (route) => false,
-      );
+      navigator.pushNamedAndRemoveUntil('/dashboard', (route) => false);
       // Open the dashboard first. An optional network/update check must not
       // leave a successfully authenticated user waiting on the login screen.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -581,11 +738,11 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     return _LocalAuthShell(
       title: 'Vidya Saarthi',
       subtitle: 'LOCAL ADMIN LOGIN',
-      description:
-          'Local ID/Password se Windows app unlock karein. Firebase connection alag rahega.',
+      description: 'Local ID/Password se Windows app unlock karein. Firebase connection alag rahega.',
       children: [
         TextField(
           controller: _adminId,
@@ -604,18 +761,13 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
             prefixIcon: const Icon(Icons.lock_outline_rounded),
             suffixIcon: IconButton(
               onPressed: () => setState(() => _obscure = !_obscure),
-              icon: Icon(
-                _obscure ? Icons.visibility_off : Icons.visibility,
-              ),
+              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
             ),
           ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(
-            _error!,
-            style: const TextStyle(color: Colors.redAccent),
-          ),
+          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
         ],
         const SizedBox(height: 18),
         SizedBox(
@@ -624,12 +776,12 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
           child: FilledButton.icon(
             onPressed: _busy ? null : _login,
             icon: _busy
-                ? const SizedBox(
+                ? SizedBox(
                     width: 17,
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: WindowsAppearance.resolve(Colors.white),
                     ),
                   )
                 : const Icon(Icons.login_rounded),
@@ -678,10 +830,8 @@ class _WindowsFirstRunSecuritySetupState
       await FirebaseAuth.instance.refreshLocalUser();
       await WindowsLocalSession.markLoggedIn();
       if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        '/dashboard',
-        (route) => false,
-      );
+      Navigator.of(context)
+          .pushNamedAndRemoveUntil('/dashboard', (route) => false);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -705,11 +855,11 @@ class _WindowsFirstRunSecuritySetupState
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     return _LocalAuthShell(
       title: 'Vidya Saarthi',
       subtitle: 'CREATE LOCAL SETTINGS LOCK',
-      description:
-          'Ye ID/Password sirf is PC ke protected Settings aur local login ke liye hoga. Firebase login nahi hai.',
+      description: 'Ye ID/Password sirf is PC ke protected Settings aur local login ke liye hoga. Firebase login nahi hai.',
       children: [
         TextField(
           controller: _adminId,
@@ -727,9 +877,7 @@ class _WindowsFirstRunSecuritySetupState
             prefixIcon: const Icon(Icons.lock_outline),
             suffixIcon: IconButton(
               onPressed: () => setState(() => _obscure = !_obscure),
-              icon: Icon(
-                _obscure ? Icons.visibility_off : Icons.visibility,
-              ),
+              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
             ),
           ),
         ),
@@ -754,12 +902,12 @@ class _WindowsFirstRunSecuritySetupState
           child: FilledButton.icon(
             onPressed: _busy ? null : _save,
             icon: _busy
-                ? const SizedBox(
+                ? SizedBox(
                     width: 17,
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: WindowsAppearance.resolve(Colors.white),
                     ),
                   )
                 : const Icon(Icons.arrow_forward_rounded),
@@ -786,8 +934,9 @@ class _LocalAuthShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: const Color(0xFF06171D),
+      backgroundColor: WindowsAppearance.resolve(const Color(0xFF06171D)),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -795,7 +944,7 @@ class _LocalAuthShell extends StatelessWidget {
             width: 500,
             padding: const EdgeInsets.all(30),
             decoration: BoxDecoration(
-              color: const Color(0xFF0A1E26),
+              color: WindowsAppearance.resolve(const Color(0xFF0A1E26)),
               borderRadius: BorderRadius.circular(26),
               border: Border.all(
                 color: const Color(0xFF00E8D0).withOpacity(0.35),
@@ -813,17 +962,17 @@ class _LocalAuthShell extends StatelessWidget {
                     ),
                     borderRadius: BorderRadius.circular(22),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.admin_panel_settings_rounded,
-                    color: Colors.white,
+                    color: WindowsAppearance.resolve(Colors.white),
                     size: 38,
                   ),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   title,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: WindowsAppearance.resolve(Colors.white),
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
                   ),
@@ -842,8 +991,8 @@ class _LocalAuthShell extends StatelessWidget {
                 Text(
                   description,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white54,
+                  style: TextStyle(
+                    color: WindowsAppearance.resolve(Colors.white54),
                     fontSize: 11,
                     height: 1.4,
                   ),

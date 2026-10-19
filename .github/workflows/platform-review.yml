@@ -229,14 +229,15 @@ jobs:
         PY
     - run: flutter pub get
     - name: Analyze Settings-only presentation
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_fee_settings_design.dart test/windows_fee_settings_design_test.dart lib/windows_admin_settings_design.dart test/windows_admin_settings_design_test.dart lib/windows_settings_design.dart lib/windows_settings_panel.dart lib/windows_device_management.dart lib/windows_device_directory_cache.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_appearance.dart test/windows_appearance_test.dart lib/windows_fee_settings_design.dart test/windows_fee_settings_design_test.dart lib/windows_admin_settings_design.dart test/windows_admin_settings_design_test.dart lib/windows_settings_design.dart lib/windows_settings_panel.dart lib/windows_device_management.dart lib/windows_device_directory_cache.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart
     - name: Verify actual Windows Settings and render responsive review screenshots
-      run: flutter test --concurrency=1 test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
+      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
     - uses: actions/upload-artifact@v4
       if: always()
       with:
         name: windows-settings-ui-comparison
         path: |
+          build/appearance-preview
           build/settings-preview
           build/fee-settings-preview
           build/admin-settings-preview

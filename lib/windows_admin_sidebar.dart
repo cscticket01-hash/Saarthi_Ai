@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'package:flutter/material.dart';
 import 'windows_ui_localization.dart' as ui;
 
@@ -27,9 +28,9 @@ class WindowsAdminSidebar extends StatelessWidget {
     (WindowsAdminPage.templates, 'Templates', 'ID cards, report cards & receipts', Icons.dashboard_customize_rounded, Color(0xFFCE93D8)),
   ];
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  SizedBox(
     width: width,
-    child: ColoredBox(color: const Color(0xFF06131A), child: SafeArea(
+    child: ColoredBox(color: WindowsAppearance.resolve(const Color(0xFF06131A)), child: SafeArea(
       child: Column(children: [
         Expanded(child: ListView(padding: EdgeInsets.zero, children: [header,
           for (final entry in entries) Padding(
@@ -40,15 +41,15 @@ class WindowsAdminSidebar extends StatelessWidget {
               child: ListTile(key: ValueKey('admin-nav-${entry.$1.name}'),
                 leading: Icon(entry.$4, color: entry.$5),
                 title: ui.Text(entry.$2, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
-                subtitle: ui.Text(entry.$3, maxLines: 2, style: const TextStyle(fontSize: 10, color: Colors.white54)),
+                subtitle: ui.Text(entry.$3, maxLines: 2, style:  TextStyle(fontSize: 10, color: WindowsAppearance.resolve(Colors.white54))),
                 trailing: Icon(Icons.chevron_right_rounded, color: entry.$5),
                 onTap: () => onSelected(entry.$1)),
             ),
           ),
         ])),
         const Divider(height: 1),
-        const Padding(padding: EdgeInsets.only(top: 8),
-          child: ui.Text('Vidya Saarthi • School Management', style: TextStyle(color: Colors.white38, fontSize: 10))),
+         Padding(padding: EdgeInsets.only(top: 8),
+          child: ui.Text('Vidya Saarthi • School Management', style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10))),
         Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
           child: SizedBox(width: double.infinity, child: TextButton.icon(
             key: const ValueKey('admin-logout'), onPressed: onLogout,
@@ -56,5 +57,5 @@ class WindowsAdminSidebar extends StatelessWidget {
             icon: const Icon(Icons.logout_rounded), label: const ui.Text('Logout')))),
       ]),
     )),
-  );
+  ); }
 }
