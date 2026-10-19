@@ -1027,8 +1027,12 @@ class SchoolSession {
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
     final groupCheckpoints = <String, Map<String, String>>{};
+    const recordGroups = {
+      'notices', 'calendar', 'documents', 'examinations', 'reportCards',
+      'fees', 'payments', 'feeStructures', 'salary',
+    };
     for (final entry in dashboard.entries) {
-      if (entry.value is! List) continue;
+      if (!recordGroups.contains(entry.key) || entry.value is! List) continue;
       final rows = (entry.value as List).whereType<Map>().toList();
       if (rows.any(
         (r) =>

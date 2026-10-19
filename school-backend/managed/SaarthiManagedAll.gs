@@ -8264,7 +8264,17 @@ function VS_mobileAction(b){
   if(b.mobileRecordDeltaVersion===1){
    const checkpoints=b.knownGroupRecordRevisions||{};
    if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
-   let count=0;Object.keys(checkpoints).forEach(key=>{const values=checkpoints[key];if(!Object.prototype.hasOwnProperty.call(groups,key)||!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});});
+   let count=0;Object.keys(checkpoints).forEach(key=>{
+    const values=checkpoints[key];
+    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');
+    if(!Object.prototype.hasOwnProperty.call(groups,key)){
+     // Older mobile clients turn cached metadata lists (e.g. noticeIds)
+     // into empty checkpoints. Ignore only empty hints; never read a new group.
+     if(Object.keys(values).length===0)return;
+     throw new Error('Invalid mobile group checkpoint');
+    }
+    Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});
+   });
    result.mobileRecordDeltaVersion=1;result.groupRecordDeltas={};
    Object.keys(groups).forEach(key=>{
     if(!Array.isArray(result[key]))return;
