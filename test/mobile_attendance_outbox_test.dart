@@ -75,6 +75,110 @@ void main() {
     expect((await store.pending(owner)).map((r)=>r['capturedAt']).toSet(),{1000,2000});
     await session.clear();
   });
+  for (final rejection in [
+    (
+      400,
+      'ATTENDANCE_OUTSIDE_SCHOOL',
+      'Attendance can be marked only within the school location',
+      'outside the school',
+    ),
+    (400, '', 'Accurate school location required', 'accuracy'),
+    (
+      400,
+      'ATTENDANCE_SCHOOL_CLOSED',
+      'School is closed today. Attendance is disabled for everyone',
+      'School is closed',
+    ),
+    (
+      409,
+      'ATTENDANCE_CAPTURE_REVIEW',
+      'Attendance capture date needs school review.',
+      'capture date',
+    ),
+    (400, '', 'PRIVATE_TOKEN_NEVER_DISPLAY', 'request was rejected'),
+  ]) {
+    test(
+      'policy rejection ${rejection.$3} retains capture and stops automatic retry',
+      () async {
+        var writes = 0;
+        final day = DateTime.now()
+            .toUtc()
+            .add(const Duration(hours: 5, minutes: 30))
+            .toIso8601String()
+            .substring(0, 10);
+        final permit = {
+          'schoolId': school,
+          'role': fixture['type'],
+          'documentId': fixture['personId'],
+          'personId': 'stable',
+          'day': day,
+        };
+        final token =
+            '${base64UrlEncode(utf8.encode(jsonEncode(permit)))}.fixture';
+        final session = SchoolSession(
+          attendanceStore: store,
+          client: MockClient((r) async {
+            final action = (jsonDecode(r.body)['request'] as Map)['action'];
+            if (action == 'mobile_mark_attendance') {
+              writes++;
+              return http.Response(
+                jsonEncode({
+                  'success': false,
+                  'code': rejection.$2,
+                  'message': rejection.$3,
+                  'requestId': '11111111-1111-1111-1111-111111111111',
+                }),
+                rejection.$1,
+              );
+            }
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'schoolId': school,
+                'projectId': school,
+                'sessionToken': 'verified',
+                'person': {'personId': fixture['personId']},
+                'expiresAt': DateTime.now()
+                    .add(const Duration(hours: 1))
+                    .millisecondsSinceEpoch,
+                'attendancePermit': token,
+              }),
+              200,
+            );
+          }),
+        );
+        await session.login(
+          SchoolLink.parse(SchoolLink.encodeCompact(fixture)),
+        );
+        final owner = AttendanceStore.owner(
+          session.link!.endpoint,
+          school,
+          fixture['type'],
+          fixture['personId'],
+        );
+        await store.save(owner, day, 'entry', 1000, gps);
+        await session.flushAttendance();
+        await session.flushAttendance();
+        expect(writes, 1);
+        expect(session.loggedIn, true);
+        expect(session.attendanceAccepted, 0);
+        expect(session.attendanceFailure, contains(rejection.$4));
+        expect(session.attendanceFailure, isNot(contains('PRIVATE_TOKEN')));
+        expect(
+          session.attendanceFailure,
+          contains('11111111-1111-1111-1111-111111111111'),
+        );
+        final row = (await store.pending(owner)).single;
+        expect(row['state'], 'needsAttention');
+        expect(row['capturedAt'], 1000);
+        expect(jsonDecode(row['payload'] as String)['latitude'], 24);
+        await store.close();
+        store = AttendanceStore(openDatabaseOverride: open);
+        expect((await store.pending(owner)).single['id'], row['id']);
+        await session.clear();
+      },
+    );
+  }
   test('offline save survives logout/restart; accepted is pending until exact final cloud ACK', () async {
     var offline = false, wrongAck = false, completed = false;
     final day = DateTime.now().toUtc().add(const Duration(hours:5,minutes:30)).toIso8601String().substring(0,10);

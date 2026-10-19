@@ -26,6 +26,42 @@ class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
 }
 
+/// Attendance policy refusals retain the exact original capture for school review.
+/// Messages are local constants, never arbitrary server exception text.
+class AttendanceRejected extends StateError {
+  AttendanceRejected(this.code, {this.reference = ''})
+    : super(
+        _reasons[code] ??
+            'Attendance request was rejected. Ask the school to review it.',
+      );
+  final String code, reference;
+  static const _reasons = <String, String>{
+    'ATTENDANCE_SCHOOL_CLOSED': 'School is closed for this attendance day.',
+    'ATTENDANCE_LOCATION_ACCURACY': 'Location accuracy or school location settings do not meet the attendance policy.',
+    'ATTENDANCE_OUTSIDE_SCHOOL':
+        'The captured location is outside the school attendance radius.',
+    'ATTENDANCE_CAPTURE_REVIEW': 'Attendance capture date needs school review.',
+  };
+  static String? reason(Map<String, dynamic> response, int status) {
+    final code = response['code'];
+    if (_reasons.containsKey(code)) return code as String;
+    // Older deployed brokers send these verified policy refusals without codes.
+    const legacy = {
+      'School is closed today. Attendance is disabled for everyone':
+          'ATTENDANCE_SCHOOL_CLOSED',
+      'Accurate school location required': 'ATTENDANCE_LOCATION_ACCURACY',
+      'Attendance can be marked only within the school location':
+          'ATTENDANCE_OUTSIDE_SCHOOL',
+    };
+    return legacy[response['message']] ??
+        (status == 400 ? 'ATTENDANCE_REQUEST_REJECTED' : null);
+  }
+
+  String get retainedMessage =>
+      '$message Original capture retained for school review.'
+      '${reference.isEmpty ? '' : ' Ref: $reference'}';
+}
+
 /// A verified server response arrived, but its local cache commit failed.
 /// This must not be described as an upstream request timeout.
 class SchoolCacheFailure extends StateError {
@@ -484,6 +520,7 @@ class SchoolSession {
       } catch (error) {
         _cachedAttendancePermit = null;
         final review =
+            error is AttendanceRejected ||
             error is SchoolAccessDenied ||
             (error is SchoolApiFailure && !error.retryable) ||
             error is StateError && error.message.contains('school review');
@@ -492,7 +529,9 @@ class SchoolSession {
           'attempts': attempts,
           'nextAt': at + delay + Random.secure().nextInt(max(1, delay ~/ 2)),
           if (review) 'state': 'needsAttention',
-          'error': review
+          'error': error is AttendanceRejected
+              ? error.retainedMessage
+              : review
               ? 'Attendance needs school review; capture retained.'
               : 'Attendance unavailable; capture retained for automatic retry.',
         });
@@ -661,6 +700,17 @@ class SchoolSession {
         );
       }
       final d = _decodeSchoolResponse(r.body);
+      if (action == 'mobile_mark_attendance' &&
+          (r.statusCode == 400 || r.statusCode == 409)) {
+        final code = AttendanceRejected.reason(d, r.statusCode);
+        if (code != null) {
+          final ref = d['requestId']?.toString() ?? '';
+          throw AttendanceRejected(
+            code,
+            reference: RegExp(r'^[a-f0-9-]{36}$').hasMatch(ref) ? ref : '',
+          );
+        }
+      }
       if (r.statusCode == 401 || r.statusCode == 403) {
         await clear();
         throw SchoolAccessDenied(

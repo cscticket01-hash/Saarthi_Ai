@@ -36,3 +36,10 @@ test('verified school-root failure retains safe provider provenance instead of g
  await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_ROOT_IDENTITY_MISMATCH'&&!e.message.includes('NEVER_EXPOSE'));
  assert.equal(f.sent.length,1);
 });
+
+test('Apps Script lock timeout is retryable 504 without replay, raw errors or false ACK',async()=>{
+ const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,code:'SCRIPT_TIMEOUT',message:'NEVER_EXPOSE'})}));
+ await assert.rejects(f.call(body),e=>e.status===504&&e.code==='SCRIPT_TIMEOUT'&&e.message.includes('pending changes are retained')&&!e.message.includes('NEVER_EXPOSE'));
+ assert.equal(f.sent.length,1);
+ assert.equal(JSON.parse(JSON.parse(f.sent[0].opt.body).payload).operationId,operationId);
+});

@@ -333,7 +333,9 @@ test('verified attendance permit and final ACK use '+attendanceCollection+'; tam
  const first=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(first.accepted,true);assert.equal(f.sent.length,1);assert.equal(rows.size,1);
  assert(!JSON.stringify([...rows.values()]).includes(session));assert(!JSON.stringify([...rows.values()]).includes('x'.repeat(48)));
  const duplicate=await f.call({action:'managed/mobile',schoolId:A,request});assert.equal(duplicate.duplicate,true);assert.equal(rows.size,1);
- await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,latitude:25}}),e=>e.status===400);
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,latitude:25}}),e=>e.status===400&&e.code==='ATTENDANCE_OUTSIDE_SCHOOL');
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,accuracy:201}}),e=>e.status===400&&e.code==='ATTENDANCE_LOCATION_ACCURACY');
+ assert.equal(rows.size,1);
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{...request,attendancePermit:request.attendancePermit+'x'}}),e=>e.status===401);
  f.docs.get('platform_schools/'+B).lastSeenAt=time;
  await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request}),e=>e.status===409);

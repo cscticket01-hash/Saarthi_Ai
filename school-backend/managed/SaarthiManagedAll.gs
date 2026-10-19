@@ -7708,11 +7708,12 @@ function VS_managedDelta(b) {
   // Normal delta reads verify records; hourly audit detects external edits.
   if(b.headOnly!==undefined&&typeof b.headOnly!=='boolean')throw new Error('Invalid delta mode');
   if(b.headOnly===true){
-    const lock=LockService.getScriptLock();lock.waitLock(1000);
-    try{const props=PropertiesService.getScriptProperties().getProperties(),revisions={};
-      b.collections.forEach(col=>{revisions[col]=props['VS_RECORD_REV_'+col]||'legacy';});
-      return {syncProtocol:2,headOnly:true,revisions:revisions};
-    }finally{lock.releaseLock();}
+    // Advisory snapshot only: a concurrent commit may make this hint stale.
+    // The subsequent normal delta verifies records under its existing lock.
+    // Do not reacquire the writer lock after signed nonce verification here.
+    const props=PropertiesService.getScriptProperties().getProperties(),revisions={};
+    b.collections.forEach(col=>{revisions[col]=props['VS_RECORD_REV_'+col]||'legacy';});
+    return {syncProtocol:2,headOnly:true,revisions:revisions};
   }
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{const changes={},p=PropertiesService.getScriptProperties(),readContext={};
