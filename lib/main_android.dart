@@ -17,6 +17,7 @@ import 'package:printing/printing.dart';
 
 import 'mobile/school_session.dart';
 import 'mobile/published_id_card.dart';
+import 'mobile/attendance_history.dart';
 import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
@@ -458,7 +459,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   bool _loading = true, _busy = false, _blocked = false;
   String? _error;
   Map<String, dynamic> _data = {};
-  List<Map<String, dynamic>> _attendance = [];
+  late final _history = AttendanceHistoryController(
+    load: _s.attendanceHistory,
+    cached: _s.cachedAttendanceHistory,
+    confirmations: _s.attendanceChanges,
+    confirmationKey: () =>
+        _s.lastAttendanceAck?.millisecondsSinceEpoch.toString() ?? '',
+  );
+  List<Map<String, dynamic>> get _attendance => _history.rows;
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month),
       _selectedDay = DateTime.now();
   Timer? _timer;
@@ -476,13 +484,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _s.attendanceChanges.addListener(_attendanceChanged);
+    _history.addListener(_attendanceChanged);
+    unawaited(_history.selectMonth(_monthKey));
     unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
     var previousLock = _s.attendanceLockReason;
     var previousAttendanceDay = attendanceDay(DateTime.now());
+    var lastQueueCheck = DateTime.now();
     _attendanceClock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
         return;
-      final day = attendanceDay(DateTime.now());
+      final now = DateTime.now();
+      if (_s.attendancePending > 0 &&
+          now.difference(lastQueueCheck) >= const Duration(seconds: 5)) {
+        lastQueueCheck = now;
+        unawaited(_s.flushAttendance().catchError((_) {}));
+      }
+      final day = attendanceDay(now);
       if (day != previousAttendanceDay) {
         previousAttendanceDay = day;
         unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
@@ -515,6 +532,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     _s.attendanceChanges.removeListener(_attendanceChanged);
+    _history.removeListener(_attendanceChanged);
+    _history.dispose();
     _s.connectionChanges.removeListener(_connectionChanged);
     super.dispose();
   }
@@ -534,6 +553,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       _loading =
           _s.connectionState == SchoolConnectionState.syncing && _data.isEmpty;
     });
+    if (_s.connectionState == SchoolConnectionState.connected &&
+        _page == (_teacher ? 0 : 1))
+      unawaited(_loadAttendance());
   }
 
   void _attendanceChanged() {
@@ -562,6 +584,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           _blocked = false;
           _error = null;
         });
+      if (_page == (_teacher ? 0 : 1)) unawaited(_loadAttendance());
       unawaited(_refreshPublishedCard().catchError((Object _) => null));
       unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
@@ -590,15 +613,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     }
   }
 
-  Future<void> _loadAttendance() async {
-    try {
-      final month = _monthKey;
-      final rows = await _s.attendanceHistory(month);
-      if (mounted && month == _monthKey) setState(() => _attendance = rows);
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    }
-  }
+  Future<void> _loadAttendance() => _history.selectMonth(_monthKey);
 
   Future<void> _logout() async {
     await SchoolMessaging.stop();
@@ -805,6 +820,33 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
             content: Text(
               'Unable to open this school document. Refresh and try again.',
             ),
+          ),
+        );
+    }
+  }
+
+  Future<void> _openIdPdfExternally(Uint8List bytes) async {
+    final owner = _s.link;
+    try {
+      final directory = await getTemporaryDirectory();
+      final file = File(
+        '${directory.path}/school-id-${sha256.convert(bytes)}.pdf',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted || !identical(owner, _s.link)) return;
+      final result = await OpenFilex.open(file.path);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open a PDF viewer. Try Open my ID card.'),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open your ID card. Please try again.'),
           ),
         );
     }
@@ -1162,7 +1204,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               Column(
                 children: [
                   Text(
-                    '$present',
+                    _history.ready ? '$present' : '—',
                     style: const TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.bold,
@@ -1186,7 +1228,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               Column(
                 children: [
                   Text(
-                    working == 0
+                    !_history.ready || working == 0
                         ? '—'
                         : '${(present / working * 100).clamp(0, 100).toStringAsFixed(0)}%',
                     style: const TextStyle(
@@ -1283,10 +1325,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                   _data['idCardPackage'],
                 ]),
               ),
-              load: _s.publishedIdCard,
+              load: _refreshPublishedCard,
               refresh: () => _load(afterSignal: true),
               open: (bytes) =>
                   _previewPdf(bytes, 'School ID card • Front & back'),
+              openExternally: _openIdPdfExternally,
             ),
           ],
         ),
