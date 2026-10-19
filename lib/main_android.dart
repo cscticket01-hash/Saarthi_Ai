@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 
 import 'mobile/school_session.dart';
+import 'mobile/published_id_card.dart';
 import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
@@ -756,26 +757,6 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
 
   Future<Uint8List?> _fetchPublishedCard() => _s.publishedIdCard();
 
-  String _idPreviewKey = '';
-  Future<Uint8List?>? _idPreview;
-  Future<Uint8List?> _idCardPreview() {
-    final key = jsonEncode([
-      _s.link?.projectId,
-      _s.link?.personId,
-      _data['idCardPackage'],
-    ]);
-    if (_idPreview == null || _idPreviewKey != key) {
-      _idPreviewKey = key;
-      _idPreview = (() async {
-        final bytes = await _s.publishedIdCard();
-        if (bytes == null) return null;
-        final page = await Printing.raster(bytes, pages: [0], dpi: 100).first;
-        return page.toPng();
-      })();
-    }
-    return _idPreview!;
-  }
-
   Future<void> _openSchoolDocument(Map<String, dynamic> document) async {
     final active = _s.link;
     try {
@@ -864,10 +845,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           await _previewPdf(cached, 'School ID card • Front & back');
           return;
         }
-        final published = await _refreshPublishedCard();
+        var published = await _refreshPublishedCard();
+        if (published == null) {
+          await _load(afterSignal: true);
+          published = await _refreshPublishedCard();
+        }
         if (published == null)
           throw StateError(
-            'Your selected ID card has not reached school cloud storage yet. Ask the school to complete Sync.',
+            'Your school is preparing your ID card. Please try again shortly.',
           );
         await _previewPdf(published, 'School ID card • Front & back');
         return;
@@ -1287,33 +1272,21 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       _card(
         Column(
           children: [
-            FutureBuilder<Uint8List?>(
-              future: _idCardPreview(),
-              builder: (context, snapshot) => snapshot.hasData
-                  ? InkWell(
-                      onTap: () => _showPdf('studentId', _s.person),
-                      child: Image.memory(
-                        snapshot.data!,
-                        height: 240,
-                        fit: BoxFit.contain,
-                      ),
-                    )
-                  : Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Text(
-                        snapshot.connectionState == ConnectionState.waiting
-                            ? 'Loading your ID card…'
-                            : 'Your school ID card is not available yet.',
-                      ),
-                    ),
-            ),
-            const SizedBox(height: 12),
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: () => _showPdf('studentId', _s.person),
-              icon: const Icon(Icons.badge_outlined),
-              label: const Text('Open my ID card'),
+            PublishedIdCard(
+              key: ValueKey(
+                jsonEncode([
+                  _s.link?.projectId,
+                  _s.link?.role,
+                  _s.link?.personId,
+                  _data['idCardPackage'],
+                ]),
+              ),
+              load: _s.publishedIdCard,
+              refresh: () => _load(afterSignal: true),
+              open: (bytes) =>
+                  _previewPdf(bytes, 'School ID card • Front & back'),
             ),
           ],
         ),
@@ -1607,6 +1580,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         onDestinationSelected: (i) {
           setState(() => _page = i);
           if (i == (_teacher ? 0 : 1)) _loadAttendance();
+          if (!_teacher && i == 2) unawaited(_load(afterSignal: true));
         },
         destinations: _teacher
             ? const [

@@ -1862,6 +1862,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
+        final bootstrapRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('id-card-publication-bootstrap-v1');
+        final bootstrap = (await bootstrapRef.get()).data();
+        final needsIdBootstrap = bootstrap?['schoolId'] != _activeSchoolSyncId || bootstrap?['version'] != 1;
+        if (needsIdBootstrap) {
+          final missing = await WindowsDocumentTemplates.missingIdCardTargets();
+          for (final kind in missing.entries) {
+            for (final id in kind.value) {
+              _noteIdInput(kind.key == 'studentId' ? 'students_directory' : 'teachers_directory', id);
+            }
+          }
+        }
         final dependencyRows = await WindowsSyncDependencies.read(_activeSchoolSyncId);
         for (final row in dependencyRows) {
           final input = row.data();
@@ -1906,6 +1917,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             );
           }
           await WindowsSyncDependencies.complete(_activeSchoolSyncId, dependencyRows);
+          if (needsIdBootstrap) {
+            if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+              throw StateError('School changed during ID publication bootstrap.');
+            await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => bootstrapRef.set({
+              'schoolId': _activeSchoolSyncId, 'version': 1,
+              'completedAt': DateTime.now().millisecondsSinceEpoch,
+            }));
+          }
         } catch (_) {
           if (_activeProfileId == syncOrigin) {
             for (final entry in idInputs.entries) {

@@ -239,6 +239,31 @@ class WindowsDocumentTemplates {
     );
   }
 
+  /// One-time discovery for installations predating automatic card publication.
+  /// Does not regenerate existing packages, retained deletions or conflicts.
+  static Future<Map<String, Set<String>>> missingIdCardTargets() async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    final result = <String, Set<String>>{};
+    for (final kind in ['studentId', 'teacherId']) {
+      final role = kind == 'studentId' ? 'student' : 'teacher';
+      final people = (await db.collection(kind == 'studentId' ? 'students_directory' : 'teachers_directory').get()).docs;
+      for (final person in people) {
+        if (person.data()['deleted'] == true || person.data()['_syncDeleted'] == true ||
+            person.data()['schoolId'] != null && person.data()['schoolId'] != school) continue;
+        final id = WindowsBackendBridge.publishedIdCardOwnerId(role, person.id);
+        final local = (await db.collection('_local_student_documents').doc(id).get()).data();
+        final pending = (await db.collection('_windows_document_outbox').doc(id).get()).data();
+        final cloud = (await db.collection('documents').doc(id).get()).data();
+        if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school)
+          throw StateError('School changed during missing ID discovery.');
+        if (holdAutomaticIdCard(local, pending, cloud, school as String) || pending != null || cloud != null) continue;
+        (result[kind] ??= <String>{}).add(person.id);
+      }
+    }
+    return result;
+  }
+
   /// Uses the same selected renderer and the existing durable document outbox.
   /// Only changed person/profile/template inputs create a new immutable package.
   static Future<void> publishChangedIdCards({
@@ -317,8 +342,12 @@ class WindowsDocumentTemplates {
         if(holdAutomaticIdCard(existing,pending,cached,identity['schoolId'] as String))continue;
         if ((existing?['inputRevision'] == revision ||
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
-            existing?['deleted'] != true)
+            existing?['deleted'] != true) {
+          if (pending == null && cached == null && existing?['syncState'] != 'Synced') {
+            await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: readPublished);
+          }
           continue;
+        }
         if (existing == null) {
           final cached = (await db.collection('documents').doc(id).get())
               .data();
