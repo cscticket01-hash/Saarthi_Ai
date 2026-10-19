@@ -15,7 +15,17 @@ Retries retain the same credential/device identity. Older clients receive the sa
 explicit disabled-rollout registration response that their existing login handles.
 Existing sessions continue syncing without being forced out or clearing queues.
 
-A PC must complete one fresh school sign-in in the compatible app to enroll.
+A compatible PC can enroll from its already authenticated school session or its
+first device-directory request; it need not log out. This migration runs only in
+enrollment-only mode, after server-verified Firebase identity, active school-admin
+membership and current entitlement. It admits only a never-registered, never-revoked
+device identity, with its existing persisted proof, within the transactional five-PC
+limit. A conflicting credential, revoked row or pruned revoked identity is never
+repaired by this path. Explicit registration/re-authorization keeps its fresh-login
+requirements, and full management/TEST enforcement never performs this migration.
+Session admission is optional background metadata; a metadata outage cannot fail
+the restored school session or school record sync. Directory reads perform bounded
+admission before returning the real server list and current-PC marker.
 Unregistered devices cannot obtain a verified directory. No fabricated names or
 counts are shown. Other logged-in PCs keep normal school access. The existing
 presence heartbeat optionally records registered-PC activity asynchronously;
@@ -61,3 +71,14 @@ The live saarthi-oauth-staging backend was observed on
 b219b1a1967b874c17a1abfde32bbd2fe94b98d8, predating these rollout modes.
 A compatible backend deployment is required to remove the operational 503.
 No production configuration/deploy is changed by this pull request.
+
+## Existing-session 401 regression
+
+Windows v2.1.147 could retain a valid school login created before enrollment was
+enabled. Only fresh password sign-in called register; the directory immediately
+verified an absent registry row and returned DEVICE_AUTHORIZATION_REJECTED. The
+new migration closes that missing admission path without replacing device proofs,
+school sessions, local records, pending operations or cloud checkpoints. Compatible
+Windows session/list calls also send bounded hostname/OS metadata, so the verified
+row can show its PC name. Legacy clients can still enroll using a default name.
+Rows remain keyed/stable and activity still comes from the existing heartbeat.

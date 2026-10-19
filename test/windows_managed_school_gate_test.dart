@@ -23,6 +23,12 @@ void main(){
         hostname:()=>throw UnsupportedError('Native hostname unavailable on web'));
     expect(body,{'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':'Web browser','deviceOs':'Web','type':'pc'});
   });
+  test('unavailable native hostname does not break existing session metadata', () {
+    final body=ManagedSchoolSession.deviceRegistrationBody(web:false,
+        hostname:()=>throw StateError('Hostname unavailable'));
+    expect(body['deviceName'],'Windows PC');
+    expect(body['deviceManagementProtocol'],2);
+  });
   test('native registration retains measured hostname with bounded fallback', () {
     expect(ManagedSchoolSession.deviceRegistrationBody(web:false,hostname:()=>'School PC')['deviceName'],'School PC');
     for(final name in ['',List.filled(101,'x').join()]) {

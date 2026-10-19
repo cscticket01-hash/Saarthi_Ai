@@ -21,7 +21,16 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   if(entitlement.allowed!==true||!Number.isSafeInteger(expiresAt)||expiresAt<=issuedAt)reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
   const data={version:1,purpose:'vidya-pc-offline',schoolId:auth.schoolId,uid:auth.uid,deviceIdentity:device.deviceIdentity,generationHash:device.generationHash,issuedAt,expiresAt};
   const payload=Buffer.from(JSON.stringify(data)).toString('base64url');return {offlineLease:payload+'.'+sign(null,Buffer.from(payload),key).toString('base64url'),offlineExpiresAt:expiresAt,device};}
- return {async observePresence(req,presence){
+ async function enrollSession(req,body,identity,entitlement){
+  if(!enrollmentEnabled||enforced||managementEnabled)return;
+  const auth=context(identity,body);
+  if(!Number.isSafeInteger(auth.authenticatedAt)||auth.authenticatedAt<0||auth.authenticatedAt>now())reject(401,'DEVICE_FRESH_LOGIN_REQUIRED');
+  if(entitlement?.allowed!==true||Number(entitlement.expiresAt)<=now())reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
+  const registry=createManagedDeviceRegistry({store,schoolId:auth.schoolId,now,requireFreshAuthentication:true});
+  return registry.register(auth,{deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential'),
+   name:body.deviceName,os:body.deviceOs},{existingSessionEnrollment:true});
+ }
+ return {observeSession:enrollSession,async observePresence(req,presence){
   // Optional display metadata only. Never change the legacy presence result.
   if(!enrollmentEnabled||enforced||managementEnabled)return;
   try{
@@ -51,7 +60,8 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   }
   // Every protected request reads the registry transactionally: no cached
   // presence/session/offline lease may authorize an online server request.
-  const device=await registry.verify(proof);
+  const device=enrollmentOnly&&action==='managed/device/list'
+   ?await enrollSession(req,body,identity,entitlement):await registry.verify(proof);
   if(action==='managed/device/check')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
   if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,canRevoke:!enrollmentOnly,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
   if(action==='managed/device/revoke'){

@@ -42,12 +42,18 @@ function createManagedDeviceRegistry({store,schoolId,now=Date.now,requireFreshAu
   return store.transaction(schoolId,async existing=>work(prune(existing||{schemaVersion:1,schoolId,devices:{}},t),t));}
  function audit(auth,id,event,t){return {eventId:randomUUID(),schoolId,deviceIdentity:id,actorHash:digest(auth.uid),event,at:t};}
  return {
-  async register(auth,input){actor(auth);const id=device(input.deviceId),credential=secret(input.credential);
+  async register(auth,input,{existingSessionEnrollment=false}={}){actor(auth);const id=device(input.deviceId),credential=secret(input.credential);
    const name=String(input.name||'Windows PC').trim(),os=String(input.os||'Windows').trim();
    if(!name||name.length>100||os.length>80||/[\x00-\x1f]/.test(name+os))deny(400,'INVALID_DEVICE_METADATA');
    return transact((state,t)=>{const old=state.devices[id];
-    if(old?.status==='active'){if(!equal(old.credentialHash,credential))deny(409,'DEVICE_CREDENTIAL_CONFLICT');return {state,result:{...safe(old,t),duplicate:true}};}
-    if(requireFreshAuthentication&&(!Number.isSafeInteger(auth.authenticatedAt)||auth.authenticatedAt>t||t-auth.authenticatedAt>300000||old?.status==='revoked'&&auth.authenticatedAt<=old.revokedAt))deny(401,'DEVICE_FRESH_LOGIN_REQUIRED');
+    if(old?.status==='active'){if(!equal(old.credentialHash,credential))deny(409,'DEVICE_CREDENTIAL_CONFLICT');
+     if(existingSessionEnrollment){if(t-old.lastSeenAt>=60000)old.lastSeenAt=t;
+      if(input.name!==undefined)old.name=name;if(input.os!==undefined)old.os=os;}
+     return {state,result:{...safe(old,t),duplicate:true}};}
+    // Enrollment-only migration accepts an already verified school session for
+    // a never-registered PC. It cannot resurrect a revoked/pruned identity.
+    if(existingSessionEnrollment&&(old||filterHas(state.revokedDeviceFilter,id)))deny(401,'DEVICE_AUTHORIZATION_REJECTED');
+    if(requireFreshAuthentication&&!existingSessionEnrollment&&(!Number.isSafeInteger(auth.authenticatedAt)||auth.authenticatedAt>t||t-auth.authenticatedAt>300000||old?.status==='revoked'&&auth.authenticatedAt<=old.revokedAt))deny(401,'DEVICE_FRESH_LOGIN_REQUIRED');
     if(filterHas(state.revokedCredentialFilter,credential)||old&&equal(old.credentialHash,credential))deny(401,'REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL');
     if(Object.values(state.devices).filter(r=>r.status==='active').length>=MAX_ACTIVE)deny(409,'DEVICE_LIMIT_REACHED');
     if(Object.values(state.devices).some(r=>equal(r.credentialHash,credential)))deny(409,'DEVICE_CREDENTIAL_REUSED');
