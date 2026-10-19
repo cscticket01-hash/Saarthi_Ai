@@ -59,12 +59,12 @@ class WindowsFeeStructure {
       for (final key in previous.keys) key: replaceHeads ? 0.0 : previous[key],
       ...normalized,
     };
-    final heads = merged.entries.where((e) => e.value is num && e.value > 0).map((e) => e.key).toList();
+    final configuredHeads = merged.entries.where((e) => e.value is num && e.value > 0).map((e) => e.key).toList();
     final retained = Map<String, dynamic>.from(old)..removeWhere((key, _) => key.startsWith('_sync') || key == 'operationId');
     final batch = db.batch();
     batch.set(db.collection('fee_settings').doc(documentId(className, session)), {
       ...retained, 'className': className, 'academicSession': session, 'fees': merged,
-      'configured': heads.isNotEmpty, 'configuredHeads': heads,
+      'configured': configuredHeads.isNotEmpty, 'configuredHeads': configuredHeads,
       if (replaceHeads) 'feeHeadOrder': normalized.keys.toList(),
       if (replaceHeads) 'feeStructureSaved': true,
       'updatedAt': FieldValue.serverTimestamp(),

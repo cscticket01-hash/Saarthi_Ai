@@ -148,6 +148,42 @@ void main() {
     expect(find.byType(TextField),findsNothing);
     await tester.pumpWidget(const SizedBox());
   },timeout:const Timeout(Duration(minutes:2)));
+  testWidgets('collection uses custom heads and preserves partial payment heads after their removal', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600,1200));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    final session = await io(tester,()=>WindowsFeeStructure.currentSession());
+    await io(tester,()=>db.collection('students_directory').doc('fee-pupil').set({
+      'name':'Synthetic Fee Pupil','class':'Class 1','rollNo':'1','parentContact':'0000000000',
+    }));
+    for(final existingPayment in [false,true]) {
+      await io(tester,()=>WindowsFeeStructure.save('Class 1',session!,existingPayment ? {} : {'Transport':40.25,'Monthly Tuition':175.75},replaceHeads:true));
+      if(existingPayment) {
+        final now=DateTime.now();final month='${now.year}-${now.month.toString().padLeft(2,'0')}';
+        await io(tester,()=>db.collection('fee_ledger').doc('partial').set({
+          'month':month,'studentId':'fee-pupil','studentName':'Synthetic Fee Pupil','rollNo':'1','parentContact':'0000000000',
+          'feeItems':{'Original Tuition':125.5},'expectedAmount':125.5,'totalPaid':50,
+        }));
+      }
+      await tester.pumpWidget(const MaterialApp(home:FeesCollectionScreen()));
+      await waitFor(tester,find.text('Fees Collection'));
+      await waitFor(tester,find.text('Synthetic Fee Pupil').last);
+      await tester.enterText(find.widgetWithText(TextField,'Student Name'),'Synthetic Fee Pupil');
+      await tester.pump();
+      await tester.ensureVisible(find.text('Synthetic Fee Pupil').last);
+      await tester.runAsync(()=>tester.tap(find.text('Synthetic Fee Pupil').last));
+      await waitFor(tester,find.text(existingPayment ? 'Original Tuition' : 'Transport'));
+      expect(find.text('Tuition Fees'),findsNothing);
+      if(existingPayment) {
+        expect(find.text('Monthly Tuition'),findsNothing);
+        final original=await io(tester,()=>db.collection('fee_ledger').doc('partial').get());
+        expect(original!.data()?['feeItems'],{'Original Tuition':125.5});
+        expect(original.data()?['totalPaid'],50);
+      } else {
+        expect(find.text('Monthly Tuition'),findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox());await tester.pump();
+    }
+  },timeout:const Timeout(Duration(minutes:2)));
   testWidgets('local save locks inputs and restart remains read-only; edit requires full wait and correct App Lock', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400,1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));

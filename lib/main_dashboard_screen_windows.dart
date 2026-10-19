@@ -11655,19 +11655,29 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   if (!mounted || _activeStudentId == null) return;
                   final currentClass = _selectedClass;
                   final currentStudent = _activeStudentId;
-                  final updated = await _getClassFeeSettings(currentClass);
-                  if (!mounted || currentStudent != _activeStudentId || currentClass != _selectedClass) return;
-                  setState(() {
-                    _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
-                    _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
-                    if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
-                      _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
-                    }
-                    if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
+                  try {
+                    final updated = await _getClassFeeSettings(currentClass);
+                    if (!mounted || currentStudent != _activeStudentId || currentClass != _selectedClass) return;
+                    setState(() {
+                      _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
+                      _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
+                      if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
+                        _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
+                      }
+                      if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
+                        _selectedFeeHeads.clear();
+                        _receivedAmountController.clear();
+                      }
+                    });
+                  } catch (error) {
+                    if (!mounted) return;
+                    setState(() {
+                      _activeFeeSettingsReady = false;
+                      _activeFeeSettingsMessage = 'Reload fee settings before collecting payment.';
                       _selectedFeeHeads.clear();
-                      _receivedAmountController.clear();
-                    }
-                  });
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee settings load error: $error')));
+                  }
                 },
                 icon: const Icon(Icons.settings_rounded, size: 16),
                 label: const Text('Settings'),
