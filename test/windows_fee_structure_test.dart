@@ -167,6 +167,7 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home:FeesCollectionScreen()));
       await waitFor(tester,find.text('Fees Collection'));
       await waitFor(tester,find.text('Synthetic Fee Pupil'));
+      if (existingPayment) await waitFor(tester,find.text('PARTIAL'));
       await tester.enterText(find.widgetWithText(TextField,'Student Name'),'Synthetic Fee Pupil');
       await tester.pump();
       await tester.ensureVisible(find.text('Synthetic Fee Pupil').last);

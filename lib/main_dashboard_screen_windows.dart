@@ -10957,7 +10957,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
             child: Icon(icon, color: color),
           ),
           const SizedBox(width: 11),
-          Column(
+          Expanded(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
@@ -10973,7 +10973,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
                 style: const TextStyle(color: Colors.white54, fontSize: 11),
               ),
             ],
-          ),
+          )),
         ],
       ),
     );
@@ -12075,6 +12075,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           LayoutBuilder(
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= 850;
+              final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
               final feePanel = _feeStructurePanel(
                 studentSelected: studentSelected,
                 settingsReady: studentSelected && _activeFeeSettingsReady,
@@ -12094,7 +12095,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
               if (wide) {
                 return SizedBox(
-                  height: 440,
+                  height: panelHeight,
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -12110,7 +12111,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 children: [
                   feePanel,
                   const SizedBox(height: 12),
-                  SizedBox(height: 430, child: paymentPanel),
+                  SizedBox(height: panelHeight, child: paymentPanel),
                 ],
               );
             },
@@ -12621,7 +12622,7 @@ child: Row(
                                         return _studentCard(
                                           student,
                                           ledgerForStudent(student),
-                                          canSelect: searchStarted,
+                                          canSelect: searchStarted && ledgerSnapshot.hasData && !ledgerSnapshot.hasError,
                                         );
                                       },
                                     ),
