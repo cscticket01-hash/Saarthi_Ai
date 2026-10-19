@@ -80,11 +80,11 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  }
  function verifyAttendance(schoolId,request){
   const p=verifyAttendanceIdentity(schoolId,request);
-  if(p.open!==true)fail(400,'School is closed today. Attendance is disabled for everyone');
+  if(p.open!==true)fail(400,'School is closed today. Attendance is disabled for everyone','ATTENDANCE_SCHOOL_CLOSED');
   const lat=Number(request.latitude),lng=Number(request.longitude),accuracy=Number(request.accuracy),radius=Number(p.radiusMeters);
-  if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius||!Number.isFinite(radius)||radius<25||radius>200||!Number.isFinite(Number(p.latitude))||!Number.isFinite(Number(p.longitude)))fail(400,'Accurate school location required');
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||!Number.isFinite(accuracy)||accuracy<0||accuracy>radius||!Number.isFinite(radius)||radius<25||radius>200||!Number.isFinite(Number(p.latitude))||!Number.isFinite(Number(p.longitude)))fail(400,'Accurate school location required','ATTENDANCE_LOCATION_ACCURACY');
   const rad=x=>x*Math.PI/180,h=Math.sin(rad(p.latitude-lat)/2)**2+Math.cos(rad(lat))*Math.cos(rad(p.latitude))*Math.sin(rad(p.longitude-lng)/2)**2;
-  if(6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))>radius)fail(400,'Attendance can be marked only within the school location');
+  if(6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))>radius)fail(400,'Attendance can be marked only within the school location','ATTENDANCE_OUTSIDE_SCHOOL');
   return p;
  }
  let attendanceWake=()=>{};
