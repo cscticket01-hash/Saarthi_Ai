@@ -12252,6 +12252,13 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _ledgerStream,
             builder: (context, ledgerSnapshot) {
+              if (!ledgerSnapshot.hasData && !ledgerSnapshot.hasError) {
+                return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+              }
+              if (ledgerSnapshot.hasError) {
+                return const Center(child: Text('Fee history could not load. Reopen Fees Collection before collecting a payment.',
+                  style: TextStyle(color: Colors.orangeAccent)));
+              }
               final ledgerByIdentity = <String, Map<String, dynamic>>{};
               final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
 
