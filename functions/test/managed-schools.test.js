@@ -469,3 +469,29 @@ test('revoked school-admin cannot list or mutate recycle snapshots',async()=>{
  await assert.rejects(f.call({action:'managed/recycle',operation:'restore',fileId:'own',operationId:'restore_operation_0001',expectedRecordRevision:'deleted'}),e=>e.status===403);
  assert.equal(f.sent.length,0);
 });
+
+test('signed school schedule rejects outside captures, retains valid delayed capture and fences foreign school',async()=>{
+ const day=new Date(time+19800000).toISOString().slice(0,10),at=new Date(time+19800000),minute=at.getUTCHours()*60+at.getUTCMinutes();
+ const session='schedule-session',qr='x'.repeat(48),rows=new Map();
+ let schedule={enabled:true,startMinute:0,endMinute:minute};
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,projectId:A,attendancePolicy:{role:'student',personId:'stable',documentId:'pupil',qrHash:crypto.createHash('sha256').update('student/pupil/'+qr).digest('hex'),day,open:true,latitude:24,longitude:92,radiusMeters:200,scheduleVersion:1,schedule,recorded:false}})}),{
+  attendanceStore:{create:async(id,row)=>{if(rows.has(id))return false;rows.set(id,row);return true;},pending:async()=>[]}
+ });
+ const refresh=()=>f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_refresh',sessionToken:session}});
+ let result=await refresh();assert.equal(result.attendanceStatus.day,day);assert.equal(result.attendanceStatus.version,1);assert.deepEqual(result.attendanceStatus.schedule,schedule);
+ const request={action:'mobile_mark_attendance',sessionToken:session,attendancePermit:result.attendancePermit,role:'student',personId:'pupil',linkToken:qr,latitude:24,longitude:92,accuracy:3,mode:'entry',clientCapturedAt:time};
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request}),e=>e.code==='ATTENDANCE_SCHEDULE_CLOSED');assert.equal(rows.size,0);
+ // Same current server minute is closed, but original capture before that minute remains eligible.
+ const earlier=time-60000;
+ assert.equal((await f.call({action:'managed/mobile',schoolId:A,request:{...request,clientCapturedAt:earlier}})).accepted,true);
+ assert.equal(rows.size,1);
+ f.docs.get('platform_schools/'+B).lastSeenAt=time;
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:B,request:{...request,clientCapturedAt:earlier}}));assert.equal(rows.size,1);
+ schedule={enabled:true,startMinute:0,endMinute:1440};result=await refresh();
+ assert.equal((await f.call({action:'managed/mobile',schoolId:A,request:{...request,attendancePermit:result.attendancePermit}})).duplicate,true);
+});
+
+test('current Script schedule rejection becomes a retained policy refusal instead of a generic 502',async()=>{
+ const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Student attendance is outside the school schedule'})}));
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_mark_attendance',sessionToken:'valid'}}),e=>e.status===400&&e.code==='ATTENDANCE_SCHEDULE_CLOSED');
+});
