@@ -371,6 +371,10 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  }
  const m=await identity(req,b.schoolId);
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ // A restored Firebase session predates enrollment on existing PCs. Optional
+ // directory admission is background metadata, never a new school-data gate.
+ if(action==='managed/session'&&deviceEnrollmentEnabled&&!deviceManagementEnabled&&!deviceAccessEnforced)
+  scheduleHint(()=>deviceAccess.observeSession(req,b,m,lease(m)).catch(()=>{}));
  if(action==='managed/presence'){
   const p=verifiedPresence(b.presenceToken);if(p.schoolId!==m.schoolId||p.uid!==m.uid)fail(403,'Another school is not accessible');
   await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:now()},{merge:true});return {success:true,schoolId:m.schoolId};

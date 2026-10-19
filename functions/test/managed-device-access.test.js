@@ -5,9 +5,9 @@ const {createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS}=requir
 const {generateDeviceCredential,createManagedDeviceRegistry}=require('../managed-device-registry');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),keys=generateKeyPairSync('ed25519');
 const hash=value=>createHash('sha256').update(value).digest('hex');
-function fixture(enforced=true){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
+function fixture(enforced=true,managementEnabled=false,enrollmentEnabled=false){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
  const store={transaction(school,work){const result=tail.then(async()=>{const change=await work(rows.has(school)?structuredClone(rows.get(school)):null);rows.set(school,structuredClone(change.state));if(change.audit)audit.push(change.audit);return change.result;});tail=result.catch(()=>{});return result;}};
- const access=createManagedDeviceAccess({store,enforced,offlinePrivateKey:keys.privateKey,now:()=>time});
+ const access=createManagedDeviceAccess({store,enforced,managementEnabled,enrollmentEnabled,offlinePrivateKey:keys.privateKey,now:()=>time});
  const identity={schoolId:A,uid:'school-admin',authenticatedAt:time};
  const entitlement={allowed:true,expiresAt:time+86400000};
  const proof=n=>({'x-vidya-device-id':String(n).padStart(32,'0'),'x-vidya-device-credential':generateDeviceCredential()});
@@ -80,4 +80,107 @@ test('successful managed session includes signed offline authorization only in e
   deviceIdentity:session.device.deviceIdentity,generationHash:session.device.generationHash,now:f.time}).expiresAt,session.offlineExpiresAt);
  const legacy=await fixture(false).call('managed/session',{});
  assert.equal(legacy.deviceEnforced,false);assert.equal(legacy.offlineLease,undefined);
+});
+
+test('management mode preserves offline policy but checks registration and revocation online',async()=>{
+ const f=fixture(false,true),one=f.proof(1),two=f.proof(2);
+ const first=(await f.call('managed/device/register',one)).result;
+ assert.equal(first.deviceManaged,true);assert.equal(first.deviceEnforced,false);
+ assert.equal(first.offlineLease,undefined);
+ const second=(await f.call('managed/device/register',two)).result;
+ const session=await f.call('managed/session',one);
+ assert.equal(session.deviceManaged,true);assert.equal(session.deviceEnforced,false);
+ const list=(await f.call('managed/device/list',one)).result;
+ assert.equal(list.devices.length,2);assert.equal(list.devices.filter(d=>d.current).length,1);
+ assert.equal(list.deviceLimit,5);assert.equal(list.serverTime,f.time());
+ await assert.rejects(f.call('managed/presence',{}),{code:'DEVICE_PROOF_REQUIRED'});
+ await f.call('managed/device/revoke',one,{targetDeviceIdentity:second.device.deviceIdentity});
+ for(const action of ['managed/session','managed/presence','managed/records']) {
+  await assert.rejects(f.call(action,two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ }
+ assert.equal((await f.call('managed/device/list',one)).result.devices.filter(d=>d.status==='active').length,1);
+});
+
+test('enrollment mode keeps existing sync/session authorization exactly legacy and negotiates new clients',async()=>{
+ const f=fixture(false,false,true),headers=f.proof(1);
+ for(const action of ['managed/session','managed/records','managed/disconnect','managed/storage/connect']) {
+  assert.deepEqual(await f.call(action,{}),{handled:false,mode:'legacy_unenforced',deviceEnforced:false});
+ }
+ await assert.rejects(f.call('managed/device/register',headers),{code:'DEVICE_ROLLOUT_DISABLED'});
+ assert.equal(f.rows.size,0);
+ const first=(await f.call('managed/device/register',headers,{deviceManagementProtocol:2})).result;
+ assert.equal(first.deviceManaged,true);assert.equal(first.deviceEnforced,false);
+ assert.equal(first.deviceEnrollmentOnly,true);assert.equal(first.offlineLease,undefined);
+ const list=(await f.call('managed/device/list',headers)).result;
+ assert.equal(list.canRevoke,false);assert.equal(list.devices.length,1);
+ const before=structuredClone(f.rows.get(A));
+ await assert.rejects(f.call('managed/device/revoke',headers,{targetDeviceIdentity:hash('other')}),{code:'DEVICE_ENFORCEMENT_REQUIRED'});
+ assert.deepEqual(f.rows.get(A),before);
+ f.setTime(f.time()+61000);
+ await f.access.observePresence({headers},{schoolId:A,uid:f.identity.uid});
+ const seen=(await createManagedDeviceRegistry({store:f.store,schoolId:A,now:f.time}).list({...f.identity,role:'school_admin'}))[0].lastSeenAt;
+ assert.equal(seen,f.time());
+ await f.access.observePresence({headers:{}},{schoolId:A,uid:f.identity.uid});
+ await f.access.observePresence({headers},{schoolId:B,uid:f.identity.uid});
+ assert.equal((await f.call('managed/device/list',headers)).result.devices.length,1);
+});
+test('enrollment still enforces school isolation, fresh registration and five-PC admission',async()=>{
+ const f=fixture(false,false,true),body={deviceManagementProtocol:2};
+ await assert.rejects(f.call('managed/device/register',f.proof(1),body,{...f.identity,authenticatedAt:f.time()-300001}),{code:'DEVICE_FRESH_LOGIN_REQUIRED'});
+ for(let i=1;i<=5;i++) await f.call('managed/device/register',f.proof(i),body);
+ await assert.rejects(f.call('managed/device/register',f.proof(6),body),{code:'DEVICE_LIMIT_REACHED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{schoolId:B}),{code:'DEVICE_SCHOOL_MISMATCH'});
+ assert.deepEqual(await f.call('managed/records',{}),{handled:false,mode:'legacy_unenforced',deviceEnforced:false});
+});
+
+test('restored school sessions enroll two real proofs without fresh password login',async()=>{
+ const f=fixture(false,false,true),one=f.proof(1),two=f.proof(2);
+ f.setTime(f.time()+3600000); // Refreshed Firebase tokens retain their old auth_time.
+ const a=(await f.call('managed/device/list',one,{deviceName:'Office PC',deviceOs:'Windows'})).result;
+ assert.equal(a.devices.length,1);assert.equal(a.devices[0].current,true);
+ assert.equal(a.devices[0].name,'Office PC');assert.equal(a.canRevoke,false);
+ await f.access.observeSession({headers:two},{action:'managed/session',schoolId:A,deviceName:'Accounts PC'},f.identity,f.entitlement);
+ const b=(await f.call('managed/device/list',one)).result;
+ assert.equal(b.devices.length,2);assert.equal(b.devices.filter(d=>d.current).length,1);
+ assert.equal(b.devices.find(d=>d.current).deviceIdentity,a.devices[0].deviceIdentity);
+ const other=(await f.call('managed/device/list',two)).result;
+ assert.equal(other.devices.find(d=>d.current).name,'Accounts PC');
+ assert.equal(f.audit.length,2);
+ f.setTime(f.time()+61000);
+ const again=(await f.call('managed/device/list',one,{deviceName:'Renamed office'})).result;
+ const current=again.devices.find(d=>d.current);
+ assert.equal(current.lastSeenAt,f.time());assert.equal(current.name,'Renamed office');
+ assert.equal(current.generationHash,a.devices[0].generationHash);assert.equal(f.audit.length,2);
+});
+test('session migration never repairs revoked, pruned or conflicting device credentials',async()=>{
+ const f=fixture(false,false,true),one=f.proof(1),two=f.proof(2);
+ await f.call('managed/device/list',one);const second=(await f.call('managed/device/list',two)).result.devices.find(d=>d.current);
+ const registry=createManagedDeviceRegistry({store:f.store,schoolId:A,now:f.time});
+ const actor={...f.identity,role:'school_admin'};
+ await registry.revoke(actor,{currentDeviceId:one['x-vidya-device-id'],currentCredential:one['x-vidya-device-credential'],targetDeviceIdentity:second.deviceIdentity});
+ const before=structuredClone(f.rows.get(A));
+ await assert.rejects(f.call('managed/device/list',two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...two,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...one,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_CREDENTIAL_CONFLICT'});
+ assert.deepEqual(f.rows.get(A),before);
+ f.setTime(f.time()+86400001);f.entitlement.expiresAt=f.time()+86400000;
+ await registry.list(actor); // Prune revoked display row, retaining revocation filter.
+ assert.equal(f.rows.get(A).devices[second.deviceIdentity],undefined);
+ await assert.rejects(f.call('managed/device/list',two),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ await assert.rejects(f.call('managed/device/list',{...two,'x-vidya-device-credential':generateDeviceCredential()}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+});
+test('restored-session admission retains transactional five-PC limit and identity guards',async()=>{
+ const f=fixture(false,false,true);f.setTime(f.time()+3600000);
+ const attempts=await Promise.allSettled(Array.from({length:6},(_,n)=>f.call('managed/device/list',f.proof(n+1))));
+ assert.equal(attempts.filter(r=>r.status==='fulfilled').length,5);
+ assert.equal(attempts.find(r=>r.status==='rejected').reason.code,'DEVICE_LIMIT_REACHED');
+ assert.equal(Object.keys(f.rows.get(A).devices).length,5);
+ await assert.rejects(f.call('managed/device/list',{}),{code:'DEVICE_PROOF_REQUIRED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{},f.identity,{allowed:false,expiresAt:f.time()+10000}),{code:'DEVICE_ENTITLEMENT_EXPIRED'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{schoolId:B}),{code:'DEVICE_SCHOOL_MISMATCH'});
+ await assert.rejects(f.call('managed/device/list',f.proof(7),{},{...f.identity,authenticatedAt:undefined}),{code:'DEVICE_FRESH_LOGIN_REQUIRED'});
+ for(const mode of [fixture(),fixture(false,true)]){
+  await assert.rejects(mode.call('managed/device/list',mode.proof(1)),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+  assert.equal(mode.rows.size,0);
+ }
 });
