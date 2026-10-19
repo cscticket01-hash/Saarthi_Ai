@@ -38,10 +38,12 @@ class AttendanceRejected extends StateError {
   final String code, reference;
   static const _reasons = <String, String>{
     'ATTENDANCE_SCHOOL_CLOSED': 'School is closed for this attendance day.',
-    'ATTENDANCE_LOCATION_ACCURACY': 'Location accuracy or school location settings do not meet the attendance policy.',
+    'ATTENDANCE_LOCATION_ACCURACY':
+        'Location accuracy or school location settings do not meet the attendance policy.',
     'ATTENDANCE_OUTSIDE_SCHOOL':
         'The captured location is outside the school attendance radius.',
-    'ATTENDANCE_SCHEDULE_CLOSED': 'Student attendance is outside the school schedule.',
+    'ATTENDANCE_SCHEDULE_CLOSED':
+        'Student attendance is outside the school schedule.',
     'ATTENDANCE_CAPTURE_REVIEW': 'Attendance capture date needs school review.',
   };
   static String? reason(Map<String, dynamic> response, int status) {
@@ -201,9 +203,11 @@ class SchoolSession {
           token.length > 3000 ||
           !RegExp(r'^[a-f0-9]{64}$').hasMatch(parts[1]))
         return null;
-      final p = jsonDecode(
-        utf8.decode(base64Url.decode(base64Url.normalize(parts[0]))),
-      ) as Map;
+      final p =
+          jsonDecode(
+                utf8.decode(base64Url.decode(base64Url.normalize(parts[0]))),
+              )
+              as Map;
       if (p['purpose'] != 'attendance' ||
           p['schoolId'] != current.schoolId ||
           p['role'] != current.role ||
@@ -244,16 +248,34 @@ class SchoolSession {
 
   String _attendanceStatusDay = '';
   String? _attendanceStatusOwner;
-  bool _capturedToday = false;
-  String get attendanceLockReason {
+  bool _capturedToday = false, _exitedToday = false;
+  String _historyDay = '';
+  String? _historyOwner;
+  bool _historyEntry = false, _historyExit = false;
+  String get attendanceLockReason => attendanceLockFor('entry');
+  String attendanceLockFor(String mode) {
     final day = attendanceDay(DateTime.now());
-    if (!attendanceStatusReady || _attendanceStatusOwner != _attendanceOwner || _attendanceStatusDay != day) {
+    if (!attendanceStatusReady ||
+        _attendanceStatusOwner != _attendanceOwner ||
+        _attendanceStatusDay != day) {
       return 'Checking today’s attendance…';
     }
     final status = dashboard['attendanceStatus'];
-    if (_capturedToday || status is Map && status['day'] == day && status['recorded'] == true) {
-      return 'Attendance captured today. Locked until tomorrow, including pending submissions.';
+    final entered =
+        _capturedToday ||
+        (_historyOwner == _attendanceOwner &&
+            _historyDay == day &&
+            _historyEntry) ||
+        status is Map && status['day'] == day && status['recorded'] == true;
+    final exited =
+        _exitedToday ||
+        (_historyOwner == _attendanceOwner &&
+            _historyDay == day &&
+            _historyExit);
+    if (mode == 'exit' ? exited : entered) {
+      return '${mode == 'exit' ? 'Check-out' : 'Check-in'} captured today. Locked until tomorrow, including pending submissions.';
     }
+    if (mode == 'exit' && !entered) return 'Check in before checking out.';
     if (link?.role == 'student') {
       if (status is! Map) {
         return 'Refresh school attendance settings before marking attendance.';
@@ -270,11 +292,15 @@ class SchoolSession {
 
   String get attendanceScheduleLabel {
     final status = dashboard['attendanceStatus'];
-    if (link?.role != 'student' || status is! Map || status['version'] != 1) return '';
+    if (link?.role != 'student' || status is! Map || status['version'] != 1)
+      return '';
     final w = status['schedule'];
-    if (w == null || w is Map && w['enabled'] == false) return 'Student attendance: no daily time limit.';
-    if (w is! Map || w['startMinute'] is! int || w['endMinute'] is! int) return '';
-    String clock(int n) => '${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}';
+    if (w == null || w is Map && w['enabled'] == false)
+      return 'Student attendance: no daily time limit.';
+    if (w is! Map || w['startMinute'] is! int || w['endMinute'] is! int)
+      return '';
+    String clock(int n) =>
+        '${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}';
     return 'Student attendance: ${clock(w['startMinute'])}–${clock(w['endMinute'])} IST. Locks at closing time.';
   }
 
@@ -286,13 +312,19 @@ class SchoolSession {
       return;
     }
     final day = attendanceDay(DateTime.now());
-    final captured = await _attendanceStore.capturedOn(owner, day);
+    final captured = await _attendanceStore.capturedOn(
+      owner,
+      day,
+      mode: 'entry',
+    );
+    final exited = await _attendanceStore.capturedOn(owner, day, mode: 'exit');
     final rows = await _attendanceStore.pending(owner);
     final summary = await _attendanceStore.summary(owner);
     if (owner != _attendanceOwner) return;
     _attendanceStatusOwner = owner;
     _attendanceStatusDay = day;
     _capturedToday = captured;
+    _exitedToday = exited;
     attendanceStatusReady = true;
     attendancePending = (summary['pending'] as num).toInt();
     attendanceAccepted = (summary['accepted'] as num? ?? 0).toInt();
@@ -306,6 +338,26 @@ class SchoolSession {
         .take(1)
         .join();
     attendanceChanges.value++;
+  }
+
+  Future<List<Map<String, dynamic>>> attendanceHistory(String month) async {
+    final current = link, generation = _generation;
+    final result = await schoolCall('mobile_attendance_list', {'month': month});
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
+    final rows = (result['attendance'] as List? ?? [])
+        .whereType<Map>()
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
+    final day = attendanceDay(DateTime.now());
+    if (month == day.substring(0, 7)) {
+      _historyDay = day;
+      _historyOwner = _attendanceOwner;
+      _historyEntry = rows.any((r) => r['date'] == day && r['checkIn'] != null);
+      _historyExit = rows.any((r) => r['date'] == day && r['checkOut'] != null);
+      attendanceChanges.value++;
+    }
+    return rows;
   }
 
   Future<void> retryAttendance() async {
@@ -328,8 +380,9 @@ class SchoolSession {
     await refreshAttendanceStatus();
     if (generation != _generation || !identical(current, link))
       throw SchoolAccessDenied('School session changed.');
-    if (attendanceLockReason.isNotEmpty) throw StateError(attendanceLockReason);
-    if (mode != 'entry' || capturedAt <= 0)
+    if (attendanceLockFor(mode).isNotEmpty)
+      throw StateError(attendanceLockFor(mode));
+    if (!['entry', 'exit'].contains(mode) || capturedAt <= 0)
       throw StateError('Invalid attendance capture.');
     final day = DateTime.fromMillisecondsSinceEpoch(
       capturedAt,
@@ -338,10 +391,14 @@ class SchoolSession {
     final date =
         '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
     if (date != attendanceDay(DateTime.now()) ||
-        current.role == 'student' && !attendanceWindowAllows(
-          (dashboard['attendanceStatus'] as Map?)?['schedule'],
-          DateTime.fromMillisecondsSinceEpoch(capturedAt))) {
-      throw StateError('Attendance capture is outside today’s school schedule.');
+        current.role == 'student' &&
+            !attendanceWindowAllows(
+              (dashboard['attendanceStatus'] as Map?)?['schedule'],
+              DateTime.fromMillisecondsSinceEpoch(capturedAt),
+            )) {
+      throw StateError(
+        'Attendance capture is outside today’s school schedule.',
+      );
     }
     final approval = <String, dynamic>{};
     if (_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
@@ -373,7 +430,7 @@ class SchoolSession {
       ...gps,
       ...approval,
       if (current.cardIssueId.isNotEmpty) 'cardIssueId': current.cardIssueId,
-    }, oncePerDay: true);
+    }, oncePerMode: true);
     if (generation != _generation || !identical(current, link))
       throw SchoolAccessDenied(
         'School session changed; original capture retained.',
@@ -386,7 +443,8 @@ class SchoolSession {
     final running = _attendanceFlush;
     if (running != null) return running;
     final pending = _flushAttendance().catchError((Object error) {
-      attendanceFailure = 'Attendance storage unavailable. Existing captures are retained; retry after reopening the app.';
+      attendanceFailure =
+          'Attendance storage unavailable. Existing captures are retained; retry after reopening the app.';
       attendanceChanges.value++;
       throw error;
     });
@@ -423,11 +481,15 @@ class SchoolSession {
     if (permitToken is! String) return; // Older broker: no fake acceptance.
     Map permit;
     try {
-      permit = jsonDecode(
-        utf8.decode(
-          base64Url.decode(base64Url.normalize(permitToken.split('.').first)),
-        ),
-      ) as Map;
+      permit =
+          jsonDecode(
+                utf8.decode(
+                  base64Url.decode(
+                    base64Url.normalize(permitToken.split('.').first),
+                  ),
+                ),
+              )
+              as Map;
     } catch (_) {
       return;
     }
@@ -490,13 +552,15 @@ class SchoolSession {
                     publicKey: cardPublicKey,
                   )
                 : null;
-            final oldPermit = jsonDecode(
-              utf8.decode(
-                base64Url.decode(
-                  base64Url.normalize(original.split('.').first),
-                ),
-              ),
-            ) as Map;
+            final oldPermit =
+                jsonDecode(
+                      utf8.decode(
+                        base64Url.decode(
+                          base64Url.normalize(original.split('.').first),
+                        ),
+                      ),
+                    )
+                    as Map;
             if (originalExpiry == null ||
                 originalExpiry <= at ||
                 oldPermit['expiresAt'] is! int ||
@@ -654,7 +718,8 @@ class SchoolSession {
       );
       link = restoredLink;
       schoolToken = d['schoolToken'];
-      syncPaused = d['syncPaused'] == true;
+      // Student-facing pause control was retired; always resume background sync.
+      syncPaused = false;
       await _adoptCardAuthorization(
         Map<String, dynamic>.from(d),
         restoring: true,
@@ -1025,7 +1090,8 @@ class SchoolSession {
     final watch = Stopwatch()..start();
     final pending = _refreshDashboard(afterSignal: afterSignal);
     _refresh = pending;
-    connectionMessage = 'Checking the latest school dashboard; previously verified data remains available.';
+    connectionMessage =
+        'Checking the latest school dashboard; previously verified data remains available.';
     connectionChanges.value++;
     pending.then(
       (_) {
@@ -1409,6 +1475,11 @@ class SchoolSession {
     _cachedAttendancePermit = null;
     _attendanceStatusDay = '';
     _capturedToday = false;
+    _exitedToday = false;
+    _historyDay = '';
+    _historyOwner = null;
+    _historyEntry = false;
+    _historyExit = false;
     attendanceStatusReady = false;
     _cardAuthorizationToken = null;
     _cardOfflineLease = null;

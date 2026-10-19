@@ -847,7 +847,7 @@ void main() {
       expect(calls, 1);
       final restored = SchoolSession();
       await restored.restore();
-      expect(restored.syncPaused, true);
+      expect(restored.syncPaused, false); // Upgrades resume hidden background sync.
       await session.setSyncPaused(false);
       expect(calls, 2);
       final due = session.lastDashboardVerifiedAt!.add(
