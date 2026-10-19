@@ -47,6 +47,61 @@ void main() {
     expect(await store.capturedOn(a, day), true);
     await expectLater(store.save(a, day, 'exit', 7000, gps, oncePerDay: true), throwsStateError);
   });
+  test(
+    'entry and exit lock independently across review, restart and concurrent taps',
+    () async {
+      const owner = 'school-A/student-1', day = '2026-10-19';
+      await store.save(owner, day, 'entry', 1000, gps, oncePerMode: true);
+      expect(await store.capturedOn(owner, day, mode: 'entry'), true);
+      expect(await store.capturedOn(owner, day, mode: 'exit'), false);
+      final results = await Future.wait(
+        [2000, 3000].map((at) async {
+          try {
+            await store.save(owner, day, 'exit', at, gps, oncePerMode: true);
+            return true;
+          } on StateError {
+            return false;
+          }
+        }),
+      );
+      expect(results.where((v) => v).length, 1);
+      await store.close();
+      store = AttendanceStore(openDatabaseOverride: open);
+      expect(await store.capturedOn(owner, day, mode: 'exit'), true);
+      await expectLater(
+        store.save(owner, day, 'exit', 4000, gps, oncePerMode: true),
+        throwsStateError,
+      );
+      expect((await store.pending(owner)).length, 2);
+      expect(
+        await store.capturedOn('school-B/student-1', day, mode: 'exit'),
+        false,
+      );
+    },
+  );
+  test('saved school session checks in and out without another login; pending actions stay locked', () async {
+    final day = attendanceDay(DateTime.now()), at = DateTime.now().millisecondsSinceEpoch;
+    final session = SchoolSession(attendanceStore: store, client: MockClient((_) async =>
+      http.Response(jsonEncode({'success': true, 'schoolId': school, 'projectId': school,
+        'sessionToken': 'verified', 'expiresAt': at + 3600000,
+        'person': {'personId': fixture['personId']},
+        'attendanceStatus': {'version': 1, 'day': day, 'recorded': false, 'schedule': null}}), 200)));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.setSyncPaused(true); // Deterministic offline queue capture.
+    await session.refreshAttendanceStatus();
+    expect(session.attendanceLockFor('exit'), contains('Check in before'));
+    await expectLater(session.saveAttendance(gps, at, 'exit'), throwsStateError);
+    await session.saveAttendance(gps, at, 'entry');
+    expect(session.attendanceLockFor('entry'), contains('Locked'));
+    expect(session.attendanceLockFor('exit'), isEmpty);
+    await session.saveAttendance(gps, at + 1, 'exit');
+    expect(session.attendanceLockFor('exit'), contains('Locked'));
+    expect(session.attendancePending, 2);
+    final restored = SchoolSession(attendanceStore: store);
+    await restored.restore(); await restored.refreshAttendanceStatus();
+    expect(restored.attendanceLockFor('entry'), contains('Locked'));
+    expect(restored.attendanceLockFor('exit'), contains('Locked'));
+  });
   test('concurrent daily captures commit once without replacing original payload', () async {
     final results = await Future.wait([1000, 2000].map((at) async {
       try { await store.save('owner', '2026-10-19', 'entry', at, gps, oncePerDay: true); return true; }
@@ -370,7 +425,7 @@ void main() {
         now);
     final restored = SchoolSession(client: client, attendanceStore: store);
     await restored.restore();
-    await expectLater(restored.saveAttendance(gps, now, 'exit'), throwsStateError);
+    await expectLater(restored.saveAttendance(gps, now, 'entry'), throwsStateError);
     expect(restored.attendanceLockReason, contains('Locked'));
     await restored.flushAttendance();
     expect(marks, 1); // No second capture or second server write after restart.

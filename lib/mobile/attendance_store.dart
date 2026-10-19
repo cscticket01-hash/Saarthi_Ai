@@ -48,6 +48,7 @@ class AttendanceStore {
     int capturedAt,
     Map<String, dynamic> gps, {
     bool oncePerDay = false,
+    bool oncePerMode = false,
   }) async {
     if (gps['cardIssueId'] != null &&
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(gps['cardIssueId'].toString()))
@@ -70,12 +71,12 @@ class AttendanceStore {
         .convert(utf8.encode(jsonEncode([owner, day, mode])))
         .toString();
     await (await database).transaction((tx) async {
-      if (oncePerDay &&
+      if ((oncePerDay || oncePerMode) &&
           (await tx.query(
             'attendance',
             columns: ['id'],
-            where: 'owner=? AND day=?',
-            whereArgs: [owner, day],
+            where: 'owner=? AND day=?${oncePerDay ? '' : ' AND mode=?'}',
+            whereArgs: [owner, day, if (!oncePerDay) mode],
             limit: 1,
           )).isNotEmpty) {
         throw StateError(
@@ -107,12 +108,12 @@ class AttendanceStore {
     return id; // Only after the durable transaction commits.
   }
 
-  Future<bool> capturedOn(String owner, String day) async =>
+  Future<bool> capturedOn(String owner, String day, {String? mode}) async =>
       (await (await database).query(
         'attendance',
         columns: ['id'],
-        where: 'owner=? AND day=?',
-        whereArgs: [owner, day],
+        where: 'owner=? AND day=?${mode == null ? '' : ' AND mode=?'}',
+        whereArgs: [owner, day, if (mode != null) mode],
         limit: 1,
       )).isNotEmpty;
   Future<List<Map<String, Object?>>> pending(String owner) async =>
