@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:image/image.dart' as img;
 import 'package:qr/qr.dart' as qr_pixels;
 import 'package:printing/printing.dart';
@@ -208,10 +210,11 @@ void main() {
     expect((await db.collection('_windows_document_outbox').get()).docs.map((row) => row.id).toList(), queueBefore);
   });
 
-  test('one unavailable owner image does not starve later ID packages or replace them on retry', () async {
+  test('one unavailable owner image does not starve a slow valid image or replace prepared IDs on retry', () async {
     await CentralSchoolCloud.updateSession(school, {'endpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud'});
     final person = {'mobileLinkToken': 'x' * 48, 'mobileStableId': 'p-${'a' * 64}',
-      'mobileIdentityVersion': 1, 'name': 'Ready Student', 'class': '1', 'rollNo': '1'};
+      'mobileIdentityVersion': 1, 'name': 'Ready Student', 'class': '1', 'rollNo': '1',
+      'photoUrl': 'https://school.example/photo.png'};
     await db.collection('students_directory').doc('broken').set({...person,
       'photoUrl': 'data:image/png;base64,%%%'});
     await db.collection('students_directory').doc('ready').set(person);
@@ -224,14 +227,25 @@ void main() {
     final card = WindowsBackendBridge.publishedIdCardId(qr);
     final printing = PrintingPlatform.instance;
     PrintingPlatform.instance = OwnerReviewPrinting(qr);
-    Future<void> publish() => WindowsDocumentTemplates.publishChangedIdCards(
-      affectedPeople: {'studentId': {'broken', 'ready'}},
-      readInventory: () async => {'schoolId': school, 'syncProtocol': 2, 'records': <String, dynamic>{}});
+    final photo = img.encodePng(img.Image(width: 16, height: 24));
+    var imageReads = 0;
+    Future<void> publish() => http.runWithClient(
+      () => WindowsDocumentTemplates.publishChangedIdCards(
+        affectedPeople: {'studentId': {'broken', 'ready'}},
+        readInventory: () async => {'schoolId': school, 'syncProtocol': 2, 'records': <String, dynamic>{}}),
+      () => MockClient((request) async {
+        expect(request.url.toString(), 'https://school.example/photo.png');
+        imageReads++;
+        // A valid school image need not complete inside the former 600ms.
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        return http.Response.bytes(photo, 200, headers: {'content-type': 'image/png'});
+      }));
     try {
       await expectLater(publish(), throwsStateError);
       final prepared = (await db.collection('_windows_document_outbox').doc(card).get()).data()!;
       final original = await File(prepared['localPath']).readAsBytes();
       expect(prepared['studentId'], 'ready');
+      expect(imageReads, greaterThanOrEqualTo(2));
       expect((await db.collection('_windows_document_outbox').doc(
         WindowsBackendBridge.publishedIdCardOwnerId('student', 'broken')).get()).exists, false);
       await expectLater(publish(), throwsStateError);
