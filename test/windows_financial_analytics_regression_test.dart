@@ -130,7 +130,7 @@ Future<void> settleExpenseIo(WidgetTester tester) async {
   for (var i = 0; i < 100; i++) {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pump(const Duration(milliseconds: 100));
-    if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    if (i >= 9 && find.byType(CircularProgressIndicator).evaluate().isEmpty && !tester.binding.hasScheduledFrame) break;
   }
   await tester.pumpAndSettle();
 }
