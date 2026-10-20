@@ -22,7 +22,7 @@ void main() {
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  test('a verified dashboard arriving after 25 seconds replaces cache instead of timing out early', () async {
+  test('a verified school read arriving after 25 seconds is accepted instead of timing out early', () async {
     late Completer<http.Response> reply;
     var slow = false;
     final session = SchoolSession(persistSession: (_) async {}, client: MockClient((request) async {
@@ -36,19 +36,19 @@ void main() {
     slow = true;
     fakeAsync((clock) {
       reply = Completer<http.Response>();
-      var completed = false;
+      Map<String, dynamic>? verified;
       Object? failure;
-      session.refreshDashboard().then((_) => completed = true, onError: (Object e) { failure = e; });
+      session.schoolCall('mobile_dashboard', {}).then((result) => verified = result, onError: (Object e) { failure = e; });
       clock.flushMicrotasks();
       clock.elapse(const Duration(seconds: 35));
       expect(failure, isNull);
-      expect(completed, false);
+      expect(verified, isNull);
       expect(session.dashboard['revision'], 'old');
       reply.complete(http.Response(jsonEncode(response({'revision': 'new', 'notices': []})), 200));
       clock.flushMicrotasks();
       expect(failure, isNull);
-      expect(completed, true);
-      expect(session.dashboard['revision'], 'new');
+      expect(verified?['revision'], 'new');
+      expect(session.dashboard['revision'], 'old');
       expect(session.connectionState, SchoolConnectionState.connected);
     });
     await session.clear();
