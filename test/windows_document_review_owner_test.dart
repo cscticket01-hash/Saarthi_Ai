@@ -215,6 +215,7 @@ void main() {
     await db.collection('students_directory').doc('broken').set({...person,
       'photoUrl': 'data:image/png;base64,%%%'});
     await db.collection('students_directory').doc('ready').set(person);
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolName': 'Synthetic School'});
     await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:school-id-v1'});
     final qr = SchoolLink.encodeCompact({'app': 'VIDYA_SAARTHI', 'v': 2, 'managed': true,
       'schoolId': school, 'centralEndpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud',
