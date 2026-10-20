@@ -1,4 +1,5 @@
 'use strict';
+const {createManagedSupport}=require('./managed-support');
 const {createManagedCardReader}=require('./managed-card-reader');
 const {createSchoolChangeFeed}=require('./school-change-feed');
 const {createManagedDeviceAccess}=require('./managed-device-access');
@@ -376,6 +377,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  }
  const m=await identity(req,b.schoolId);
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ if(['managed/support/list','managed/support/create','managed/support/thread','managed/support/reply'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
  // directory admission is background metadata, never a new school-data gate.
  if(action==='managed/session'&&deviceEnrollmentEnabled&&!deviceManagementEnabled&&!deviceAccessEnforced)

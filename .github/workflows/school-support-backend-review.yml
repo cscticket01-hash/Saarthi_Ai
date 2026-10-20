@@ -1,0 +1,18 @@
+name: School support production backend review
+on:
+  pull_request:
+    paths:
+      - functions/managed-support.js
+      - functions/test/managed-support.test.js
+      - .github/workflows/school-support-backend-review.yml
+permissions:
+  contents: read
+jobs:
+  support-attendance-devices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test functions/test/managed-support.test.js functions/test/attendance-queue.test.js functions/test/managed-device-access.test.js functions/test/managed-device-registry.test.js functions/test/device-management-session.test.js
