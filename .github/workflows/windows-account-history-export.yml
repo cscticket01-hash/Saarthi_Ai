@@ -11,6 +11,9 @@ on:
       - .github/workflows/windows-account-history-export.yml
 permissions:
   contents: read
+concurrency:
+  group: windows-account-review-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -41,4 +44,4 @@ jobs:
       - name: Workbook, expense, appearance and identity regressions
         env:
           APPDATA: ${{ runner.temp }}/windows-account-review
-        run: flutter test --concurrency=1 test/windows_student_excel_test.dart test/windows_financial_analytics_regression_test.dart test/windows_appearance_test.dart test/windows_oauth_build_configuration_test.dart
+        run: flutter test --concurrency=1 --timeout 90s test/windows_student_excel_test.dart test/windows_financial_analytics_regression_test.dart test/windows_appearance_test.dart test/windows_oauth_build_configuration_test.dart

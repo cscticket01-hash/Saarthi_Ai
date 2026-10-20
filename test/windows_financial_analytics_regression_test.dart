@@ -70,15 +70,15 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('expenses display local data before a remote refresh finishes', (tester) async {
-    await db.collection('school_expenses').doc('cached').set({
+    await tester.runAsync(() => db.collection('school_expenses').doc('cached').set({
       'title': 'Cached school stationery', 'amount': 125, 'timestamp': 1,
-    });
+    }));
     final response = Completer<Map<String, dynamic>>();
     await tester.pumpWidget(MaterialApp(home: WindowsSchoolExpensesScreen(call: (_) => response.future)));
-    await tester.pumpAndSettle();
+    await settleExpenseIo(tester);
     expect(find.text('Cached school stationery'), findsOneWidget);
     response.completeError(StateError('Synthetic offline refresh'));
-    await tester.pumpAndSettle();
+    await settleExpenseIo(tester);
     expect(find.text('Cached school stationery'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
@@ -92,17 +92,17 @@ void main() {
       if (requests.length == 1) throw StateError('Synthetic uncertain response');
       return {'success': true};
     })));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Add Expense')); await tester.pumpAndSettle();
+    await settleExpenseIo(tester);
+    await tester.tap(find.text('Add Expense')); await settleExpenseIo(tester);
     await tester.enterText(find.widgetWithText(TextField, 'Expense Title'), 'Synthetic stationery');
     await tester.enterText(find.widgetWithText(TextField, 'Amount ₹'), '120.50');
-    await tester.tap(find.text('Save Expense')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Save Expense')); await settleExpenseIo(tester);
     expect(requests, hasLength(1));
     await tester.enterText(find.widgetWithText(TextField, 'Amount ₹'), '150');
-    await tester.tap(find.text('Save Expense')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Save Expense')); await settleExpenseIo(tester);
     expect(requests, hasLength(1), reason: 'Changed retry must never overwrite an uncertain original expense');
     await tester.enterText(find.widgetWithText(TextField, 'Amount ₹'), '120.50');
-    await tester.tap(find.text('Save Expense')); await tester.pumpAndSettle();
+    await tester.tap(find.text('Save Expense')); await settleExpenseIo(tester);
     expect(requests, hasLength(2));
     expect(requests[1], requests[0]);
     expect(find.text('Add School Expense'), findsNothing);
@@ -112,7 +112,7 @@ void main() {
     final screenKey = GlobalKey();
     await tester.pumpWidget(MaterialApp(home: WindowsSchoolExpensesScreen(key: screenKey,
       call: (_) async => {'success': true, 'expenses': [{'expenseId':'legacy-id', 'title':'Earlier school private expense', 'amount':120}]})));
-    await tester.pumpAndSettle();
+    await settleExpenseIo(tester);
     await tester.runAsync(() => db.switchProfile('expense-other-${DateTime.now().microsecondsSinceEpoch}'));
     await tester.pumpWidget(MaterialApp(home: WindowsSchoolExpensesScreen(key: screenKey,
       call: (_) async => {'success': true, 'expenses': const []})));
@@ -122,4 +122,15 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+}
+
+// Local reads inspect device persistence flags through real file I/O. Let that
+// finish while still advancing widget animations with the test clock.
+Future<void> settleExpenseIo(WidgetTester tester) async {
+  for (var i = 0; i < 100; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pump(const Duration(milliseconds: 100));
+    if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+  }
+  await tester.pumpAndSettle();
 }
