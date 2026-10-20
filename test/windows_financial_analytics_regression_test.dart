@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -66,6 +67,19 @@ void main() {
     expect(find.text('School changed. Reopen analytics.'), findsOneWidget);
     expect(find.text('Total Students'), findsNothing);
     expect(find.text('Total Student Fees Collection'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('expenses display local data before a remote refresh finishes', (tester) async {
+    await db.collection('school_expenses').doc('cached').set({
+      'title': 'Cached school stationery', 'amount': 125, 'timestamp': 1,
+    });
+    final response = Completer<Map<String, dynamic>>();
+    await tester.pumpWidget(MaterialApp(home: WindowsSchoolExpensesScreen(call: (_) => response.future)));
+    await tester.pumpAndSettle();
+    expect(find.text('Cached school stationery'), findsOneWidget);
+    response.completeError(StateError('Synthetic offline refresh'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cached school stationery'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('expense dialog retries an uncertain save with the same intent and rejects edited retry', (tester) async {

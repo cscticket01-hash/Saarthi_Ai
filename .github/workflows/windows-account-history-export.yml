@@ -1,0 +1,44 @@
+name: Windows account, support and Excel review
+on:
+  push:
+    branches: [feature/windows-account-history-export]
+  pull_request:
+    paths:
+      - lib/windows_admin_avatar.dart
+      - lib/windows_support_history.dart
+      - lib/windows_student_excel.dart
+      - functions/managed-support.js
+      - .github/workflows/windows-account-history-export.yml
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts
+        working-directory: functions
+      - run: npm test
+        working-directory: functions
+  windows-ui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_admin_avatar.dart lib/windows_support_history.dart lib/windows_student_excel.dart lib/windows_school_operations.dart lib/windows_connect/google_authorization.dart lib/main_dashboard_screen_windows.dart lib/developer_portal.dart lib/platform/developer_service.dart
+      - name: Workbook, expense, appearance and identity regressions
+        env:
+          APPDATA: ${{ runner.temp }}/windows-account-review
+        run: flutter test --concurrency=1 test/windows_student_excel_test.dart test/windows_financial_analytics_regression_test.dart test/windows_appearance_test.dart test/windows_oauth_build_configuration_test.dart

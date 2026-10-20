@@ -1,3 +1,4 @@
+import 'windows_support_history.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -381,6 +382,7 @@ class WindowsSupportScreen extends StatefulWidget {
 
 class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
   final _message = TextEditingController();
+  final _support = SchoolSupportClient();
   final _inbox = DeveloperInbox();
   Timer? _inboxTimer;
   @override
@@ -411,7 +413,12 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       _error = null;
     });
     try {
-      await WindowsPlatformClient.instance.complaint(_message.text.trim());
+      final account = await CentralSchoolCloud.saved();
+      if (account['managed'] == true) {
+        await _support.send(_message.text.trim(), WindowsPlatformClient.version);
+      } else {
+        await WindowsPlatformClient.instance.complaint(_message.text.trim());
+      }
       _message.clear();
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -427,7 +434,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
 
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
-    appBar: AppBar(title: const Text('Report app problem')),
+    appBar: AppBar(title: const Text('Report app problem'), actions: [TextButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WindowsComplaintHistory())), icon: const Icon(Icons.history), label: const Text('Complaint history'))]),
     body: Stack(children: [SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 28, 92, 28),
       child: Align(

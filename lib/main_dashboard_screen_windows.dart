@@ -1,3 +1,5 @@
+import 'windows_student_excel.dart';
+import 'package:file_selector/file_selector.dart' as excel_file;
 import 'windows_appearance.dart';
 import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
@@ -16543,12 +16545,41 @@ class AllStudentsListScreen extends StatefulWidget {
 class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   final _directoryProfile=FirebaseFirestore.instance.activeProfileId;
   String _selectedClassFilter = 'All Classes';
+  bool _exportingExcel = false;
+  String _exportProgress = '';
 
   final List<String> _classes = [
     'All Classes',
     ...List.generate(12, (index) => 'Class ${index + 1}'),
   ];
 
+
+  Future<void> _exportExcel() async {
+    if (_exportingExcel) return;
+    final db = FirebaseFirestore.instance;
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    final selected = _selectedClassFilter;
+    void checkSchool() {
+      if (db.activeProfileId != _directoryProfile || (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != school) throw StateError('School changed. Reopen the directory.');
+    }
+    setState(() { _exportingExcel = true; _exportProgress = 'Preparing Excel…'; });
+    try {
+      checkSchool();
+      final snapshot = await db.collection('students_directory').get();
+      checkSchool();
+      final rows = snapshot.docs.map((d) => {'id': d.id, ...d.data()}).where((r) => selected == 'All Classes' || r['class'] == selected).toList();
+      if (rows.isEmpty) throw StateError('No students to export.');
+      final location = await excel_file.getSaveLocation(suggestedName: 'Students_${selected.replaceAll(' ', '_')}.xlsx', acceptedTypeGroups: const [excel_file.XTypeGroup(label:'Excel workbook',extensions:['xlsx'])]);
+      if (location == null) return;
+      checkSchool();
+      final bytes = await StudentExcelExport.build(schoolId:school, students:rows, imageReader:schoolImageBytes, checkSchool:checkSchool,
+        progress:(done,total) { if (mounted) setState(() => _exportProgress = 'Exporting $done / $total'); });
+      checkSchool();
+      await excel_file.XFile.fromData(bytes,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',name:'Students.xlsx').saveTo(location.path);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Excel saved. Available student photos are embedded; missing photos are labelled.')));
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e'))); }
+    finally { if (mounted) setState(() => _exportingExcel = false); }
+  }
 
   List<Map<String, dynamic>> _studentExamResults = <Map<String, dynamic>>[];
   bool _studentExamResultsLoading = true;
@@ -17450,6 +17481,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       appBar: AppBar(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
         title: const Text('Student Directory Records'),
+        actions: [TextButton.icon(onPressed:_exportingExcel?null:_exportExcel,icon:const Icon(Icons.table_view_outlined),label:Text(_exportingExcel?_exportProgress:'Export Excel')),const SizedBox(width:12)],
       ),
       body: Column(
         children: [
@@ -22903,9 +22935,17 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   Future<void> _load() async {
     if (!mounted) return;
     final generation = ++_expenseLoadGeneration;
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = _items.isEmpty; _error = null; });
     try {
-      final result = await _call(const {'action': 'list_school_expenses'});
+      _checkExpenseProfile();
+      final local = await FirebaseFirestore.instance.collection('school_expenses').get();
+      _checkExpenseProfile();
+      if (!mounted || generation != _expenseLoadGeneration) return;
+      setState(() {
+        _items..clear()..addAll(local.docs.map((d) => {'expenseId': d.id, ...d.data()}));
+        _loading = false;
+      });
+      final result = await _call(const {'action': 'list_school_expenses'}).timeout(const Duration(seconds: 20));
       final raw = result['expenses'];
       final list = raw is List
           ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
