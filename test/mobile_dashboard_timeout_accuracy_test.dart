@@ -23,7 +23,7 @@ void main() {
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   test('a verified dashboard arriving after 25 seconds replaces cache instead of timing out early', () async {
-    final reply = Completer<http.Response>();
+    late Completer<http.Response> reply;
     var slow = false;
     final session = SchoolSession(persistSession: (_) async {}, client: MockClient((request) async {
       final action = (jsonDecode(request.body)['request'] as Map)['action'];
@@ -35,6 +35,7 @@ void main() {
     await session.refreshDashboard();
     slow = true;
     fakeAsync((clock) {
+      reply = Completer<http.Response>();
       var completed = false;
       Object? failure;
       session.refreshDashboard().then((_) => completed = true, onError: (Object e) { failure = e; });
@@ -54,7 +55,7 @@ void main() {
   });
 
   test('an actual read deadline retains verified cache and rejects a late response', () async {
-    final reply = Completer<http.Response>();
+    late Completer<http.Response> reply;
     var slow = false;
     final session = SchoolSession(persistSession: (_) async {}, client: MockClient((request) async {
       final action = (jsonDecode(request.body)['request'] as Map)['action'];
@@ -67,6 +68,7 @@ void main() {
     final verifiedAt = session.lastDashboardVerifiedAt;
     slow = true;
     fakeAsync((clock) {
+      reply = Completer<http.Response>();
       Object? failure;
       session.refreshDashboard().then((_) {}, onError: (Object e) { failure = e; });
       clock.flushMicrotasks();
