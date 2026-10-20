@@ -156,6 +156,29 @@ void main() {
     expect(account.email,'school@gmail.com');expect(account.refreshToken,'refresh');expect(account.expiresIn,3600);
     auth.close();
   });
+  test('profile-only OAuth accepts canonical Google scope without school permissions', () async {
+    final auth = GoogleAuthorization(oauthClientId:'desktop.apps.googleusercontent.com',
+      client:MockClient((r) async {
+        if (r.url.host == 'oauth2.googleapis.com') {
+          return http.Response(jsonEncode({'access_token':'access',
+            'scope':'openid email https://www.googleapis.com/auth/userinfo.profile'}),200);
+        }
+        return http.Response(jsonEncode({'sub':'123','email':'school@gmail.com',
+          'email_verified':true,'picture':'https://lh3.googleusercontent.com/photo.gif'}),200);
+      }),openBrowser:(uri) async {
+        expect(uri.queryParameters['scope']!.split(' '), ['openid','email','profile']);
+        final callback=Uri.parse(uri.queryParameters['redirect_uri']!).replace(queryParameters:{
+          'state':uri.queryParameters['state']!,'code':'approved-code'});
+        final browser=HttpClient();
+        try { await (await (await browser.getUrl(callback)).close()).drain<void>(); }
+        finally { browser.close(); }
+      });
+    try {
+      final account=await HttpOverrides.runWithHttpOverrides(
+        ()=>auth.authorize(script:false,profileOnly:true), _LoopbackOverrides());
+      expect(account.photoUrl,'https://lh3.googleusercontent.com/photo.gif');
+    } finally { auth.close(); }
+  });
   test('All paths include a validated school ID and reject traversal',(){
     expect(tenantCollectionPath(school,'students_directory'),'schools/$school/students_directory');
     for(final id in ['', '../other','vs-school-legacy']) {

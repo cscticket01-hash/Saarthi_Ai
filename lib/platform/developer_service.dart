@@ -113,10 +113,41 @@ class DeveloperService {
     }
     if (action == 'complaint/update') {
       final status = body['status'].toString();
-      if (!{'open','in_progress','resolved'}.contains(status)) throw ArgumentError('Invalid status');
-      await _db.collection('platform_complaints').doc(body['complaintId'].toString()).update({
-        'status': status, 'developerNote': body['note'].toString().substring(0, min(3000, body['note'].toString().length)),
-        'updatedAt': FieldValue.serverTimestamp(),
+      if (!{'open', 'in_progress', 'resolved'}.contains(status))
+        throw ArgumentError('Invalid status');
+      final ref = _db
+          .collection('platform_complaints')
+          .doc(body['complaintId'].toString());
+      final note = body['note'].toString().trim();
+      if (note.length > 3000)
+        throw ArgumentError('Use at most 3000 characters');
+      final replyId = '${DateTime.now().millisecondsSinceEpoch}_${_random(16)}';
+      await _db.runTransaction((tx) async {
+        final snapshot = await tx.get(ref);
+        final data = snapshot.data();
+        if (data == null) throw StateError('Complaint no longer exists');
+        final old = data['developerNote']?.toString() ?? '';
+        if (data['supportHistoryVersion'] != 1 && old.isNotEmpty) {
+          tx.set(ref.collection('messages').doc('legacy-developer-note'), {
+            'schoolId': data['schoolId'],
+            'role': 'developer',
+            'message': old,
+            'createdAt': data['updatedAt'] ?? data['createdAt'],
+          });
+        }
+        if (note.isNotEmpty && note != old)
+          tx.set(ref.collection('messages').doc(replyId), {
+            'schoolId': data['schoolId'],
+            'role': 'developer',
+            'message': note,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        tx.update(ref, {
+          'status': status,
+          'developerNote': note,
+          'supportHistoryVersion': 1,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       });
       return {'success': true};
     }

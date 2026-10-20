@@ -517,9 +517,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
 
   Future<void> _complaint(Map<String, dynamic> c) async {
     String status = c['status']?.toString() ?? 'open';
-    final note = TextEditingController(
-      text: c['developerNote']?.toString() ?? '',
-    );
+    final note = TextEditingController(text: '');
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -532,6 +530,40 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SelectableText(c['message']?.toString() ?? ''),
+                if ((c['developerNote']?.toString() ?? '').isNotEmpty &&
+                    c['supportHistoryVersion'] != 1)
+                  SelectableText('Developer: ${c['developerNote']}'),
+                SizedBox(
+                  height: 220,
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('platform_complaints')
+                        .doc(c['id'].toString())
+                        .collection('messages')
+                        .orderBy('createdAt')
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError)
+                        return const Text('Conversation could not be loaded.');
+                      final docs = snapshot.data?.docs ?? [];
+                      return ListView(
+                        children: [
+                          for (final d in docs)
+                            ListTile(
+                              title: Text(
+                                d.data()['role'] == 'developer'
+                                    ? 'Developer'
+                                    : 'School',
+                              ),
+                              subtitle: SelectableText(
+                                d.data()['message']?.toString() ?? '',
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
                 const SizedBox(height: 20),
                 DropdownButtonFormField<String>(
                   initialValue: status,
@@ -553,7 +585,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   controller: note,
                   maxLines: 3,
                   decoration: const InputDecoration(
-                    labelText: 'Developer note',
+                    labelText: 'Reply to school',
                   ),
                 ),
               ],
