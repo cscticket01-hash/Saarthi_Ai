@@ -5,6 +5,23 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/mobile/published_id_card.dart';
 
 void main() {
+  testWidgets('slow verified ID reads are not abandoned at the former 30-second widget limit', (tester) async {
+    final download = Completer<Uint8List?>();
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PublishedIdCard(
+      load: () => download.future, refresh: () async {},
+      rasterize: (_) async => throw StateError('Synthetic preview unavailable'),
+      open: (pdf) async => expect(pdf, bytes),
+    ))));
+    await tester.pump(const Duration(seconds: 35));
+    expect(find.text('Loading your ID card…'), findsOneWidget);
+    expect(find.textContaining('Unable to load'), findsNothing);
+    download.complete(bytes);
+    await tester.pumpAndSettle();
+    expect(find.text('Open my ID card'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'never-ending native raster cannot block PDF opening or Refresh',
     (tester) async {

@@ -1,3 +1,4 @@
+import 'school_request_deadlines.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -12,7 +13,7 @@ class PublishedIdCard extends StatefulWidget {
     required this.open,
     this.openExternally,
     this.rasterize,
-    this.loadTimeout = const Duration(seconds: 30),
+    this.loadTimeout = schoolIdLoadTimeout,
     this.previewTimeout = const Duration(seconds: 8),
   });
   final Future<Uint8List?> Function() load;

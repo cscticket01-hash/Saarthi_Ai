@@ -1,3 +1,4 @@
+import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
@@ -827,6 +828,7 @@ class SchoolSession {
     }
 
     if (current.managed) {
+      final requestTimeout = managedSchoolRequestTimeout(action);
       final r = await _client
           .post(
             Uri.parse(current.endpoint),
@@ -847,14 +849,12 @@ class SchoolSession {
             }),
           )
           .timeout(
-            action == 'mobile_login'
-                ? const Duration(seconds: 105)
-                : const Duration(seconds: 25),
+            requestTimeout,
             onTimeout: () => throw action == 'mobile_login'
                 ? SchoolLoginTimeout()
                 : TimeoutException(
                     'School request did not finish in time.',
-                    const Duration(seconds: 25),
+                    requestTimeout,
                   ),
           );
       unchanged();
@@ -1202,9 +1202,17 @@ class SchoolSession {
   }) async {
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
+    // Legacy responses can leave list metadata (notably noticeIds: []) in
+    // the retained cache. Empty lists vacuously pass the row checks below,
+    // but are not Script data groups and must never become checkpoints.
+    final groups = <String>{
+      'school', 'templates', 'notices', 'calendar', 'documents', 'examinations',
+      if (link?.role == 'student') ...{'reportCards', 'fees', 'payments', 'feeStructures'},
+      if (link?.role == 'teacher') 'salary',
+    };
     final groupCheckpoints = <String, Map<String, String>>{};
     for (final entry in dashboard.entries) {
-      if (entry.value is! List) continue;
+      if (!groups.contains(entry.key) || entry.value is! List) continue;
       final rows = (entry.value as List).whereType<Map>().toList();
       if (rows.any(
         (r) =>
@@ -1234,9 +1242,10 @@ class SchoolSession {
       if (dashboard['revisions'] is Map)
         'knownRevisions': {
           for (final entry in (dashboard['revisions'] as Map).entries)
-            if (dashboard['mobileRecordDeltaVersion'] != 1 ||
+            if (groups.contains(entry.key) &&
+                (dashboard['mobileRecordDeltaVersion'] != 1 ||
                 dashboard[entry.key] is! List ||
-                groupCheckpoints.containsKey(entry.key))
+                groupCheckpoints.containsKey(entry.key)))
               entry.key: entry.value,
         },
       if (dashboard['notices'] is List)
