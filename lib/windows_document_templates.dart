@@ -26,6 +26,12 @@ import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
 import 'windows_student_id_cards.dart';
 
+/// Prepared packages remain uploadable while individual owners await repair.
+class IdCardPreparationFailure extends StateError {
+  IdCardPreparationFailure(Object cause)
+      : super('ID card preparation incomplete: $cause');
+}
+
 class WindowsDocumentTemplates {
   static const manifestName = 'School ID • Manifest Front + Back';
   static Future<Uint8List> manifestId(
@@ -75,7 +81,7 @@ class WindowsDocumentTemplates {
     try {
       return await schoolImageBytes(
         u.toString(),
-      ).timeout(const Duration(milliseconds: 600), onTimeout: () => null);
+      ).timeout(const Duration(seconds: 30), onTimeout: () => null);
     } catch (_) {}
     return null;
   }
@@ -299,6 +305,8 @@ class WindowsDocumentTemplates {
             {'conflict', 'needsAttention'}.contains(q.data()['syncState']))
           q.data()['documentId'],
     };
+    Object? firstFailure;
+    StackTrace? firstFailureStack;
     for (final kind in ['studentId', 'teacherId']) {
       final collection = kind == 'studentId'
           ? 'students_directory'
@@ -312,6 +320,7 @@ class WindowsDocumentTemplates {
         if (!doc.exists) continue;
         if (db.activeProfileId != origin)
           throw StateError('School changed during ID publication.');
+        try {
         // Retained file/metadata conflicts must be explicitly reviewed before
         // automatic ID regeneration can change their queue or local originals.
         final ownerId = WindowsBackendBridge.publishedIdCardOwnerId(
@@ -386,7 +395,19 @@ class WindowsDocumentTemplates {
           readPublished: readPublished,
           automatic:true,
         );
+        } catch (error, stack) {
+          // One unavailable photo, renderer or owner conflict must not starve
+          // every later student/teacher. The caller retains dependencies and
+          // retries failures after uploading the packages already prepared.
+          if (db.activeProfileId != origin ||
+              error is CentralCloudException) rethrow;
+          firstFailure ??= error;
+          firstFailureStack ??= stack;
+        }
       }
+    }
+    if (firstFailure != null) {
+      Error.throwWithStackTrace(IdCardPreparationFailure(firstFailure), firstFailureStack!);
     }
   }
 

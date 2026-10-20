@@ -1886,8 +1886,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         final targets = windowsIdPublicationTargets(idInputs, audit: auditCards);
         final publishIds = targets == null || targets.isNotEmpty;
         try {
+          Object? preparationFailure;
+          StackTrace? preparationStack;
           if (publishIds) {
-            await WindowsDocumentTemplates.publishChangedIdCards(affectedPeople: targets);
+            try {
+              await WindowsDocumentTemplates.publishChangedIdCards(affectedPeople: targets);
+            } catch (error, stack) {
+              if (FirebaseFirestore.instance.activeProfileId != syncOrigin ||
+                  error is! IdCardPreparationFailure) rethrow;
+              preparationFailure = error;
+              preparationStack = stack;
+            }
           }
           // Only card preparation can create a second set of credential writes.
           if (publishIds) {
@@ -1915,6 +1924,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               },
               download: () async {},
             );
+          }
+          // Drain verified packages even when a different owner's preparation
+          // failed. Never mark bootstrap/dependencies complete for that failure.
+          if (preparationFailure != null) {
+            Error.throwWithStackTrace(preparationFailure, preparationStack!);
           }
           await WindowsSyncDependencies.complete(_activeSchoolSyncId, dependencyRows);
           if (needsIdBootstrap) {

@@ -208,6 +208,39 @@ void main() {
     expect((await db.collection('_windows_document_outbox').get()).docs.map((row) => row.id).toList(), queueBefore);
   });
 
+  test('one unavailable owner image does not starve later ID packages or replace them on retry', () async {
+    await CentralSchoolCloud.updateSession(school, {'endpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+    final person = {'mobileLinkToken': 'x' * 48, 'mobileStableId': 'p-${'a' * 64}',
+      'mobileIdentityVersion': 1, 'name': 'Ready Student', 'class': '1', 'rollNo': '1'};
+    await db.collection('students_directory').doc('broken').set({...person,
+      'photoUrl': 'data:image/png;base64,%%%'});
+    await db.collection('students_directory').doc('ready').set(person);
+    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:school-id-v1'});
+    final qr = SchoolLink.encodeCompact({'app': 'VIDYA_SAARTHI', 'v': 2, 'managed': true,
+      'schoolId': school, 'centralEndpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId': platformProjectId, 'type': 'student', 'personId': 'ready',
+      'linkToken': person['mobileLinkToken']});
+    final card = WindowsBackendBridge.publishedIdCardId(qr);
+    final printing = PrintingPlatform.instance;
+    PrintingPlatform.instance = OwnerReviewPrinting(qr);
+    Future<void> publish() => WindowsDocumentTemplates.publishChangedIdCards(
+      affectedPeople: {'studentId': {'broken', 'ready'}},
+      readInventory: () async => {'schoolId': school, 'syncProtocol': 2, 'records': <String, dynamic>{}});
+    try {
+      await expectLater(publish(), throwsStateError);
+      final prepared = (await db.collection('_windows_document_outbox').doc(card).get()).data()!;
+      final original = await File(prepared['localPath']).readAsBytes();
+      expect(prepared['studentId'], 'ready');
+      expect((await db.collection('_windows_document_outbox').doc(
+        WindowsBackendBridge.publishedIdCardOwnerId('student', 'broken')).get()).exists, false);
+      await expectLater(publish(), throwsStateError);
+      final retry = (await db.collection('_windows_document_outbox').doc(card).get()).data()!;
+      expect(retry['documentRevision'], prepared['documentRevision']);
+      expect(retry['localPath'], prepared['localPath']);
+      expect(await File(retry['localPath']).readAsBytes(), original);
+    } finally { PrintingPlatform.instance = printing; }
+  });
+
   test('unchanged published ID survives photo upload references, retry and restart without new files', () async {
     await CentralSchoolCloud.updateSession(school, {'endpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud'});
     final photo = Uint8List.fromList(img.encodePng(img.Image(width: 16, height: 24)));
