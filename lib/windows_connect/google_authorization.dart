@@ -135,7 +135,7 @@ class GoogleAuthorization {
       final granted = (token['scope'] as String? ?? '').split(' ').toSet();
       // Google may return the canonical userinfo.email scope instead of email.
       final needed = scopes.where((s) => s != 'email' && s != 'openid' && s != 'profile');
-      if (!granted.contains('profile') && !granted.contains('https://www.googleapis.com/auth/userinfo.profile')) throw StateError('Google profile permission was not granted.');
+      if (profileOnly && !granted.contains('profile') && !granted.contains('https://www.googleapis.com/auth/userinfo.profile')) throw StateError('Google profile permission was not granted.');
       if (!needed.every(granted.contains)) throw StateError('Required permissions were not granted. No school setup was started.');
       final access = token['access_token']?.toString() ?? '';
       if (access.isEmpty) throw StateError('Google access token missing.');
