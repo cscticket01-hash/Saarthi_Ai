@@ -10,8 +10,8 @@ test('school complaint creation is durable and idempotent; foreign school cannot
  await f.call({action:'managed/support/create',complaintId:id,message,version:'test'});
  await f.call({action:'managed/support/create',complaintId:id,message,version:'test'});
  assert.equal(f.docs.get('platform_complaints/'+id).schoolId,A);
- assert.equal(f.docs.get('platform_complaints/'+id).createdAt.toMillis(),time);
- assert.equal(f.docs.get('platform_support_limits/'+A).lastSentAt.toMillis(),time);
+ assert.equal(f.docs.get('platform_complaints/'+id).createdAt.getTime(),time);
+ assert.equal(f.docs.get('platform_support_limits/'+A).lastSentAt.getTime(),time);
  await assert.rejects(f.call({action:'managed/support/create',complaintId:A+'_'+'d'.repeat(32),message}),e=>e.status===429);
  await assert.rejects(f.call({action:'managed/support/create',complaintId:id,message:'Changed body'}),e=>e.status===409);
  f.docs.set('platform_complaints/'+other,{schoolId:B,message:'Foreign private complaint',createdAt:time});
