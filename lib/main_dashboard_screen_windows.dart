@@ -26,6 +26,7 @@ import 'windows_admin_sidebar.dart';
 import 'windows_monthly_attendance.dart';
 import 'windows_analytics_identity.dart';
 import 'windows_expense_intent.dart';
+import 'windows_expense_history.dart';
 import 'windows_exam_service.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
@@ -22880,7 +22881,8 @@ class _ExamMarksEntryScreenState
 
 
 class WindowsSchoolExpensesScreen extends StatefulWidget {
-  const WindowsSchoolExpensesScreen({super.key, this.call});
+  const WindowsSchoolExpensesScreen({super.key, this.call, this.history = false});
+  final bool history;
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> body)? call;
 
   @override
@@ -22900,6 +22902,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
   }
   bool _loading = true;
   String? _error;
+  String _historyQuery = '';
 
   @override
   void initState() {
@@ -22959,7 +22962,14 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     }
   }
 
-  double get _total => _items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
+  Future<void> _openHistory() async {
+    _checkExpenseProfile();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => WindowsSchoolExpensesScreen(call: widget.call, history: true),
+    ));
+    if (mounted) await _load();
+  }
+
 
   Future<void> _addExpense() async {
     _checkExpenseProfile();
@@ -23049,14 +23059,19 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       return Scaffold(appBar: AppBar(title: const Text('School Expenses')),
         body: const Center(child: Text('School changed. Reopen expenses.')));
     }
+    final items = windowsExpenseHistory(_items, schoolId: _expenseSchool,
+      query: widget.history ? _historyQuery : '');
+    final total = items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
     return Scaffold(
       backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
       appBar: AppBar(
-        title: Text(windowsTr('expenses')),
+        title: Text(widget.history ? 'School Expense History' : windowsTr('expenses')),
         actions:[
-          IconButton(onPressed:_load, icon:const Icon(Icons.refresh_rounded)),
+          if (!widget.history) TextButton.icon(onPressed: _openHistory,
+            icon: const Icon(Icons.history_rounded), label: const Text('History')),
+          IconButton(tooltip: 'Refresh expenses', onPressed:_load, icon:const Icon(Icons.refresh_rounded)),
           const SizedBox(width:6),
-          Padding(
+          if (!widget.history) Padding(
             padding: const EdgeInsets.only(right:12),
             child: FilledButton.icon(onPressed:_addExpense, icon:const Icon(Icons.add_rounded), label:const Text('Add Expense')),
           ),
@@ -23069,20 +23084,28 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
               child: Column(
                 children:[
                   Row(children:[
-                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:'Total Expenses', value:'₹${_total.toStringAsFixed(2)}', color:Colors.amberAccent),
+                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:Colors.amberAccent),
                     const SizedBox(width:12),
-                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:'Entries', value:'${_items.length}', color:const Color(0xFF69C2FF)),
+                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:const Color(0xFF69C2FF)),
                   ]),
                   if (_error != null) Padding(padding:const EdgeInsets.all(10), child:Text(_error!, style:const TextStyle(color:Colors.redAccent))),
                   const SizedBox(height:14),
+                  if (widget.history) Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: TextField(
+                      decoration: const InputDecoration(prefixIcon: Icon(Icons.search_rounded),
+                        labelText: 'Search expense history', hintText: 'Title, category, vendor, date or note'),
+                      onChanged: (value) => setState(() => _historyQuery = value),
+                    ),
+                  ),
                   Expanded(
-                    child: _items.isEmpty
-                        ?  Center(child:Text('Abhi koi school expense entry nahi hai.', style:TextStyle(color:WindowsAppearance.resolve(Colors.white38))))
+                    child: items.isEmpty
+                        ?  Center(child:Text(widget.history ? (_historyQuery.trim().isEmpty ? 'No saved expenses in this school yet.' : 'No expenses match your search.') : 'Abhi koi school expense entry nahi hai.', style:TextStyle(color:WindowsAppearance.resolve(Colors.white38))))
                         : ListView.separated(
-                            itemCount:_items.length,
+                            itemCount:items.length,
                             separatorBuilder:(_,__)=>const SizedBox(height:8),
                             itemBuilder:(context,index){
-                              final e=_items[index];
+                              final e=items[index];
                               return Container(
                                 padding:const EdgeInsets.all(14),
                                 decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xFF111B21)), borderRadius:BorderRadius.circular(14), border:Border.all(color:WindowsAppearance.resolve(Colors.white10))),
@@ -23096,7 +23119,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                                     if (e['note']?.toString().trim().isNotEmpty == true) Text(e['note'].toString(), style: TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:10.5)),
                                   ])),
                                   Text('₹${(double.tryParse(e['amount']?.toString() ?? '') ?? 0).toStringAsFixed(2)}', style:const TextStyle(color:Colors.amberAccent,fontSize:16,fontWeight:FontWeight.w900)),
-                                  IconButton(onPressed:()=>_delete(e), icon:const Icon(Icons.delete_outline_rounded,color:Colors.redAccent)),
+                                  if (!widget.history) IconButton(onPressed:()=>_delete(e), icon:const Icon(Icons.delete_outline_rounded,color:Colors.redAccent)),
                                 ]),
                               );
                             },
