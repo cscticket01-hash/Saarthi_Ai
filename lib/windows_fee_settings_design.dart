@@ -66,8 +66,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
           if (wide) SizedBox(width: 210, child: Container(
             decoration:  BoxDecoration(border: Border(right: BorderSide(color: WindowsAppearance.resolve(_border)))),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-               Padding(padding: EdgeInsets.fromLTRB(22, 28, 16, 24), child: Text('Vidya Saarthi',
-                style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 22, fontWeight: FontWeight.w700))),
+              _backBrand(context, const EdgeInsets.fromLTRB(22, 28, 16, 24)),
               Expanded(child: ListView(children: classes.map((item) => Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                 child: Material(color: item == selectedClass ? WindowsAppearance.resolve(const Color(0xFF126C73)) : Colors.transparent,
@@ -85,13 +84,27 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
     ),
   ); }
 
+  Widget _backBrand(BuildContext context, EdgeInsetsGeometry padding) => Tooltip(
+    message: 'Back',
+    child: TextButton(
+      onPressed: saving ? null : () => Navigator.maybePop(context),
+      style: TextButton.styleFrom(
+        alignment: Alignment.centerLeft,
+        padding: padding,
+        foregroundColor: WindowsAppearance.resolve(Colors.white),
+        textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+      ),
+      child: const Text('Vidya Saarthi'),
+    ),
+  );
+
   Widget _content(BuildContext context, bool wide) => Column(children: [
-    Padding(padding: EdgeInsets.fromLTRB(wide ? 22 : 8, 16, 16, 12), child: Row(children: [
-      IconButton(tooltip: 'Back', onPressed: saving ? null : () => Navigator.maybePop(context),
-        icon:  Icon(Icons.arrow_back, color: WindowsAppearance.resolve(Colors.white))),
-      const SizedBox(width: 8),
-       Expanded(child: Text('Payment Collection Settings',
-        style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 23, fontWeight: FontWeight.w700))),
+    Padding(padding: EdgeInsets.fromLTRB(wide ? 22 : 16, 16, 16, 12), child: Row(children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (!wide) _backBrand(context, const EdgeInsets.symmetric(vertical: 8)),
+        Text('Payment Collection Settings',
+          style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 23, fontWeight: FontWeight.w700)),
+      ])),
     ])),
     Expanded(child: loading ? const Center(child: CircularProgressIndicator(color: _teal))
       : failed ? Center(child: FilledButton(onPressed: onRetry, child: const Text('Retry loading fees')))
