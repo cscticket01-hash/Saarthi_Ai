@@ -786,11 +786,16 @@ void main() {
         final b = jsonDecode(request.body)['request'] as Map;
         if (b['action'] == 'mobile_login')
           return http.Response(jsonEncode(login()), 200);
-        if (stage > 0)
+        if (stage > 0) {
           expect(b['knownGroupRecordRevisions']['calendar']['a'], 'a1');
+          expect(b['knownGroupRecordRevisions'].containsKey('noticeIds'), isFalse);
+          expect(b['knownGroupRecordRevisions'].containsKey('legacyMetadata'), isFalse);
+        }
         final payload = stage++ == 0
             ? {
                 'revision': 'v1',
+                'noticeIds': ['legacy-id'],
+                'legacyMetadata': [],
                 'revisions': {'calendar': 'c1'},
                 'mobileRecordDeltaVersion': 1,
                 'groupRecordDeltas': {

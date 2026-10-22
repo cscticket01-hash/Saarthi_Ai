@@ -400,6 +400,18 @@ test('mobile versioned lists transfer only changed visible records and acknowled
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'school_calendar',id:'b'}).success,true);
  const removed=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(removed.success,true);assert.deepEqual(removed.groupRecordDeltas.calendar.ids,['a']);assert.deepEqual(removed.calendar,[]);
  const bad=mobile({...request,knownGroupRecordRevisions:{calendar:[]}});assert.equal(bad.success,false);
+ // Released clients can retain legacy noticeIds metadata after upgrading.
+ // Their checkpoint builder serializes that list as an empty record map.
+ const compatible=mobile({...request,knownGroupRecordRevisions:{...knownGroupRecordRevisions,noticeIds:{},legacyMetadata:{}}});
+ assert.equal(compatible.success,true);assert.deepEqual(compatible.groupRecordDeltas.calendar.ids,['a']);
+ assert.equal(compatible.noticeIds,undefined);assert.equal(compatible.legacyMetadata,undefined);
+ assert.equal(compatible.groupRecordDeltas.legacyMetadata,undefined);
+ assert.equal(compatible.fees.some(row=>row.personId==='another'),false);
+ for(const foreign of [{id:'a'.repeat(64)},[],null,'invalid']){
+  assert.equal(mobile({...request,knownGroupRecordRevisions:{foreign}}).success,false);
+ }
+ assert.equal(mobile({...request,knownGroupRecordRevisions:{calendar:{a:'invalid'}}}).success,false);
+
  write('students_directory','pupil',{name:'Pupil',class:'2',rollNo:'1',dob:'2015-01-01',mobileLinkToken:token});
  const reScoped=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(reScoped.success,true);assert.deepEqual(reScoped.groupRecordDeltas.feeStructures.ids,['class2']);assert.equal(reScoped.feeStructures[0].amount,20);
 });
