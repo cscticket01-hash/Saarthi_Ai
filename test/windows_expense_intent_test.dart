@@ -1,9 +1,69 @@
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_expense_intent.dart';
 import '../lib/windows_expense_history.dart';
+import '../lib/windows_exam_history_records.dart';
 import 'dart:convert';
 
 void main() {
+  test('exam history scopes sessions, search, results and deleted rows', () {
+    final rows = <Map<String, dynamic>>[
+      {
+        'schoolId': 'A',
+        'examId': 'old',
+        'examName': 'Final',
+        'academicSession': '2025-26',
+        'timestamp': 10,
+      },
+      {
+        'schoolId': 'A',
+        'examId': 'new',
+        'examName': 'Unit Test',
+        'studentClass': 'Class 2',
+        'timestamp': 20,
+      },
+      {'schoolId': 'B', 'examId': 'foreign', 'timestamp': 30},
+      {'schoolId': 'A', 'examId': 'deleted', '_syncDeleted': true},
+      {'examId': 'legacy', 'timestamp': 5},
+    ];
+    final history = windowsExamHistoryRecords(rows, schoolId: 'A');
+    expect(history.map((row) => row['examId']), ['new', 'old', 'legacy']);
+    expect(
+      windowsExamHistoryRecords(
+        rows,
+        schoolId: 'A',
+        session: '2025-26',
+      ).single['examId'],
+      'old',
+    );
+    expect(
+      windowsExamHistoryRecords(
+        rows,
+        schoolId: 'A',
+        query: 'CLASS 2',
+      ).single['examId'],
+      'new',
+    );
+    history.first['examName'] = 'changed';
+    expect(rows[1]['examName'], 'Unit Test');
+    final results = <Map<String, dynamic>>[
+      {'schoolId': 'A', 'examId': 'old', 'studentName': 'Own'},
+      {'schoolId': 'B', 'examId': 'old', 'studentName': 'Foreign'},
+      {'schoolId': 'A', 'examId': 'new', 'studentName': 'Other exam'},
+      {'schoolId': 'A', 'examId': 'old', 'deleted': true},
+    ];
+    expect(
+      windowsExamHistoryResults(
+        results,
+        schoolId: 'A',
+        examId: 'old',
+      ).single['studentName'],
+      'Own',
+    );
+    expect(
+      windowsExamHistoryResults(results, schoolId: 'A', examId: ''),
+      isEmpty,
+    );
+  });
   test(
     'expense history keeps only active-school records, orders dates and never mutates the ledger',
     () {

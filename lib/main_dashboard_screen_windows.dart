@@ -28,6 +28,7 @@ import 'windows_analytics_identity.dart';
 import 'windows_expense_intent.dart';
 import 'windows_expense_history.dart';
 import 'windows_exam_service.dart';
+import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
@@ -22094,6 +22095,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const WindowsExamHistoryScreen(),
+            )),
+            icon: const Icon(Icons.history_rounded),
+            label: const Text('History'),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 9),
             child: Container(
