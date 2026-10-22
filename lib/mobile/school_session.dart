@@ -1,6 +1,8 @@
+import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
+import '../attendance_schedule.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -37,9 +39,12 @@ class AttendanceRejected extends StateError {
   final String code, reference;
   static const _reasons = <String, String>{
     'ATTENDANCE_SCHOOL_CLOSED': 'School is closed for this attendance day.',
-    'ATTENDANCE_LOCATION_ACCURACY': 'Location accuracy or school location settings do not meet the attendance policy.',
+    'ATTENDANCE_LOCATION_ACCURACY':
+        'Location accuracy or school location settings do not meet the attendance policy.',
     'ATTENDANCE_OUTSIDE_SCHOOL':
         'The captured location is outside the school attendance radius.',
+    'ATTENDANCE_SCHEDULE_CLOSED':
+        'Student attendance is outside the school schedule.',
     'ATTENDANCE_CAPTURE_REVIEW': 'Attendance capture date needs school review.',
   };
   static String? reason(Map<String, dynamic> response, int status) {
@@ -199,9 +204,11 @@ class SchoolSession {
           token.length > 3000 ||
           !RegExp(r'^[a-f0-9]{64}$').hasMatch(parts[1]))
         return null;
-      final p = jsonDecode(
-        utf8.decode(base64Url.decode(base64Url.normalize(parts[0]))),
-      ) as Map;
+      final p =
+          jsonDecode(
+                utf8.decode(base64Url.decode(base64Url.normalize(parts[0]))),
+              )
+              as Map;
       if (p['purpose'] != 'attendance' ||
           p['schoolId'] != current.schoolId ||
           p['role'] != current.role ||
@@ -240,6 +247,64 @@ class SchoolSession {
         )
       : null;
 
+  String _attendanceStatusDay = '';
+  String? _attendanceStatusOwner;
+  bool _capturedToday = false, _exitedToday = false;
+  String _historyDay = '';
+  String? _historyOwner;
+  bool _historyEntry = false, _historyExit = false;
+  String get attendanceLockReason => attendanceLockFor('entry');
+  String attendanceLockFor(String mode) {
+    final day = attendanceDay(DateTime.now());
+    if (!attendanceStatusReady ||
+        _attendanceStatusOwner != _attendanceOwner ||
+        _attendanceStatusDay != day) {
+      return 'Checking today’s attendance…';
+    }
+    final status = dashboard['attendanceStatus'];
+    final entered =
+        _capturedToday ||
+        (_historyOwner == _attendanceOwner &&
+            _historyDay == day &&
+            _historyEntry) ||
+        status is Map && status['day'] == day && status['recorded'] == true;
+    final exited =
+        _exitedToday ||
+        (_historyOwner == _attendanceOwner &&
+            _historyDay == day &&
+            _historyExit);
+    if (mode == 'exit' ? exited : entered) {
+      return '${mode == 'exit' ? 'Check-out' : 'Check-in'} captured today. Locked until tomorrow, including pending submissions.';
+    }
+    if (mode == 'exit' && !entered) return 'Check in before checking out.';
+    if (link?.role == 'student') {
+      if (status is! Map) {
+        return 'Refresh school attendance settings before marking attendance.';
+      }
+      if (status['version'] != 1) {
+        return 'School attendance update required. Ask the school to update its attendance backend.';
+      }
+      if (!attendanceWindowAllows(status['schedule'], DateTime.now())) {
+        return 'Student attendance is locked outside the school schedule (India time).';
+      }
+    }
+    return '';
+  }
+
+  String get attendanceScheduleLabel {
+    final status = dashboard['attendanceStatus'];
+    if (link?.role != 'student' || status is! Map || status['version'] != 1)
+      return '';
+    final w = status['schedule'];
+    if (w == null || w is Map && w['enabled'] == false)
+      return 'Student attendance: no daily time limit.';
+    if (w is! Map || w['startMinute'] is! int || w['endMinute'] is! int)
+      return '';
+    String clock(int n) =>
+        '${(n ~/ 60).toString().padLeft(2, '0')}:${(n % 60).toString().padLeft(2, '0')}';
+    return 'Student attendance: ${clock(w['startMinute'])}–${clock(w['endMinute'])} IST. Locks at closing time.';
+  }
+
   Future<void> refreshAttendanceStatus() async {
     final owner = _attendanceOwner;
     if (owner == null) {
@@ -247,9 +312,20 @@ class SchoolSession {
       attendanceAccepted = 0;
       return;
     }
+    final day = attendanceDay(DateTime.now());
+    final captured = await _attendanceStore.capturedOn(
+      owner,
+      day,
+      mode: 'entry',
+    );
+    final exited = await _attendanceStore.capturedOn(owner, day, mode: 'exit');
     final rows = await _attendanceStore.pending(owner);
     final summary = await _attendanceStore.summary(owner);
     if (owner != _attendanceOwner) return;
+    _attendanceStatusOwner = owner;
+    _attendanceStatusDay = day;
+    _capturedToday = captured;
+    _exitedToday = exited;
     attendanceStatusReady = true;
     attendancePending = (summary['pending'] as num).toInt();
     attendanceAccepted = (summary['accepted'] as num? ?? 0).toInt();
@@ -263,6 +339,74 @@ class SchoolSession {
         .take(1)
         .join();
     attendanceChanges.value++;
+  }
+
+  Map<String, dynamic> _attendanceHistoryCache = {};
+  final _attendanceHistoryFlights =
+      <String, Future<List<Map<String, dynamic>>>>{};
+  List<Map<String, dynamic>>? cachedAttendanceHistory(String month) {
+    if (!cachedAccessAllowed || _attendanceHistoryCache[month] is! List)
+      return null;
+    return (_attendanceHistoryCache[month] as List)
+        .whereType<Map>()
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> attendanceHistory(String month) {
+    if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(month))
+      throw StateError('Select a month.');
+    final existing = _attendanceHistoryFlights[month];
+    if (existing != null) return existing;
+    final pending = _fetchAttendanceHistory(month);
+    _attendanceHistoryFlights[month] = pending;
+    return pending.whenComplete(() {
+      if (identical(_attendanceHistoryFlights[month], pending))
+        _attendanceHistoryFlights.remove(month);
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAttendanceHistory(
+    String month,
+  ) async {
+    final current = link, generation = _generation;
+    final result = await schoolCall('mobile_attendance_list', {'month': month});
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
+    final value = result['attendance'];
+    if (value is! List ||
+        value.any(
+          (r) =>
+              r is! Map ||
+              r['date'] is! String ||
+              !(r['date'] as String).startsWith('$month-'),
+        ))
+      throw StateError(
+        'Invalid school attendance history; saved history retained.',
+      );
+    final rows = value.map((r) => Map<String, dynamic>.from(r as Map)).toList();
+    final before = _attendanceHistoryCache;
+    final updated = {...before, month: rows};
+    final months = updated.keys.toList()..sort();
+    while (months.length > 18) updated.remove(months.removeAt(0));
+    _attendanceHistoryCache = updated;
+    try {
+      await _persist();
+    } catch (_) {
+      if (generation == _generation) _attendanceHistoryCache = before;
+      rethrow;
+    }
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
+    final day = attendanceDay(DateTime.now());
+    if (month == day.substring(0, 7)) {
+      _historyDay = day;
+      _historyOwner = _attendanceOwner;
+      _historyEntry = rows.any((r) => r['date'] == day && r['checkIn'] != null);
+      _historyExit = rows.any((r) => r['date'] == day && r['checkOut'] != null);
+      attendanceChanges.value++;
+    }
+    return rows;
   }
 
   Future<void> retryAttendance() async {
@@ -282,6 +426,11 @@ class SchoolSession {
     final owner = _attendanceOwner, current = link, generation = _generation;
     if (owner == null || current == null || !cachedAccessAllowed)
       throw SchoolAccessDenied('Verified school access required.');
+    await refreshAttendanceStatus();
+    if (generation != _generation || !identical(current, link))
+      throw SchoolAccessDenied('School session changed.');
+    if (attendanceLockFor(mode).isNotEmpty)
+      throw StateError(attendanceLockFor(mode));
     if (!['entry', 'exit'].contains(mode) || capturedAt <= 0)
       throw StateError('Invalid attendance capture.');
     final day = DateTime.fromMillisecondsSinceEpoch(
@@ -290,6 +439,16 @@ class SchoolSession {
     ).add(const Duration(hours: 5, minutes: 30));
     final date =
         '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    if (date != attendanceDay(DateTime.now()) ||
+        current.role == 'student' &&
+            !attendanceWindowAllows(
+              (dashboard['attendanceStatus'] as Map?)?['schedule'],
+              DateTime.fromMillisecondsSinceEpoch(capturedAt),
+            )) {
+      throw StateError(
+        'Attendance capture is outside today’s school schedule.',
+      );
+    }
     final approval = <String, dynamic>{};
     if (_cardReaderEnforced || current.cardIssueId.isNotEmpty) {
       final permit = _currentAttendancePermit, offline = _cardOfflineLease;
@@ -320,7 +479,7 @@ class SchoolSession {
       ...gps,
       ...approval,
       if (current.cardIssueId.isNotEmpty) 'cardIssueId': current.cardIssueId,
-    });
+    }, oncePerMode: true);
     if (generation != _generation || !identical(current, link))
       throw SchoolAccessDenied(
         'School session changed; original capture retained.',
@@ -333,7 +492,8 @@ class SchoolSession {
     final running = _attendanceFlush;
     if (running != null) return running;
     final pending = _flushAttendance().catchError((Object error) {
-      attendanceFailure = 'Attendance storage unavailable. Existing captures are retained; retry after reopening the app.';
+      attendanceFailure =
+          'Attendance storage unavailable. Existing captures are retained; retry after reopening the app.';
       attendanceChanges.value++;
       throw error;
     });
@@ -370,11 +530,15 @@ class SchoolSession {
     if (permitToken is! String) return; // Older broker: no fake acceptance.
     Map permit;
     try {
-      permit = jsonDecode(
-        utf8.decode(
-          base64Url.decode(base64Url.normalize(permitToken.split('.').first)),
-        ),
-      ) as Map;
+      permit =
+          jsonDecode(
+                utf8.decode(
+                  base64Url.decode(
+                    base64Url.normalize(permitToken.split('.').first),
+                  ),
+                ),
+              )
+              as Map;
     } catch (_) {
       return;
     }
@@ -437,13 +601,15 @@ class SchoolSession {
                     publicKey: cardPublicKey,
                   )
                 : null;
-            final oldPermit = jsonDecode(
-              utf8.decode(
-                base64Url.decode(
-                  base64Url.normalize(original.split('.').first),
-                ),
-              ),
-            ) as Map;
+            final oldPermit =
+                jsonDecode(
+                      utf8.decode(
+                        base64Url.decode(
+                          base64Url.normalize(original.split('.').first),
+                        ),
+                      ),
+                    )
+                    as Map;
             if (originalExpiry == null ||
                 originalExpiry <= at ||
                 oldPermit['expiresAt'] is! int ||
@@ -601,7 +767,8 @@ class SchoolSession {
       );
       link = restoredLink;
       schoolToken = d['schoolToken'];
-      syncPaused = d['syncPaused'] == true;
+      // Student-facing pause control was retired; always resume background sync.
+      syncPaused = false;
       await _adoptCardAuthorization(
         Map<String, dynamic>.from(d),
         restoring: true,
@@ -616,6 +783,10 @@ class SchoolSession {
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        if (d['cacheRole'] == link!.role)
+          _attendanceHistoryCache = Map<String, dynamic>.from(
+            d['attendanceHistory'] as Map? ?? {},
+          );
         if (d['lastDashboardVerifiedAt'] is num)
           lastDashboardVerifiedAt = DateTime.fromMillisecondsSinceEpoch(
             (d['lastDashboardVerifiedAt'] as num).toInt(),
@@ -657,6 +828,7 @@ class SchoolSession {
     }
 
     if (current.managed) {
+      final requestTimeout = managedSchoolRequestTimeout(action);
       final r = await _client
           .post(
             Uri.parse(current.endpoint),
@@ -677,14 +849,12 @@ class SchoolSession {
             }),
           )
           .timeout(
-            action == 'mobile_login'
-                ? const Duration(seconds: 105)
-                : const Duration(seconds: 25),
+            requestTimeout,
             onTimeout: () => throw action == 'mobile_login'
                 ? SchoolLoginTimeout()
                 : TimeoutException(
                     'School request did not finish in time.',
-                    const Duration(seconds: 25),
+                    requestTimeout,
                   ),
           );
       unchanged();
@@ -736,6 +906,9 @@ class SchoolSession {
         _policyExpiresAt = (d['policyExpiresAt'] as num).toInt();
       if (action != 'mobile_login' && d['attendancePermit'] is String)
         _cachedAttendancePermit = d['attendancePermit'] as String;
+      if (d['attendanceStatus'] is Map) {
+        dashboard = {...dashboard, 'attendanceStatus': d['attendanceStatus']};
+      }
       return Map<String, dynamic>.from(d);
     }
     final r = await _client
@@ -911,6 +1084,8 @@ class SchoolSession {
       if (_cardOfflineLease != null) 'cardOfflineLease': _cardOfflineLease,
       'cacheSchool': link!.projectId,
       'cachePerson': link!.personId,
+      'cacheRole': link!.role,
+      'attendanceHistory': _attendanceHistoryCache,
       'dashboard': dashboard,
       'syncPaused': syncPaused,
       'lastDashboardVerifiedAt':
@@ -969,7 +1144,8 @@ class SchoolSession {
     final watch = Stopwatch()..start();
     final pending = _refreshDashboard(afterSignal: afterSignal);
     _refresh = pending;
-    connectionMessage = 'Checking the latest school dashboard; previously verified data remains available.';
+    connectionMessage =
+        'Checking the latest school dashboard; previously verified data remains available.';
     connectionChanges.value++;
     pending.then(
       (_) {
@@ -1026,13 +1202,17 @@ class SchoolSession {
   }) async {
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
-    final groupCheckpoints = <String, Map<String, String>>{};
-    const recordGroups = {
-      'notices', 'calendar', 'documents', 'examinations', 'reportCards',
-      'fees', 'payments', 'feeStructures', 'salary',
+    // Legacy responses can leave list metadata (notably noticeIds: []) in
+    // the retained cache. Empty lists vacuously pass the row checks below,
+    // but are not Script data groups and must never become checkpoints.
+    final groups = <String>{
+      'school', 'templates', 'notices', 'calendar', 'documents', 'examinations',
+      if (link?.role == 'student') ...{'reportCards', 'fees', 'payments', 'feeStructures'},
+      if (link?.role == 'teacher') 'salary',
     };
+    final groupCheckpoints = <String, Map<String, String>>{};
     for (final entry in dashboard.entries) {
-      if (!recordGroups.contains(entry.key) || entry.value is! List) continue;
+      if (!groups.contains(entry.key) || entry.value is! List) continue;
       final rows = (entry.value as List).whereType<Map>().toList();
       if (rows.any(
         (r) =>
@@ -1062,9 +1242,10 @@ class SchoolSession {
       if (dashboard['revisions'] is Map)
         'knownRevisions': {
           for (final entry in (dashboard['revisions'] as Map).entries)
-            if (dashboard['mobileRecordDeltaVersion'] != 1 ||
+            if (groups.contains(entry.key) &&
+                (dashboard['mobileRecordDeltaVersion'] != 1 ||
                 dashboard[entry.key] is! List ||
-                groupCheckpoints.containsKey(entry.key))
+                groupCheckpoints.containsKey(entry.key)))
               entry.key: entry.value,
         },
       if (dashboard['notices'] is List)
@@ -1355,6 +1536,14 @@ class SchoolSession {
     _refreshFailures = 0;
     syncPaused = false;
     _cachedAttendancePermit = null;
+    _attendanceStatusDay = '';
+    _capturedToday = false;
+    _exitedToday = false;
+    _historyDay = '';
+    _historyOwner = null;
+    _historyEntry = false;
+    _historyExit = false;
+    attendanceStatusReady = false;
     _cardAuthorizationToken = null;
     _cardOfflineLease = null;
     _cardOfflineUntil = 0;
@@ -1373,6 +1562,8 @@ class SchoolSession {
     person = {};
     schoolName = '';
     dashboard = {};
+    _attendanceHistoryCache = {};
+    _attendanceHistoryFlights.clear();
     connectionState = SchoolConnectionState.cachedOffline;
     lastDashboardVerifiedAt = null;
     dashboardCleanupDeferred = false;

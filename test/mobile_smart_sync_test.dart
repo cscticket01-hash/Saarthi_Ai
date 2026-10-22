@@ -37,6 +37,33 @@ void main() {
     'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('confirmed attendance survives restart and malformed/failed reads without crossing role cache', () async {
+    var offline = false, malformed = false, reads = 0;
+    final client = MockClient((request) async {
+      final action = (jsonDecode(request.body)['request'] as Map)['action'];
+      if (action == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (offline) throw const SocketException('offline');
+      reads++;
+      return http.Response(jsonEncode(response({'attendance': malformed ? 'bad' : [{'date': '2026-10-19', 'checkIn': 123}]})), 200);
+    });
+    final session = SchoolSession(client: client);
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await Future.wait([session.attendanceHistory('2026-10'), session.attendanceHistory('2026-10')]);
+    expect(reads, 1);
+    final restored = SchoolSession(client: client); await restored.restore();
+    expect(restored.cachedAttendanceHistory('2026-10')!.single['checkIn'], 123);
+    offline = true; await expectLater(restored.attendanceHistory('2026-10'), throwsA(isA<SocketException>()));
+    expect(restored.cachedAttendanceHistory('2026-10')!.length, 1);
+    offline = false; malformed = true;
+    await expectLater(restored.attendanceHistory('2026-10'), throwsStateError);
+    expect(restored.cachedAttendanceHistory('2026-10')!.length, 1);
+    final stored = jsonDecode((await const FlutterSecureStorage().read(key: 'vs_mobile_session'))!) as Map<String,dynamic>;
+    stored['cacheRole'] = 'teacher';
+    FlutterSecureStorage.setMockInitialValues({'vs_mobile_session': jsonEncode(stored)});
+    final foreignRole = SchoolSession(); await foreignRole.restore();
+    expect(foreignRole.cachedAttendanceHistory('2026-10'), isNull);
+    await restored.clear(); expect(restored.cachedAttendanceHistory('2026-10'), isNull);
+  });
   test('ACK hint during an older in-flight dashboard schedules one fresh delta read', () async {
     final oldReply = Completer<http.Response>();
     var dashboardReads = 0;
@@ -852,7 +879,7 @@ void main() {
       expect(calls, 1);
       final restored = SchoolSession();
       await restored.restore();
-      expect(restored.syncPaused, true);
+      expect(restored.syncPaused, false); // Upgrades resume hidden background sync.
       await session.setSyncPaused(false);
       expect(calls, 2);
       final due = session.lastDashboardVerifiedAt!.add(

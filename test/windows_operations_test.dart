@@ -622,4 +622,48 @@ void main() {
       image.dispose();
     });
   });
+  testWidgets('attendance Schedule belongs to the active school and cannot save across a profile switch', (tester) async {
+    tester.view.resetPhysicalSize();
+    tester.view.physicalSize = const Size(1500, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final schoolA = db.activeProfileId;
+    await tester.runAsync(() async {
+      await db.collection('school_settings').doc('attendance_schedule').set({
+        'enabled': true, 'startMinute': 480, 'endMinute': 600,
+      });
+    });
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const MaterialApp(home: SchoolAttendanceOverview()));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    });
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Attendance options'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Schedule'));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    });
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 20 && find.text('Student attendance schedule').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('Student attendance schedule'), findsOneWidget);
+    expect(find.text('Opens at'), findsOneWidget);
+    expect(find.text('Locks at'), findsOneWidget);
+    final schoolB = '$schoolA-other';
+    await tester.runAsync(() => db.switchProfile(schoolB));
+    await tester.tap(find.text('Save schedule'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      expect((await db.collection('school_settings').doc('attendance_schedule').get()).exists, false);
+      await db.switchProfile(schoolA);
+      expect((await db.collection('school_settings').doc('attendance_schedule').get()).data()?['startMinute'], 480);
+    });
+    expect(tester.takeException(), isNull);
+  }, timeout: const Timeout(Duration(seconds: 30)));
+
 }

@@ -26,6 +26,12 @@ import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
 import 'windows_student_id_cards.dart';
 
+/// Prepared packages remain uploadable while individual owners await repair.
+class IdCardPreparationFailure extends StateError {
+  IdCardPreparationFailure(Object cause)
+      : super('ID card preparation incomplete: $cause');
+}
+
 class WindowsDocumentTemplates {
   static const manifestName = 'School ID • Manifest Front + Back';
   static Future<Uint8List> manifestId(
@@ -75,7 +81,7 @@ class WindowsDocumentTemplates {
     try {
       return await schoolImageBytes(
         u.toString(),
-      ).timeout(const Duration(milliseconds: 600), onTimeout: () => null);
+      ).timeout(const Duration(seconds: 30), onTimeout: () => null);
     } catch (_) {}
     return null;
   }
@@ -239,6 +245,31 @@ class WindowsDocumentTemplates {
     );
   }
 
+  /// One-time discovery for installations predating automatic card publication.
+  /// Does not regenerate existing packages, retained deletions or conflicts.
+  static Future<Map<String, Set<String>>> missingIdCardTargets() async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    final result = <String, Set<String>>{};
+    for (final kind in ['studentId', 'teacherId']) {
+      final role = kind == 'studentId' ? 'student' : 'teacher';
+      final people = (await db.collection(kind == 'studentId' ? 'students_directory' : 'teachers_directory').get()).docs;
+      for (final person in people) {
+        if (person.data()['deleted'] == true || person.data()['_syncDeleted'] == true ||
+            person.data()['schoolId'] != null && person.data()['schoolId'] != school) continue;
+        final id = WindowsBackendBridge.publishedIdCardOwnerId(role, person.id);
+        final local = (await db.collection('_local_student_documents').doc(id).get()).data();
+        final pending = (await db.collection('_windows_document_outbox').doc(id).get()).data();
+        final cloud = (await db.collection('documents').doc(id).get()).data();
+        if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school)
+          throw StateError('School changed during missing ID discovery.');
+        if (holdAutomaticIdCard(local, pending, cloud, school as String) || pending != null || cloud != null) continue;
+        (result[kind] ??= <String>{}).add(person.id);
+      }
+    }
+    return result;
+  }
+
   /// Uses the same selected renderer and the existing durable document outbox.
   /// Only changed person/profile/template inputs create a new immutable package.
   static Future<void> publishChangedIdCards({
@@ -274,6 +305,8 @@ class WindowsDocumentTemplates {
             {'conflict', 'needsAttention'}.contains(q.data()['syncState']))
           q.data()['documentId'],
     };
+    Object? firstFailure;
+    StackTrace? firstFailureStack;
     for (final kind in ['studentId', 'teacherId']) {
       final collection = kind == 'studentId'
           ? 'students_directory'
@@ -287,6 +320,7 @@ class WindowsDocumentTemplates {
         if (!doc.exists) continue;
         if (db.activeProfileId != origin)
           throw StateError('School changed during ID publication.');
+        try {
         // Retained file/metadata conflicts must be explicitly reviewed before
         // automatic ID regeneration can change their queue or local originals.
         final ownerId = WindowsBackendBridge.publishedIdCardOwnerId(
@@ -317,8 +351,12 @@ class WindowsDocumentTemplates {
         if(holdAutomaticIdCard(existing,pending,cached,identity['schoolId'] as String))continue;
         if ((existing?['inputRevision'] == revision ||
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
-            existing?['deleted'] != true)
+            existing?['deleted'] != true) {
+          if (pending == null && cached == null && existing?['syncState'] != 'Synced') {
+            await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: readPublished);
+          }
           continue;
+        }
         if (existing == null) {
           final cached = (await db.collection('documents').doc(id).get())
               .data();
@@ -357,7 +395,19 @@ class WindowsDocumentTemplates {
           readPublished: readPublished,
           automatic:true,
         );
+        } catch (error, stack) {
+          // One unavailable photo, renderer or owner conflict must not starve
+          // every later student/teacher. The caller retains dependencies and
+          // retries failures after uploading the packages already prepared.
+          if (db.activeProfileId != origin ||
+              error is CentralCloudException) rethrow;
+          firstFailure ??= error;
+          firstFailureStack ??= stack;
+        }
       }
+    }
+    if (firstFailure != null) {
+      Error.throwWithStackTrace(IdCardPreparationFailure(firstFailure), firstFailureStack!);
     }
   }
 

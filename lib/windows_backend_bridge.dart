@@ -2225,6 +2225,50 @@ class WindowsBackendBridge {
     return publishedIdCardOwnerId(link.role,link.personId);
   }
 
+  /// Restore the SAME retained PDF operation only after an authoritative read
+  /// proves there is no cloud card. Never replace a published version/tombstone.
+  static Future<void> requeueUnpublishedIdCard(String id, {
+    required Future<Map<String, dynamic>> Function() readPublished,
+  }) async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    final local = (await db.collection('_local_student_documents').doc(id).get()).data();
+    if (local == null || local['schoolId'] != school || local['documentKind'] != 'idCard')
+      throw StateError('Verified local ID required.');
+    final reply = await readPublished();
+    if (db.activeProfileId != origin || reply['schoolId'] != school || reply['syncProtocol'] != 2 || reply['records'] is! Map)
+      throw StateError('School ID inventory verification failed.');
+    final remote = (reply['records'] as Map)[id];
+    if (remote != null) {
+      if (remote is! Map || remote['schoolId'] != school)
+        throw StateError('School ID inventory owner mismatch.');
+      await db.applySyncedDocument(db.collection('documents').doc(id), Map<String, dynamic>.from(remote));
+      return;
+    }
+    final path = local['localPath'];
+    if (path is! String || !await File(path).exists())
+      throw StateError('Original ID PDF requires school review; no replacement created.');
+    var queued = false;
+    await _documentWrite(() async {
+      if (db.activeProfileId != origin) throw StateError('School changed during ID recovery.');
+      final current = (await db.collection('_local_student_documents').doc(id).get()).data();
+      final pending = (await db.collection('_windows_document_outbox').doc(id).get()).data();
+      final cloud = (await db.collection('documents').doc(id).get()).data();
+      if (current == null || current['documentRevision'] != local['documentRevision'] || current['localPath'] != path)
+        throw StateError('Original ID changed during recovery.');
+      if (holdAutomaticIdCard(current, pending, cloud, school as String) || pending != null || cloud != null) return;
+      if (current['documentRevision'] is! String || (current['documentRevision'] as String).isEmpty)
+        throw StateError('Original ID revision requires school review.');
+      // Preserve original documentRevision, files and CAS baseline; no queue reset.
+      final batch = db.batch();
+      final retained = {...current, 'syncState': 'Pending'};
+      batch.set(db.collection('_windows_document_outbox').doc(id), retained);
+      batch.set(db.collection('_local_student_documents').doc(id), {'syncState': 'Pending'}, SetOptions(merge: true));
+      await batch.commit(); queued = true;
+    });
+    if (queued) onLocalDocumentCommitted?.call();
+  }
+
   static Future<void> publishIdCard({
     required Uint8List bytes,
     required String qr,

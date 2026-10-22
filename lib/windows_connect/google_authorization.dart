@@ -60,16 +60,16 @@ class GoogleAuthorization {
           (uri.queryParameters['code']?.isNotEmpty ?? false) && !uri.queryParameters.containsKey('error')) ||
           (uri.queryParametersAll['error']?.length == 1 && !uri.queryParameters.containsKey('code')));
 
-  Future<GoogleSetupAccount> authorize({required bool script, bool schoolCloud = false}) async {
+  Future<GoogleSetupAccount> authorize({required bool script, bool schoolCloud = false, bool profileOnly = false}) async {
     if (!oauthClientId.endsWith('.apps.googleusercontent.com')) throw StateError('Google Connect is not enabled in this build. Ask the developer to configure the Google Desktop OAuth client.');
     if ((requiresBroker || oauthBrokerUrl.isNotEmpty) && !validBrokerUrl(oauthBrokerUrl)) {
       throw StateError('The secure Google OAuth token service is not configured. Contact the developer; do not enter a client secret in the app.');
     }
     if (_pending != null) throw StateError('Google sign-in is already open.');
     _cancelled = false;
-    final scopes = <String>['openid', 'email', if (schoolCloud) 'https://www.googleapis.com/auth/drive.file'
-      else 'https://www.googleapis.com/auth/cloud-platform',
-      if (script && !schoolCloud) ...['https://www.googleapis.com/auth/script.projects',
+    final scopes = <String>['openid', 'email', 'profile', if (!profileOnly && schoolCloud) 'https://www.googleapis.com/auth/drive.file'
+      else if (!profileOnly) 'https://www.googleapis.com/auth/cloud-platform',
+      if (script && !schoolCloud && !profileOnly) ...['https://www.googleapis.com/auth/script.projects',
         'https://www.googleapis.com/auth/script.deployments']];
     final verifier = secureSetupToken(48), state = secureSetupToken();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -134,7 +134,8 @@ class GoogleAuthorization {
       final token = _decode(tokenResponse.body);
       final granted = (token['scope'] as String? ?? '').split(' ').toSet();
       // Google may return the canonical userinfo.email scope instead of email.
-      final needed = scopes.where((s) => s != 'email' && s != 'openid');
+      final needed = scopes.where((s) => s != 'email' && s != 'openid' && s != 'profile');
+      if (profileOnly && !granted.contains('profile') && !granted.contains('https://www.googleapis.com/auth/userinfo.profile')) throw StateError('Google profile permission was not granted.');
       if (!needed.every(granted.contains)) throw StateError('Required permissions were not granted. No school setup was started.');
       final access = token['access_token']?.toString() ?? '';
       if (access.isEmpty) throw StateError('Google access token missing.');

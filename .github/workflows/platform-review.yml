@@ -131,6 +131,10 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-startup-tests
       run: flutter test --concurrency=1 test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart
+    - name: Verify ID publication failure isolation
+      env:
+        APPDATA: ${{ runner.temp }}/id-publication-tests
+      run: flutter test --concurrency=1 test/windows_document_review_owner_test.dart test/windows_sync_comparison_test.dart
     - name: Verify central school cloud and paths
       run: flutter test test/central_school_cloud_test.dart
     - name: Verify school connection automation
@@ -426,7 +430,7 @@ jobs:
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
-      run: flutter test test/android_startup_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
+      run: flutter test test/mobile_attendance_history_test.dart test/published_id_card_test.dart test/android_startup_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/mobile_boundary_test.dart test/sync_recovery_policy_test.dart test/mobile_dashboard_timeout_accuracy_test.dart test/mobile_smart_sync_test.dart test/mobile_settings_screen_test.dart test/mobile_attendance_outbox_test.dart
     - name: Build unsigned Android preview
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}

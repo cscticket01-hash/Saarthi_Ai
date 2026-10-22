@@ -10,20 +10,21 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import 'mobile/school_session.dart';
+import 'mobile/published_id_card.dart';
+import 'mobile/attendance_history.dart';
 import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
 import 'mobile/school_notifications.dart';
 import 'mobile/school_messaging.dart';
 import 'mobile/startup_gate.dart';
 import 'mobile/attendance_background.dart';
+import 'attendance_schedule.dart';
 import 'school_document_renderer.dart';
 
 @pragma('vm:entry-point')
@@ -179,7 +180,8 @@ class _QrScannerState extends State<_QrScanner> {
                   } catch (_) {}
                   if (mounted)
                     setState(
-                      () => _error = 'Invalid or older ID QR. Ask your school to regenerate this card.',
+                      () => _error =
+                          'Invalid or older ID QR. Ask your school to regenerate this card.',
                     );
                   return;
                 }
@@ -216,7 +218,8 @@ class _QrScannerState extends State<_QrScanner> {
                     } catch (_) {
                       if (mounted)
                         setState(
-                          () => _error = 'Camera could not restart. Reopen the scanner and check camera permission.',
+                          () => _error =
+                              'Camera could not restart. Reopen the scanner and check camera permission.',
                         );
                     }
                   },
@@ -456,11 +459,18 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   bool _loading = true, _busy = false, _blocked = false;
   String? _error;
   Map<String, dynamic> _data = {};
-  List<Map<String, dynamic>> _attendance = [];
+  late final _history = AttendanceHistoryController(
+    load: _s.attendanceHistory,
+    cached: _s.cachedAttendanceHistory,
+    confirmations: _s.attendanceChanges,
+    confirmationKey: () =>
+        _s.lastAttendanceAck?.millisecondsSinceEpoch.toString() ?? '',
+  );
+  List<Map<String, dynamic>> get _attendance => _history.rows;
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month),
       _selectedDay = DateTime.now();
   Timer? _timer;
-  String _attendanceMode = 'entry';
+  Timer? _attendanceClock;
   bool get _teacher => _s.link?.role == 'teacher';
   List<Map<String, dynamic>> _list(dynamic value) => value is List
       ? value.whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList()
@@ -474,6 +484,32 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _s.attendanceChanges.addListener(_attendanceChanged);
+    _history.addListener(_attendanceChanged);
+    unawaited(_history.selectMonth(_monthKey));
+    unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
+    var previousLock = _s.attendanceLockReason;
+    var previousAttendanceDay = attendanceDay(DateTime.now());
+    var lastQueueCheck = DateTime.now();
+    _attendanceClock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
+        return;
+      final now = DateTime.now();
+      if (_s.attendancePending > 0 &&
+          now.difference(lastQueueCheck) >= const Duration(seconds: 5)) {
+        lastQueueCheck = now;
+        unawaited(_s.flushAttendance().catchError((_) {}));
+      }
+      final day = attendanceDay(now);
+      if (day != previousAttendanceDay) {
+        previousAttendanceDay = day;
+        unawaited(_s.refreshAttendanceStatus().catchError((_) {}));
+      }
+      final lock = _s.attendanceLockReason;
+      if (mounted && lock != previousLock) {
+        previousLock = lock;
+        setState(() {});
+      }
+    });
     _s.connectionChanges.addListener(_connectionChanged);
     _data = Map<String, dynamic>.from(_s.dashboard);
     _loading = _data.isEmpty;
@@ -492,9 +528,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _attendanceClock?.cancel();
     _noticeOpened?.cancel();
     _noticeReceived?.cancel();
     _s.attendanceChanges.removeListener(_attendanceChanged);
+    _history.removeListener(_attendanceChanged);
+    _history.dispose();
     _s.connectionChanges.removeListener(_connectionChanged);
     super.dispose();
   }
@@ -514,16 +553,20 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       _loading =
           _s.connectionState == SchoolConnectionState.syncing && _data.isEmpty;
     });
+    if (_s.connectionState == SchoolConnectionState.connected &&
+        _page == (_teacher ? 0 : 1))
+      unawaited(_loadAttendance());
   }
 
   void _attendanceChanged() {
     if (mounted) setState(() {});
   }
 
-  Future<void> _presence([String? token]) async {
+  Future<void> _presence() async {
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
       return;
     try {
+      await _s.refreshAttendanceStatus();
       await _s.refreshIfIdleDue();
     } catch (_) {
       /* Session publishes its retained-cache error state. */
@@ -541,6 +584,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           _blocked = false;
           _error = null;
         });
+      if (_page == (_teacher ? 0 : 1)) unawaited(_loadAttendance());
       unawaited(_refreshPublishedCard().catchError((Object _) => null));
       unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
@@ -569,16 +613,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     }
   }
 
-  Future<void> _loadAttendance() async {
-    try {
-      final d = await _s.schoolCall('mobile_attendance_list', {
-        'month': _monthKey,
-      });
-      if (mounted) setState(() => _attendance = _list(d['attendance']));
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    }
-  }
+  Future<void> _loadAttendance() => _history.selectMonth(_monthKey);
 
   Future<void> _logout() async {
     await SchoolMessaging.stop();
@@ -612,8 +647,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     ],
   );
   bool _open(DateTime day) {
-    final override = _list(_data['calendar'])
-        .where((d) => (d['date'] ?? d['id']) == _day(day));
+    final override = _list(
+      _data['calendar'],
+    ).where((d) => (d['date'] ?? d['id']) == _day(day));
     if (override.isNotEmpty && override.first['isOpen'] is bool)
       return override.first['isOpen'];
     final settings = _data['calendarSettings'] is Map
@@ -625,26 +661,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     return !closed.contains(day.weekday % 7);
   }
 
-  Future<void> _markAttendance() async {
-    if (_busy) return;
-    final qr = await Navigator.push<SchoolLink>(
-      context,
-      MaterialPageRoute(builder: (_) => const _QrScanner()),
-    );
-    if (qr == null || !mounted) return;
-    final scanCapturedAt = DateTime.now().millisecondsSinceEpoch;
-    if (qr.projectId != _s.link!.projectId ||
-        qr.role != _s.link!.role ||
-        qr.linkToken != _s.link!.linkToken) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Scan your own ID from the active school.'),
-        ),
-      );
-      return;
-    }
+  Future<void> _markAttendance(String mode) async {
+    if (_busy || _s.attendanceLockFor(mode).isNotEmpty) return;
     setState(() => _busy = true);
+    final activeLink = _s.link;
     try {
+      if (activeLink == null) throw StateError('Sign in to your school first.');
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied)
         permission = await Geolocator.requestPermission();
@@ -655,20 +677,23 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 20),
       );
+      if (!identical(activeLink, _s.link))
+        throw StateError('School session changed.');
+      final capturedAt = DateTime.now().millisecondsSinceEpoch;
       await _s.saveAttendance(
         {
           'latitude': position.latitude,
           'longitude': position.longitude,
           'accuracy': position.accuracy,
         },
-        scanCapturedAt,
-        _attendanceMode,
+        capturedAt,
+        mode,
       );
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Attendance saved on this device. Cloud confirmation pending.',
+              '${mode == 'exit' ? 'Check-out' : 'Check-in'} saved.',
             ),
           ),
         );
@@ -721,8 +746,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           );
       } catch (e) {
         if (mounted)
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('$e')));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
     message.dispose();
@@ -745,6 +771,86 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   }
 
   Future<Uint8List?> _fetchPublishedCard() => _s.publishedIdCard();
+
+  Future<void> _openSchoolDocument(Map<String, dynamic> document) async {
+    final active = _s.link;
+    try {
+      final result = await _s.schoolCall('mobile_document', {
+        'documentId': document['documentId'],
+      });
+      if (!mounted || !identical(active, _s.link)) return;
+      final bytes = base64Decode(result['base64'].toString());
+      if (result['documentRevision'] != document['documentRevision'] ||
+          result['contentHash'] != document['contentHash'] ||
+          result['mime'] != document['mimeType'] ||
+          sha256.convert(bytes).toString() != document['contentHash']) {
+        throw StateError(
+          'Document changed. Refresh school documents and retry.',
+        );
+      }
+      final title = document['documentName']?.toString() ?? 'School document';
+      if (result['mime'] == 'application/pdf') {
+        await _previewPdf(bytes, title);
+      } else if ([
+        'image/png',
+        'image/jpeg',
+        'image/webp',
+      ].contains(result['mime'])) {
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: Text(title)),
+              body: Center(
+                child: InteractiveViewer(child: Image.memory(bytes)),
+              ),
+            ),
+          ),
+        );
+      } else {
+        throw StateError(
+          'This document format cannot be previewed in the app.',
+        );
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Unable to open this school document. Refresh and try again.',
+            ),
+          ),
+        );
+    }
+  }
+
+  Future<void> _openIdPdfExternally(Uint8List bytes) async {
+    final owner = _s.link;
+    try {
+      final directory = await getTemporaryDirectory();
+      final file = File(
+        '${directory.path}/school-id-${sha256.convert(bytes)}.pdf',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted || !identical(owner, _s.link)) return;
+      final result = await OpenFilex.open(file.path);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open a PDF viewer. Try Open my ID card.'),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open your ID card. Please try again.'),
+          ),
+        );
+    }
+  }
 
   Future<void> _previewPdf(Uint8List pdf, String title) async {
     if (!mounted) return;
@@ -781,10 +887,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           await _previewPdf(cached, 'School ID card • Front & back');
           return;
         }
-        final published = await _refreshPublishedCard();
+        var published = await _refreshPublishedCard();
+        if (published == null) {
+          await _load(afterSignal: true);
+          published = await _refreshPublishedCard();
+        }
         if (published == null)
           throw StateError(
-            'Your selected ID card has not reached school cloud storage yet. Ask the school to complete Sync.',
+            'Your school is preparing your ID card. Please try again shortly.',
           );
         await _previewPdf(published, 'School ID card • Front & back');
         return;
@@ -866,8 +976,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         return;
       }
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -1024,7 +1135,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     ],
   );
   Widget _attendancePage() {
-    final today = DateTime.now();
+    final today = attendanceIndiaTime(DateTime.now());
+    final lockReason = _s.attendanceLockFor('entry');
+    final exitLock = _s.attendanceLockFor('exit');
     var working = 0;
     for (
       var d = DateTime(_month.year, _month.month);
@@ -1047,7 +1160,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading('Attendance', 'Daily check-in and check-out at your school'),
+        _heading('Attendance', 'Check in and check out once each day'),
         Row(
           children: [
             IconButton(
@@ -1091,7 +1204,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               Column(
                 children: [
                   Text(
-                    '$present',
+                    _history.ready ? '$present' : '—',
                     style: const TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.bold,
@@ -1115,7 +1228,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               Column(
                 children: [
                   Text(
-                    working == 0
+                    !_history.ready || working == 0
                         ? '—'
                         : '${(present / working * 100).clamp(0, 100).toStringAsFixed(0)}%',
                     style: const TextStyle(
@@ -1130,24 +1243,40 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
             ],
           ),
         ),
+        if (_s.attendanceScheduleLabel.isNotEmpty)
+          _card(Text(_s.attendanceScheduleLabel)),
         if (!_open(today))
           _card(const Text('School is closed today. Attendance is disabled.'))
         else ...[
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'entry', label: Text('Check in')),
-              ButtonSegment(value: 'exit', label: Text('Check out')),
+          if (lockReason.isNotEmpty) _card(Text(lockReason)),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy || lockReason.isNotEmpty
+                      ? null
+                      : () => _markAttendance('entry'),
+                  icon: const Icon(Icons.login),
+                  label: const Text('Check in'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy || exitLock.isNotEmpty
+                      ? null
+                      : () => _markAttendance('exit'),
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Check out'),
+                ),
+              ),
             ],
-            selected: {_attendanceMode},
-            onSelectionChanged: (v) =>
-                setState(() => _attendanceMode = v.first),
           ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: _busy ? null : _markAttendance,
-            icon: const Icon(Icons.qr_code_scanner),
-            label: Text(_busy ? 'Verifying…' : 'Scan ID & mark attendance'),
-          ),
+          if (exitLock.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(exitLock, style: const TextStyle(fontSize: 12)),
+            ),
           const SizedBox(height: 18),
         ],
         ..._attendance.map(
@@ -1161,7 +1290,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                       Text(r['date'].toString()),
                       if (r['captureTimeSource'] == 'DEVICE_REPORTED')
                         const Text(
-                          'Device scan time',
+                          'Attendance time',
                           style: TextStyle(fontSize: 12),
                         ),
                     ],
@@ -1181,29 +1310,33 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Widget _documents() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _heading('My school documents', 'Your ID card and exam report cards'),
+      _heading('My school documents', 'ID card, marksheets and certificates'),
       _card(
         Column(
           children: [
-            QrImageView(
-              data: _s.link!.rawQr,
-              size: 180,
-              backgroundColor: Colors.white,
-            ),
-            const SizedBox(height: 12),
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: () => _showPdf('studentId', _s.person),
-              icon: const Icon(Icons.badge_outlined),
-              label: const Text('Open my ID card'),
+            PublishedIdCard(
+              key: ValueKey(
+                jsonEncode([
+                  _s.link?.projectId,
+                  _s.link?.role,
+                  _s.link?.personId,
+                  _data['idCardPackage'],
+                ]),
+              ),
+              load: _refreshPublishedCard,
+              refresh: () => _load(afterSignal: true),
+              open: (bytes) =>
+                  _previewPdf(bytes, 'School ID card • Front & back'),
+              openExternally: _openIdPdfExternally,
             ),
           ],
         ),
       ),
       const SizedBox(height: 10),
       const Text(
-        'Report cards',
+        'Marksheets',
         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 12),
@@ -1230,36 +1363,50 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           ),
         ),
       ),
+      const SizedBox(height: 14),
+      const Text(
+        'Certificates & other documents',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 12),
+      if (_list(_data['documents']).isEmpty)
+        _card(
+          const Text('Documents published by your school will appear here.'),
+        ),
+      for (final document in _list(_data['documents']))
+        _card(
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.description_outlined),
+            title: Text(
+              document['documentName']?.toString() ?? 'School document',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openSchoolDocument(document),
+          ),
+        ),
     ],
   );
   Widget _fees() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _heading('Fees', 'Your school fee ledger and payment history'),
-      for (final structure in _list(_data['feeStructures']))
-        if (structure['fees'] is Map)
-          _card(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Fee Structure • ${structure['academicSession'] ?? 'Legacy'}',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                for (final head in (structure['fees'] as Map).entries)
-                  Text('${head.key}: INR ${head.value}'),
-              ],
-            ),
-          ),
       if (_list(_data['fees']).isEmpty)
         _card(const Text('Your school has not published a fee ledger yet.')),
       ..._list(_data['fees']).map((f) {
         final due =
             double.tryParse(
-              (f['remainingAmount'] ?? f['balance'] ?? f['dueAmount'] ?? 0)
+              (f['remainingAmount'] ??
+                      f['balance'] ??
+                      f['dueAmount'] ??
+                      ((double.tryParse(
+                                '${f['expectedAmount'] ?? f['totalAmount']}',
+                              ) ??
+                              0) -
+                          (double.tryParse(
+                                '${f['totalPaid'] ?? f['paidAmount']}',
+                              ) ??
+                              0)))
                   .toString(),
             ) ??
             0;
@@ -1286,6 +1433,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 ],
               ),
               const SizedBox(height: 12),
+              if (f['month'] != null) Text('Month: ${f['month']}'),
               Text('Balance: INR ${due.toStringAsFixed(2)}'),
               Text(
                 'Paid: INR ${f['totalPaid'] ?? f['paidAmount'] ?? 0}',
@@ -1295,6 +1443,24 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           ),
         );
       }),
+      for (final structure in _list(_data['feeStructures']))
+        if (structure['fees'] is Map)
+          _card(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Fee Structure • ${structure['academicSession'] ?? 'Legacy'}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                for (final head in (structure['fees'] as Map).entries)
+                  Text('${head.key}: INR ${head.value}'),
+              ],
+            ),
+          ),
       const SizedBox(height: 8),
       const Text(
         'Payments',
@@ -1304,7 +1470,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         (p) => _card(
           ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text('INR ${p['totalAmount'] ?? p['amount'] ?? 0}'),
+            title: Text(
+              'INR ${p['installmentAmount'] ?? p['paidAmount'] ?? p['amount'] ?? p['totalAmount'] ?? p['totalPaid'] ?? 0}',
+            ),
             subtitle: Text(
               '${p['dateText'] ?? p['date'] ?? ''} • ${p['receiptNo'] ?? ''}',
             ),
@@ -1372,30 +1540,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   @override
   Widget build(BuildContext context) {
     final pages = _teacher
-        ? [_attendancePage(), _salary(), _calendar()]
-        : [_home(), _attendancePage(), _documents(), _fees(), _calendar()];
+        ? [_attendancePage, _salary, _calendar]
+        : [_home, _attendancePage, _documents, _fees, _calendar];
     return Scaffold(
       appBar: AppBar(
         title: const VidyaSaarthiBrand(),
         actions: [
-          IconButton(
-            tooltip: _s.syncPaused ? 'Resume sync' : 'Pause sync',
-            icon: Icon(_s.syncPaused ? Icons.play_arrow : Icons.pause),
-            onPressed: () async {
-              try {
-                await _s.setSyncPaused(!_s.syncPaused);
-              } catch (_) {
-                if (mounted)
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Sync setting or refresh failed; cached data retained.',
-                      ),
-                    ),
-                  );
-              }
-            },
-          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'complaint') _complaint();
@@ -1451,59 +1601,6 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               child: ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
-                  if (!_s.syncPaused && (_loading || _busy))
-                    const LinearProgressIndicator(),
-                  Text(
-                    _s.syncPaused
-                        ? 'Sync paused'
-                        : switch (_s.connectionState) {
-                            SchoolConnectionState.connected =>
-                              'Connected — last dashboard verified',
-                            SchoolConnectionState.syncing => 'Syncing',
-                            SchoolConnectionState.cachedOffline =>
-                              'Cached / Offline',
-                            SchoolConnectionState.connectionError =>
-                              'Connection error — cached data retained',
-                          },
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                  Text(
-                    _s.attendanceStatusReady
-                        ? 'Attendance pending: ${_s.attendancePending} (central accepted: ${_s.attendanceAccepted})'
-                        : 'Loading local attendance queue…',
-                  ),
-                  if (_s.attendanceFailure.isNotEmpty)
-                    Text(_s.attendanceFailure),
-                  if (_s.attendancePending > 0)
-                    TextButton(
-                      onPressed: () async {
-                        try {
-                          await _s.retryAttendance();
-                        } catch (_) {}
-                      },
-                      child: const Text('Retry retained attendance'),
-                    ),
-                  if (_s.lastAttendanceAck != null)
-                    Text(
-                      'Attendance cloud ACK: ${_s.lastAttendanceAck!.toLocal()}',
-                    ),
-                  if (_s.lastDashboardVerifiedAt != null)
-                    Text(
-                      'Verified: ${_s.lastDashboardVerifiedAt!.toLocal()}',
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 11,
-                      ),
-                    ),
-                  if (SchoolSession.version.endsWith('-sync-test') &&
-                      _s.lastDashboardRefreshDuration != null)
-                    Text(
-                      'Dashboard refresh: ${_s.lastDashboardRefreshDuration!.inMilliseconds} ms',
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 11,
-                      ),
-                    ),
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
@@ -1512,7 +1609,12 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                         style: const TextStyle(color: Colors.orangeAccent),
                       ),
                     ),
-                  pages[_page],
+                  if (_loading && _data.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text('Loading school information…'),
+                    ),
+                  pages[_page](),
                 ],
               ),
             ),
@@ -1521,6 +1623,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         onDestinationSelected: (i) {
           setState(() => _page = i);
           if (i == (_teacher ? 0 : 1)) _loadAttendance();
+          if (!_teacher && i == 2) unawaited(_load(afterSignal: true));
         },
         destinations: _teacher
             ? const [

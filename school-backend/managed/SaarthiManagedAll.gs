@@ -7336,7 +7336,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-18.2',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-19.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -7400,7 +7400,9 @@ function VS_managedHandle(e) {
       'This ID card needs a new secure school QR':'Ask your school to regenerate this ID card.',
       'Class, roll number or date of birth is incorrect':'Class, roll number or date of birth is incorrect',
       'School session expired':'School session expired. Scan your ID again.',
-      'School record or ID card was changed; scan again':'School record or ID card was changed; scan again'
+      'School record or ID card was changed; scan again':'School record or ID card was changed; scan again',
+      'Student attendance is outside the school schedule':'Student attendance is outside the school schedule',
+      'Today’s attendance is already recorded':'Today’s attendance is already recorded'
     };
     // Owner-only execution diagnostics: constants and source line, never raw
     // exceptions, payloads, identities, signatures, paths or credentials.
@@ -8098,7 +8100,7 @@ function VS_managedAttendanceBatch(b) {
     if(acknowledgements.length&&(elapsed>=budget||elapsed+longest>=budget))break;
     const before=Date.now();
     try{VS_managedMobile(Object.assign({},op.request,{action:'mobile_mark_attendance',operationId:op.operationId}),b.lease);acknowledgements.push({operationId:op.operationId,success:true});}
-    catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');acknowledgements.push({operationId:op.operationId,success:false,authoritative:authoritative});}
+    catch(e){const authoritative=/School (session expired|record or ID|licence|is closed)|already recorded|outside the school schedule|capture date needs school review|Attendance can be marked|own school ID|Accurate school location/.test(e.message||'');acknowledgements.push({operationId:op.operationId,success:false,authoritative:authoritative});}
     longest=Math.max(longest,Date.now()-before);
   }
   return {acknowledgements:acknowledgements,deferredCount:b.operations.length-acknowledgements.length,partial:acknowledgements.length<b.operations.length};
@@ -8179,7 +8181,16 @@ function VS_session(b){const token=String(b.sessionToken||'');if(token.length<40
 function VS_own(col,session){const records=VS_query(col,'personId',session.personId).concat(VS_query(col,'studentId',session.person.id));const seen=Object.create(null);return records.filter(d=>{if(d.personId){if(d.personId!==session.personId)return false;}else{const name=String(d.studentName||d.name||'').trim().toLowerCase(),owner=String(session.person.name||'').trim().toLowerCase();if(!name||name!==owner)return false;if((d.dob||d.dateOfBirth)&&VS_dob(d.dob||d.dateOfBirth)!==VS_dob(session.person.dob||session.person.dateOfBirth))return false;}if(seen[d.id])return false;seen[d.id]=true;return true;});}
 function VS_safePerson(p){const allowed=['id','name','class','rollNo','dob','dateOfBirth','parentName','fatherName','parentContact','photoUrl','studentUid','teacherId','designation','subject','idCardUrl','mobileStableId'];const out={};allowed.forEach(k=>{if(p[k]!==undefined)out[k]=p[k];});return out;}
 function VS_distance(a,b,c,d){const rad=x=>x*Math.PI/180;const h=Math.sin(rad(c-a)/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(rad(d-b)/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
-function VS_attendancePolicy(session){const loc=VS_get('school_settings','school_location')||{},day=VS_day();return {role:session.role,personId:session.personId,documentId:session.person.id,qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,open:VS_isOpen(day),latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200};}
+function VS_attendancePolicy(session){
+ const loc=VS_get('school_settings','school_location')||{},day=VS_day();
+ const config=VS_get('school_settings','attendance_schedule');
+ const record=VS_get('attendance_records',VS_hash(session.role+'/'+session.personId+'/'+day));
+ return {role:session.role,personId:session.personId,documentId:session.person.id,
+  qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,
+  open:VS_isOpen(day),latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200,
+  scheduleVersion:1,schedule:config?{enabled:config.enabled,startMinute:config.startMinute,endMinute:config.endMinute}:null,
+  recorded:!!(record&&(record.checkIn||record.checkOut))};
+}
 function VS_mobileAction(b){
  const action=b.action;
  if(action==='mobile_project_info')return {projectId:VS_project(),windowsAdminProtection:!!PropertiesService.getScriptProperties().getProperty('VS_FIREBASE_API_KEY'),mobileProtocol:3};
@@ -8325,7 +8336,19 @@ function VS_mobileAction(b){
    const current=VS_get('attendance_records',id)||{};const mode=b.mode==='exit'?'exit':'entry';
    const operationField=mode==='entry'?'entryOperationId':'exitOperationId';
    if(b.operationId&&current[operationField]===b.operationId)return {message:'Attendance already recorded',record:current};
-   if(mode==='entry'&&current.checkIn)throw new Error('Today’s check-in is already recorded');
+   if(mode==='entry'&&(current.checkIn||current.checkOut))throw new Error('Today’s attendance is already recorded');
+   // Replays return above before a changed schedule can reject a committed ACK.
+   // Use original capture time for delayed queue delivery; never the delivery clock.
+   if(mode==='entry'&&session.role==='student'){
+    const schedule=VS_get('school_settings','attendance_schedule');
+    const at=Number.isSafeInteger(b.clientCapturedAt)?b.clientCapturedAt:(b.submittedAt||Date.now());
+    const submitted=b.submittedAt||Date.now();
+    if(at<=0||at>submitted+120000||Utilities.formatDate(new Date(at),'Asia/Kolkata','yyyy-MM-dd')!==day)throw new Error('Attendance capture date needs school review');
+    if(schedule&&schedule.enabled!==false){
+     const d=new Date(at+19800000),minute=d.getUTCHours()*60+d.getUTCMinutes();
+     if(schedule.enabled!==true||!Number.isInteger(schedule.startMinute)||!Number.isInteger(schedule.endMinute)||schedule.startMinute<0||schedule.endMinute>1440||schedule.startMinute>=schedule.endMinute||minute<schedule.startMinute||minute>=schedule.endMinute)throw new Error('Student attendance is outside the school schedule');
+    }
+   }
    if(mode==='exit'&&!current.checkIn)throw new Error('Check in before checking out');
    if(mode==='exit'&&current.checkOut)throw new Error('Today’s check-out is already recorded');
    const doc=Object.assign({},current,{personId:session.personId,documentId:session.person.id,role:session.role,name:session.person.name||'',studentClass:session.person.class||'',rollNo:session.person.rollNo||'',date:day,source:'ANDROID_QR',updatedAt:Date.now()});delete doc.id;
