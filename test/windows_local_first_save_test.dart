@@ -116,57 +116,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'school settings observes synced images without replacing an unsaved school name',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1280, 1100));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final ref = db.collection('school_config').doc('school_profile_cache');
-      final first = WindowsSchoolImageCache.dataUrl(
-        img.encodePng(img.Image(width: 2, height: 2)),
-      );
-      final next = WindowsSchoolImageCache.dataUrl(
-        img.encodePng(img.Image(width: 3, height: 3)),
-      );
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-        () => ref.set({
-          'schoolId': school,
-          'schoolName': 'Original school',
-          'principalName': 'Principal',
-          'logoUrl': first,
-        }),
-      );
-      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, 'Unsaved name');
-      await db.applySyncedDocument(ref, {
-        'schoolId': school,
-        'schoolName': 'Cloud school',
-        'principalName': 'Principal',
-        'logoUrl': next,
-        'principalSignatureUrl': next,
-      });
-      await tester.pumpAndSettle();
-      expect(find.text('Unsaved name'), findsOneWidget);
-      final images = tester.widgetList<Image>(find.byType(Image));
-      expect(
-        images.where(
-          (image) =>
-              image.image is MemoryImage &&
-              base64Encode((image.image as MemoryImage).bytes) ==
-                  next.substring(next.indexOf(',') + 1),
-        ),
-        isNotEmpty,
-      );
-      await tester.pumpWidget(const SizedBox());
-      // Reopening must read the updated durable profile, not stale memory.
-      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
-      await tester.pumpAndSettle();
-      expect(find.text('Cloud school'), findsOneWidget);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
   test('offline school profile and images persist with location and pending outbox', () async {
     final profile = await WindowsSchoolProfileStore.saveLocal({
       'schoolName':'Saved school','principalName':'Principal','latitude':26.1,
@@ -416,5 +365,77 @@ void main() {
     expect(prepared['marks'],original['marks']);
     expect(prepared['payments'],original['payments']);
   });
+
+  Future<void> waitForImageUi(WidgetTester tester, bool Function() ready) async {
+    for (var i = 0; i < 200 && !ready(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(ready(), isTrue, reason: 'School image UI did not finish its local I/O');
+  }
+
+  Future<void> imageIo(WidgetTester tester, Future<void> Function() action) async {
+    var done = false;
+    Object? failure;
+    await tester.runAsync(() async {
+      action().then<void>((_) { done = true; }, onError: (Object error) {
+        failure = error; done = true;
+      });
+    });
+    await waitForImageUi(tester, () => done);
+    if (failure != null) throw failure!;
+  }
+
+  testWidgets(
+    'school settings observes synced images without replacing an unsaved school name',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 1100));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final ref = db.collection('school_config').doc('school_profile_cache');
+      final first = WindowsSchoolImageCache.dataUrl(
+        img.encodePng(img.Image(width: 2, height: 2)),
+      );
+      final next = WindowsSchoolImageCache.dataUrl(
+        img.encodePng(img.Image(width: 3, height: 3)),
+      );
+      await imageIo(tester, () => WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => ref.set({
+          'schoolId': school,
+          'schoolName': 'Original school',
+          'principalName': 'Principal',
+          'logoUrl': first,
+        }),
+      ));
+      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
+      await waitForImageUi(tester, () => find.text('Original school').evaluate().isNotEmpty);
+      await tester.enterText(find.byType(TextField).first, 'Unsaved name');
+      await imageIo(tester, () => db.applySyncedDocument(ref, {
+        'schoolId': school,
+        'schoolName': 'Cloud school',
+        'principalName': 'Principal',
+        'logoUrl': next,
+        'principalSignatureUrl': next,
+      }));
+      await waitForImageUi(tester, () => tester.widgetList<Image>(find.byType(Image)).any((image) => image.image is MemoryImage && base64Encode((image.image as MemoryImage).bytes) == next.substring(next.indexOf(',') + 1)));
+      expect(find.text('Unsaved name'), findsOneWidget);
+      final images = tester.widgetList<Image>(find.byType(Image));
+      expect(
+        images.where(
+          (image) =>
+              image.image is MemoryImage &&
+              base64Encode((image.image as MemoryImage).bytes) ==
+                  next.substring(next.indexOf(',') + 1),
+        ),
+        isNotEmpty,
+      );
+      await tester.pumpWidget(const SizedBox());
+      // Reopening must read the updated durable profile, not stale memory.
+      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
+      await waitForImageUi(tester, () => find.text('Cloud school').evaluate().isNotEmpty);
+      expect(find.text('Cloud school'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
 
 }
