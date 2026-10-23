@@ -233,7 +233,7 @@ class WindowsDocumentTemplates {
     final revision = await _fingerprint(
       person,
       profile,
-      (await selections())[kind],
+      kind == 'studentId' ? studentIdTemplateId : (await selections())[kind],
       qr,
     );
     await WindowsBackendBridge.publishIdCard(
@@ -340,7 +340,7 @@ class WindowsDocumentTemplates {
           'personId': doc.id,
           'linkToken': person['mobileLinkToken'],
         });
-        final revision = await _fingerprint(person, profile, templates[kind], qr);
+        final revision = await _fingerprint(person, profile, kind == 'studentId' ? studentIdTemplateId : templates[kind], qr);
         final id = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(kind == 'studentId' ? 'student' : 'teacher',doc.id,person);
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
@@ -421,7 +421,7 @@ class WindowsDocumentTemplates {
         data['schoolId'] !=
             FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
       throw StateError('Another school document is not accessible.');
-    final v = (await selections())[kind];
+    final v = kind == 'studentId' ? 'manifest:$studentIdTemplateId' : (await selections())[kind];
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -488,6 +488,7 @@ class WindowsDocumentTemplates {
           ...data,
           if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty)
             'schoolName': profile['schoolName'],
+          'schoolAddress': profile['address'] ?? '',
         },
         qr: qr,
         photo: assets[0],
@@ -661,10 +662,7 @@ class _SchoolDocumentTemplatesScreenState
     extends State<SchoolDocumentTemplatesScreen> {
   final _names = <String, List<String>>{
     ...windowsReferenceDocumentNames,
-    'studentId': [
-      ...windowsStudentIdNames,
-      WindowsDocumentTemplates.manifestName,
-    ],
+    'studentId': ['Maroon & Gold • Front + Back'],
     'teacherId': [
       ...windowsReferenceDocumentNames['teacherId']!,
       WindowsDocumentTemplates.manifestName,
@@ -681,6 +679,7 @@ class _SchoolDocumentTemplatesScreenState
   List<IdCardCatalogEntry> _choices(String kind) =>
       _catalog.where((e) => e.kinds.contains(kind)).toList();
   int _chosen() {
+    if (_kind == 'studentId') return 0;
     final value = _selected[_kind];
     if (value is String && value.startsWith('manifest:')) {
       final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
@@ -777,7 +776,7 @@ class _SchoolDocumentTemplatesScreenState
     if(_openingDesigner)return;
     setState(()=>_openingDesigner=true);
     try {
-      final value = _selected['studentId'];
+      const value = 'manifest:$studentIdTemplateId';
       final id = value is String && value.startsWith('manifest:')
           ? value.substring(9)
           : value is String && value.startsWith('reviewed:')

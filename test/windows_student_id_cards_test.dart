@@ -15,12 +15,12 @@ void main() {
         expect(windowsStudentIdIndex(v), 0);
       }
       for (var i = 0; i < 4; i++) {
-        expect(windowsStudentIdIndex(i), i);
+        expect(windowsStudentIdIndex(i), 0);
       }
     },
   );
   test(
-      'four Windows designs render both sides, required fields and scan payload',
+      'retired indexes render the single maroon gold layout and retain scan payload',
       () async {
     final output = Directory('build/windows-id-previews');
     await output.create(recursive: true);

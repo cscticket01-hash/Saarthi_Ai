@@ -1,8 +1,21 @@
 [
   {
+    "id": "student-maroon-gold-v1",
+    "name": "Maroon & Gold \u2022 Front + Back",
+    "manifest": "assets/student_maroon_gold_manifest.json",
+    "kinds": [
+      "studentId"
+    ],
+    "frontAsset": "assets/student_maroon_gold_front.png",
+    "backAsset": "assets/student_maroon_gold_back.png"
+  },
+  {
     "id": "school-id-v1",
-    "name": "School ID • Manifest Front + Back",
+    "name": "School ID \u2022 Manifest Front + Back",
     "manifest": "assets/school_id_manifest_v1.json",
-    "kinds": ["studentId", "teacherId", "otherStaffId"]
+    "kinds": [
+      "teacherId",
+      "otherStaffId"
+    ]
   }
 ]

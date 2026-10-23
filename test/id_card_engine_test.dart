@@ -13,13 +13,31 @@ void main() {
   Map<String, dynamic> manifest() => Map<String, dynamic>.from(
     jsonDecode(File('assets/school_id_manifest_v1.json').readAsStringSync()),
   );
+  test('maroon template aliases preserve live student fields and real QR', () async {
+    final entry=await IdCardCatalog.find('student-maroon-gold-v1');
+    final prepared=await IdCardEngine.prepare(await entry.manifest(), {
+      'studentName':'Actual Student','studentClass':'VII', 'roll':'024',
+      'fatherName':'Actual Parent','parentContact':'0012345678',
+      'streetAddress':'Actual address','pin':'788001','academicSession':'2026-27',
+    },qr:'actual-qr-payload', backgrounds:await entry.backgrounds());
+    expect(prepared.data['name'],'Actual Student');
+    expect(prepared.data['parentName'],'Actual Parent');
+    expect(prepared.data['contact'],'0012345678');
+    expect(prepared.data['pinCode'],'788001');
+    expect(prepared.data['session'],'2026-27');
+    expect(prepared.qr,'actual-qr-payload');
+    expect(prepared.backgrounds.keys,containsAll(['front','back']));
+    final raw=jsonDecode(File('assets/student_maroon_gold_manifest.json').readAsStringSync()) as Map<String,dynamic>;
+    (raw['regions'] as List).first['textColor']='not-a-color';
+    expect(()=>IdCardManifest.fromJson(raw),throwsFormatException);
+  });
   test('bundled catalog validates manifests and rejects external or traversing assets', () async {
     final entries = await IdCardCatalog.load();
     expect(
-      entries.single.kinds,
-      containsAll(['studentId', 'teacherId', 'otherStaffId']),
+      entries.where((e)=>e.kinds.contains('studentId')).map((e)=>e.id).toList(),
+      ['student-maroon-gold-v1'],
     );
-    expect((await entries.single.manifest()).id, entries.single.id);
+    for(final entry in entries) { expect((await entry.manifest()).id, entry.id); }
     for (final asset in [
       'https://evil.example/card.json',
       'assets/../private.json',
