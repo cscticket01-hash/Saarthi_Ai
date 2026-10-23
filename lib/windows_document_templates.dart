@@ -257,7 +257,7 @@ class WindowsDocumentTemplates {
       for (final person in people) {
         if (person.data()['deleted'] == true || person.data()['_syncDeleted'] == true ||
             person.data()['schoolId'] != null && person.data()['schoolId'] != school) continue;
-        final id = WindowsBackendBridge.publishedIdCardOwnerId(role, person.id);
+        final id = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(role, person.id, person.data());
         final local = (await db.collection('_local_student_documents').doc(id).get()).data();
         final pending = (await db.collection('_windows_document_outbox').doc(id).get()).data();
         final cloud = (await db.collection('documents').doc(id).get()).data();
@@ -323,9 +323,9 @@ class WindowsDocumentTemplates {
         try {
         // Retained file/metadata conflicts must be explicitly reviewed before
         // automatic ID regeneration can change their queue or local originals.
-        final ownerId = WindowsBackendBridge.publishedIdCardOwnerId(
+        final ownerId = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(
           kind == 'studentId' ? 'student' : 'teacher',
-          doc.id,
+          doc.id, doc.data()!,
         );
         if (conflictedIds.contains(ownerId)) continue;
         final person = await SchoolPersonIdentity.ensure(collection, doc.id);
@@ -341,7 +341,7 @@ class WindowsDocumentTemplates {
           'linkToken': person['mobileLinkToken'],
         });
         final revision = await _fingerprint(person, profile, templates[kind], qr);
-        final id = WindowsBackendBridge.publishedIdCardId(qr);
+        final id = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(kind == 'studentId' ? 'student' : 'teacher',doc.id,person);
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
                 .data();

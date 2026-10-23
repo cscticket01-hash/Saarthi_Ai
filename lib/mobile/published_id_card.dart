@@ -13,6 +13,7 @@ class PublishedIdCard extends StatefulWidget {
     required this.open,
     this.openExternally,
     this.rasterize,
+    this.automatic = false,
     this.loadTimeout = schoolIdLoadTimeout,
     this.previewTimeout = const Duration(seconds: 8),
   });
@@ -21,13 +22,15 @@ class PublishedIdCard extends StatefulWidget {
   final Future<void> Function(Uint8List) open;
   final Future<void> Function(Uint8List)? openExternally;
   final Future<Uint8List> Function(Uint8List)? rasterize;
+  final bool automatic;
   final Duration loadTimeout, previewTimeout;
   @override
   State<PublishedIdCard> createState() => _PublishedIdCardState();
 }
 
 class _PublishedIdCardState extends State<PublishedIdCard> {
-  Uint8List? _pdf, _image;
+  Uint8List? _pdf;
+  List<Uint8List> _images = [];
   bool _loading = true, _failed = false, _previewFailed = false;
   int _generation = 0;
   @override
@@ -46,13 +49,19 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
     try {
       final pdf = await (() async {
         if (refresh) await widget.refresh();
-        return widget.load();
+        var result = await widget.load();
+        if (result == null && !refresh && widget.automatic) {
+          await widget.refresh();
+          if (!mounted || generation != _generation) return null;
+          result = await widget.load();
+        }
+        return result;
       })().timeout(widget.loadTimeout);
       if (!mounted || generation != _generation) return;
       // Publish verified bytes before waiting on the native raster plugin.
       setState(() {
         _pdf = pdf;
-        _image = null;
+        _images = [];
         _loading = false;
       });
       if (pdf != null) unawaited(_preview(pdf, generation));
@@ -66,16 +75,17 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
 
   Future<void> _preview(Uint8List pdf, int generation) async {
     try {
-      final image =
-          await (widget.rasterize != null
-                  ? widget.rasterize!(pdf)
-                  : (() async => (await Printing.raster(
-                      pdf,
-                      pages: [0],
-                      dpi: 100,
-                    ).first).toPng())())
-              .timeout(widget.previewTimeout);
-      if (mounted && generation == _generation) setState(() => _image = image);
+      final images = await (() async {
+        if (widget.rasterize != null) return [await widget.rasterize!(pdf)];
+        final pages = <Uint8List>[];
+        await for (final page in Printing.raster(pdf, dpi: 120).take(2)) {
+          pages.add(await page.toPng());
+        }
+        if (pages.isEmpty) throw StateError('Empty preview');
+        return pages;
+      })().timeout(widget.previewTimeout);
+      if (mounted && generation == _generation)
+        setState(() => _images = images);
     } catch (_) {
       if (mounted && generation == _generation)
         setState(() => _previewFailed = true);
@@ -85,11 +95,12 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      if (_image != null)
-        InkWell(
-          onTap: () => widget.open(_pdf!),
-          child: Image.memory(_image!, height: 240, fit: BoxFit.contain),
-        )
+      if (_images.isNotEmpty)
+        for (final image in _images)
+          InkWell(
+            onTap: () => widget.open(_pdf!),
+            child: Image.memory(image, height: 280, fit: BoxFit.contain),
+          )
       else
         Padding(
           padding: const EdgeInsets.all(20),
@@ -100,11 +111,13 @@ class _PublishedIdCardState extends State<PublishedIdCard> {
                 ? 'Unable to load your ID card. Please try again.'
                 : _pdf != null
                 ? 'Your school ID card is ready.'
+                : widget.automatic
+                ? 'Your school has not published an ID card for this account yet.'
                 : 'Your school is preparing your ID card. Refresh to check again.',
             textAlign: TextAlign.center,
           ),
         ),
-      if (_pdf != null)
+      if (_pdf != null && (!widget.automatic || _previewFailed))
         FilledButton.icon(
           onPressed: () => widget.open(_pdf!),
           icon: const Icon(Icons.badge_outlined),

@@ -1862,9 +1862,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
-        final bootstrapRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('id-card-publication-bootstrap-v1');
+        final bootstrapRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('id-card-publication-bootstrap-v2');
         final bootstrap = (await bootstrapRef.get()).data();
-        final needsIdBootstrap = bootstrap?['schoolId'] != _activeSchoolSyncId || bootstrap?['version'] != 1;
+        final needsIdBootstrap = bootstrap?['schoolId'] != _activeSchoolSyncId || bootstrap?['version'] != 2;
         if (needsIdBootstrap) {
           final missing = await WindowsDocumentTemplates.missingIdCardTargets();
           for (final kind in missing.entries) {
@@ -1935,7 +1935,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
               throw StateError('School changed during ID publication bootstrap.');
             await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => bootstrapRef.set({
-              'schoolId': _activeSchoolSyncId, 'version': 1,
+              'schoolId': _activeSchoolSyncId, 'version': 2,
               'completedAt': DateTime.now().millisecondsSinceEpoch,
             }));
           }

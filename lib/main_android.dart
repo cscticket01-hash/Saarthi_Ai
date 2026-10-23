@@ -1,3 +1,4 @@
+import 'mobile/complaint_screen.dart';
 import 'qr_authentication_engine.dart';
 
 import 'dart:async';
@@ -709,49 +710,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   }
 
   Future<void> _complaint() async {
-    final message = TextEditingController();
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Report an app problem'),
-        content: TextField(
-          controller: message,
-          minLines: 4,
-          maxLines: 6,
-          decoration: const InputDecoration(
-            hintText: 'Describe what happened. Do not include passwords.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Send complaint'),
-          ),
-        ],
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MobileComplaintScreen(session: _s),
       ),
     );
-    if (yes == true) {
-      try {
-        await _s.platformCall('complaint/create', {
-          'message': message.text,
-          'version': SchoolSession.version,
-        });
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Complaint saved for the developer.')),
-          );
-      } catch (e) {
-        if (mounted)
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('$e')));
-      }
-    }
-    message.dispose();
   }
 
   Future<Uint8List?>? _cardRefresh;
@@ -1317,6 +1280,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
             PublishedIdCard(
+              automatic: true,
               key: ValueKey(
                 jsonEncode([
                   _s.link?.projectId,

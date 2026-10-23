@@ -1,3 +1,4 @@
+import 'complaint_retention.dart';
 import 'developer_notification_panel.dart';
 import 'developer_login_shell.dart';
 import 'managed_developer_panel.dart';
@@ -204,6 +205,14 @@ class _DeveloperDashboard extends StatefulWidget {
 }
 
 class _DeveloperDashboardState extends State<_DeveloperDashboard> {
+  String _complaintSchool = '';
+  List<Map<String, dynamic>> get _visibleComplaints => _complaints
+      .where(
+        (c) =>
+            !complaintExpired(c) &&
+            (_complaintSchool == 'all' || c['schoolId'] == _complaintSchool),
+      )
+      .toList();
   final _service = DeveloperService();
   int _page = 0;
   String _search = '', _filter = 'all';
@@ -608,8 +617,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   _load(silent: true);
                 } catch (e) {
                   if (ctx.mounted)
-                    ScaffoldMessenger.of(ctx)
-                        .showSnackBar(SnackBar(content: Text('$e')));
+                    ScaffoldMessenger.of(
+                      ctx,
+                    ).showSnackBar(SnackBar(content: Text('$e')));
                 }
               },
               child: const Text('Save'),
@@ -770,8 +780,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       await _load(silent: true);
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -793,8 +804,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       await _load(silent: true);
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -810,8 +822,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       await _load(silent: true);
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -900,10 +913,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                                           await _load(silent: true);
                                         } catch (e) {
                                           if (mounted)
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                                  SnackBar(content: Text('$e')),
-                                                );
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(content: Text('$e')),
+                                            );
                                         }
                                       }
                                     },
@@ -938,12 +952,26 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 18),
-        if (_complaints.isEmpty)
+        DropdownButtonFormField<String>(
+          value: _complaintSchool,
+          decoration: const InputDecoration(labelText: 'Complaints for'),
+          items: [
+            const DropdownMenuItem(value: '', child: Text('Select school')),
+            const DropdownMenuItem(value: 'all', child: Text('All schools')),
+            for (final school in _schools)
+              DropdownMenuItem(
+                value: school['id'].toString(),
+                child: Text((school['name'] ?? school['id']).toString()),
+              ),
+          ],
+          onChanged: (value) => setState(() => _complaintSchool = value ?? ''),
+        ),
+        if (_visibleComplaints.isEmpty)
           const Text(
             'No complaints received yet.',
             style: TextStyle(color: Colors.white54),
           ),
-        ..._complaints.map(
+        ..._visibleComplaints.map(
           (c) => ListTile(
             contentPadding: const EdgeInsets.symmetric(vertical: 8),
             leading: Icon(

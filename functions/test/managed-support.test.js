@@ -32,3 +32,13 @@ test('complaint history paginates beyond 50 records and validates identifiers',a
  await assert.rejects(f.call({action:'managed/support/thread',complaintId:'../foreign'}),e=>e.status===400);
  f.docs.get('school_memberships/A').active=false;await assert.rejects(f.call({action:'managed/support/list'}),e=>e.status===403);
 });
+test('only the owning school resolves student complaints; reopening clears the retention clock',async()=>{
+ const f=setup();f.docs.set('platform_complaints/'+id,{schoolId:A,audience:'school',message:'Student complaint',status:'open',createdAt:time});
+ await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'resolved'},'B'),e=>e.status===404);
+ await f.call({action:'managed/support/resolve',complaintId:id,status:'resolved',reply:'Fixed'});
+ assert.equal(f.docs.get('platform_complaints/'+id).resolvedAt.getTime(),time);
+ await f.call({action:'managed/support/resolve',complaintId:id,status:'open'});
+ assert.equal(f.docs.get('platform_complaints/'+id).resolvedAt,null);
+ f.docs.get('platform_complaints/'+id).purging=true;
+ await assert.rejects(f.call({action:'managed/support/resolve',complaintId:id,status:'open'}),e=>e.status===404);
+});

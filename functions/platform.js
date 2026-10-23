@@ -171,7 +171,11 @@ async function handler(req) {
   if (action === 'complaint/update') {
     const u = await developer(req);
     if (!['open', 'in_progress', 'resolved'].includes(b.status)) fail(400, 'Invalid complaint status');
-    await collection('complaints').doc(str(b.complaintId, 64)).update({ status: b.status, developerNote: str(b.note, 2000), updatedAt: now, updatedBy: u.uid });
+    const ref=collection('complaints').doc(str(b.complaintId,120));
+    await db().runTransaction(async tx=>{
+      const old=await tx.get(ref);if(!old.exists||old.data().purging)fail(404,'Complaint unavailable');
+      tx.update(ref,{status:b.status,resolvedAt:b.status==='resolved'?(old.data().resolvedAt||now):null,developerNote:str(b.note,2000),updatedAt:now,updatedBy:u.uid});
+    });
     return { updated: true };
   }
   if (action === 'school/notice') {
