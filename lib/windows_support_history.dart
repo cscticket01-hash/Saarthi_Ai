@@ -1,3 +1,4 @@
+import 'complaint_retention.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -74,15 +75,50 @@ class SchoolSupportClient {
         .collection('_windows_support_history')
         .get();
     await _bind();
+    for (final doc in snapshot.docs) {
+      if (complaintExpired(doc.data()))
+        await local.FirebaseFirestore.instance
+            .collection('_windows_support_history')
+            .doc(doc.id)
+            .delete();
+    }
     return snapshot.docs
         .map((d) => d.data())
-        .where((d) => d['schoolId'] == _school)
+        .where((d) => d['schoolId'] == _school && !complaintExpired(d))
         .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> refreshAll() async {
+    final rows = <Map<String, dynamic>>[];
+    String? cursor;
+    do {
+      final out = await call('managed/support/list', {
+        if (cursor != null) 'cursor': cursor,
+      });
+      rows.addAll(
+        (out['complaints'] as List).map(
+          (r) => Map<String, dynamic>.from(r as Map),
+        ),
+      );
+      cursor = out['cursor'] as String?;
+    } while (cursor != null);
+    final ids = rows.map((r) => r['id']).toSet();
+    for (final old in await cached()) {
+      await _bind();
+      if (!ids.contains(old['id']))
+        await local.FirebaseFirestore.instance
+            .collection('_windows_support_history')
+            .doc(old['id'] as String)
+            .delete();
+    }
+    await cache(rows);
+    return rows;
   }
 
   Future<void> cache(List<Map<String, dynamic>> rows) async {
     await _bind();
     for (final row in rows) {
+      if (complaintExpired(row)) continue;
       if (row['schoolId'] != _school || row['id'] is! String)
         throw StateError('Complaint school mismatch');
       await local.FirebaseFirestore.instance
@@ -120,17 +156,12 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
         for (final r in await client.cached()) rows[r['id'] as String] = r;
         if (mounted) setState(() {});
       }
-      final out = await client.call('managed/support/list', {
-        if (more && cursor != null) 'cursor': cursor,
-      });
-      final items = (out['complaints'] as List)
-          .map((r) => Map<String, dynamic>.from(r as Map))
-          .toList();
-      await client.cache(items);
+      final items = await client.refreshAll();
       if (!mounted) return;
       setState(() {
+        rows.clear();
         for (final r in items) rows[r['id'] as String] = r;
-        cursor = out['cursor'] as String?;
+        cursor = null;
         error = null;
       });
     } catch (e) {
@@ -148,7 +179,7 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
       return const Scaffold(
         body: Center(child: Text('School changed. Reopen complaint history.')),
       );
-    final items = rows.values.toList()
+    final items = rows.values.where((row) => !complaintExpired(row)).toList()
       ..sort((a, b) => _at(b['createdAt']).compareTo(_at(a['createdAt'])));
     return Scaffold(
       appBar: AppBar(
@@ -203,11 +234,9 @@ String _date(dynamic value) {
   final at = _at(value);
   return at == 0
       ? 'Date unavailable'
-      : DateTime.fromMillisecondsSinceEpoch(at)
-            .toLocal()
-            .toString()
-            .split('.')
-            .first;
+      : DateTime.fromMillisecondsSinceEpoch(
+          at,
+        ).toLocal().toString().split('.').first;
 }
 
 class _ComplaintThread extends StatefulWidget {
@@ -295,7 +324,7 @@ class _ComplaintThreadState extends State<_ComplaintThread> {
       return const Scaffold(
         body: Center(child: Text('School changed. Reopen complaint history.')),
       );
-    final items = rows.values.toList()
+    final items = rows.values.where((row) => !complaintExpired(row)).toList()
       ..sort((a, b) => _at(a['createdAt']).compareTo(_at(b['createdAt'])));
     return Scaffold(
       appBar: AppBar(

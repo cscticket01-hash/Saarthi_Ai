@@ -1005,6 +1005,8 @@ class SchoolSession {
       return schoolCall('mobile_heartbeat', {'version': version});
     if (action == 'complaint/create')
       return schoolCall('mobile_complaint', body);
+    if (action == 'complaint/list')
+      return schoolCall('mobile_complaints', body);
     throw ArgumentError('Unknown mobile action');
   }
 
@@ -1206,8 +1208,18 @@ class SchoolSession {
     // the retained cache. Empty lists vacuously pass the row checks below,
     // but are not Script data groups and must never become checkpoints.
     final groups = <String>{
-      'school', 'templates', 'notices', 'calendar', 'documents', 'examinations',
-      if (link?.role == 'student') ...{'reportCards', 'fees', 'payments', 'feeStructures'},
+      'school',
+      'templates',
+      'notices',
+      'calendar',
+      'documents',
+      'examinations',
+      if (link?.role == 'student') ...{
+        'reportCards',
+        'fees',
+        'payments',
+        'feeStructures',
+      },
       if (link?.role == 'teacher') 'salary',
     };
     final groupCheckpoints = <String, Map<String, String>>{};
@@ -1244,8 +1256,8 @@ class SchoolSession {
           for (final entry in (dashboard['revisions'] as Map).entries)
             if (groups.contains(entry.key) &&
                 (dashboard['mobileRecordDeltaVersion'] != 1 ||
-                dashboard[entry.key] is! List ||
-                groupCheckpoints.containsKey(entry.key)))
+                    dashboard[entry.key] is! List ||
+                    groupCheckpoints.containsKey(entry.key)))
               entry.key: entry.value,
         },
       if (dashboard['notices'] is List)

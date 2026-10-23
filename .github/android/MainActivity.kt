@@ -16,6 +16,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(engine.dartExecutor.binaryMessenger, "vidyasaarthi/school_messaging")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "deviceInfo" -> result.success("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} • Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
                     "prepare" -> {
                         val data = call.arguments as? Map<*, *>
                         val project = data?.get("projectId") as? String
