@@ -35,7 +35,7 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({String? preferredSource}) async {
     final profile = FirebaseFirestore.instance.activeProfileId;
     final saved = await CentralSchoolCloud.saved();
     final school = saved['schoolId']?.toString() ?? '',
@@ -60,6 +60,7 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
           googleProfileImageUrl(users.first['photoUrl']?.toString() ?? ''))
         source = users.first['photoUrl'];
     } catch (_) {}
+    if (googleProfileImageUrl(preferredSource ?? '')) source = preferredSource!;
     if (!googleProfileImageUrl(source)) {
       // A password login in an older build could erase the URL while leaving
       // this same account's private cached original intact.
@@ -141,10 +142,17 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
         'photoUrl': account.photoUrl,
         'displayName': account.displayName,
       }, expectedUid: before['uid']);
-      await _load();
+      await _load(preferredSource: account.photoUrl);
       // Publish only the image returned by Google for the same verified email.
       // Password-only Firebase users then restore it on their other PCs too.
       final token = await CentralSchoolCloud.firebaseToken();
+      final current = await CentralSchoolCloud.saved();
+      if (!mounted ||
+          FirebaseFirestore.instance.activeProfileId != profile ||
+          current['uid'] != before['uid'] ||
+          current['schoolId'] != before['schoolId']) {
+        throw StateError('School changed. Reopen settings.');
+      }
       final response = await http
           .post(
             Uri.https('identitytoolkit.googleapis.com', '/v1/accounts:update', {
