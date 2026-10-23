@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_profile_image_policy.dart';
 
 import 'dart:typed_data';
 import 'dart:convert';
@@ -15,14 +16,8 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
 import 'windows_school_image_cache.dart';
 
-bool googleProfileImageUrl(String source) {
-  final uri = Uri.tryParse(source);
-  return uri != null &&
-      uri.scheme == 'https' &&
-      uri.userInfo.isEmpty &&
-      (uri.host == 'googleusercontent.com' ||
-          uri.host.endsWith('.googleusercontent.com'));
-}
+bool googleProfileImageUrl(String source) =>
+    verifiedGoogleProfileImageUrl(source);
 
 class WindowsAdminAvatar extends StatefulWidget {
   const WindowsAdminAvatar({super.key, required this.initial});
@@ -65,7 +60,30 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
           googleProfileImageUrl(users.first['photoUrl']?.toString() ?? ''))
         source = users.first['photoUrl'];
     } catch (_) {}
-    if (!googleProfileImageUrl(source)) return;
+    if (!googleProfileImageUrl(source)) {
+      // A password login in an older build could erase the URL while leaving
+      // this same account's private cached original intact.
+      final cached = await FirebaseFirestore.instance
+          .collection('_windows_school_image_cache')
+          .get();
+      for (final doc in cached.docs) {
+        final row = doc.data();
+        final fileId = row['fileId']?.toString() ?? '';
+        if (row['schoolId'] != school ||
+            !fileId.startsWith('admin-profile-$uid-'))
+          continue;
+        final restored = await WindowsSchoolImageCache.read(school, fileId);
+        if (!mounted ||
+            FirebaseFirestore.instance.activeProfileId != profile ||
+            (await CentralSchoolCloud.saved())['uid'] != uid)
+          return;
+        if (restored != null) {
+          setState(() => bytes = restored);
+          return;
+        }
+      }
+      return;
+    }
     final key = 'admin-profile-$uid-${sha256.convert(utf8.encode(source))}';
     bool own() =>
         FirebaseFirestore.instance.activeProfileId == profile &&
@@ -124,10 +142,29 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
         'displayName': account.displayName,
       }, expectedUid: before['uid']);
       await _load();
+      // Publish only the image returned by Google for the same verified email.
+      // Password-only Firebase users then restore it on their other PCs too.
+      final token = await CentralSchoolCloud.firebaseToken();
+      final response = await http
+          .post(
+            Uri.https('identitytoolkit.googleapis.com', '/v1/accounts:update', {
+              'key': platformApiKey,
+            }),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'idToken': token, 'photoUrl': account.photoUrl}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200 ||
+          (jsonDecode(response.body) as Map)['localId'] != before['uid']) {
+        throw StateError(
+          'Photo is saved on this PC, but account photo sync failed. Click to retry.',
+        );
+      }
     } catch (e) {
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
       if (mounted) setState(() => busy = false);
     }

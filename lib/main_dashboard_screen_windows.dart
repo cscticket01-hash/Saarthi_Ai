@@ -11,6 +11,7 @@ import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
+import 'windows_profile_image_policy.dart';
 import 'windows_other_staff.dart';
 import 'windows_school_image_cache.dart';
 import 'school_qr_link.dart';
@@ -1426,6 +1427,8 @@ Map<String, dynamic> _mergeSchoolProfile(Map<String, dynamic>? raw) {
   return <String, dynamic>{
     ..._defaultSchoolProfile(),
     ...?raw,
+    for (final prefix in ['logo', 'seal', 'principalSignature'])
+      '${prefix}Url': schoolProfileImageSource(raw ?? {}, prefix),
   };
 }
 
@@ -1471,10 +1474,6 @@ Future<Map<String, dynamic>> _schoolProfileBackendPost(
 Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
   _ensureSchoolProfileMemoryTenant();
   final tenant=FirebaseFirestore.instance.activeProfileId;
-  if (_schoolProfileMemoryCache != null) {
-    return _mergeSchoolProfile(_schoolProfileMemoryCache);
-  }
-
   try {
     final doc = await _schoolProfileCacheRef().get();
     if(FirebaseFirestore.instance.activeProfileId!=tenant)throw StateError('School changed while loading its profile.');
@@ -1483,7 +1482,7 @@ Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
     return profile;
   } catch (_) {
     if(FirebaseFirestore.instance.activeProfileId!=tenant)rethrow;
-    final profile = _defaultSchoolProfile();
+    final profile = _mergeSchoolProfile(_schoolProfileMemoryCache);
     _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
     return profile;
   }
@@ -9153,6 +9152,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   final TextEditingController _attendanceRadiusController = TextEditingController(text: '200');
   String _selectedWindowsLanguage = _windowsLanguage();
 
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileImages;
+  late final String _profileOrigin;
   bool _loading = false;
   bool _saving = false;
   String? _error;
@@ -9176,6 +9177,23 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _profileOrigin = FirebaseFirestore.instance.activeProfileId;
+    _profileImages = _schoolProfileCacheRef().snapshots().listen((snapshot) {
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != _profileOrigin) return;
+      final raw = snapshot.data();
+      if (raw == null) return;
+      final profile = _mergeSchoolProfile(raw);
+      _schoolProfileMemoryCache = Map<String, dynamic>.from(profile);
+      setState(() {
+        _logoUrl = profile['logoUrl']?.toString() ?? '';
+        _sealUrl = profile['sealUrl']?.toString() ?? '';
+        _signatureUrl = profile['principalSignatureUrl']?.toString() ?? '';
+      });
+    }, onError: (Object error) {
+      if (mounted && FirebaseFirestore.instance.activeProfileId == _profileOrigin) {
+        setState(() => _error = 'School images could not refresh. Retry.');
+      }
+    });
 
     // Paint immediately from memory/defaults; refresh cache/Drive in background.
     _applyProfile(
@@ -9186,6 +9204,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
 
   @override
   void dispose() {
+    _profileImages?.cancel();
     _schoolNameController.dispose();
     _principalNameController.dispose();
     _schoolContactController.dispose();
@@ -9240,7 +9259,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     // Never block the screen with a full-page loader.
     try {
       final cached = await _loadSchoolProfileCache();
-      if (mounted) {
+      if (mounted && FirebaseFirestore.instance.activeProfileId == _profileOrigin) {
         setState(() {
           _applyProfile(cached);
           _loading = false;

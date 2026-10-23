@@ -72,7 +72,7 @@ class _SchoolNetworkImage extends StatefulWidget {
   State<_SchoolNetworkImage> createState()=>_SchoolNetworkImageState();
 }
 class _SchoolNetworkImageState extends State<_SchoolNetworkImage> {
-  late final Future<Uint8List?> _bytes=schoolImageBytes(widget.source);
+  late Future<Uint8List?> _bytes=schoolImageBytes(widget.source);
   @override
   Widget build(BuildContext context) => FutureBuilder<Uint8List?>(future:_bytes,builder:(context,snapshot){
     if (snapshot.connectionState == ConnectionState.done && snapshot.data != null) {
@@ -82,6 +82,6 @@ class _SchoolNetworkImageState extends State<_SchoolNetworkImage> {
       return SizedBox(width:widget.width,height:widget.height,child:const Center(
         child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))));
     }
-    return SizedBox(width:widget.width,height:widget.height,child:widget.errorBuilder?.call(context,StateError('School image unavailable'),null) ?? const Icon(Icons.image_outlined));
+    return Tooltip(message:'Image unavailable. Click to retry.',child:InkWell(onTap:()=>setState(()=>_bytes=schoolImageBytes(widget.source)),child:SizedBox(width:widget.width,height:widget.height,child:widget.errorBuilder?.call(context,StateError('School image unavailable'),null) ?? const Icon(Icons.image_outlined))));
   });
 }
