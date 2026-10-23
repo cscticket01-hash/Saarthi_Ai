@@ -65,10 +65,12 @@ class DeveloperInbox extends ChangeNotifier {
   Future<void> _purgeExpired() async {
     final stale = messages.where(complaintExpired).toList();
     for (final row in stale) {
+      if (!current || _disposed) return;
       await _db
           .collection('_windows_developer_inbox')
           .doc(row['key'] as String)
           .delete();
+      if (!current || _disposed) return;
       await _db
           .collection('_windows_developer_inbox_read')
           .doc(row['key'] as String)
@@ -220,10 +222,12 @@ class DeveloperInbox extends ChangeNotifier {
                       row['complaintId'] != null && !live.contains(row['key']),
                 )
                 .toList()) {
+          if (!current || _disposed) return;
           await _db
               .collection('_windows_developer_inbox')
               .doc(row['key'] as String)
               .delete();
+          if (!current || _disposed) return;
           await _db
               .collection('_windows_developer_inbox_read')
               .doc(row['key'] as String)
@@ -232,6 +236,7 @@ class DeveloperInbox extends ChangeNotifier {
         }
       }
       await _purgeExpired();
+      if (!current || _disposed) return;
       final existing = {for (final m in messages) m['key']: m};
       final changed = updates
           .where(

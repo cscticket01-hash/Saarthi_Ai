@@ -124,74 +124,76 @@ class _MobileComplaintScreenState extends State<MobileComplaintScreen> {
         ),
       ],
     ),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const Text('Send a complaint to your school'),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _message,
-          enabled: !_sending && _pendingId == null,
-          minLines: 4,
-          maxLines: 8,
-          maxLength: 3000,
-          decoration: const InputDecoration(
-            hintText: 'Describe what happened. Do not include passwords.',
-          ),
-        ),
-        FilledButton.icon(
-          onPressed: _sending || !_current ? null : _send,
-          icon: const Icon(Icons.send),
-          label: Text(
-            _sending
-                ? 'Sending…'
-                : _pendingId != null
-                ? 'Retry complaint'
-                : 'Send complaint',
-          ),
-        ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(_error!),
-          ),
-        const Divider(height: 32),
-        const Text(
-          'Complaint history',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const Text(
-          'Solved complaints are deleted three months after resolution.',
-        ),
-        if (_loading) const LinearProgressIndicator(),
-        if (!_loading && _history.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('No complaints yet.'),
-          ),
-        for (final row in _history)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(row['message'].toString()),
-                  Text(
-                    '${row['status']} • ${DateTime.fromMillisecondsSinceEpoch((row['createdAt'] as num).toInt()).toLocal()}',
-                  ),
-                  if ((row['reply'] ?? '').toString().isNotEmpty)
-                    Text('School: ${row['reply']}'),
-                ],
+    body: !_current
+        ? const Center(child: Text('School account changed. Reopen this page.'))
+        : ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              const Text('Send a complaint to your school'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _message,
+                enabled: !_sending && _pendingId == null,
+                minLines: 4,
+                maxLines: 8,
+                maxLength: 3000,
+                decoration: const InputDecoration(
+                  hintText: 'Describe what happened. Do not include passwords.',
+                ),
               ),
-            ),
+              FilledButton.icon(
+                onPressed: _sending || !_current ? null : _send,
+                icon: const Icon(Icons.send),
+                label: Text(
+                  _sending
+                      ? 'Sending…'
+                      : _pendingId != null
+                      ? 'Retry complaint'
+                      : 'Send complaint',
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(_error!),
+                ),
+              const Divider(height: 32),
+              const Text(
+                'Complaint history',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const Text(
+                'Solved complaints are deleted three months after resolution.',
+              ),
+              if (_loading) const LinearProgressIndicator(),
+              if (!_loading && _history.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('No complaints yet.'),
+                ),
+              for (final row in _history)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row['message'].toString()),
+                        Text(
+                          '${row['status']} • ${DateTime.fromMillisecondsSinceEpoch((row['createdAt'] as num).toInt()).toLocal()}',
+                        ),
+                        if ((row['reply'] ?? '').toString().isNotEmpty)
+                          Text('School: ${row['reply']}'),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_cursor != null)
+                TextButton(
+                  onPressed: _loading ? null : () => _load(more: true),
+                  child: const Text('Load older complaints'),
+                ),
+            ],
           ),
-        if (_cursor != null)
-          TextButton(
-            onPressed: _loading ? null : () => _load(more: true),
-            child: const Text('Load older complaints'),
-          ),
-      ],
-    ),
   );
 }

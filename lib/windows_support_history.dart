@@ -76,6 +76,7 @@ class SchoolSupportClient {
         .get();
     await _bind();
     for (final doc in snapshot.docs) {
+      await _bind();
       if (complaintExpired(doc.data()))
         await local.FirebaseFirestore.instance
             .collection('_windows_support_history')
