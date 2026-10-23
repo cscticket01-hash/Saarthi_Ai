@@ -2220,6 +2220,22 @@ class WindowsBackendBridge {
     return 'ID-${crypto.sha256.convert(utf8.encode('$role/$personId'))}';
   }
 
+  /// A reused class/roll slot is a new owner, not permission to resurrect the
+  /// retired owner's deleted card. Keep the original identity for legacy owners.
+  static String publishedIdCardOwnerIdForPerson(String role, String personId, Map person) {
+    final legacy=publishedIdCardOwnerId(role,personId);
+    final generation=person['mobileStableId'];
+    final retired=person['_syncRetiredStudentGenerations'];
+    final previous=person['replacesStudentGeneration'];
+    final pattern=RegExp(r'^p-[a-f0-9]{32,64}$');
+    final replaced=retired is List && retired.any((value)=>value is String&&pattern.hasMatch(value)&&value!=generation) ||
+        previous is String && pattern.hasMatch(previous)&&previous!=generation;
+    if(!replaced)return legacy;
+    if(generation is! String||!pattern.hasMatch(generation)||retired is List&&retired.contains(generation))
+      throw StateError('Current ID owner generation requires review.');
+    return 'ID-${crypto.sha256.convert(utf8.encode('$role/$personId/$generation'))}';
+  }
+
   static String publishedIdCardId(String qr) {
     final link = SchoolLink.parse(qr);
     return publishedIdCardOwnerId(link.role,link.personId);
@@ -2285,7 +2301,7 @@ class WindowsBackendBridge {
       throw StateError('Verified school ID owner required.');
     if (!await db.localPersistenceEnabled())
       throw StateError('Durable local school context required.');
-    final id = publishedIdCardId(qr), origin = db.activeProfileId;
+    final id = publishedIdCardOwnerIdForPerson(link.role,link.personId,person), origin = db.activeProfileId;
     final captured =
         (await db.collection('_local_student_documents').doc(id).get()).data();
     final pendingBeforeRead=(await db.collection('_windows_document_outbox').doc(id).get()).data();

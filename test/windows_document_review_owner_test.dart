@@ -328,6 +328,35 @@ void main() {
     expect(result, {'studentId': {'missing'}});
     expect((await db.collection('_windows_document_outbox').get()).docs.map((d) => d.id).toSet(), {id, card('queued'), card('conflicted')});
   });
+  test('recreated class/roll owner gets a different card identity without reviving old deletions', () async {
+    final oldGeneration='p-${'a'*64}',currentGeneration='p-${'b'*64}';
+    final person={'name':'Current pupil','schoolId':school,'mobileStableId':currentGeneration,'_syncRetiredStudentGenerations':[oldGeneration],'mobileLinkToken':'x'*48,'mobileIdentityVersion':1,'class':'1','rollNo':'1'};
+    final legacy=WindowsBackendBridge.publishedIdCardOwnerId('student','reused-slot');
+    final current=WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','reused-slot',person);
+    expect(current,isNot(legacy));
+    expect(current,WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','reused-slot',person));
+    expect(WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','reused-slot',{'mobileStableId':currentGeneration}),legacy);
+    await db.collection('students_directory').doc('reused-slot').set(person);
+    await db.collection('documents').doc(legacy).set({'schoolId':school,'_syncDeleted':true,'_syncDeletedOwner':oldGeneration});
+    final targets=await WindowsDocumentTemplates.missingIdCardTargets();
+    expect(targets['studentId'],contains('reused-slot'));
+    expect((await db.collection('documents').doc(legacy).get()).data()?['_syncDeleted'],true);
+    await CentralSchoolCloud.updateSession(school, {'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+    await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic School'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:school-id-v1'});
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseProjectId':platformProjectId,'type':'student','personId':'reused-slot','linkToken':person['mobileLinkToken']});
+    final printing=PrintingPlatform.instance;PrintingPlatform.instance=OwnerReviewPrinting(qr);
+    try{
+      await WindowsDocumentTemplates.publishChangedIdCards(affectedPeople:{'studentId':{'reused-slot'}},readInventory:()async=>{'schoolId':school,'syncProtocol':2,'records':{legacy:{'schoolId':school,'_syncDeleted':true,'_syncRevision':'old-delete','_syncDeletedOwner':oldGeneration}}});
+      final queued=(await db.collection('_windows_document_outbox').doc(current).get()).data()!;
+      expect(queued['personId'],currentGeneration);
+      expect(queued['studentId'],'reused-slot');
+      expect(await File(queued['localPath']).exists(),true);
+      expect((await db.collection('documents').doc(legacy).get()).data()?['_syncDeleted'],true);
+    }finally{PrintingPlatform.instance=printing;}
+    await db.collection('documents').doc(current).set({'schoolId':school,'_syncDeleted':true,'_syncDeletedOwner':currentGeneration});
+    expect((await WindowsDocumentTemplates.missingIdCardTargets())['studentId']?.contains('reused-slot')??false,isFalse);
+  });
   test('unpublished original is requeued with exactly its original operation, path and CAS baseline', () async {
     const recoveryId = 'RECOVERY-original';
     final retained = {...local, 'documentId': recoveryId, 'syncState': 'Local', 'baseCloudRevision': 'original-baseline'};
