@@ -233,7 +233,7 @@ class WindowsDocumentTemplates {
     final revision = await _fingerprint(
       person,
       profile,
-      (await selections())[kind],
+      kind == 'studentId' ? studentIdTemplateId : (await selections())[kind],
       qr,
     );
     await WindowsBackendBridge.publishIdCard(
