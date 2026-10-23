@@ -479,7 +479,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
       Positioned(top: 28, right: 28, child: AnimatedBuilder(
         animation: _inbox,
         builder: (context, _) { WindowsAppearance.watch(context); return  IconButton(
-          tooltip: 'Developer notifications',
+          tooltip: 'Notifications',
           onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DeveloperInboxScreen(inbox: _inbox); })),
           icon: Badge(isLabelVisible: _inbox.unread > 0,

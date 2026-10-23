@@ -12,7 +12,7 @@ function createMobileComplaints({db,now,fail,verify}){
    let q=db.collection('platform_complaints').where('schoolId','==',schoolId).orderBy('__name__');
    if(request.cursor!==undefined){if(!/^[-_a-zA-Z0-9]{1,120}$/.test(request.cursor))fail(400,'Invalid history cursor');q=q.startAfter(request.cursor);}
    const rows=(await q.limit(101).get()).docs;
-   const complaints=rows.slice(0,100).filter(d=>{const v=d.data();return v.schoolId===schoolId&&v.owner===owner&&!v.purging&&!expired(v,now());}).map(d=>{const v=d.data();return {id:d.id,message:v.message,status:v.status,createdAt:millis(v.createdAt),resolvedAt:millis(v.resolvedAt),reply:v.schoolReply||''};});
+   const complaints=rows.slice(0,100).filter(d=>{const v=d.data();return v.schoolId===schoolId&&v.owner===owner&&!v.purging&&!expired(v,now());}).map(d=>{const v=d.data();return {id:d.id,message:v.message,status:v.status,createdAt:millis(v.createdAt),resolvedAt:millis(v.resolvedAt),reply:v.schoolReply||v.developerNote||''};});
    return {success:true,schoolId,projectId:schoolId,complaints,cursor:rows.length>100?rows[99].id:null};
   }
   const message=String(request.message||'').trim();

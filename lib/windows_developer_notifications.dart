@@ -10,9 +10,10 @@ import 'windows_local_firestore.dart' as local;
 
 /// Developer messages and verified school complaints. Reads never enter the school sync outbox.
 class DeveloperInbox extends ChangeNotifier {
-  DeveloperInbox({this.readPage});
+  DeveloperInbox({this.readPage, this.readComplaints});
   final Future<Map<String, dynamic>> Function(String audience, String? cursor)?
   readPage;
+  final Future<Map<String, dynamic>> Function(String? cursor)? readComplaints;
   final _db = local.FirebaseFirestore.instance;
   final _client = http.Client();
   final Map<String, String?> _cursors = {};
@@ -184,13 +185,15 @@ class DeveloperInbox extends ChangeNotifier {
         next[audience] = cursor as String?;
       }
       if (!current || _disposed) return;
-      if (readPage == null && !more) {
+      if ((readPage == null || readComplaints != null) && !more) {
         final support = SchoolSupportClient();
         String? cursor;
         do {
-          final out = await support.call('managed/support/list', {
-            if (cursor != null) 'cursor': cursor,
-          });
+          final out = readComplaints != null
+              ? await readComplaints!(cursor)
+              : await support.call('managed/support/list', {
+                  if (cursor != null) 'cursor': cursor,
+                });
           if (!current || _disposed) return;
           for (final raw in out['complaints'] as List) {
             final row = Map<String, dynamic>.from(raw as Map);
