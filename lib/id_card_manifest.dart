@@ -107,6 +107,7 @@ class IdCardRegion {
         fit = data['fit']?.toString() ?? 'contain',
         align = data['align']?.toString() ?? 'left',
         label = data['label']?.toString() ?? '',
+        textColor = data['textColor']?.toString() ?? '#000000',
         isRequired = data['required']==true,
         padding = (data['padding'] as num? ?? 0).toDouble(),
         x = (data['x'] as num).toDouble(),
@@ -123,7 +124,7 @@ class IdCardRegion {
         allowOverlapWith = List<String>.from(
           data['allowOverlapWith'] as List? ?? const [],
         ) {
-    if (!padding.isFinite || padding<0 || padding*2>=width || padding*2>=height || key.isEmpty ||
+    if (!RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(textColor) || !padding.isFinite || padding<0 || padding*2>=width || padding*2>=height || key.isEmpty ||
         !{'front', 'back'}.contains(side) ||
         !{'text', 'image', 'qr'}.contains(kind) ||
         !{'contain', 'cover'}.contains(fit) ||
@@ -152,7 +153,7 @@ class IdCardRegion {
       throw const FormatException('Invalid ID region.');
     }
   }
-  final String key, side, kind, fit, align, label;
+  final String key, side, kind, fit, align, label, textColor;
   final double x, y, width, height, fontSize, minFontSize, focusX, focusY;
   final bool wrap, isRequired;
   final double padding;

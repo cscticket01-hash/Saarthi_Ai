@@ -71,6 +71,26 @@ class IdCardEngine {
     Map<String, Uint8List> backgrounds = const {},
     pw.Font? font,
   }) async {
+    if(template.id == 'student-maroon-gold-v1') {
+      String first(List<String> keys) {
+        for(final key in keys) {
+          final value=data[key]?.toString().trim()??'';
+          if(value.isNotEmpty)return value;
+        }
+        return '';
+      }
+      data={...data,
+        'name':first(['name','studentName']),
+        'class':[first(['studentClass','class']), if(first(['section']).isNotEmpty) first(['section'])].where((v)=>v.isNotEmpty).join(' / '),
+        'rollNo':first(['rollNo','roll']),
+        'studentUid':first(['studentUid','studentId']),
+        'session':first(['academicSession','session','academicYear']),
+        'parentName':first(['parentName','fatherName']),
+        'contact':first(['parentContact','contact','phone']),
+        'address':first(['streetAddress','address']),
+        'pinCode':first(['pinCode','pin','pincode']),
+      };
+    }
     qr = compactQr(qr);
     for (final r in template.regions) {
       if (r.isRequired &&
@@ -94,6 +114,7 @@ class IdCardEngine {
         minFontSize: region.minFontSize,
         maxLines: region.maxLines,
         align: region.align,
+        color: 0xFF000000 | int.parse(region.textColor.substring(1),radix:16),
       );
       if (rendered != null) {
         shapedText['${region.side}:${region.key}'] = rendered;
@@ -222,6 +243,7 @@ class PreparedIdCard {
                       : IdCardLayout.text(
                           '${r.label}${data[r.key] ?? ''}',
                           font: font,
+                          color: PdfColor.fromHex(r.textColor),
                           fontSize: r.fontSize,
                           minFontSize: r.minFontSize,
                           wrap: r.wrap,
