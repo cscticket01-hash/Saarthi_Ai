@@ -22599,7 +22599,7 @@ class _ExamMarksEntryScreenState
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
-                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', resultData);
+                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', {...widget.exam, ...student, ...resultData});
                         if (reportBytes == null) throw StateError('Report card could not be generated.');
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({

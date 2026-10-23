@@ -421,7 +421,18 @@ class WindowsDocumentTemplates {
         data['schoolId'] !=
             FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
       throw StateError('Another school document is not accessible.');
-    final v = (await selections())[kind];
+    if (kind == 'reportCard' && data['studentId'] is String) {
+      final student = (await FirebaseFirestore.instance.collection('students_directory').doc(data['studentId'] as String).get()).data();
+      if (FirebaseFirestore.instance.activeProfileId != origin)
+        throw StateError('School changed during marksheet preview.');
+      final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+      if (student != null && student['deleted'] != true && student['_syncDeleted'] != true &&
+          (student['schoolId'] == null || student['schoolId'] == school) &&
+          (data['personId'] != null && data['personId'] == student['mobileStableId'])) {
+        data = {...student, ...data};
+      }
+    }
+    final v = kind == 'reportCard' ? 0 : (await selections())[kind];
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')

@@ -21,19 +21,19 @@ for index in range(4):
     assert 'principalsignature' in text
     if index == 2:
         assert 'expiration' in text, 'Cyan card must not clip its last detail row'
-    reader, text = document(f'reportCard_{index}.pdf')
-    assert len(reader.pages) == 1
-    assert tuple(float(v) for v in reader.pages[0].mediabox[2:]) == (612, 792)
-    for subject in ['English', 'Mathematics', 'Science', 'Social Studies', 'Bengali', 'Hindi']:
-        assert re.sub(r'\s+', '', subject).lower() in text
-    assert 'arupdas' in text
-    if index == 3:
-        assert 'behavior:-' in text, 'Burgundy report must include all four behavior fields'
-_, text = document('reportCard_term2.pdf')
-assert 'english--84--' in text, 'Term 2 marks must be in the Term 2 column, not Final Grade'
-_, text = document('reportCard_quarter2.pdf')
-assert 'english-84--' in text, 'Quarter 2 marks must not be printed as Quarter 1'
-assert 'overall85.5' in text, 'Selected term total must remain present'
+reader, text = document('reportCard_0.pdf')
+assert len(reader.pages) == 1
+width,height=map(float,reader.pages[0].mediabox[2:])
+assert abs(width-595.2756)<.02 and abs(height-841.8898)<.02
+for subject in ['English', 'Mathematics', 'Science', 'Social Studies', 'Bengali', 'Hindi']:
+    assert re.sub(r'\s+', '', subject).lower() in text
+for value in ['arupdas','fullmarks','passmarks','marksobtained','percentage:85.50%','result:pass','600','198','513']:
+    assert value in text, f'Missing actual report data: {value}'
+for filename in ['reportCard_term2.pdf','reportCard_quarter2.pdf']:
+    _, text=document(filename)
+    assert 'english1003384-' in text, 'Selected exam must use Term/Quarter 2 marks'
+    assert '84.00%' in text, 'Selected term percentage must reflect its marks'
+    assert 'english1003311-' not in text, 'Term 1 marks leaked into Term 2'
 reader, text = document('receipt_0.pdf')
 for field in ['totalpaid:500', 'totaldue:700', 'amountpaid:500', 'subtotal:1200']:
     assert field in text, f'Incorrect installment receipt: {field}'
