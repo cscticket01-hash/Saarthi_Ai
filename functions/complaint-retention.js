@@ -24,7 +24,12 @@ async function cleanupComplaints({db,now=Date.now,schoolId}){
     if(!expired(row,now()))return false;
     tx.set(ref,{purging:true},{merge:true});return true;
    });
-   if(remove){await db.recursiveDelete(ref);deleted++;}
+   if(remove){
+    // Keep the locked parent until every message is gone. A failed child
+    // cleanup remains discoverable and retryable on the next sweep.
+    await db.recursiveDelete(db.collection('platform_complaints/'+snapshot.id+'/messages'));
+    await ref.delete();deleted++;
+   }
   }
   cursor=rows[rows.length-1].id;if(rows.length<100)break;
  }
