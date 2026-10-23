@@ -1,3 +1,6 @@
+import 'package:flutter/material.dart';
+import '../lib/main_dashboard_screen_windows.dart' show SchoolSettingsScreen;
+import '../lib/windows_profile_image_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:image/image.dart' as img;
@@ -35,6 +38,84 @@ void main() {
     await db.switchProfile('local-first-${DateTime.now().microsecondsSinceEpoch}',
       identity:{'schoolId':school,'schoolSyncId':school});
   });
+  test(
+    'profile media rebuilds File-ID-only references and keeps inline edits',
+    () {
+      expect(
+        schoolProfileImageSource({'logoFileId': 'own-logo'}, 'logo'),
+        'https://drive.google.com/file/d/own-logo/view',
+      );
+      expect(
+        schoolProfileImageSource({
+          'logoUrl': 'data:image/png;base64,YWJj',
+          'logoFileId': 'old',
+        }, 'logo'),
+        'data:image/png;base64,YWJj',
+      );
+      expect(
+        schoolProfileImageSource({'logoFileId': '../foreign'}, 'logo'),
+        '',
+      );
+      expect(
+        schoolProfileImageSource({
+          'principalSignatureFileId': 'signature',
+        }, 'principalSignature'),
+        contains('/signature/view'),
+      );
+      final old = {
+        'uid': 'A',
+        'schoolId': school,
+        'photoUrl': 'https://lh3.googleusercontent.com/own.gif',
+      };
+      expect(
+        retainedAdminGoogleProfile(
+          previous: old,
+          verified: {},
+          uid: 'A',
+          schoolId: school,
+        )['photoUrl'],
+        old['photoUrl'],
+      );
+      expect(
+        retainedAdminGoogleProfile(
+          previous: old,
+          verified: {},
+          uid: 'B',
+          schoolId: school,
+        ),
+        isEmpty,
+      );
+      expect(
+        retainedAdminGoogleProfile(
+          previous: old,
+          verified: {},
+          uid: 'A',
+          schoolId: 'other',
+        ),
+        isEmpty,
+      );
+      expect(
+        verifiedGoogleProfileImageUrl(
+          'https://googleusercontent.com.attacker.example/image',
+        ),
+        isFalse,
+      );
+      final digest = 'a' * 64;
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-$digest', 'A'), isTrue);
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-other-$digest', 'A'), isFalse);
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-$digest', ''), isFalse);
+      final gif = Uint8List.fromList([...ascii.encode('GIF89a'), 1, 0, 1, 0]);
+      expect(
+        WindowsSchoolImageCache.dataUrl(gif),
+        startsWith('data:image/gif;'),
+      );
+      expect(
+        UriData.parse(WindowsSchoolImageCache.dataUrl(gif)).contentAsBytes(),
+        gif,
+      );
+    },
+  );
+
   test('offline school profile and images persist with location and pending outbox', () async {
     final profile = await WindowsSchoolProfileStore.saveLocal({
       'schoolName':'Saved school','principalName':'Principal','latitude':26.1,
@@ -284,5 +365,77 @@ void main() {
     expect(prepared['marks'],original['marks']);
     expect(prepared['payments'],original['payments']);
   });
+
+  Future<void> waitForImageUi(WidgetTester tester, bool Function() ready) async {
+    for (var i = 0; i < 200 && !ready(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(ready(), isTrue, reason: 'School image UI did not finish its local I/O');
+  }
+
+  Future<void> imageIo(WidgetTester tester, Future<void> Function() action) async {
+    var done = false;
+    Object? failure;
+    await tester.runAsync(() async {
+      action().then<void>((_) { done = true; }, onError: (Object error) {
+        failure = error; done = true;
+      });
+    });
+    await waitForImageUi(tester, () => done);
+    if (failure != null) throw failure!;
+  }
+
+  testWidgets(
+    'school settings observes synced images without replacing an unsaved school name',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1280, 1100));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final ref = db.collection('school_config').doc('school_profile_cache');
+      final first = WindowsSchoolImageCache.dataUrl(
+        img.encodePng(img.Image(width: 2, height: 2)),
+      );
+      final next = WindowsSchoolImageCache.dataUrl(
+        img.encodePng(img.Image(width: 3, height: 3)),
+      );
+      await imageIo(tester, () => WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => ref.set({
+          'schoolId': school,
+          'schoolName': 'Original school',
+          'principalName': 'Principal',
+          'logoUrl': first,
+        }),
+      ));
+      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
+      await waitForImageUi(tester, () => find.text('Original school').evaluate().isNotEmpty);
+      await tester.enterText(find.byType(TextField).first, 'Unsaved name');
+      await imageIo(tester, () => db.applySyncedDocument(ref, {
+        'schoolId': school,
+        'schoolName': 'Cloud school',
+        'principalName': 'Principal',
+        'logoUrl': next,
+        'principalSignatureUrl': next,
+      }));
+      await waitForImageUi(tester, () => tester.widgetList<Image>(find.byType(Image)).any((image) => image.image is MemoryImage && base64Encode((image.image as MemoryImage).bytes) == next.substring(next.indexOf(',') + 1)));
+      expect(find.text('Unsaved name'), findsOneWidget);
+      final images = tester.widgetList<Image>(find.byType(Image));
+      expect(
+        images.where(
+          (image) =>
+              image.image is MemoryImage &&
+              base64Encode((image.image as MemoryImage).bytes) ==
+                  next.substring(next.indexOf(',') + 1),
+        ),
+        isNotEmpty,
+      );
+      await tester.pumpWidget(const SizedBox());
+      // Reopening must read the updated durable profile, not stale memory.
+      await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
+      await waitForImageUi(tester, () => find.text('Cloud school').evaluate().isNotEmpty);
+      expect(find.text('Cloud school'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
 
 }
