@@ -7,7 +7,7 @@ import '../lib/windows_reference_documents.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
-      'all nine reference designs render real data and printable front/back cards',
+      'single marksheet and retained staff/receipt designs render real data',
       () async {
     final folder = Directory('build/reference-document-previews');
     await folder.create(recursive: true);
@@ -40,6 +40,7 @@ void main() {
         'Bengali': 88,
         'Hindi': 83
       },
+      'fullMarks':100, 'passMarks':33,
       'percentage': '85.5',
       'result': 'PASS',
       'remarks': 'Shows steady progress and participates well in class.',
@@ -72,6 +73,8 @@ void main() {
       expect(windowsReferenceDocumentIndex(kind, -1), 0);
       expect(windowsReferenceDocumentIndex(kind, 99), 0);
     }
+    expect(windowsReferenceDocumentNames['reportCard'], ['Maroon & Gold • Progress Report']);
+    for(final old in [0,1,2,3,99]) { expect(windowsReferenceDocumentIndex('reportCard',old),0); }
     expect(windowsReferenceTermNumber({'examName': 'Term 2'}), 2);
     expect(windowsReferenceTermNumber({'examName': 'Quarter 4'}), 4);
     expect(
@@ -81,7 +84,7 @@ void main() {
       final bytes = await renderWindowsReferenceDocument(
           kind: 'reportCard',
           template: pair.$2,
-          data: {...sample, 'examName': 'Term 2', 'isFinal': false});
+          data: {...sample, 'marks':{}, 'term1Marks':{'English':11}, 'term2Marks':{'English':84}, 'examName': pair.$1.endsWith('quarter2')?'Quarter 2':'Term 2', 'isFinal': false});
       await File('${folder.path}/${pair.$1}.pdf').writeAsBytes(bytes);
     }
     for (final kind in ['reportCard', 'receipt']) {
