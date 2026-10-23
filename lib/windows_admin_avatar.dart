@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'platform/platform_config.dart';
-import 'windows_connect/google_authorization.dart';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -28,14 +27,13 @@ class WindowsAdminAvatar extends StatefulWidget {
 
 class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
   Uint8List? bytes;
-  bool busy = false;
   @override
   void initState() {
     super.initState();
     _load();
   }
 
-  Future<void> _load({String? preferredSource}) async {
+  Future<void> _load() async {
     final profile = FirebaseFirestore.instance.activeProfileId;
     final saved = await CentralSchoolCloud.saved();
     final school = saved['schoolId']?.toString() ?? '',
@@ -60,7 +58,6 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
           googleProfileImageUrl(users.first['photoUrl']?.toString() ?? ''))
         source = users.first['photoUrl'];
     } catch (_) {}
-    if (googleProfileImageUrl(preferredSource ?? '')) source = preferredSource!;
     if (!googleProfileImageUrl(source)) {
       // A password login in an older build could erase the URL while leaving
       // this same account's private cached original intact.
@@ -114,104 +111,25 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
     }
   }
 
-  Future<void> _connect() async {
-    if (busy) return;
-    setState(() => busy = true);
-    final profile = FirebaseFirestore.instance.activeProfileId;
-    try {
-      final before = await CentralSchoolCloud.saved();
-      final account = await GoogleAuthorization().authorize(
-        script: false,
-        profileOnly: true,
-      );
-      final after = await CentralSchoolCloud.saved();
-      if (profile != FirebaseFirestore.instance.activeProfileId ||
-          before['uid'] != after['uid'] ||
-          before['schoolId'] != after['schoolId'])
-        throw StateError('School changed. Reopen settings.');
-      if (account.email.toLowerCase() !=
-          before['email']?.toString().toLowerCase())
-        throw StateError(
-          'Choose the Google account used by this administrator.',
-        );
-      if (!googleProfileImageUrl(account.photoUrl))
-        throw StateError(
-          'Google did not provide a profile image for this account.',
-        );
-      await CentralSchoolCloud.updateSession(before['schoolId'].toString(), {
-        'photoUrl': account.photoUrl,
-        'displayName': account.displayName,
-      }, expectedUid: before['uid']);
-      await _load(preferredSource: account.photoUrl);
-      // Publish only the image returned by Google for the same verified email.
-      // Password-only Firebase users then restore it on their other PCs too.
-      final token = await CentralSchoolCloud.firebaseToken();
-      final current = await CentralSchoolCloud.saved();
-      if (!mounted ||
-          FirebaseFirestore.instance.activeProfileId != profile ||
-          current['uid'] != before['uid'] ||
-          current['schoolId'] != before['schoolId']) {
-        throw StateError('School changed. Reopen settings.');
-      }
-      final response = await http
-          .post(
-            Uri.https('identitytoolkit.googleapis.com', '/v1/accounts:update', {
-              'key': platformApiKey,
-            }),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'idToken': token, 'photoUrl': account.photoUrl}),
-          )
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200 ||
-          (jsonDecode(response.body) as Map)['localId'] != before['uid']) {
-        throw StateError(
-          'Photo is saved on this PC, but account photo sync failed. Click to retry.',
-        );
-      }
-    } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    final fallback = Text(
-      widget.initial,
-      style: TextStyle(
-        color: WindowsAppearance.resolve(Colors.white),
-        fontSize: 25,
-        fontWeight: FontWeight.w800,
-      ),
-    );
-    return Tooltip(
-      message: 'Google profile photo • click to refresh or connect',
-      child: InkWell(
-        onTap: busy ? null : _connect,
-        child: busy
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : bytes == null
-            ? fallback
-            : ClipOval(
-                child: Image.memory(
-                  bytes!,
-                  width: 68,
-                  height: 68,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, __, ___) => fallback,
-                ),
+    const empty = SizedBox(width: 68, height: 68);
+    return Semantics(
+      image: true,
+      label: 'Google account profile photo',
+      child: bytes == null
+          ? empty
+          : ClipOval(
+              child: Image.memory(
+                bytes!,
+                width: 68,
+                height: 68,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => empty,
               ),
-      ),
+            ),
     );
   }
 }
