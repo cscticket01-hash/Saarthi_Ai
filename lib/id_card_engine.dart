@@ -81,7 +81,7 @@ class IdCardEngine {
       }
       data={...data,
         'name':first(['name','studentName']),
-        'class':first(['studentClass','class']),
+        'class':[first(['studentClass','class']), if(first(['section']).isNotEmpty) first(['section'])].where((v)=>v.isNotEmpty).join(' / '),
         'rollNo':first(['rollNo','roll']),
         'studentUid':first(['studentUid','studentId']),
         'session':first(['academicSession','session','academicYear']),
