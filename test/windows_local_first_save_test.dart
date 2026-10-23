@@ -149,8 +149,8 @@ void main() {
         images.where(
           (image) =>
               image.image is MemoryImage &&
-              (image.image as MemoryImage).bytes.length ==
-                  UriData.parse(next).contentAsBytes().length,
+              base64Encode((image.image as MemoryImage).bytes) ==
+                  next.substring(next.indexOf(',') + 1),
         ),
         isNotEmpty,
       );
