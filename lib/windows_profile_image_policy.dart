@@ -45,3 +45,11 @@ Map<String, dynamic> retainedAdminGoogleProfile({
   }
   return {};
 }
+
+/// The fixed hash suffix prevents UID-prefix collisions during cache recovery.
+bool adminAvatarCacheBelongsTo(String fileId, String uid) {
+  if (uid.isEmpty) return false;
+  final prefix = 'admin-profile-$uid-';
+  return fileId.startsWith(prefix) &&
+      RegExp(r'^[a-f0-9]{64}$').hasMatch(fileId.substring(prefix.length));
+}

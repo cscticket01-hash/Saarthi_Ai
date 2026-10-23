@@ -100,6 +100,10 @@ void main() {
         ),
         isFalse,
       );
+      final digest = 'a' * 64;
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-$digest', 'A'), isTrue);
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-other-$digest', 'A'), isFalse);
+      expect(adminAvatarCacheBelongsTo('admin-profile-A-$digest', ''), isFalse);
       final gif = Uint8List.fromList([...ascii.encode('GIF89a'), 1, 0, 1, 0]);
       expect(
         WindowsSchoolImageCache.dataUrl(gif),

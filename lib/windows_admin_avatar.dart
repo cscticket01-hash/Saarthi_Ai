@@ -70,7 +70,7 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
         final row = doc.data();
         final fileId = row['fileId']?.toString() ?? '';
         if (row['schoolId'] != school ||
-            !fileId.startsWith('admin-profile-$uid-'))
+            !adminAvatarCacheBelongsTo(fileId, uid))
           continue;
         final restored = await WindowsSchoolImageCache.read(school, fileId);
         if (!mounted ||
