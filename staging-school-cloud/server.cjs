@@ -126,6 +126,15 @@ function fromEnvironment(env) {
     managed.setAttendanceWake(worker.wake);
   }
   const verifyTest=async()=>{if(testSchoolId){const school=await db.doc('schools/'+testSchoolId).get();if(!school.exists||!/^TEST\b/i.test(school.data().schoolName||''))throw Object.assign(Error('Verified TEST school required'),{status:403,code:'ISOLATED_TEST_SCOPE_REQUIRED'});}};
+  let complaintSweepRunning=false;
+  const sweepComplaints=async()=>{
+    if(complaintSweepRunning)return;complaintSweepRunning=true;
+    try{await verifyTest();await require('../functions/complaint-retention').cleanupComplaints({db,...(testSchoolId?{schoolId:testSchoolId}:{})});}
+    catch(_){console.info(JSON.stringify({event:'complaint_retention_retry_pending'}));}
+    finally{complaintSweepRunning=false;}
+  };
+  const complaintTimer=setInterval(sweepComplaints,6*60*60*1000);complaintTimer.unref();
+  setImmediate(sweepComplaints);
   const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
   return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
