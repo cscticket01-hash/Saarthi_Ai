@@ -1013,8 +1013,8 @@ final bool _vidyaWebBootstrapBackgroundApplied = (() {
 
 
 // ============================================================
-// PORTAL SESSION + 30 MINUTE INACTIVITY
-// Keeps login across browser reload. Any click/tap refreshes 30 minutes.
+// WINDOWS PORTAL SESSION + FOREGROUND APP LOCK
+// Only mouse clicks inside the Windows app renew the one-hour lock.
 // ============================================================
 const Duration _portalInactivityLimit = windowsIdleTimeout;
 const String _portalSessionRoleKey = 'saarthi_portal_role_v1';
@@ -1046,14 +1046,14 @@ void _savePortalSession({
   }
 }
 
-void _touchPortalSession() {
+void _touchPortalSession({Duration? remaining}) {
   try {
     final storage = html.window.localStorage;
     final role = storage[_portalSessionRoleKey]?.trim() ?? '';
     if (role.isEmpty) return;
 
     storage[_portalSessionExpiryKey] =
-        DateTime.now().add(_portalInactivityLimit).millisecondsSinceEpoch.toString();
+        DateTime.now().add(remaining ?? _portalInactivityLimit).millisecondsSinceEpoch.toString();
   } catch (e) {
     debugPrint('Portal session refresh error: $e');
   }
@@ -1114,14 +1114,15 @@ int _portalSessionRemainingSeconds() {
 
 String _formatPortalTimer(int totalSeconds) {
   final safe = totalSeconds.clamp(0, _portalInactivityLimit.inSeconds).toInt();
-  final minutes = safe ~/ 60;
+  final hours = safe ~/ 3600;
+  final minutes = (safe % 3600) ~/ 60;
   final seconds = safe % 60;
-  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 }
 
 Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
   return Tooltip(
-    message: 'App Lock after 30 seconds of inactivity',
+    message: 'App Lock after 1 hour without a mouse click in this app',
     child: ValueListenableBuilder<int>(
       valueListenable: secondsListenable,
       builder: (context, seconds, _) {WindowsAppearance.watch(context);
@@ -4671,7 +4672,7 @@ class AdminDashboardScreen extends StatefulWidget {
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> with WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _adminScaffoldKey = GlobalKey<ScaffoldState>();
 
 int _loginBackPressCount = 0;
@@ -4727,28 +4728,50 @@ void _handleLoginBack(bool didPop) {
       ValueNotifier<int>(_portalInactivityLimit.inSeconds);
   bool _autoLogoutInProgress = false;
 
-  void _startPortalInactivityTimer() {
-    final initialRemaining = _portalInactivityLimit.inSeconds;
-    _idleLock.reset();
-    _sessionSecondsRemaining.value = initialRemaining;
+  int get _idleSecondsRemaining =>
+      (_idleLock.remaining.inMilliseconds / 1000)
+          .ceil()
+          .clamp(0, _portalInactivityLimit.inSeconds)
+          .toInt();
 
+  void _startPortalInactivityTimer() {
+    _idleLock.reset();
+    _touchPortalSession(remaining: _idleLock.remaining);
+    _sessionSecondsRemaining.value = _idleSecondsRemaining;
+
+    // A shared Windows mouse-click event renews both the real lock deadline
+    // and the visible countdown. No keyboard/move/scroll activity is emitted.
     _sessionClickSubscription = html.document.onClick.listen((_) {
-      if (!mounted || _autoLogoutInProgress) return;
+      if (!mounted || _autoLogoutInProgress || _idleLock.isPaused) return;
       _idleLock.reset();
-      _touchPortalSession();
-      _sessionSecondsRemaining.value = _portalInactivityLimit.inSeconds;
+      _touchPortalSession(remaining: _idleLock.remaining);
+      _sessionSecondsRemaining.value = _idleSecondsRemaining;
     });
 
     _sessionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _autoLogoutInProgress) return;
-
-      final remaining = _portalSessionRemainingSeconds();
-      _sessionSecondsRemaining.value = remaining;
-
-
+      _sessionSecondsRemaining.value = _idleSecondsRemaining;
     });
 
+    // The dashboard can also be opened while the desktop window is inactive.
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      _idleLock.pause();
+    }
+  }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted || _autoLogoutInProgress) return;
+    if (state == AppLifecycleState.resumed) {
+      _idleLock.resume();
+      // Keep persisted expiry aligned with the *remaining* active time.
+      _touchPortalSession(remaining: _idleLock.remaining);
+    } else {
+      // Alt+Tab, task switching and minimizing must never lock this session.
+      _idleLock.pause();
+    }
+    _sessionSecondsRemaining.value = _idleSecondsRemaining;
   }
 
   Future<void> _autoLogoutAdmin() async {
@@ -4807,6 +4830,7 @@ void _handleLoginBack(bool didPop) {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startPortalInactivityTimer();
 
     // Preload heavy/remote Admin data while dashboard is already visible.
@@ -4826,6 +4850,7 @@ void _handleLoginBack(bool didPop) {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _idleLock.dispose();
     _sessionTimer?.cancel();
     _sessionClickSubscription?.cancel();
