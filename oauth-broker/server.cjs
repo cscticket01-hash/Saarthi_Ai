@@ -6,6 +6,7 @@ const { createHash } = require('node:crypto');
 // SDK is used. Only Google's one-use code + PKCE verifier is exchanged.
 function createServer(options = {}) {
   let windowStart = Date.now(), requests = 0;
+  const downloads = require('./public-downloads.cjs').createInstallerHandler(options.downloads);
   return http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
@@ -14,6 +15,7 @@ function createServer(options = {}) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    if (await downloads(req,res)) return;
     if (req.url === '/school-cloud' || req.url === '/school-cloud/healthz') {
       if (!options.schoolCloud) return send(503, {success:false,message:'Central school staging is not configured'});
       return options.schoolCloud(req,res);
