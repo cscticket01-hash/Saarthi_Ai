@@ -390,7 +390,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
   const p=verifiedPresence(b.presenceToken);if(p.schoolId!==m.schoolId||p.uid!==m.uid)fail(403,'Another school is not accessible');
   await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:now()},{merge:true});return {success:true,schoolId:m.schoolId};
  }
- if(action==='managed/session'){const access=lease(m);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,deviceEnforced:deviceDecision.deviceEnforced===true,...(deviceDecision.deviceManaged===true?{deviceManaged:true,device:deviceDecision.device}:{}),...(deviceDecision.deviceEnforced===true?{device:deviceDecision.device,offlineLease:deviceDecision.offlineLease,offlineExpiresAt:deviceDecision.offlineExpiresAt}:{}),presenceToken:presence(m,access),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
+ if(action==='managed/session'){const access=lease(m);const registration=await db.doc('school_registration_profiles/'+m.schoolId).get();const account=await db.doc('platform_schools/'+m.schoolId).get();access.registrationState=registration.exists?'complete':account.data()?.registrationState==='new'?'new':'unknown';await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,deviceEnforced:deviceDecision.deviceEnforced===true,...(deviceDecision.deviceManaged===true?{deviceManaged:true,device:deviceDecision.device}:{}),...(deviceDecision.deviceEnforced===true?{device:deviceDecision.device,offlineLease:deviceDecision.offlineLease,offlineExpiresAt:deviceDecision.offlineExpiresAt}:{}),presenceToken:presence(m,access),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
  if(action==='managed/disconnect'){invalidate(m.schoolId);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:0},{merge:true});return {success:true};}
  if(action==='managed/summary'){
   if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');
@@ -409,20 +409,21 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  if(action==='managed/profile'){
   const ref=db.doc('school_registration_profiles/'+m.schoolId);
   if(b.operation==='initialize'){
-   const name=String(b.schoolName||'').trim(),principal=String(b.principalName||'').trim();
+   const name=String(b.schoolName||'').trim(),principal=String(b.principalName||'').trim(),contact=String(b.schoolContactNo||'').trim();
+   if(contact&&!/^\+?[0-9][0-9 -]{5,18}[0-9]$/.test(contact))fail(400,'Valid school contact number required');
    if(name.length<2||name.length>160||principal.length<2||principal.length>160)fail(400,'Valid school and principal names required');
    await db.runTransaction(async tx=>{
     const entitlement=await tx.get(db.doc('school_entitlements/'+m.schoolId)),existing=await tx.get(ref);
     const current={...m,entitlement:entitlement.data()||{}};
     if(current.entitlement.active!==true||current.entitlement.blocked===true||!lease(current).allowed||current.entitlement.status!=='trial'&&current.entitlement.activated!==true||current.entitlement.licenseHash!==m.entitlement.licenseHash)fail(403,'School access changed during registration');
-    if(!existing.exists)tx.set(ref,{schoolId:m.schoolId,schoolName:name,principalName:principal,completedAt:now()});
+    if(!existing.exists)tx.set(ref,{schoolId:m.schoolId,schoolName:name,principalName:principal,...(contact?{schoolContactNo:contact}:{}),completedAt:now()});
    });
   }else if(b.operation!=='read')fail(400,'Invalid school profile operation');
   const profile=await ref.get(),school=await db.doc('platform_schools/'+m.schoolId).get(),storage=await db.doc('school_storage_private/'+m.schoolId).get();
   const data=profile.data();
   if(profile.exists&&(data.schoolId!==m.schoolId||typeof data.schoolName!=='string'||data.schoolName.trim().length<2||typeof data.principalName!=='string'||data.principalName.trim().length<2))fail(409,'Saved school registration requires recovery');
   let registrationState=profile.exists?'complete':school.data()?.registrationState==='new'?'new':'unknown';
-  let recovered=profile.exists?{schoolId:m.schoolId,schoolName:data.schoolName,principalName:data.principalName}:null;
+  let recovered=profile.exists?{schoolId:m.schoolId,schoolName:data.schoolName,principalName:data.principalName,...(data.schoolContactNo?{schoolContactNo:data.schoolContactNo}:{})}:null;
   // Pre-marker accounts already have an authoritative developer-created name.
   // Recover that SAME account, without asserting that missing registration or
   // operational data was backed up, and without creating/changing any records.
