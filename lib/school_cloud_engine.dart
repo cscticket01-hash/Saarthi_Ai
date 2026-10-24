@@ -27,8 +27,11 @@ class SchoolCloudEngine extends ChangeNotifier {
     Future<Map<String, dynamic>?> Function()? legacyAccess,
     Future<void> Function(Map<String, dynamic>, int)? touchClock,
     DateTime Function()? clock,
+    Duration Function()? elapsed,
     Future<bool> Function(Map<String,dynamic>, Map<String,dynamic>, int)? verifyDeviceLease,
-  }) : _deviceVerifier = verifyDeviceLease ?? _verifyDeviceLease,
+  }) : _elapsed = elapsed ?? _monotonicClock(),
+       _useServerClock = clock == null || elapsed != null,
+       _deviceVerifier = verifyDeviceLease ?? _verifyDeviceLease,
        _read = readIdentity ?? CentralSchoolCloud.saved,
        _verify = verify ?? (() => ManagedSchoolSession.call('managed/session')),
        _persist =
@@ -60,6 +63,18 @@ class SchoolCloudEngine extends ChangeNotifier {
   final Future<void> Function() _activate;
   final Future<Map<String, dynamic>?> Function() _legacy;
   final DateTime Function() _clock;
+  final Duration Function() _elapsed;
+  final bool _useServerClock;
+  int? _verifiedServerTime;
+  Duration _verifiedElapsed = Duration.zero;
+  Future<void>? _verificationTask;
+  static Duration Function() _monotonicClock() {
+    final watch = Stopwatch()..start();
+    return () => watch.elapsed;
+  }
+  int get _accessNow => _verifiedServerTime == null
+      ? _clock().millisecondsSinceEpoch
+      : _verifiedServerTime! + (_elapsed() - _verifiedElapsed).inMilliseconds;
   final Future<bool> Function(Map<String,dynamic>,Map<String,dynamic>,int) _deviceVerifier;
   int _deviceLeaseExpiry=0;
   bool _deviceEnforcedSeen=false;
@@ -77,7 +92,7 @@ class SchoolCloudEngine extends ChangeNotifier {
   Future<void> _refreshDeviceProof() async {
     _deviceLeaseExpiry=0;
     if(!_requiresDeviceProof || identity==null || access==null)return;
-    final now=_clock().millisecondsSinceEpoch;
+    final now=_accessNow;
     if(await _deviceVerifier(identity!,access!,now)) {
       final payload=jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize((access!['offlineLease'] as String).split('.').first))));
       _deviceLeaseExpiry=(payload['expiresAt'] as num).toInt();
@@ -101,29 +116,40 @@ class SchoolCloudEngine extends ChangeNotifier {
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
   bool get accessExpired =>
-      (access?['expiresAt'] as num? ?? 0) <= _clock().millisecondsSinceEpoch;
+      (access?['expiresAt'] as num? ?? 0) <= _accessNow;
   bool get trialAvailable => access?['status'] == 'trial' &&
       access?['allowed'] == true && !accessExpired && identity != null &&
       sameIdentity(access!, identity!);
   /// Skip licence entry only within this authenticated school's original trial.
   Future<bool> continueTrial() async {
-    if (!trialAvailable) return false;
+    if (access?['status'] != 'trial') return false;
     if (!canOpen) await verify();
     return access?['status'] == 'trial' && canOpen;
   }
+  String get accessProblem {
+    if (error != null) return error!;
+    if (accessExpired) return 'The school trial or licence has expired.';
+    if (_requiresDeviceProof && _deviceLeaseExpiry <= _accessNow)
+      return 'PC authorization could not be verified. Sign in again with this school account.';
+    if (_verifiedServerTime == null &&
+        ((access?['serverTime'] as num? ?? 0) > _accessNow + 300000 ||
+         (identity?['lastLocalSeenAt'] as num? ?? 0) > _accessNow + 300000))
+      return 'The PC date/time differs from saved school verification. Retry online verification.';
+    return 'School access could not be verified. Sign in again with this school account.';
+  }
   bool get _leaseUsable =>
-      (!_requiresDeviceProof || _deviceLeaseExpiry > _clock().millisecondsSinceEpoch) &&
+      (!_requiresDeviceProof || _deviceLeaseExpiry > _accessNow) &&
       access != null &&
       sameIdentity(access!, identity!) &&
       access!['allowed'] == true &&
       (access!['status'] == 'trial' || access!['activated'] == true) &&
-      (access!['expiresAt'] as num? ?? 0) > _clock().millisecondsSinceEpoch &&
-      _clock().millisecondsSinceEpoch - (access!['serverTime'] as num? ?? 0) <
+      (access!['expiresAt'] as num? ?? 0) > _accessNow &&
+      _accessNow - (access!['serverTime'] as num? ?? 0) <
           (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72)).inMilliseconds &&
       (access!['serverTime'] as num? ?? 0) <=
-          _clock().millisecondsSinceEpoch + 300000 &&
-      (identity!['lastLocalSeenAt'] as num? ?? 0) <=
-          _clock().millisecondsSinceEpoch + 300000;
+          _accessNow + 300000 &&
+      (_verifiedServerTime != null || (identity!['lastLocalSeenAt'] as num? ?? 0) <=
+          _accessNow + 300000);
   static bool sameIdentity(Map<String, dynamic> a, Map<String, dynamic> b) =>
       a['schoolId'] == b['schoolId'] &&
       a['uid'] == b['uid'] &&
@@ -167,6 +193,7 @@ class SchoolCloudEngine extends ChangeNotifier {
     _localReady = false;
     identity = null;
     access = null;
+    _verifiedServerTime = null;
     _deviceLeaseExpiry=0;
     _deviceEnforcedSeen=false;
     error = null;
@@ -237,7 +264,10 @@ class SchoolCloudEngine extends ChangeNotifier {
       identity = {...origin, 'lastLocalSeenAt': time};
   }
 
-  Future<void> verify() async {
+  Future<void> verify() => _verificationTask ??=
+      _verifyAccess().whenComplete(() => _verificationTask = null);
+
+  Future<void> _verifyAccess() async {
     if (_verifying || identity == null || _disposed) return;
     _verifying = true;
     _lastVerifyAttempt = _clock();
@@ -264,14 +294,13 @@ class SchoolCloudEngine extends ChangeNotifier {
       if (!current() || !sameIdentity(stored, origin)) return;
       identity=Map<String,dynamic>.from(stored);
       _deviceEnforcedSeen = _deviceEnforcedSeen || stored['deviceEnforced']==true;
-      final storedAccess = stored['verifiedAccess'];
-      access =
-          storedAccess is Map &&
-              sameIdentity(Map<String, dynamic>.from(storedAccess), origin) &&
-              (storedAccess['serverTime'] as num? ?? 0) >
-                  (snapshot['serverTime'] as num? ?? 0)
-          ? Map<String, dynamic>.from(storedAccess)
-          : snapshot;
+      // A fresh authenticated response is authority; a future-dated cached
+      // snapshot cannot override it after the PC clock has been corrected.
+      access = snapshot;
+      if (_useServerClock) {
+        _verifiedServerTime = (snapshot['serverTime'] as num).toInt();
+        _verifiedElapsed = _elapsed();
+      }
       await _refreshDeviceProof();
       if(!current())return;
       _failures = 0;

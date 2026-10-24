@@ -78,6 +78,37 @@ void main() {
     expect(await e.continueTrial(), false);
     e.dispose();
   });
+  test('Skip awaits the existing verification and replaces future-dated cache', () async {
+    final pending = Completer<Map<String,dynamic>>();
+    var calls = 0;
+    final cached = {...access(status:'trial',activated:false),
+      'serverTime':now.add(const Duration(hours:1)).millisecondsSinceEpoch};
+    final e = engine(identity(cached),verify:(){calls++;return pending.future;});
+    await e.restore();
+    var completed = false;
+    final skip = e.continueTrial().then((result){completed=true;return result;});
+    await Future<void>.delayed(Duration.zero);
+    expect(completed,false);expect(calls,1);
+    pending.complete(access(status:'trial',activated:false));
+    expect(await skip,true);
+    expect(e.access?['serverTime'],now.millisecondsSinceEpoch);
+    e.dispose();
+  });
+  test('authenticated server clock admits a wrong-clock PC without extending trial expiry', () async {
+    var pcTime=now.subtract(const Duration(days:1));
+    var elapsed=Duration.zero;
+    final snapshot=access(status:'trial',activated:false);
+    final saved={...identity(snapshot),'lastLocalSeenAt':now.millisecondsSinceEpoch};
+    final e=SchoolCloudEngine(readIdentity:()async=>saved,clock:()=>pcTime,elapsed:()=>elapsed,
+      activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},
+      persist:(a,b)async{},verify:()async=>snapshot);
+    await e.restore();await e.verify();
+    expect(await e.continueTrial(),true);
+    pcTime=pcTime.subtract(const Duration(days:10));
+    elapsed=const Duration(days:5);
+    expect(e.canOpen,false);
+    e.dispose();
+  });
   test('Skip cannot bypass blocked, foreign-school or device-proof access', () async {
     for (final lease in [access(status:'blocked',allowed:false),
       {...access(status:'trial'), 'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},

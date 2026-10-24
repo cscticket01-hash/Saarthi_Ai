@@ -29,6 +29,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   late final SchoolCloudEngine engine;
   bool routed = false;
   bool _activatingLicence = false;
+  bool _continuingTrial = false;
   String? _trialAcceptedSchool;
   String? error;
   final licence = TextEditingController();
@@ -184,19 +185,21 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
                 ],
                 if (trialAvailable)
                   FilledButton(
-                    onPressed: () async {
+                    onPressed: _continuingTrial ? null : () async {
+                      setState(() { _continuingTrial = true; error = null; });
                       final accepted = await engine.continueTrial();
                       if (!mounted) return;
                       setState(() {
+                        _continuingTrial = false;
                         if (accepted) {
                           _trialAcceptedSchool = engine.identity?['schoolId'];
                           error = null;
                         } else {
-                          error = 'Trial access could not be verified. Connect to the internet and try again.';
+                          error = engine.accessProblem;
                         }
                       });
                     },
-                    child: const Text('Skip'),
+                    child: Text(_continuingTrial ? 'Verifying trial...' : 'Skip'),
                   ),
                 if (error != null) Text(error!),
                 TextButton(
