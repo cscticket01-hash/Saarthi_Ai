@@ -6,6 +6,8 @@ const os=require('node:os');
 const path=require('node:path');
 const {pipeline}=require('node:stream/promises');
 const repo='cscticket01-hash/Saarthi_Ai';
+// Verified release fallback keeps downloads available when GitHub rate-limits shared hosting IPs.
+const verifiedReleases=[{"tag_name":"windows-v2.1.165","assets":[{"name":"Vidya_Saarthi_Setup_2.1.165.exe","size":16940773,"digest":"sha256:a1b15ea398c22acafa31ad575d6e11a538dbaa87de3cc56db78ae47673748db3","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.165/Vidya_Saarthi_Setup_2.1.165.exe"}]},{"tag_name":"android-v1.0.597","assets":[{"name":"Vidya-Saarthi-v1.0.597.apk","size":68262173,"digest":"sha256:f941501c41fa200ddeab0af39ae2b96e9e5e91f55ca6227e905c0a2794000a3d","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.597/Vidya-Saarthi-v1.0.597.apk"}]}];
 function selectInstaller(releases,platform){
  const re=new RegExp(`^${platform}-v(\\d+)\\.(\\d+)\\.(\\d+)$`);
  return releases.filter(r=>!r.draft&&!r.prerelease&&re.test(r.tag_name)).sort((a,b)=>{
@@ -19,7 +21,7 @@ function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir()
  const pending=new Map(),cached=new Map();
  async function releases(){
   if(releaseCache&&now()<releaseUntil)return releaseCache;
-  if(!lookup)lookup=(async()=>{const r=await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=100`,{signal:AbortSignal.timeout(30000),headers:{Accept:'application/vnd.github+json'}});if(!r.ok)throw Error('release_lookup');const list=await r.json();if(!Array.isArray(list))throw Error('release_lookup');releaseCache=list;releaseUntil=now()+300000;return list;})().finally(()=>lookup=null);
+  if(!lookup)lookup=(async()=>{const r=await fetchImpl(`https://api.github.com/repos/${repo}/releases?per_page=100`,{signal:AbortSignal.timeout(30000),headers:{Accept:'application/vnd.github+json','User-Agent':'Vidya-Saarthi-Downloads'}});if(r.status===403||r.status===429){releaseCache=releaseCache||verifiedReleases;releaseUntil=now()+300000;return releaseCache;}if(!r.ok)throw Error('release_lookup_'+r.status);const list=await r.json();if(!Array.isArray(list))throw Error('release_lookup');releaseCache=list;releaseUntil=now()+300000;return list;})().finally(()=>lookup=null);
   return lookup;
  }
  async function installer(platform){
@@ -30,7 +32,7 @@ function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir()
   if(!pending.has(key))pending.set(key,(async()=>{
    await fsp.mkdir(directory,{recursive:true});const file=path.join(directory,platform+'-'+hash),temp=file+'.'+randomUUID()+'.part';
    try{
-    const r=await fetchImpl(asset.browser_download_url,{signal:AbortSignal.timeout(180000)});if(!r.ok||!r.body)throw Error('download_failed');
+    const r=await fetchImpl(asset.browser_download_url,{signal:AbortSignal.timeout(180000)});if(!r.ok||!r.body)throw Error('download_failed_'+r.status);
     const handle=await fsp.open(temp,'wx',0o600),digest=createHash('sha256');let size=0,prefix=Buffer.alloc(0);
     try{for await(const raw of r.body){const chunk=Buffer.from(raw);size+=chunk.length;if(size>asset.size)throw Error('size_mismatch');digest.update(chunk);if(prefix.length<2)prefix=Buffer.concat([prefix,chunk.subarray(0,2-prefix.length)]);await handle.writeFile(chunk);}}finally{await handle.close();}
     if(size!==asset.size||digest.digest('hex')!==hash||!(platform==='windows'?prefix.equals(Buffer.from('MZ')):prefix.equals(Buffer.from('PK'))))throw Error('integrity_failure');
@@ -52,7 +54,7 @@ function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir()
    if(status===206)headers['Content-Range']=`bytes ${start}-${end}/${item.size}`;
    res.writeHead(status,headers);if(req.method==='HEAD'){res.end();return true;}
    await pipeline(fs.createReadStream(item.file,{start,end}),res);
-  }catch(_){if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/plain','Retry-After':'30'});res.end('Download temporarily unavailable. Please try again shortly.');}else res.destroy();}
+  }catch(error){console.error(JSON.stringify({event:'public_download_failure',platform,code:/^(release_lookup_\d{3}|download_failed_\d{3}|invalid_release|integrity_failure|size_mismatch)$/.test(error.message)?error.message:'download_internal'}));if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/plain','Retry-After':'30','X-Download-Error':/^(release_lookup_\d{3}|download_failed_\d{3}|invalid_release|integrity_failure|size_mismatch)$/.test(error.message)?error.message:'download_internal'});res.end('Download temporarily unavailable. Please try again shortly.');}else res.destroy();}
   return true;
  };
 }
