@@ -37,7 +37,7 @@ void main() {
   testWidgets('native keyboard activity reaches the inactivity monitor', (tester) async {
     var activity=0;
     await tester.pumpWidget(MaterialApp(home:WindowsActivityMonitor(
-      onActivity:()=>activity++,child:const TextField())));
+      onActivity:()=>activity++,child:const Scaffold(body:TextField()))));
     await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
     expect(activity,1);
     await tester.pumpWidget(const SizedBox());
