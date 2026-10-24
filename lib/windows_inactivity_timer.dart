@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:clock/clock.dart';
 
 const windowsIdleTimeout = Duration(hours: 1);
 
@@ -8,7 +9,7 @@ class WindowsInactivityTimer {
   WindowsInactivityTimer({required this.onTimeout});
 
   final void Function() onTimeout;
-  final Stopwatch _elapsed = Stopwatch();
+  final Stopwatch _elapsed = clock.stopwatch();
   Timer? _timer;
   Duration _remaining = windowsIdleTimeout;
   bool _started = false;
