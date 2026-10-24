@@ -1,5 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
 
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/platform/platform_config.dart';
@@ -44,22 +49,96 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
     expect(activity,1);
   });
-  testWidgets('trial registration combines required contact, App Lock and licence Skip', (tester) async {
-    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({
-      'managed':true,'projectId':platformProjectId,'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      'uid':'A','endpoint':'https://school.example/school-cloud','folderId':'managed','firebaseRefreshToken':'refresh',
-      'verifiedAccess':{'status':'trial','allowed':true,'serverTime':1,'expiresAt':432000001}})});
-    await tester.binding.setSurfaceSize(const Size(1400,1200));
-    addTearDown(()=>tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const MaterialApp(home:WindowsAdminSetupScreen()));
-    await tester.pump();await tester.pump();
-    expect(find.widgetWithText(TextField,'School Contact Number *'),findsOneWidget);
-    expect(find.widgetWithText(TextField,'New App Lock password *'),findsOneWidget);
-    expect(find.text('Skip licence • Start five-day trial'),findsOneWidget);
-    await tester.tap(find.text('Skip licence • Start five-day trial'));await tester.pump();
-    expect(find.textContaining('School contact number and an App Lock password'),findsOneWidget);
+  Map<String, String> trialSchoolIdentity() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return {CentralSchoolCloud.key: jsonEncode({
+      'managed': true, 'projectId': platformProjectId,
+      'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'uid': 'A',
+      'endpoint': 'https://school.example/school-cloud',
+      'folderId': 'managed', 'firebaseRefreshToken': 'refresh',
+      'verifiedAccess': {'success': true, 'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'uid': 'A', 'projectId': platformProjectId, 'status': 'trial',
+        'allowed': true, 'serverTime': now, 'expiresAt': now + 5 * 86400000}
+    })};
+  }
+  testWidgets('trial Skip is a selection and the setup has one Submit action', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    var completed = 0;
+    await tester.binding.setSurfaceSize(const Size(1400, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(home: WindowsAdminSetupScreen(onFinished: () => completed++)));
+    await tester.pump(); await tester.pump();
+    expect(find.text('Contact no'), findsOneWidget);
+    expect(find.text('Contact no *'), findsNothing);
+    expect(find.byKey(const ValueKey('setup-contact')), findsOneWidget);
+    expect(find.text('New App lock *'), findsOneWidget);
+    expect(find.text('Confirm app lock *'), findsOneWidget);
+    expect(find.text('Submit'), findsOneWidget);
+    expect(find.text('Save & Open App'), findsNothing);
+    expect(find.byType(Checkbox), findsOneWidget);
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, false);
+    await tester.ensureVisible(find.byKey(const ValueKey('setup-skip-trial')));
+    await tester.tap(find.byKey(const ValueKey('setup-skip-trial')));
+    await tester.pump();
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, true);
+    expect(completed, 0);
+    expect(find.byKey(const ValueKey('admin-setup-error')), findsNothing);
+    expect(find.text('Submit'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('blank contact passes validation while a licence or explicit trial selection is required', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    await tester.binding.setSurfaceSize(const Size(1400, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: WindowsAdminSetupScreen()));
+    await tester.pump(); await tester.pump();
+    await tester.enterText(find.byKey(const ValueKey('setup-school-name')), 'Example School');
+    await tester.enterText(find.byKey(const ValueKey('setup-principal-name')), 'Example Principal');
+    await tester.enterText(find.byKey(const ValueKey('setup-app-lock')), 'App-lock-123');
+    await tester.enterText(find.byKey(const ValueKey('setup-confirm-lock')), 'App-lock-123');
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('setup-contact'))).controller!.text, isEmpty);
+    await tester.ensureVisible(find.byKey(const ValueKey('setup-submit')));
+    await tester.tap(find.byKey(const ValueKey('setup-submit')));
+    await tester.pump();
+    expect(find.text('Enter your school licence key, or choose Skip for the valid five-day trial.'), findsOneWidget);
+    expect(find.textContaining('contact number and an App Lock'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('setup page renders desktop and laptop review images without overflow', (tester) async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    await tester.runAsync(() async {
+      await (FontLoader('Segoe UI')..addFont(Future.value(ByteData.sublistView(
+        await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes())))).load();
+      await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    });
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final spec in [('desktop', const Size(1280, 1000)), ('laptop', const Size(1280, 800)), ('full', const Size(1280, 1400))]) {
+      await tester.binding.setSurfaceSize(spec.$2);
+      final key = GlobalKey();
+      await tester.pumpWidget(MaterialApp(theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Segoe UI'),
+        home: RepaintBoundary(key: key, child: const WindowsAdminSetupScreen())));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: spec.$1);
+      await tester.runAsync(() async {
+        final image = await (key.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage();
+        final bytes = (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+        final file = File('build/settings-preview/setup-${spec.$1}.png');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes);
+        final encoded = base64Encode(bytes);
+        for (var start = 0; start < encoded.length; start += 16000) {
+          final end = (start + 16000).clamp(0, encoded.length);
+          print('SETUP_PNG_${spec.$1}:$start:${encoded.substring(start, end)}');
+        }
+        image.dispose();
+      });
+      await tester.ensureVisible(find.byKey(const ValueKey('setup-submit')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('setup-submit')).hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: spec.$1);
+      await tester.pumpWidget(const SizedBox());
+    }
+  }, skip: !Platform.isWindows);
   testWidgets('legacy Admin lock does not add another password prompt', (
     tester,
   ) async {
@@ -120,33 +199,31 @@ void main() {
     expect(find.text('School data'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
-  testWidgets(
-    'registration licence box sits below confirmation and header is removed',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1400, 1000));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.pumpWidget(
-        const MaterialApp(home: WindowsAdminSetupScreen()),
-      );
-      final confirm = find.widgetWithText(
-            TextField,
-            'Confirm App Lock password',
-          ),
-          licence = find.widgetWithText(
-            TextField,
-            'Licence Key (optional during five-day trial)',
-          );
-      expect(confirm, findsOneWidget);
-      expect(licence, findsOneWidget);
-      expect(
-        tester.getTopLeft(licence).dy,
-        greaterThan(tester.getTopLeft(confirm).dy),
-      );
-      expect(find.text('Admin Setup'), findsNothing);
-      expect(find.text('Skip'), findsNothing);
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
+  testWidgets('setup fields and uploads follow the approved order', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: WindowsAdminSetupScreen()));
+    await tester.pump(); await tester.pump();
+    const keys = ['setup-school-name', 'setup-principal-name', 'setup-contact',
+      'setup-app-lock', 'setup-confirm-lock', 'setup-licence'];
+    var previous = -1.0;
+    for (final name in keys) {
+      final field = find.byKey(ValueKey(name));
+      expect(field, findsOneWidget);
+      final y = tester.getTopLeft(field).dy;
+      expect(y, greaterThan(previous));
+      previous = y;
+    }
+    final logo = tester.getTopLeft(find.text('School logo')).dy;
+    final signature = tester.getTopLeft(find.text('School signature')).dy;
+    final seal = tester.getTopLeft(find.text('School seal')).dy;
+    expect(logo, greaterThan(previous));
+    expect(signature, greaterThan(logo));
+    expect(seal, greaterThan(signature));
+    expect(find.text('Submit'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('Submit')).dy, greaterThan(seal));
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
     'tenant connection completes before registration lookup; restore failure shows retry not setup',
     (tester) async {

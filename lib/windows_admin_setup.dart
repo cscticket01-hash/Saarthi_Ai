@@ -291,7 +291,8 @@ class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
   final _confirm = TextEditingController();
   final _licence = TextEditingController();
   String? _logoPath, _sealPath, _signaturePath;
-  bool _busy = false, _obscure = true;
+  bool _busy = false, _obscure = true, _confirmObscure = true;
+  bool _skipLicence = false;
   bool _trialEligible = false;
   String? _error;
 
@@ -367,14 +368,27 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     }
   }
 
-  Future<void> _save({bool skipLicence = false}) async {
+  Future<void> _save() async {
     if (_busy) return;
+    if (_school.text.trim().length < 2) {
+      setState(() => _error = 'School Name is required.');
+      return;
+    }
+    if (_principal.text.trim().length < 2) {
+      setState(() => _error = 'Principal Name is required.');
+      return;
+    }
     if (_password.text != _confirm.text) {
       setState(() => _error = 'Passwords do not match.');
       return;
     }
-    if (_password.text.length < 6 || _contact.text.trim().isEmpty) {
-      setState(() => _error = 'School contact number and an App Lock password of at least 6 characters are required.');
+    if (_password.text.length < 6) {
+      setState(() => _error = 'App Lock password must be at least 6 characters.');
+      return;
+    }
+    if (_contact.text.trim().isNotEmpty &&
+        !RegExp(r'^\+?[0-9][0-9 -]{5,18}[0-9]$').hasMatch(_contact.text.trim())) {
+      setState(() => _error = 'Enter a valid school contact number.');
       return;
     }
     setState(() {
@@ -382,11 +396,12 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       _error = null;
     });
     try {
-      if (skipLicence) {
+      if (_skipLicence && _trialEligible) {
         final access = await ManagedSchoolSession.call('managed/session');
         if (access['allowed'] != true || access['status'] != 'trial' ||
             access['expiresAt'] is! num || access['serverTime'] is! num ||
             (access['expiresAt'] as num) <= (access['serverTime'] as num)) {
+          if (mounted) setState(() { _skipLicence = false; _trialEligible = false; });
           throw StateError('The five-day trial has ended. Enter your school licence key.');
         }
       } else {
@@ -396,7 +411,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       await WindowsAdminSetup.save(
         schoolName: _school.text,
         principalName: _principal.text,
-        schoolContactNo: _contact.text,
+        schoolContactNo: _contact.text.trim(),
         adminPassword: _password.text,
         logoPath: _logoPath,
         sealPath: _sealPath,
@@ -422,106 +437,198 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     }
   }
 
-  Widget _imageTile(String label, String? path, int slot) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(path == null
-            ? Icons.add_photo_alternate_outlined
-            : Icons.check_circle_outline,
-            color: Colors.orangeAccent),
-        title: Text(label),
-        subtitle: Text(path == null ? 'Optional — choose an image file'
-            : 'Selected: ${path.split(Platform.pathSeparator).last}',
-            maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: OutlinedButton(
-            onPressed: _busy ? null : () => _pick(slot),
-            child: const Text('Choose')),
-      );
+  static const _background = Color(0xFF0B141C);
+  static const _surface = Color(0xFF16212D);
+  static const _accent = Color(0xFF00C8C8);
+  static const _muted = Color(0xFF9AABBE);
+
+  Widget _field({
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required String fieldKey,
+    TextInputType? keyboardType,
+    bool obscureText = false,
+    bool enabled = true,
+    VoidCallback? toggleVisibility,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 15),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 7),
+        TextField(
+          key: ValueKey(fieldKey),
+          controller: controller,
+          keyboardType: keyboardType,
+          enabled: enabled && !_busy,
+          obscureText: obscureText,
+          enableSuggestions: !obscureText && toggleVisibility == null,
+          autocorrect: toggleVisibility == null,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: _muted, fontSize: 13),
+            filled: true,
+            fillColor: enabled ? _surface : const Color(0xFF101922),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF405264))),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF405264))),
+            disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF2B3947))),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _accent, width: 1.5)),
+            suffixIcon: toggleVisibility == null ? null : IconButton(
+              onPressed: _busy ? null : toggleVisibility,
+              tooltip: obscureText ? 'Show password' : 'Hide password',
+              icon: Icon(obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: _muted, size: 20),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _imageTile(String label, String? path, int slot) => Padding(
+    padding: const EdgeInsets.only(bottom: 15),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Container(
+              width: 66, height: 60,
+              decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(7), border: Border.all(color: const Color(0xFF405264))),
+              clipBehavior: Clip.antiAlias,
+              child: path == null
+                ? const Icon(Icons.image_outlined, color: _muted, size: 27)
+                : Image.file(File(path), fit: slot == 0 ? BoxFit.cover : BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined, color: _muted)),
+            ),
+            const SizedBox(width: 15),
+            OutlinedButton(
+              key: ValueKey('setup-upload-$slot'),
+              onPressed: _busy ? null : () => _pick(slot),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: _surface,
+                side: const BorderSide(color: Color(0xFF405264)),
+                padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 15),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+              ),
+              child: const Text('Choose file'),
+            ),
+            if (path != null) ...[
+              const SizedBox(width: 12),
+              Expanded(child: Text(path.split(Platform.pathSeparator).last,
+                maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _muted, fontSize: 11))),
+            ],
+          ],
+        ),
+      ],
+    ),
+  );
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+  Widget build(BuildContext context) => Theme(
+    data: ThemeData.dark(useMaterial3: true).copyWith(
+      textTheme: ThemeData.dark(useMaterial3: true).textTheme.apply(fontFamily: 'Segoe UI'),
+      colorScheme: const ColorScheme.dark(primary: _accent, surface: _surface),
+      scaffoldBackgroundColor: _background,
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? _accent : Colors.transparent),
+        checkColor: const WidgetStatePropertyAll(_background),
+        side: const BorderSide(color: _muted),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      ),
+    ),
+    child: Scaffold(
+      backgroundColor: _background,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
+              constraints: const BoxConstraints(maxWidth: 650),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-
-                  TextField(
-                    controller: _school,
-                    decoration: const InputDecoration(
-                        labelText: 'School Name *',
-                        border: OutlineInputBorder()),
-                  ),
+                  const Icon(Icons.menu_book_rounded, color: _accent, size: 44),
+                  const SizedBox(height: 8),
+                  const Text('Vidya Saarthi', textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 10),
+                  Center(child: Container(width: 32, height: 3, decoration: BoxDecoration(color: _accent, borderRadius: BorderRadius.circular(2)))),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _principal,
-                    decoration: const InputDecoration(
-                        labelText: 'Principal Name *',
-                        border: OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _contact,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(labelText: 'School Contact Number *', border: OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _password,
-                    obscureText: _obscure,
-                    decoration: InputDecoration(
-                      labelText: 'New App Lock password *',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                          onPressed: () =>
-                              setState(() => _obscure = !_obscure),
-                          icon: Icon(_obscure
-                              ? Icons.visibility_off
-                              : Icons.visibility)),
+                  const Text('School Setup', textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFFD7E0EA), fontSize: 19, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 24),
+                  _field(label: 'School name *', hint: 'Enter school name', controller: _school, fieldKey: 'setup-school-name'),
+                  _field(label: 'Principal name *', hint: 'Enter principal name', controller: _principal, fieldKey: 'setup-principal-name'),
+                  _field(label: 'Contact no', hint: 'Enter contact number', controller: _contact, fieldKey: 'setup-contact', keyboardType: TextInputType.phone),
+                  _field(label: 'New App lock *', hint: 'Create App Lock password', controller: _password, fieldKey: 'setup-app-lock',
+                    obscureText: _obscure, toggleVisibility: () => setState(() => _obscure = !_obscure)),
+                  _field(label: 'Confirm app lock *', hint: 'Confirm App Lock password', controller: _confirm, fieldKey: 'setup-confirm-lock',
+                    obscureText: _confirmObscure, toggleVisibility: () => setState(() => _confirmObscure = !_confirmObscure)),
+                  _field(label: 'Valid licence key', hint: 'Enter licence key', controller: _licence, fieldKey: 'setup-licence', enabled: !_skipLicence),
+                  if (_trialEligible) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(width: 26, height: 26, child: Checkbox(
+                          key: const ValueKey('setup-skip-trial'),
+                          value: _skipLicence,
+                          onChanged: _busy ? null : (value) => setState(() { _skipLicence = value ?? false; _error = null; }),
+                        )),
+                        const SizedBox(width: 10),
+                        Expanded(child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Skip for now — use free trial', style: TextStyle(color: Colors.white, fontSize: 13)),
+                            const SizedBox(height: 4),
+                            const Text('Available during the 5-day trial. Add your licence later in Settings.',
+                              style: TextStyle(color: _muted, fontSize: 11, height: 1.5)),
+                          ],
+                        )),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _confirm,
-                    obscureText: _obscure,
-                    decoration: const InputDecoration(
-                        labelText: 'Confirm App Lock password',
-                        border: OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(controller:_licence,decoration:const InputDecoration(labelText:'Licence Key (optional during five-day trial)',border:OutlineInputBorder())),
-                  const SizedBox(height: 16),
-                  _imageTile('School Logo', _logoPath, 0),
-                  _imageTile('School Seal', _sealPath, 1),
-                  _imageTile('Principal / Authorized Signature',
-                      _signaturePath, 2),
+                    const SizedBox(height: 24),
+                  ] else const SizedBox(height: 8),
+                  _imageTile('School logo', _logoPath, 0),
+                  _imageTile('School signature', _signaturePath, 2),
+                  _imageTile('School seal', _sealPath, 1),
                   if (_error != null) ...[
+                    const SizedBox(height: 4),
+                    Text(_error!, key: const ValueKey('admin-setup-error'),
+                      style: const TextStyle(color: Color(0xFFFF8C8C), fontSize: 13)),
                     const SizedBox(height: 10),
-                    Text(_error!,
-                        key: const ValueKey('admin-setup-error'),
-                        style: const TextStyle(color: Colors.redAccent)),
                   ],
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 4),
                   FilledButton(
-                      onPressed: _busy ? null : () => _save(),
-                      child: Text(_busy
-                          ? 'Saving…'
-                          : 'Save & Open App')),
-                  if (_trialEligible) TextButton(
-                    onPressed: _busy ? null : () => _save(skipLicence: true),
-                    child: const Text('Skip licence • Start five-day trial'),
+                    key: const ValueKey('setup-submit'),
+                    onPressed: _busy ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _accent, foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+                    ),
+                    child: _busy
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: _background))
+                      : const Text('Submit', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
+                  const SizedBox(height: 19),
+                  const Text('After 30 seconds of inactivity, App Lock will appear.', textAlign: TextAlign.center,
+                    style: TextStyle(color: _muted, fontSize: 11)),
                 ],
               ),
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
