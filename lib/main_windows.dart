@@ -8,6 +8,8 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
 import 'dart:async';
+import 'dart:ui' show PointerDeviceKind;
+import 'windows_inactivity_timer.dart';
 
 import 'windows_platform_client.dart';
 import 'windows_license_gate.dart';
@@ -40,36 +42,16 @@ class WindowsActivityMonitor extends StatefulWidget {
 }
 
 class _WindowsActivityMonitorState extends State<WindowsActivityMonitor> {
-  final _clock = Stopwatch()..start();
-  int _lastActivity = -500;
-  void _activity() {
-    final now = _clock.elapsedMilliseconds;
-    if (now - _lastActivity < 250) return;
-    _lastActivity = now;
-    (widget.onActivity ?? windows_html.document.dispatchClick)();
-  }
-  bool _keyboard(KeyEvent event) {
-    if (event is KeyDownEvent || event is KeyRepeatEvent) _activity();
-    return false;
-  }
-  @override
-  void initState() {
-    super.initState();
-    HardwareKeyboard.instance.addHandler(_keyboard);
-  }
-  @override
-  void dispose() {
-    HardwareKeyboard.instance.removeHandler(_keyboard);
-    _clock.stop();
-    super.dispose();
-  }
   @override
   Widget build(BuildContext context) => Listener(
     behavior: HitTestBehavior.translucent,
-    onPointerDown: (_) => _activity(),
-    onPointerMove: (_) => _activity(),
-    onPointerHover: (_) => _activity(),
-    onPointerSignal: (_) => _activity(),
+    // Only an actual mouse-button click inside this application renews App Lock.
+    // Keyboard, hover, mouse movement, scrolling, touch and other apps do not.
+    onPointerDown: (event) {
+      if (event.kind == PointerDeviceKind.mouse) {
+        (widget.onActivity ?? windows_html.document.dispatchClick)();
+      }
+    },
     child: widget.child,
   );
 }
@@ -709,7 +691,7 @@ class _WindowsAdminSessionDashboardState
     final storage = windows_html.window.localStorage;
     storage['saarthi_portal_role_v1'] = 'admin';
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(seconds: 30))
+        .add(windowsIdleTimeout)
         .millisecondsSinceEpoch
         .toString();
   }
@@ -909,7 +891,7 @@ class _WindowsFirstRunSecuritySetupState
     return _LocalAuthShell(
       title: 'Vidya Saarthi',
       subtitle: 'CREATE APP LOCK',
-      description: 'App Lock password banana zaroori hai. 30 seconds inactivity ke baad isi password se app unlock hoga.',
+      description: 'App Lock password banana zaroori hai. 1 hour ki inactivity ke baad isi password se app unlock hoga.',
       children: [
         TextField(
           controller: _password,
