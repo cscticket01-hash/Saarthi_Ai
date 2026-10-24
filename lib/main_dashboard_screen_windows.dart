@@ -4760,7 +4760,7 @@ void _handleLoginBack(bool didPop) {
       if((await CentralSchoolCloud.saved())['managed']==true){
         await WindowsLocalSecurity.initialize();
         _sessionTimer?.cancel();await _sessionClickSubscription?.cancel();_clearPortalSession();
-        if(mounted)Navigator.of(context).pushNamedAndRemoveUntil('/',(route)=>false);
+        if(mounted)Navigator.of(context).pushNamedAndRemoveUntil(WindowsLocalSecurity.configured?'/local-login':'/',(route)=>false);
         return;
       }
     }catch(e){debugPrint('Local idle lock verification failed: $e');}
