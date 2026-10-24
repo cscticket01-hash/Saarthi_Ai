@@ -7,6 +7,8 @@ import '../lib/platform/platform_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
+import '../lib/windows_inactivity_timer.dart';
 
 import '../lib/main_windows.dart';
 import '../lib/windows_admin_setup.dart';
@@ -17,6 +19,47 @@ import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  testWidgets('idle locks after 30 seconds, activity restarts deadline and disposal cancels it', (tester) async {
+    var locks = 0;
+    final idle = WindowsInactivityTimer(onTimeout: () => locks++);
+    idle.reset();
+    await tester.pump(const Duration(seconds: 29));
+    expect(locks,0);
+    idle.reset();
+    await tester.pump(const Duration(seconds: 29));
+    expect(locks,0);
+    await tester.pump(const Duration(seconds: 1));
+    expect(locks,1);
+    idle.reset();idle.dispose();
+    await tester.pump(const Duration(seconds: 31));
+    expect(locks,1);
+  });
+  testWidgets('native keyboard activity reaches the inactivity monitor', (tester) async {
+    var activity=0;
+    await tester.pumpWidget(MaterialApp(home:WindowsActivityMonitor(
+      onActivity:()=>activity++,child:const TextField())));
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    expect(activity,1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+    expect(activity,1);
+  });
+  testWidgets('trial registration combines required contact, App Lock and licence Skip', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({
+      'managed':true,'projectId':platformProjectId,'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'uid':'A','endpoint':'https://school.example/school-cloud','folderId':'managed','firebaseRefreshToken':'refresh',
+      'verifiedAccess':{'status':'trial','allowed':true,'serverTime':1,'expiresAt':432000001}})});
+    await tester.binding.setSurfaceSize(const Size(1400,1200));
+    addTearDown(()=>tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home:WindowsAdminSetupScreen()));
+    await tester.pump();await tester.pump();
+    expect(find.widgetWithText(TextField,'School Contact Number *'),findsOneWidget);
+    expect(find.widgetWithText(TextField,'New App Lock password *'),findsOneWidget);
+    expect(find.text('Skip licence • Start five-day trial'),findsOneWidget);
+    await tester.tap(find.text('Skip licence • Start five-day trial'));await tester.pump();
+    expect(find.textContaining('School contact number and an App Lock password'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('legacy Admin lock does not add another password prompt', (
     tester,
   ) async {
@@ -132,7 +175,7 @@ void main() {
     },
   );
   testWidgets(
-    'verified existing enrollment with no local preferences opens home rather than registration',
+    'existing school with no local App Lock must create it before opening home',
     (tester) async {
       FlutterSecureStorage.setMockInitialValues({
         CentralSchoolCloud.key: jsonEncode({
@@ -159,7 +202,7 @@ void main() {
       await tester.pump();
       expect(find.text('Open Admin Panel'), findsNothing);
       expect(
-        find.byType(WindowsAdminSessionDashboard, skipOffstage: false),
+        find.byType(WindowsFirstRunSecuritySetup, skipOffstage: false),
         findsOneWidget,
       );
       expect(find.text('Save & Open App'), findsNothing);

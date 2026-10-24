@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'main_dashboard_screen_windows.dart' show WindowsLicenseSettingsPanel, WindowsLicenseStore;
 import 'windows_sync_engine.dart';
+import 'windows_admin_setup.dart';
 
 class WindowsManagedSchoolGate extends StatefulWidget {
   const WindowsManagedSchoolGate({
@@ -30,7 +31,6 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   bool routed = false;
   bool _activatingLicence = false;
   bool _continuingTrial = false;
-  String? _trialAcceptedSchool;
   String? error;
   final licence = TextEditingController();
   Timer? expiryTimer;
@@ -53,13 +53,15 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   }
 
   void sessionChanged() {
+    final previousSchool = engine.identity?['schoolId'];
+    final previousUid = engine.identity?['uid'];
     routed = false;
-    _trialAcceptedSchool = null;
     unawaited(
       engine.restore().then((_) {
         if (mounted && engine.canOpen && !routed) {
           routed = true;
-          widget.onAuthenticated?.call();
+          if (previousSchool != engine.identity?['schoolId'] ||
+              previousUid != engine.identity?['uid']) widget.onAuthenticated?.call();
         }
       }),
     );
@@ -116,9 +118,13 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
           ),
         ),
       );
-    if (!engine.canOpen ||
-        engine.access?['status'] == 'trial' &&
-            _trialAcceptedSchool != engine.identity?['schoolId']) {
+    if (!engine.canOpen && engine.access?['allowed'] == true &&
+        engine.access?['registrationState'] == 'new' &&
+        engine.access?['status'] == 'licensed' &&
+        engine.access?['activated'] != true) {
+      return const WindowsAdminSetupScreen();
+    }
+    if (!engine.canOpen) {
       final s = engine.access;
       if (s == null)
         return Scaffold(
@@ -192,7 +198,6 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
                       setState(() {
                         _continuingTrial = false;
                         if (accepted) {
-                          _trialAcceptedSchool = engine.identity?['schoolId'];
                           error = null;
                         } else {
                           error = engine.accessProblem;

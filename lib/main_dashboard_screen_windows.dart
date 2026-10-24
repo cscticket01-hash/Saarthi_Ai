@@ -1,3 +1,4 @@
+import 'windows_inactivity_timer.dart';
 import 'windows_student_excel.dart';
 import 'package:file_selector/file_selector.dart' as excel_file;
 import 'windows_appearance.dart';
@@ -1015,7 +1016,7 @@ final bool _vidyaWebBootstrapBackgroundApplied = (() {
 // PORTAL SESSION + 30 MINUTE INACTIVITY
 // Keeps login across browser reload. Any click/tap refreshes 30 minutes.
 // ============================================================
-const Duration _portalInactivityLimit = Duration(minutes: 30);
+const Duration _portalInactivityLimit = windowsIdleTimeout;
 const String _portalSessionRoleKey = 'saarthi_portal_role_v1';
 const String _portalSessionStudentIdKey = 'saarthi_portal_student_id_v1';
 const String _portalSessionStudentClassKey = 'saarthi_portal_student_class_v1';
@@ -1120,7 +1121,7 @@ String _formatPortalTimer(int totalSeconds) {
 
 Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
   return Tooltip(
-    message: 'Auto logout after 30 minutes of inactivity',
+    message: 'App Lock after 30 seconds of inactivity',
     child: ValueListenableBuilder<int>(
       valueListenable: secondsListenable,
       builder: (context, seconds, _) {WindowsAppearance.watch(context);
@@ -4719,6 +4720,7 @@ void _handleLoginBack(bool didPop) {
   });
 }
 
+  late final _idleLock = WindowsInactivityTimer(onTimeout: () => unawaited(_autoLogoutAdmin()));
   Timer? _sessionTimer;
   StreamSubscription<html.MouseEvent>? _sessionClickSubscription;
   final ValueNotifier<int> _sessionSecondsRemaining =
@@ -4726,11 +4728,13 @@ void _handleLoginBack(bool didPop) {
   bool _autoLogoutInProgress = false;
 
   void _startPortalInactivityTimer() {
-    final initialRemaining = _portalSessionRemainingSeconds();
+    final initialRemaining = _portalInactivityLimit.inSeconds;
+    _idleLock.reset();
     _sessionSecondsRemaining.value = initialRemaining;
 
     _sessionClickSubscription = html.document.onClick.listen((_) {
       if (!mounted || _autoLogoutInProgress) return;
+      _idleLock.reset();
       _touchPortalSession();
       _sessionSecondsRemaining.value = _portalInactivityLimit.inSeconds;
     });
@@ -4741,27 +4745,20 @@ void _handleLoginBack(bool didPop) {
       final remaining = _portalSessionRemainingSeconds();
       _sessionSecondsRemaining.value = remaining;
 
-      if (remaining <= 0) {
-        _autoLogoutAdmin();
-      }
+
     });
 
-    if (initialRemaining <= 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _autoLogoutAdmin();
-      });
-    }
+
   }
 
   Future<void> _autoLogoutAdmin() async {
     if (_autoLogoutInProgress) return;
     _autoLogoutInProgress = true;
+    _idleLock.dispose();
     // Managed identity persists; inactivity uses only explicitly enabled local locks.
     try {
       if((await CentralSchoolCloud.saved())['managed']==true){
         await WindowsLocalSecurity.initialize();
-        final locked=WindowsLocalSecurity.configured||await WindowsSectionLocks.enabled(_windowsAdminSectionLock);
-        if(!locked){_touchPortalSession();_sessionSecondsRemaining.value=_portalInactivityLimit.inSeconds;_autoLogoutInProgress=false;return;}
         _sessionTimer?.cancel();await _sessionClickSubscription?.cancel();_clearPortalSession();
         if(mounted)Navigator.of(context).pushNamedAndRemoveUntil('/',(route)=>false);
         return;
@@ -4829,6 +4826,7 @@ void _handleLoginBack(bool didPop) {
 
   @override
   void dispose() {
+    _idleLock.dispose();
     _sessionTimer?.cancel();
     _sessionClickSubscription?.cancel();
     _sessionSecondsRemaining.dispose();
