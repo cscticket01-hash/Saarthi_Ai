@@ -621,7 +621,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                       : const Text('Submit', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
                   const SizedBox(height: 19),
-                  const Text('After 30 seconds of inactivity, App Lock will appear.', textAlign: TextAlign.center,
+                  const Text('After 1 hour without a mouse click in this app, App Lock will appear.', textAlign: TextAlign.center,
                     style: TextStyle(color: _muted, fontSize: 11)),
                 ],
               ),
