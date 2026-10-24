@@ -29,6 +29,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   late final SchoolCloudEngine engine;
   bool routed = false;
   bool _activatingLicence = false;
+  String? _trialAcceptedSchool;
   String? error;
   final licence = TextEditingController();
   Timer? expiryTimer;
@@ -52,6 +53,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
 
   void sessionChanged() {
     routed = false;
+    _trialAcceptedSchool = null;
     unawaited(
       engine.restore().then((_) {
         if (mounted && engine.canOpen && !routed) {
@@ -113,7 +115,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
           ),
         ),
       );
-    if (!engine.canOpen) {
+    if (!engine.canOpen ||
+        engine.access?['status'] == 'trial' &&
+            _trialAcceptedSchool != engine.identity?['schoolId']) {
       final s = engine.access;
       if (s == null)
         return Scaffold(
@@ -137,8 +141,8 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
           ),
         );
       final renewalRequired = s['status'] == 'expired' ||
-          s['status'] == 'licensed' && s['expiresAt'] is num &&
-          (s['expiresAt'] as num) <= DateTime.now().millisecondsSinceEpoch;
+          (s['status'] == 'licensed' || s['status'] == 'trial') && engine.accessExpired;
+      final trialAvailable = engine.trialAvailable;
       return Scaffold(
         body: Center(
           child: SizedBox(
@@ -149,7 +153,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
                 Text('School ${s['schoolId']} • ${s['status']}'),
                 Text(renewalRequired
                     ? 'Licence expired. Enter the new renewal key issued by the developer.'
-                    : 'School access needs verification or a valid licence.'),
+                    : trialAvailable
+                        ? 'Use your school licence key, or skip to continue the five-day free trial.'
+                        : 'School access needs verification or a valid licence.'),
                 if (s['status'] != 'blocked' &&
                     s['status'] != 'auth_required') ...[
                   TextField(
@@ -176,10 +182,22 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
                     child: Text(_activatingLicence ? 'Verifying licence...' : 'Verify licence'),
                   ),
                 ],
-                FilledButton(
-                  onPressed: engine.verify,
-                  child: const Text('Retry school verification'),
-                ),
+                if (trialAvailable)
+                  FilledButton(
+                    onPressed: () async {
+                      final accepted = await engine.continueTrial();
+                      if (!mounted) return;
+                      setState(() {
+                        if (accepted) {
+                          _trialAcceptedSchool = engine.identity?['schoolId'];
+                          error = null;
+                        } else {
+                          error = 'Trial access could not be verified. Connect to the internet and try again.';
+                        }
+                      });
+                    },
+                    child: const Text('Skip'),
+                  ),
                 if (error != null) Text(error!),
                 TextButton(
                   onPressed: ManagedSchoolSession.logout,
