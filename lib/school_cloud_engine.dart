@@ -100,6 +100,17 @@ class SchoolCloudEngine extends ChangeNotifier {
   bool _presenceRunning=false;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
+  bool get accessExpired =>
+      (access?['expiresAt'] as num? ?? 0) <= _clock().millisecondsSinceEpoch;
+  bool get trialAvailable => access?['status'] == 'trial' &&
+      access?['allowed'] == true && !accessExpired && identity != null &&
+      sameIdentity(access!, identity!);
+  /// Skip licence entry only within this authenticated school's original trial.
+  Future<bool> continueTrial() async {
+    if (!trialAvailable) return false;
+    if (!canOpen) await verify();
+    return access?['status'] == 'trial' && canOpen;
+  }
   bool get _leaseUsable =>
       (!_requiresDeviceProof || _deviceLeaseExpiry > _clock().millisecondsSinceEpoch) &&
       access != null &&
@@ -107,7 +118,8 @@ class SchoolCloudEngine extends ChangeNotifier {
       access!['allowed'] == true &&
       (access!['status'] == 'trial' || access!['activated'] == true) &&
       (access!['expiresAt'] as num? ?? 0) > _clock().millisecondsSinceEpoch &&
-      _clock().millisecondsSinceEpoch - (access!['serverTime'] as num? ?? 0) < const Duration(hours:72).inMilliseconds &&
+      _clock().millisecondsSinceEpoch - (access!['serverTime'] as num? ?? 0) <
+          (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72)).inMilliseconds &&
       (access!['serverTime'] as num? ?? 0) <=
           _clock().millisecondsSinceEpoch + 300000 &&
       (identity!['lastLocalSeenAt'] as num? ?? 0) <=
