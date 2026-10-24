@@ -6,13 +6,21 @@ on:
       - main
       - windows/easy-connect-draft
   workflow_dispatch:
+  workflow_run:
+    workflows: ['Build Vidya Saarthi Windows Admin', 'Build Vidya Saarthi Android APK']
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: vidyasaarthi-hosting-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   verify-rules:
-    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
+    if: (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')) && ((github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]'))))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +36,7 @@ jobs:
       - run: npm test
         working-directory: security-tests
   build-and-deploy:
-    if: (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))
+    if: (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')) && ((github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[developer-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]'))))
     needs: verify-rules
     runs-on: ubuntu-latest
 
@@ -222,6 +230,13 @@ jobs:
       # =========================================================
       # VERIFY BUILD
       # =========================================================
+      - name: Stage verified same-origin app downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --test scripts/stage-web-downloads.test.mjs
+          node scripts/stage-web-downloads.mjs
+
       - name: Verify Built Assets
         run: |
           test -f build/web/index.html
@@ -252,7 +267,7 @@ jobs:
       # DEPLOY ONLY VIDYASAARTHI HOSTING SITE
       # =========================================================
       - name: Verify and deploy free central Firebase rules
-        if: "!contains(github.event.head_commit.message, '[hosting-only]')"
+        if: "github.event_name != 'workflow_run' && !contains(github.event.head_commit.message, '[hosting-only]')"
         run: |
           npm --prefix functions install
           npm --prefix functions test
