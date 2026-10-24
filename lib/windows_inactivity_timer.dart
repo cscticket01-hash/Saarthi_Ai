@@ -3,8 +3,7 @@ import 'package:clock/clock.dart';
 
 const windowsIdleTimeout = Duration(hours: 1);
 
-/// Monotonic, foreground-only App Lock timer. Switching to another Windows
-/// application pauses this timer without logging out the school session.
+/// Monotonic App Lock deadline. It keeps running while minimized or unfocused.
 class WindowsInactivityTimer {
   WindowsInactivityTimer({required this.onTimeout});
 
@@ -13,21 +12,19 @@ class WindowsInactivityTimer {
   Timer? _timer;
   Duration _remaining = windowsIdleTimeout;
   bool _started = false;
-  bool _paused = false;
   bool _disposed = false;
 
-  bool get isPaused => _paused;
   Duration get remaining {
     if (_disposed) return Duration.zero;
-    final value = _remaining - (_paused ? Duration.zero : _elapsed.elapsed);
+    final value = _remaining - _elapsed.elapsed;
     return value.isNegative ? Duration.zero : value;
   }
 
   void _startCountdown() {
-    if (_disposed || _paused || !_started) return;
+    if (_disposed || !_started) return;
     _elapsed..reset()..start();
     _timer = Timer(_remaining, () {
-      if (_disposed || _paused || !_started) return;
+      if (_disposed || !_started) return;
       _elapsed.stop();
       _timer = null;
       _remaining = Duration.zero;
@@ -44,21 +41,6 @@ class WindowsInactivityTimer {
     _elapsed..stop()..reset();
     _remaining = windowsIdleTimeout;
     _started = true;
-    _startCountdown();
-  }
-
-  void pause() {
-    if (_disposed || _paused) return;
-    _remaining = remaining;
-    _paused = true;
-    _timer?.cancel();
-    _timer = null;
-    _elapsed..stop()..reset();
-  }
-
-  void resume() {
-    if (_disposed || !_paused) return;
-    _paused = false;
     _startCountdown();
   }
 

@@ -4672,7 +4672,7 @@ class AdminDashboardScreen extends StatefulWidget {
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> with WidgetsBindingObserver {
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final GlobalKey<ScaffoldState> _adminScaffoldKey = GlobalKey<ScaffoldState>();
 
 int _loginBackPressCount = 0;
@@ -4742,7 +4742,7 @@ void _handleLoginBack(bool didPop) {
     // A shared Windows mouse-click event renews both the real lock deadline
     // and the visible countdown. No keyboard/move/scroll activity is emitted.
     _sessionClickSubscription = html.document.onClick.listen((_) {
-      if (!mounted || _autoLogoutInProgress || _idleLock.isPaused) return;
+      if (!mounted || _autoLogoutInProgress) return;
       _idleLock.reset();
       _touchPortalSession(remaining: _idleLock.remaining);
       _sessionSecondsRemaining.value = _idleSecondsRemaining;
@@ -4753,25 +4753,6 @@ void _handleLoginBack(bool didPop) {
       _sessionSecondsRemaining.value = _idleSecondsRemaining;
     });
 
-    // The dashboard can also be opened while the desktop window is inactive.
-    final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
-      _idleLock.pause();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!mounted || _autoLogoutInProgress) return;
-    if (state == AppLifecycleState.resumed) {
-      _idleLock.resume();
-      // Keep persisted expiry aligned with the *remaining* active time.
-      _touchPortalSession(remaining: _idleLock.remaining);
-    } else {
-      // Alt+Tab, task switching and minimizing must never lock this session.
-      _idleLock.pause();
-    }
-    _sessionSecondsRemaining.value = _idleSecondsRemaining;
   }
 
   Future<void> _autoLogoutAdmin() async {
@@ -4830,7 +4811,6 @@ void _handleLoginBack(bool didPop) {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _startPortalInactivityTimer();
 
     // Preload heavy/remote Admin data while dashboard is already visible.
@@ -4850,7 +4830,6 @@ void _handleLoginBack(bool didPop) {
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _idleLock.dispose();
     _sessionTimer?.cancel();
     _sessionClickSubscription?.cancel();

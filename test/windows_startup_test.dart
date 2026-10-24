@@ -43,19 +43,19 @@ void main() {
     expect(locks, 1);
   });
 
-  testWidgets('switching applications pauses remaining idle time without logout', (tester) async {
+  testWidgets('minimize and app switching do not pause or reset the hour', (tester) async {
     var locks = 0;
     final idle = WindowsInactivityTimer(onTimeout: () => locks++);
     idle.reset();
     await tester.pump(const Duration(minutes: 20));
-    idle.pause();
-    expect(idle.isPaused, true);
-    await tester.pump(const Duration(hours: 4));
-    expect(locks, 0);
-    idle.resume();
-    expect(idle.isPaused, false);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     await tester.pump(const Duration(minutes: 39, seconds: 59));
     expect(locks, 0);
+    expect(idle.remaining, const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(locks, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump(const Duration(seconds: 1));
     expect(locks, 1);
     idle.dispose();
