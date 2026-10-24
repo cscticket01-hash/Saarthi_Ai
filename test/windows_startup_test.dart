@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/rendering.dart';
 
@@ -24,30 +25,57 @@ import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
-  testWidgets('idle locks after 30 seconds, activity restarts deadline and disposal cancels it', (tester) async {
+  testWidgets('one-hour idle timer resets on activity and disposal cancels it', (tester) async {
+    var locks = 0;
+    final idle = WindowsInactivityTimer(onTimeout: () => locks++);
+    expect(windowsIdleTimeout, const Duration(hours: 1));
+    idle.reset();
+    await tester.pump(const Duration(minutes: 59, seconds: 59));
+    expect(locks, 0);
+    idle.reset();
+    await tester.pump(const Duration(minutes: 59, seconds: 59));
+    expect(locks, 0);
+    await tester.pump(const Duration(seconds: 1));
+    expect(locks, 1);
+    idle.reset();
+    idle.dispose();
+    await tester.pump(const Duration(hours: 2));
+    expect(locks, 1);
+  });
+
+  testWidgets('switching applications pauses remaining idle time without logout', (tester) async {
     var locks = 0;
     final idle = WindowsInactivityTimer(onTimeout: () => locks++);
     idle.reset();
-    await tester.pump(const Duration(seconds: 29));
-    expect(locks,0);
-    idle.reset();
-    await tester.pump(const Duration(seconds: 29));
-    expect(locks,0);
+    await tester.pump(const Duration(minutes: 20));
+    idle.pause();
+    expect(idle.isPaused, true);
+    await tester.pump(const Duration(hours: 4));
+    expect(locks, 0);
+    idle.resume();
+    expect(idle.isPaused, false);
+    await tester.pump(const Duration(minutes: 39, seconds: 59));
+    expect(locks, 0);
     await tester.pump(const Duration(seconds: 1));
-    expect(locks,1);
-    idle.reset();idle.dispose();
-    await tester.pump(const Duration(seconds: 31));
-    expect(locks,1);
+    expect(locks, 1);
+    idle.dispose();
   });
-  testWidgets('native keyboard activity reaches the inactivity monitor', (tester) async {
-    var activity=0;
-    await tester.pumpWidget(MaterialApp(home:WindowsActivityMonitor(
-      onActivity:()=>activity++,child:const Scaffold(body:TextField()))));
+
+  testWidgets('only mouse-button clicks reset the activity monitor', (tester) async {
+    var activity = 0;
+    await tester.pumpWidget(MaterialApp(home: WindowsActivityMonitor(
+      onActivity: () => activity++, child: const Scaffold(body: TextField()))));
     await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
-    expect(activity,1);
-    await tester.pumpWidget(const SizedBox());
+    expect(activity, 0);
+    await tester.tap(find.byType(TextField)); // Touch is not a mouse click.
+    expect(activity, 0);
+    await tester.tap(find.byType(TextField), kind: PointerDeviceKind.mouse);
+    expect(activity, 1);
+    await tester.tap(find.byType(TextField), kind: PointerDeviceKind.mouse);
+    expect(activity, 2); // Even quick successive clicks count.
     await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
-    expect(activity,1);
+    expect(activity, 2);
+    await tester.pumpWidget(const SizedBox());
   });
   Map<String, String> trialSchoolIdentity() {
     final now = DateTime.now().millisecondsSinceEpoch;
