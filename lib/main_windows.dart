@@ -201,6 +201,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
   bool _managed = false;
+  bool _openAfterSetup = false;
   bool _chooseFresh = false;
   String? _restoreError;
 
@@ -237,11 +238,15 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
       await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
       final done = await widget.checkSetup();
-      final managed = (await CentralSchoolCloud.saved())['managed'] == true;
+      final currentIdentity = await CentralSchoolCloud.saved();
+      final managed = currentIdentity['managed'] == true;
+      final openAfterSetup = managed && WindowsAdminSetup.consumeCompletedSetup(
+        currentIdentity['schoolId'].toString(), currentIdentity['uid'].toString());
       if (!mounted) return;
       setState(() {
         _setupDone = done;
         _managed = managed;
+        _openAfterSetup = openAfterSetup;
         _loading = false;
       });
     } catch (e) {
@@ -310,6 +315,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     if (_managed) {
       if (!_setupDone) return const WindowsAdminSetupScreen();
       if (!WindowsLocalSecurity.configured) return const WindowsFirstRunSecuritySetup();
+      if (_openAfterSetup) return const WindowsLocalDashboardGate();
       return Column(
         children: [
           if (WindowsAdminSetup.restoreNotice.isNotEmpty)
