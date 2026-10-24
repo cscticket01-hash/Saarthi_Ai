@@ -14,6 +14,7 @@ import 'windows_license_gate.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
+import 'package:flutter/services.dart';
 
 import 'main_dashboard_screen_windows.dart';
 import 'windows_html_shim.dart' as windows_html;
@@ -28,6 +29,50 @@ import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
 final _schoolNavigatorKey = GlobalKey<NavigatorState>();
+
+/// Native typing, mouse movement and scrolling all count as user activity.
+class WindowsActivityMonitor extends StatefulWidget {
+  const WindowsActivityMonitor({super.key, required this.child, this.onActivity});
+  final Widget child;
+  final VoidCallback? onActivity;
+  @override
+  State<WindowsActivityMonitor> createState() => _WindowsActivityMonitorState();
+}
+
+class _WindowsActivityMonitorState extends State<WindowsActivityMonitor> {
+  final _clock = Stopwatch()..start();
+  int _lastActivity = -500;
+  void _activity() {
+    final now = _clock.elapsedMilliseconds;
+    if (now - _lastActivity < 250) return;
+    _lastActivity = now;
+    (widget.onActivity ?? windows_html.document.dispatchClick)();
+  }
+  bool _keyboard(KeyEvent event) {
+    if (event is KeyDownEvent || event is KeyRepeatEvent) _activity();
+    return false;
+  }
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_keyboard);
+  }
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_keyboard);
+    _clock.stop();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerDown: (_) => _activity(),
+    onPointerMove: (_) => _activity(),
+    onPointerHover: (_) => _activity(),
+    onPointerSignal: (_) => _activity(),
+    child: widget.child,
+  );
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,9 +140,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           theme: WindowsAppearance.theme(Brightness.light),
           darkTheme: WindowsAppearance.theme(Brightness.dark),
           builder: (context, child) {
-            final content = Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) => windows_html.document.dispatchClick(),
+            final content = WindowsActivityMonitor(
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -126,7 +169,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           },
           home: WindowsStartupFlow(
             initializeConnections: initializeConnections,
-            offerRestore: true,
+            offerRestore: false,
           ),
         ),
       ),
@@ -158,6 +201,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
   bool _loading = true;
   bool _setupDone = false;
   bool _managed = false;
+  bool _openAfterSetup = false;
   bool _chooseFresh = false;
   String? _restoreError;
 
@@ -194,11 +238,15 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
       await widget.initializeConnections();
       await WindowsLocalSecurity.initialize();
       final done = await widget.checkSetup();
-      final managed = (await CentralSchoolCloud.saved())['managed'] == true;
+      final currentIdentity = await CentralSchoolCloud.saved();
+      final managed = currentIdentity['managed'] == true;
+      final openAfterSetup = managed && WindowsAdminSetup.consumeCompletedSetup(
+        currentIdentity['schoolId'].toString(), currentIdentity['uid'].toString());
       if (!mounted) return;
       setState(() {
         _setupDone = done;
         _managed = managed;
+        _openAfterSetup = openAfterSetup;
         _loading = false;
       });
     } catch (e) {
@@ -266,6 +314,8 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
       );
     if (_managed) {
       if (!_setupDone) return const WindowsAdminSetupScreen();
+      if (!WindowsLocalSecurity.configured) return const WindowsFirstRunSecuritySetup();
+      if (_openAfterSetup) return const WindowsLocalDashboardGate();
       return Column(
         children: [
           if (WindowsAdminSetup.restoreNotice.isNotEmpty)
@@ -659,7 +709,7 @@ class _WindowsAdminSessionDashboardState
     final storage = windows_html.window.localStorage;
     storage['saarthi_portal_role_v1'] = 'admin';
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
-        .add(const Duration(minutes: 30))
+        .add(const Duration(seconds: 30))
         .millisecondsSinceEpoch
         .toString();
   }
@@ -803,7 +853,7 @@ class WindowsFirstRunSecuritySetup extends StatefulWidget {
 
 class _WindowsFirstRunSecuritySetupState
     extends State<WindowsFirstRunSecuritySetup> {
-  final _adminId = TextEditingController();
+  final _adminId = TextEditingController(text: 'School app');
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _busy = false;
@@ -858,22 +908,14 @@ class _WindowsFirstRunSecuritySetupState
     WindowsAppearance.watch(context);
     return _LocalAuthShell(
       title: 'Vidya Saarthi',
-      subtitle: 'CREATE LOCAL SETTINGS LOCK',
-      description: 'Ye ID/Password sirf is PC ke protected Settings aur local login ke liye hoga. Firebase login nahi hai.',
+      subtitle: 'CREATE APP LOCK',
+      description: 'App Lock password banana zaroori hai. 30 seconds inactivity ke baad isi password se app unlock hoga.',
       children: [
-        TextField(
-          controller: _adminId,
-          decoration: const InputDecoration(
-            labelText: 'Local Admin ID',
-            prefixIcon: Icon(Icons.person_outline),
-          ),
-        ),
-        const SizedBox(height: 12),
         TextField(
           controller: _password,
           obscureText: _obscure,
           decoration: InputDecoration(
-            labelText: 'Settings Password',
+              labelText: 'App Lock Password',
             prefixIcon: const Icon(Icons.lock_outline),
             suffixIcon: IconButton(
               onPressed: () => setState(() => _obscure = !_obscure),

@@ -33,6 +33,12 @@ class WindowsAdminSetup {
 
   static Map<String, dynamic> _data = const {};
   static bool? _cachedCompleted;
+  static String? _justCompletedIdentity;
+  static bool consumeCompletedSetup(String schoolId, String uid) {
+    if (_justCompletedIdentity != '$schoolId:$uid') return false;
+    _justCompletedIdentity = null;
+    return true;
+  }
 
   /// Test-only override so widget tests can pin the setup state without a
   /// real %APPDATA% round trip. Null means "check local storage".
@@ -161,6 +167,7 @@ class WindowsAdminSetup {
     required String schoolName,
     required String principalName,
     required String adminPassword,
+    String schoolContactNo = '',
     String? logoPath,
     String? sealPath,
     String? signaturePath,
@@ -177,7 +184,11 @@ class WindowsAdminSetup {
     final targetFile=_fileForSchool(managed?saved['schoolId'].toString():'');
     final brandingRef=FirebaseFirestore.instance.collection('school_config').doc('school_profile_cache');
 
-    if (managed && adminPassword.isNotEmpty && adminPassword.length < 6) throw const FormatException('App Lock password must be at least 6 characters.');
+    await WindowsLocalSecurity.initialize();
+    if (managed && WindowsLocalSecurity.configured && !WindowsLocalSecurity.verifyPassword(adminPassword)) throw StateError('Enter the existing App Lock password for this school.');
+    if (managed && adminPassword.length < 6) throw const FormatException('App Lock password must be at least 6 characters.');
+    if (schoolContactNo.isNotEmpty && !RegExp(r'^\+?[0-9][0-9 -]{5,18}[0-9]$').hasMatch(schoolContactNo.trim()))
+      throw const FormatException('Enter a valid school contact number.');
     if (!managed && adminPassword.length < 6) {
       throw const FormatException(
           'Admin Password must be at least 6 characters.');
@@ -187,6 +198,7 @@ class WindowsAdminSetup {
       if (managed) 'schoolId': saved['schoolId'],
       'schoolName': name,
       'principalName': principal,
+      'schoolContactNo': schoolContactNo.trim(),
       'logoUrl': await _encodeImage(logoPath),
       'sealUrl': await _encodeImage(sealPath),
       'principalSignatureUrl': await _encodeImage(signaturePath),
@@ -194,7 +206,8 @@ class WindowsAdminSetup {
     };
     if (managed) {
       final result = await ManagedSchoolSession.call('managed/profile', {
-        'operation': 'initialize', 'schoolName': name, 'principalName': principal});
+        'operation': 'initialize', 'schoolName': name, 'principalName': principal,
+        'schoolContactNo': schoolContactNo.trim()});
       if (result['success'] != true || result['schoolId'] != saved['schoolId'] ||
           result['registrationState'] != 'complete') {
         throw StateError('School registration could not be saved. Retry.');
@@ -220,7 +233,7 @@ class WindowsAdminSetup {
     // Keep initial branding in the durable outbox until its own Drive is ready.
     final cache = <String,dynamic>{
       if(managed) 'schoolId':saved['schoolId'],
-      'schoolName':name,'principalName':principal,'logoUrl':map['logoUrl'],
+      'schoolName':name,'principalName':principal,'schoolContactNo':schoolContactNo.trim(),'logoUrl':map['logoUrl'],
       'sealUrl':map['sealUrl'],'principalSignatureUrl':map['principalSignatureUrl'],
       'updatedAt':DateTime.now().millisecondsSinceEpoch,
     };
@@ -230,7 +243,7 @@ class WindowsAdminSetup {
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>brandingRef.set(cache,SetOptions(merge:true)));
     }
     // Reuse the existing local security lock with the entered password.
-    if(managed){if(adminPassword.isNotEmpty){if(adminPassword.length<6)throw const FormatException('App Lock password must be at least 6 characters.');await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
+    if(managed){if(!WindowsLocalSecurity.configured){await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();_justCompletedIdentity="${saved['schoolId']}:${saved['uid']}";return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',
@@ -273,17 +286,32 @@ class WindowsAdminSetupScreen extends StatefulWidget {
 class _WindowsAdminSetupScreenState extends State<WindowsAdminSetupScreen> {
   final _school = TextEditingController();
   final _principal = TextEditingController();
+  final _contact = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   final _licence = TextEditingController();
   String? _logoPath, _sealPath, _signaturePath;
   bool _busy = false, _obscure = true;
+  bool _trialEligible = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    CentralSchoolCloud.saved().then((saved) {
+      final access = saved['verifiedAccess'];
+      if (mounted) setState(() => _trialEligible = access is Map &&
+        access['status'] == 'trial' && access['allowed'] == true &&
+        access['expiresAt'] is num && access['serverTime'] is num &&
+        (access['expiresAt'] as num) > (access['serverTime'] as num));
+    }).catchError((_) {});
+  }
 
   @override
   void dispose() {
     _school.dispose();
     _principal.dispose();
+    _contact.dispose();
     _password.dispose();
     _confirm.dispose();
     _licence.dispose();
@@ -339,10 +367,14 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     }
   }
 
-  Future<void> _save() async {
+  Future<void> _save({bool skipLicence = false}) async {
     if (_busy) return;
     if (_password.text != _confirm.text) {
       setState(() => _error = 'Passwords do not match.');
+      return;
+    }
+    if (_password.text.length < 6 || _contact.text.trim().isEmpty) {
+      setState(() => _error = 'School contact number and an App Lock password of at least 6 characters are required.');
       return;
     }
     setState(() {
@@ -350,10 +382,21 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
       _error = null;
     });
     try {
-      if(_licence.text.trim().isNotEmpty)await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});
+      if (skipLicence) {
+        final access = await ManagedSchoolSession.call('managed/session');
+        if (access['allowed'] != true || access['status'] != 'trial' ||
+            access['expiresAt'] is! num || access['serverTime'] is! num ||
+            (access['expiresAt'] as num) <= (access['serverTime'] as num)) {
+          throw StateError('The five-day trial has ended. Enter your school licence key.');
+        }
+      } else {
+        if (_licence.text.trim().isEmpty) throw const FormatException('Enter your school licence key, or choose Skip for the valid five-day trial.');
+        await ManagedSchoolSession.call('managed/licence/activate',{'key':_licence.text.trim()});
+      }
       await WindowsAdminSetup.save(
         schoolName: _school.text,
         principalName: _principal.text,
+        schoolContactNo: _contact.text,
         adminPassword: _password.text,
         logoPath: _logoPath,
         sealPath: _sealPath,
@@ -423,10 +466,16 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    controller: _contact,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(labelText: 'School Contact Number *', border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
                     controller: _password,
                     obscureText: _obscure,
                     decoration: InputDecoration(
-                      labelText: 'New App Lock password (optional)',
+                      labelText: 'New App Lock password *',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                           onPressed: () =>
@@ -459,10 +508,14 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                   ],
                   const SizedBox(height: 18),
                   FilledButton(
-                      onPressed: _busy ? null : _save,
+                      onPressed: _busy ? null : () => _save(),
                       child: Text(_busy
                           ? 'Saving…'
                           : 'Save & Open App')),
+                  if (_trialEligible) TextButton(
+                    onPressed: _busy ? null : () => _save(skipLicence: true),
+                    child: const Text('Skip licence • Start five-day trial'),
+                  ),
                 ],
               ),
             ),

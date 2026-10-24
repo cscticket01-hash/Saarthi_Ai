@@ -120,15 +120,13 @@ void main() {
       e.dispose();
     }
   });
-  testWidgets('valid trial shows Skip and opens console without a licence key', (tester) async {
+  testWidgets('valid trial reaches setup content without a separate licence gate', (tester) async {
     final e = engine(identity(access(status:'trial',activated:false)));
     await tester.pumpWidget(MaterialApp(home: WindowsManagedSchoolGate(engine:e,
       child:const Text('Trial Console'),legacy:const Text('Legacy'))));
     await tester.pump();await tester.pump();
-    expect(find.text('Skip'),findsOneWidget);
+    expect(find.text('Skip'),findsNothing);
     expect(find.text('Retry school verification'),findsNothing);
-    expect(find.text('Trial Console'),findsNothing);
-    await tester.tap(find.text('Skip'));await tester.pump();await tester.pump();
     expect(find.text('Trial Console'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });

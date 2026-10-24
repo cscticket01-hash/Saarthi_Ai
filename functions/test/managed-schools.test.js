@@ -16,6 +16,15 @@ test('website exam reads require developer auth, retain tenant isolation and sup
  await assert.rejects(foreign.call({action:'developer/managed/exams',schoolId:A},'developer'),e=>e.status===502);
 });
 const {fixture,A,B,key,secret,time}=require('./helpers/managed-school-broker');
+test('new school session routes to combined setup and contact restores on another PC',async()=>{
+ const f=fixture();f.docs.get('platform_schools/'+A).registrationState='new';
+ assert.equal((await f.call({action:'managed/session'})).registrationState,'new');
+ const result=await f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A',schoolContactNo:'+91 9876543210'});
+ assert.equal(result.profile.schoolContactNo,'+91 9876543210');
+ assert.equal((await f.call({action:'managed/profile',operation:'read'},'A-new-pc')).profile.schoolContactNo,'+91 9876543210');
+ assert.equal((await f.call({action:'managed/session'})).registrationState,'complete');
+ await assert.rejects(f.call({action:'managed/profile',operation:'initialize',schoolName:'School A',principalName:'Principal A',schoolContactNo:'bad'}),e=>e.status===400);
+});
 test('only developer creates accounts; passwords never enter Firestore/dashboard',async()=>{const f=fixture(),b={action:'developer/managed/create',email:'new@school.example',schoolName:'New School'};await assert.rejects(f.call(b),e=>e.status===403);const r=await f.call(b,'developer');assert(r.passwordSetupLink);assert.equal(r.password,undefined);assert(!JSON.stringify([...f.docs.values()]).includes('password'));assert.equal(f.docs.get('school_memberships/new').schoolId,r.schoolId);assert.equal(f.docs.get('school_entitlements/'+r.schoolId).expiresAt,time+5*86400000);});
 test('forged tenant/developer claims never override membership',async()=>{const f=fixture();await assert.rejects(f.call({action:'managed/session',schoolId:B}),e=>e.status===403);await assert.rejects(f.call({action:'developer/managed/monitor'},'forged'),e=>e.status===403);assert.equal((await f.call({action:'managed/session'},'forged')).schoolId,A);});
 test('block, expiry, disable and membership revocation deny storage before forwarding',async()=>{for(const mode of ['block','expire','disable','membership']){const f=fixture(),e=f.docs.get('school_entitlements/'+A);if(mode==='block')e.blocked=true;if(mode==='expire')e.expiresAt=time;if(mode==='disable')e.active=false;if(mode==='membership')f.docs.get('school_memberships/A').active=false;await assert.rejects(f.call({action:'managed/records',collection:'students_directory',operation:'read'}));assert.equal(f.sent.length,0);}});
