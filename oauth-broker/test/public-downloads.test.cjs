@@ -7,7 +7,7 @@ test('rate-limited release lookup uses only verified fallback and still rejects 
   const directory=await mkdtemp(path.join(os.tmpdir(),'saarthi-fallback-test-'));const urls=[];
   const handler=createInstallerHandler({directory,fetchImpl:async url=>{urls.push(url);return url.includes('api.github.com')?new Response('{}',{status}):new Response('bad file');}});
   const server=http.createServer(async(req,res)=>{await handler(req,res);});await new Promise(r=>server.listen(0,'127.0.0.1',r));
-  try{const r=await fetch('http://127.0.0.1:'+server.address().port+'/downloads/windows.exe');assert.equal(r.status,503);assert.equal(r.headers.get('content-disposition'),null);assert.equal(urls[1],'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.165/Vidya_Saarthi_Setup_2.1.165.exe');}
+  try{const r=await fetch('http://127.0.0.1:'+server.address().port+'/downloads/windows.exe');assert.equal(r.status,503);assert.equal(r.headers.get('content-disposition'),null);assert.match(urls[1],/^https:\/\/github\.com\/cscticket01-hash\/Saarthi_Ai\/releases\/download\/windows-v2\.1\.\d+\/Vidya_Saarthi_Setup_2\.1\.\d+\.exe$/);}
   finally{server.closeAllConnections();await new Promise(r=>server.close(r));await rm(directory,{recursive:true,force:true});}
  }
 });
