@@ -122,7 +122,11 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
         engine.access?['registrationState'] == 'new' &&
         engine.access?['status'] == 'licensed' &&
         engine.access?['activated'] != true) {
-      return const WindowsAdminSetupScreen();
+      return WindowsAdminSetupScreen(onFinished: () {
+        // This restricted setup is above the Navigator; verified access mounts
+        // the normal startup flow after registration/activation completes.
+        unawaited(engine.verify());
+      });
     }
     if (!engine.canOpen) {
       final s = engine.access;
