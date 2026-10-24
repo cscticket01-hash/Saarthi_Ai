@@ -33,6 +33,12 @@ class WindowsAdminSetup {
 
   static Map<String, dynamic> _data = const {};
   static bool? _cachedCompleted;
+  static String? _justCompletedIdentity;
+  static bool consumeCompletedSetup(String schoolId, String uid) {
+    if (_justCompletedIdentity != '$schoolId:$uid') return false;
+    _justCompletedIdentity = null;
+    return true;
+  }
 
   /// Test-only override so widget tests can pin the setup state without a
   /// real %APPDATA% round trip. Null means "check local storage".
@@ -237,7 +243,7 @@ class WindowsAdminSetup {
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>brandingRef.set(cache,SetOptions(merge:true)));
     }
     // Reuse the existing local security lock with the entered password.
-    if(managed){if(!WindowsLocalSecurity.configured){await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();return;}
+    if(managed){if(!WindowsLocalSecurity.configured){await WindowsLocalSecurity.create(adminId:'School app',password:adminPassword);}await FirebaseAuth.instance.refreshLocalUser();await WindowsLocalSession.markLoggedIn();_cachedCompleted=true;await completed();_justCompletedIdentity="${saved['schoolId']}:${saved['uid']}";return;}
     if (!WindowsLocalSecurity.configured) {
       await WindowsLocalSecurity.create(
         adminId: 'Local Administrator',
