@@ -52,7 +52,7 @@ function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir()
    if(status===206)headers['Content-Range']=`bytes ${start}-${end}/${item.size}`;
    res.writeHead(status,headers);if(req.method==='HEAD'){res.end();return true;}
    await pipeline(fs.createReadStream(item.file,{start,end}),res);
-  }catch(error){console.error(JSON.stringify({event:'public_download_failure',platform,code:/^(release_lookup_\d{3}|download_failed_\d{3}|invalid_release|integrity_failure|size_mismatch)$/.test(error.message)?error.message:'download_internal'}));if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/plain','Retry-After':'30'});res.end('Download temporarily unavailable. Please try again shortly.');}else res.destroy();}
+  }catch(error){console.error(JSON.stringify({event:'public_download_failure',platform,code:/^(release_lookup_\d{3}|download_failed_\d{3}|invalid_release|integrity_failure|size_mismatch)$/.test(error.message)?error.message:'download_internal'}));if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/plain','Retry-After':'30','X-Download-Error':/^(release_lookup_\d{3}|download_failed_\d{3}|invalid_release|integrity_failure|size_mismatch)$/.test(error.message)?error.message:'download_internal'});res.end('Download temporarily unavailable. Please try again shortly.');}else res.destroy();}
   return true;
  };
 }
