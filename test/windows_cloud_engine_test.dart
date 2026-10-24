@@ -63,6 +63,44 @@ void main() {
     expect(e.canOpen,false);
     e.dispose();
   });
+  test('trial skip works on day four and stops at original day-five expiry', () async {
+    var time = now.add(const Duration(days: 4));
+    final saved = identity(access(status: 'trial', activated: false));
+    final e = SchoolCloudEngine(readIdentity: () async => saved, clock: () => time,
+      activateLocal: () async {}, legacyAccess: () async => null,
+      touchClock: (a,b) async {}, persist: (a,b) async {},
+      verify: () async => throw const SocketException('offline'));
+    await e.restore();
+    await Future<void>.delayed(Duration.zero);
+    expect(await e.continueTrial(), true);
+    time = now.add(const Duration(days: 5));
+    expect(e.canOpen, false);
+    expect(await e.continueTrial(), false);
+    e.dispose();
+  });
+  test('Skip cannot bypass blocked, foreign-school or device-proof access', () async {
+    for (final lease in [access(status:'blocked',allowed:false),
+      {...access(status:'trial'), 'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+      {...access(status:'trial'), 'deviceEnforced':true}]) {
+      final e = engine(identity(lease));
+      await e.restore();
+      await Future<void>.delayed(Duration.zero);
+      expect(await e.continueTrial(), false);
+      e.dispose();
+    }
+  });
+  testWidgets('valid trial shows Skip and opens console without a licence key', (tester) async {
+    final e = engine(identity(access(status:'trial',activated:false)));
+    await tester.pumpWidget(MaterialApp(home: WindowsManagedSchoolGate(engine:e,
+      child:const Text('Trial Console'),legacy:const Text('Legacy'))));
+    await tester.pump();await tester.pump();
+    expect(find.text('Skip'),findsOneWidget);
+    expect(find.text('Retry school verification'),findsNothing);
+    expect(find.text('Trial Console'),findsNothing);
+    await tester.tap(find.text('Skip'));await tester.pump();await tester.pump();
+    expect(find.text('Trial Console'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
   test('signed device lease expires and enforcement cannot downgrade in memory', () async {
     var time=now;
     final expiry=now.add(const Duration(minutes:15)).millisecondsSinceEpoch;
