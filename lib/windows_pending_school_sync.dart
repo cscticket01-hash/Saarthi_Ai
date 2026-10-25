@@ -41,6 +41,7 @@ class WindowsPendingSchoolSync {
     String? onlyQueueId,
     String? onlyOperationId,
     bool respectBackoff = false,
+    bool diagnoseUnclassified = false,
     void Function(Map<String, dynamic>)? onActivity,
   }) async {
     final db = FirebaseFirestore.instance;
@@ -152,6 +153,7 @@ class WindowsPendingSchoolSync {
           queued.reference,
           item,
           state: 'needsAttention',
+          failureCategory: 'configuration',
           error: 'Invalid pending sync record retained for recovery.',
         );
         report('needsAttention', queued.id, item, category: 'configuration');
@@ -201,8 +203,19 @@ class WindowsPendingSchoolSync {
           category: item['failureCategory'] as String,
         );
       }
+      // Explicit Sync Now can re-diagnose a legacy blocked request whose
+      // category was never persisted. Preserve its exact operation/CAS base;
+      // never rebase it or treat a successful transport response as an ACK.
+      final diagnoseLegacy = diagnoseUnclassified && sendVersioned != null &&
+          item['syncState'] == 'needsAttention' &&
+          (item['failureCategory'] == null || item['failureCategory'] == '') &&
+          collection != 'documents' &&
+          item['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
+          item['operationId'] is String &&
+          RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['operationId']) &&
+          item['baseCloudRevision'] is String;
       if (item['syncState'] == 'conflict' ||
-          item['syncState'] == 'needsAttention')
+          item['syncState'] == 'needsAttention' && !diagnoseLegacy)
         continue;
       if (canAdmit?.call() == false) break;
       String? revision;
@@ -290,6 +303,7 @@ class WindowsPendingSchoolSync {
           retryCount: attempts,
           retryAtMillis: retryAt?.millisecondsSinceEpoch,
           error: e.toString(),
+          diagnostic: documentFailureDiagnostic(e, 'recordRequestAndAck'),
         );
         if (decision.independentRecords || recordConflict ||
             {

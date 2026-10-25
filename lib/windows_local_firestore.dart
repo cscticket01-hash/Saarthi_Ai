@@ -227,13 +227,15 @@ class FirebaseFirestore {
   /// Failure metadata belongs only to the exact operation that failed.
   Future<bool> recordOutboxFailure(DocumentReference<Map<String,dynamic>> ref,
       Map<String,dynamic> expected, {required String state, required String error,
-      String? failureCategory, int? retryCount, int? retryAtMillis}) {
+      String? failureCategory, int? retryCount, int? retryAtMillis,
+      Map<String,dynamic>? diagnostic}) {
     ref.requireOriginProfile();
     if (ref.collectionPath != '_windows_firebase_outbox') {
       throw ArgumentError('Outbox reference required');
     }
     return _database.recordOutboxFailure(ref.id,expected,state:state,error:error,
-      failureCategory:failureCategory,retryCount:retryCount,retryAtMillis:retryAtMillis);
+      failureCategory:failureCategory,retryCount:retryCount,retryAtMillis:retryAtMillis,
+      diagnostic:diagnostic);
   }
 
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
@@ -1647,11 +1649,18 @@ class _LocalSchoolDatabase {
 
   Future<bool> recordOutboxFailure(String queueId, Map<String,dynamic> expected,
       {required String state, required String error, String? failureCategory,
-      int? retryCount, int? retryAtMillis}) {
+      int? retryCount, int? retryAtMillis, Map<String,dynamic>? diagnostic}) {
     final origin = _activeProfileId;
     final school = _activeIdentity['schoolSyncId'];
     // Snapshot before queueing: callers cannot alter the comparison while waiting.
     final encodedExpected = _encodeMap(expected);
+    final safeDiagnostic = {
+      if(diagnostic?['failureStage']=='recordRequestAndAck') 'failureStage':'recordRequestAndAck',
+      if(diagnostic?['failureCode'] is String && RegExp(r'^[A-Za-z0-9_]{1,80}$').hasMatch(diagnostic!['failureCode']))
+        'failureCode':diagnostic['failureCode'],
+      if(diagnostic?['failureHttpStatus'] is int && diagnostic!['failureHttpStatus']>=400 && diagnostic['failureHttpStatus']<=599)
+        'failureHttpStatus':diagnostic['failureHttpStatus'],
+    };
     final completer = Completer<bool>();
     _writeTail = _writeTail.then((_) async {
       try {
@@ -1674,6 +1683,11 @@ class _LocalSchoolDatabase {
         }
         queue[queueId] = {...Map<String,dynamic>.from(current),
           'syncState':state,'lastError':error,
+          if(diagnostic!=null) ...{
+            'failureStage':safeDiagnostic['failureStage'],
+            'failureCode':safeDiagnostic['failureCode'],
+            'failureHttpStatus':safeDiagnostic['failureHttpStatus'],
+          },
           if (failureCategory != null) 'failureCategory':failureCategory,
           if (retryCount != null) 'retryCount':retryCount,
           if (retryAtMillis != null) 'retryAtMillis':retryAtMillis};
@@ -2154,7 +2168,7 @@ class _LocalSchoolDatabase {
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
       'syncState':blocked ? previous['syncState'] : 'pending', 'retryCount':0,
       if (blocked) ...{
-        for (final field in ['lastError','failureCategory','directoryConflictBase'])
+        for (final field in ['lastError','failureCategory','failureCode','failureStage','failureHttpStatus','directoryConflictBase'])
           if (previous[field] != null) field: previous[field],
       },
       if (explicitDirectorySave) 'savedOverConflictOperationId':previous['operationId'],

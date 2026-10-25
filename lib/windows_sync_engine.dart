@@ -2330,6 +2330,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     onlyQueueId: onlyQueueId,
     onlyOperationId: onlyOperationId,
     respectBackoff: onlyOperationId == null,
+    diagnoseUnclassified: _manualSync,
     onActivity: _recordActivity,
     canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
     send: (c, id, op, data) async {},
@@ -2691,8 +2692,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           }
           final queued = pendingById[entry.key];
           if (queued != null &&
-              (data['_syncRevision'] ?? '') !=
-                  (queued.data()['baseCloudRevision'] ?? '')) {
+              ((data['_syncRevision'] ?? '') !=
+                  (queued.data()['baseCloudRevision'] ?? '') ||
+               queued.data()['syncState'] == 'conflict')) {
             // Still compare the live operation inside the existing durable writer.
             await db.recordOutboxConflict(
               queued.reference,
