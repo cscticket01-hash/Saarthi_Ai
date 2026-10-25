@@ -12,6 +12,9 @@ jobs:
   contact-dialog:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      APPDATA: ${{ runner.temp }}/student-contact-tests
+      LOCALAPPDATA: ${{ runner.temp }}/student-contact-tests
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
