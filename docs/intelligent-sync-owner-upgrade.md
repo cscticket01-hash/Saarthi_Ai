@@ -12,4 +12,4 @@ Notification intents are metadata-only, persisted before protocol-2 writes. A fa
 
 Self-repair diagnoses exact durable operations, preserves newer local edits via the existing serialized CAS writer, and reports retry admission separately from verified completion. Authorization, quota, unknown errors and real same-field conflicts are not blindly reopened. Existing owner timers, pause and profile isolation remain authoritative.
 
-Deployment requires the updated broker and the supplied bundle in the existing school Script project. Preserve School ID, root, secret, Script Properties and deployment URL. Private school pending rows and physical devices have not been directly verified. Missing credentials or an inaccessible school Script cannot be repaired by guessing.
+Deployment requires Script bundle 2026-10-25.2 and the updated broker and the supplied bundle in the existing school Script project. Preserve School ID, root, secret, Script Properties and deployment URL. Private school pending rows and physical devices have not been directly verified. Missing credentials or an inaccessible school Script cannot be repaired by guessing.
