@@ -13037,13 +13037,13 @@ errorBuilder: (
                                   FieldValue.delete();
                             }
 
-                            await FirebaseFirestore
+                            await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore
                                 .instance
                                 .collection(
                                   'teachers_directory',
                                 )
                                 .doc(docId)
-                                .update(updateData);
+                                .update(updateData));
 
                             if (!mounted) return;
 
@@ -13977,13 +13977,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   FieldValue.delete();
                             }
 
-                            await FirebaseFirestore
+                            await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore
                                 .instance
                                 .collection(
                                   'teachers_directory',
                                 )
                                 .doc(docId)
-                                .update(updateData);
+                                .update(updateData));
 
                             if (!mounted) return;
 
@@ -15368,6 +15368,7 @@ class _AddTeacherScreenState
   // ============================================================
 
   Future<void> _saveTeacher() async {
+    if (_saving) return;
     final name =
         _nameCtrl.text.trim();
 
@@ -16353,6 +16354,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                   onPressed: isSaving
                       ? null
                       : () async {
+                          if (isSaving) return;
                           final name = nameCtrl.text.trim();
                           final parent = parentCtrl.text.trim();
                           final roll = rollCtrl.text.trim();
@@ -17474,10 +17476,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 }
 
                                 if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
-                                await FirebaseFirestore.instance
+                                await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore.instance
                                     .collection('students_directory')
                                     .doc(docId)
-                                    .update(updateData);
+                                    .update(updateData));
 
                                 if (!mounted) return;
 

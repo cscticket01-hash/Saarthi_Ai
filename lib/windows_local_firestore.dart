@@ -26,6 +26,13 @@ class WindowsLocalFirestoreSyncControl {
 
   static const Object _zoneKey =
       #vidyaSaarthiRemoteSyncWrite;
+  static const Object _userSaveKey = #vidyaSaarthiExplicitDirectorySave;
+  static bool get explicitDirectorySave => Zone.current[_userSaveKey] == true;
+
+  /// Only actual directory Save controls may select a changed local version.
+  /// ID-card preparation and other tracked background writes cannot do so.
+  static Future<T> runDirectorySave<T>(Future<T> Function() action) =>
+      runZoned<Future<T>>(action, zoneValues:{_userSaveKey:true});
 
   static WindowsLocalTrackedMutationCallback?
       onTrackedMutation;
@@ -1138,6 +1145,7 @@ class _LocalSchoolDatabase {
     }
 
     final profileAtEnqueue=_activeProfileId;
+    final userDirectorySave = WindowsLocalFirestoreSyncControl.explicitDirectorySave;
     final completer = Completer<void>();
 
     _writeTail = _writeTail.then((_) async {
@@ -1244,6 +1252,9 @@ class _LocalSchoolDatabase {
           );
 
           collections[operation.collection] = docs;
+          final beforeSave = docs[operation.documentId] is Map
+              ? _encodeMap(Map<String,dynamic>.from(docs[operation.documentId] as Map))
+              : null;
           final deletedSnapshot = operation.type == _WriteType.delete &&
               WindowsLocalFirestoreSyncControl.trackingEnabled &&
               _shouldTrackForFirebase(operation.collection) &&
@@ -1373,10 +1384,21 @@ class _LocalSchoolDatabase {
 
           if (WindowsLocalFirestoreSyncControl.trackingEnabled &&
               _shouldTrackForFirebase(operation.collection)) {
+            // Runs inside the same serialized transaction as queue writes.
+            // Double-clicks cannot rotate an in-flight operation or its ACK.
+            // Restore/lifecycle intents still use their original safeguards.
+            if (operation.type != _WriteType.delete && beforeSave != null &&
+                docs[operation.documentId] is Map &&
+                sameSavedRecord(operation.collection, beforeSave,
+                    docs[operation.documentId] as Map)) {
+              docs[operation.documentId] = beforeSave;
+              continue;
+            }
             _recordFirebaseOutbox(
               collections,
               operation,
               docs,
+              userDirectorySave: userDirectorySave,
             );
             if (deletedSnapshot != null) {
               final queue = collections['_windows_firebase_outbox'] as Map;
@@ -1434,11 +1456,15 @@ class _LocalSchoolDatabase {
               WindowsLocalFirestoreSyncControl
                   .onTrackedMutation;
           if (callback != null) {
-            Future<void>.microtask(() async {
-              try {
-                await callback();
-              } catch (_) {}
-            });
+            // A Save gesture's authority ends at its own write. Dart zones
+            // otherwise propagate it into deferred sync/card preparation.
+            runZoned(() {
+              Future<void>.microtask(() async {
+                try {
+                  await callback();
+                } catch (_) {}
+              });
+            }, zoneValues:{WindowsLocalFirestoreSyncControl._userSaveKey:false});
           }
         }
 
@@ -1716,8 +1742,8 @@ class _LocalSchoolDatabase {
             remote['_syncOperationId'] != operationId && !linkedStudent) {
           final local = (collections[collection] as Map?)?[id];
           if (local is Map &&
-              syncPayloadHash(_decodeMap(Map<String,dynamic>.from(local))) ==
-                  syncPayloadHash(expected['data'] as Map)) {
+              sameSavedRecord(collection, _decodeMap(Map<String,dynamic>.from(local)),
+                  expected['data'] as Map)) {
             final history = collections.putIfAbsent('_windows_sync_conflict_history',
                 () => <String,dynamic>{}) as Map;
             history[operationId] = _encodeMap({...expected,
@@ -1838,7 +1864,22 @@ class _LocalSchoolDatabase {
           'documentId':id,'local':local,'remote':remote,
           'detectedAt':DateTime.now().millisecondsSinceEpoch});
         queue[queueId] = {...Map<String,dynamic>.from(current),
-          'syncState':'conflict','lastError':'Record revision conflict'};
+          'syncState':'conflict','lastError':'Record revision conflict',
+          'failureCategory':'conflict',
+          // Only authenticated reconciliation supplies this CAS base. Saving
+          // unchanged data never consumes it; changed Save retains both copies.
+          if ({'students_directory','teachers_directory'}.contains(collection) &&
+              remote['id'] == id &&
+              (remote['documentId'] == null || remote['documentId'] == id) &&
+              remote['_syncDeleted'] != true &&
+              remote['replacesStudentGeneration'] == null &&
+              !remote.keys.any((key)=>key.toString().startsWith('_syncRecreates')))
+            'directoryConflictBase': {
+              'schoolId':school,'documentId':id,'revision':revision,
+              'identityField':collection=='students_directory'?'mobileStableId':'teacherId',
+              'identity':remote[collection=='students_directory'?'mobileStableId':'teacherId'],
+            }
+          else 'directoryConflictBase':null};
         _storeCollections(root,collections);
         await _writeRoot(root);
         for (final name in ['_windows_firebase_outbox','_windows_sync_conflicts']) {
@@ -2013,8 +2054,9 @@ class _LocalSchoolDatabase {
   void _recordFirebaseOutbox(
     Map<String, dynamic> collections,
     _WriteOperation operation,
-    Map<String, dynamic> finalDocs,
-  ) {
+    Map<String, dynamic> finalDocs, {
+    required bool userDirectorySave,
+  }) {
     if (operation.type != _WriteType.delete && operation.collection == 'school_config' &&
         operation.documentId == 'school_profile_cache') {
       // Keep legacy branding locally, but never turn an asset-only cache into a mutation.
@@ -2094,12 +2136,28 @@ class _LocalSchoolDatabase {
       // Only a save made AFTER observing this deletion may recreate this slot.
       (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedRevision'] = baselineEntry['revision'];
     }
+    final explicitDirectorySave = userDirectorySave && previous is Map && !isDelete &&
+        finalDocs[operation.documentId] is Map &&
+        previous['schoolId'] == _activeIdentity['schoolSyncId'] &&
+        canSaveDirectoryConflict(previous, finalDocs[operation.documentId] as Map);
+    final correctedValidation = userDirectorySave && previous is Map && !isDelete &&
+        previous['syncState'] == 'needsAttention' &&
+        previous['failureCategory'] == 'validation';
+    final blocked = previous is Map &&
+        {'conflict','needsAttention'}.contains(previous['syncState']) &&
+        !explicitDirectorySave && !correctedValidation;
     queue[key] = <String, dynamic>{
       'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
-      'baseCloudRevision': previous is Map ? previous['baseCloudRevision'] ?? '' :
+      'baseCloudRevision': explicitDirectorySave ? previous['directoryConflictBase']['revision'] :
+          previous is Map ? previous['baseCloudRevision'] ?? '' :
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
-      'syncState':previous is Map && {'conflict','needsAttention'}.contains(previous['syncState']) ? previous['syncState'] : 'pending', 'retryCount':0,
+      'syncState':blocked ? previous['syncState'] : 'pending', 'retryCount':0,
+      if (blocked) ...{
+        for (final field in ['lastError','failureCategory','directoryConflictBase'])
+          if (previous[field] != null) field: previous[field],
+      },
+      if (explicitDirectorySave) 'savedOverConflictOperationId':previous['operationId'],
       if(priorDeletion is Map) 'priorDeletion':Map<String,dynamic>.from(priorDeletion),
       if(isDelete && (previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String || baselineEntry is Map && baselineEntry['recreatedFrom'] is String))
         'recordGeneration':previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String ? previous['data']['_syncRecreatesDeletedRevision'] : baselineEntry['recreatedFrom'],

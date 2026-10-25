@@ -211,9 +211,14 @@ void main() {
 
     // A retained stale operation can conflict even with unchanged collection
     // heads. Fetch only this missing checkpoint, retaining every other one.
+    // Restore an old-version pending fixture explicitly: unchanged Save now
+    // correctly creates no queue entry after a verified download.
     await rig.db.collection('school_notices').doc('N1').set(values);
-    final q = (await rig.queue()).single;
-    await q.reference.update({'baseCloudRevision':''});
+    expect(await rig.queue(), isEmpty);
+    await rig.db.collection('_windows_firebase_outbox').doc('legacy-stale-fixture').set({
+      ...original, 'operationId':'legacy-stale-operation',
+      'baseCloudRevision':'', 'syncState':'pending',
+    });
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
     await rig.pull({'school_notices'});
     expect(await rig.queue(),isEmpty);
@@ -221,6 +226,43 @@ void main() {
       'collection':'school_notices','syncProtocol':2}))['records']['N1'] as Map;
     expect(unchanged['_syncRevision'],cloud['_syncRevision']);
     expect(unchanged['_syncOperationId'],cloud['_syncOperationId']);
+  });
+
+  test('changed directory Save uses authenticated CAS and a third edit conflicts again', () async {
+    await rig.db.collection('teachers_directory').doc('T1').set({
+      'schoolId':school,'teacherId':'person-1','name':'Synthetic teacher','subject':'Original',
+    });
+    await rig.flush();
+    await rig.open('pc2');
+    await rig.pull({'teachers_directory'});
+    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Offline PC2'});
+    await rig.open('pc1');
+    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'New PC1'});
+    await rig.flush();
+    await rig.open('pc2');
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    await rig.pull({'teachers_directory'});
+    final conflict=(await rig.queue()).single.data();
+    expect(conflict['syncState'],'conflict');
+    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Offline PC2'});
+    expect((await rig.queue()).single.data()['operationId'],conflict['operationId']);
+    await WindowsLocalFirestoreSyncControl.runDirectorySave(() => rig.db.collection('teachers_directory').doc('T1').update({'subject':'Explicit Save PC2'}));
+    expect((await rig.queue()).single.data()['syncState'],'pending');
+    await rig.open('pc1');
+    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Intervening PC1'});
+    await rig.flush();
+    await rig.open('pc2');
+    await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
+    expect((await rig.queue()).single.data()['syncState'],'conflict');
+    await rig.pull({'teachers_directory'});
+    await WindowsLocalFirestoreSyncControl.runDirectorySave(() => rig.db.collection('teachers_directory').doc('T1').update({'subject':'Final explicit PC2'}));
+    await rig.flush();
+    expect(await rig.queue(),isEmpty);
+    await rig.open('pc1');
+    await rig.pull({'teachers_directory'});
+    final rows=(await rig.db.collection('teachers_directory').get()).docs;
+    expect(rows.length,1);
+    expect(rows.single.data()['subject'],'Final explicit PC2');
   });
 
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {

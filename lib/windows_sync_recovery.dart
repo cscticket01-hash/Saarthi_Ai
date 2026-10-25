@@ -16,6 +16,15 @@ class MissingSyncAcknowledgement implements Exception {
       'Verified cloud acknowledgement missing. Pending retained.';
 }
 
+class PendingSyncAttention implements Exception {
+  const PendingSyncAttention(this.total, this.conflicts);
+  final int total, conflicts;
+  @override
+  String toString() => '$total pending records need attention: '
+      '$conflicts version conflicts, ${total - conflicts} other issues. '
+      'Open full queue for each record\'s reason. Pending data retained.';
+}
+
 const automaticRecordRetryLimit = 5;
 
 class PendingDocumentFileFailure extends FileSystemException {
@@ -80,6 +89,13 @@ bool recoverablePendingAttention(
         (item['retryCount'] as num? ?? 0) < automaticRecordRetryLimit);
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is PendingSyncAttention) {
+    return SyncRecoveryDecision(
+      error.conflicts > 0 ? SyncFailureKind.conflict : SyncFailureKind.unknown,
+      review: true,
+      independentRecords: true,
+    );
+  }
   if (error is BlankSchoolProfile) return SyncRecoveryDecision.classify(code:'BLANK_SCHOOL_PROFILE');
   if (error is FileSystemException || error is StateError && error.message == 'Pending document file is missing.') {
     return SyncRecoveryDecision.classify(code:'FILE_UNREADABLE');
