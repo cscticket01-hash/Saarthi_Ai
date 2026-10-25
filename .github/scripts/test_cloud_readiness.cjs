@@ -37,6 +37,26 @@ async function run() {
   const token = r.data.idToken, uid = r.data.localId;
   r = await request(endpoint, {action: 'managed/session', schoolId}, token);
   check('Authenticated TEST school identity', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.uid === uid);
+  // This session can succeed even when the trial/licence gate rejects profile
+  // and storage access. Record only safe status booleans, never tokens or UID.
+  report.testAccess = {
+    status: ['trial', 'licensed', 'pending', 'expired'].includes(r.data.status) ? r.data.status : 'unknown',
+    allowed: r.data.allowed === true,
+    activated: r.data.activated === true,
+    storageReady: r.data.storageReady === true,
+    expiresAt: Number.isSafeInteger(r.data.expiresAt) && r.data.expiresAt > 0
+      ? new Date(r.data.expiresAt).toISOString() : 'unknown',
+  };
+  const accessReady = report.testAccess.allowed &&
+    (report.testAccess.status === 'trial' || report.testAccess.activated);
+  if (!accessReady) {
+    report.checks.push({name: 'Authorized TEST trial/licence gate', status: 'BLOCKED', http: r.status,
+      reference: r.data.requestId || null});
+    report.status = 'BLOCKED';
+    report.blocker = 'TEST account session is authenticated but trial/licence is not authorized. Review and renew/activate only the TEST school through developer-authorized licensing; never bypass the server gate.';
+    process.exitCode = 1;
+    return;
+  }
   r = await request(endpoint, {action: 'managed/profile', operation: 'read', schoolId}, token);
   check('Authenticated TEST profile response', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId);
   if (r.data.profile && r.data.profile.schoolName !== 'TEST Sync V2') throw new Error('TEST profile name mismatch');
