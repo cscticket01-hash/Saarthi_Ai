@@ -35,7 +35,7 @@ void main() {
       final original = (await pending()).data()!;
       await Future.wait(List.generate(8, (_) => ref.set({...value})));
       final current = (await pending()).data()!;
-      expect(current, original);
+      expect(migrationJsonValue(current), migrationJsonValue(original));
       expect((await db.collection(collection).get()).docs.length, 1);
       await db.acknowledgeOutbox((await pending()).reference,original,revision:'verified-r1');
       await ref.set(value);
@@ -57,11 +57,11 @@ void main() {
       error:'Synthetic permission failure',failureCategory:'authorization',retryCount:5);
     final original=(await pending()).data()!;
     await ref.update({'updatedAt':FieldValue.serverTimestamp()});
-    expect((await pending()).data(),original);
+    expect(migrationJsonValue((await pending()).data()),migrationJsonValue(original));
     expect((await ref.get()).data()?['updatedAt'],isA<Timestamp>());
     expect(((await ref.get()).data()!['updatedAt'] as Timestamp).millisecondsSinceEpoch,1);
     await db.resetVolatileSession();
-    expect((await pending()).data(),original,reason:'Durable queue survives restart');
+    expect(migrationJsonValue((await pending()).data()),migrationJsonValue(original),reason:'Durable queue survives restart');
   });
 
   test('same directory value in cloud adopts verified revision despite save timestamps', () async {
@@ -89,7 +89,7 @@ void main() {
       expect(await db.recordOutboxConflict(q.reference,original,remote),true);
       final conflicted=(await pending()).data()!;
       await ref.update({'name':'Local'});
-      expect((await pending()).data(),conflicted,reason:'Unchanged Save cannot choose a winner');
+      expect(migrationJsonValue((await pending()).data()),migrationJsonValue(conflicted),reason:'Unchanged Save cannot choose a winner');
       await ref.update({'name':'Explicit changed Save'});
       final saved=(await pending()).data()!;
       expect(saved['syncState'],'pending');
