@@ -9,6 +9,9 @@ class WindowsRemoteChangeFeed {
     this.onError,
     this.onReset,
     this.onVerified,
+    this.onRecords,
+    this.loadCursor,
+    this.persistEvent,
   });
   final Future<Map<String, dynamic>> Function(String school, String? cursor)
   read;
@@ -17,6 +20,10 @@ class WindowsRemoteChangeFeed {
   final void Function(Object)? onError;
   final void Function()? onReset;
   final void Function()? onVerified;
+  final void Function(Map<String, Set<String>>)? onRecords;
+  final Future<String?> Function(String school)? loadCursor;
+  final Future<void> Function(String school, Map<String, dynamic> event)?
+  persistEvent;
   Timer? _timer;
   String? _scope, _school, _cursor;
   int _generation = 0, _failures = 0;
@@ -27,7 +34,23 @@ class WindowsRemoteChangeFeed {
     stop();
     _scope = scope;
     _school = school;
-    _poll(_generation);
+    if (loadCursor == null) {
+      _poll(_generation);
+    } else {
+      _resume(_generation, school);
+    }
+  }
+
+  Future<void> _resume(int generation, String school) async {
+    try {
+      final cursor = await loadCursor!(school);
+      if (generation != _generation) return;
+      _cursor = cursor;
+    } catch (error) {
+      if (generation != _generation) return;
+      onError?.call(error);
+    }
+    if (generation == _generation) _poll(generation);
   }
 
   void stop() {
@@ -61,14 +84,50 @@ class WindowsRemoteChangeFeed {
           names.toSet().length != names.length) {
         throw StateError('Unverified school change notification.');
       }
+      final targets = <String, Set<String>>{};
+      final raw = out['records'];
+      if (raw != null) {
+        if (raw is! Map || raw.keys.any((k) => !names.contains(k)))
+          throw StateError('Invalid record notification.');
+        for (final entry in raw.entries) {
+          final ids = entry.value;
+          if (ids is! List ||
+              ids.isEmpty ||
+              ids.length > 64 ||
+              ids.any(
+                (id) =>
+                    id is! String ||
+                    id.isEmpty ||
+                    id.length > 200 ||
+                    id.contains('/') ||
+                    {
+                      '.',
+                      '..',
+                      '__proto__',
+                      'prototype',
+                      'constructor',
+                    }.contains(id),
+              ) ||
+              ids.toSet().length != ids.length)
+            throw StateError('Invalid record notification.');
+          targets[entry.key as String] = ids.cast<String>().toSet();
+        }
+      }
+      if (persistEvent != null && (cursor != _cursor || out['reset'] == true))
+        await persistEvent!(_school!, Map<String, dynamic>.from(out));
+      if (generation != _generation) return;
       onVerified?.call();
       _healthy = true;
       _cursor = cursor;
       _failures = 0;
       if (out['reset'] == true && onReset != null)
         onReset!();
-      else if (names.isNotEmpty)
-        onHint(names.cast<String>().toSet());
+      else if (names.isNotEmpty) {
+        if (onRecords != null && targets.isNotEmpty) onRecords!(targets);
+        final broad = names.cast<String>().toSet()
+          ..removeAll(onRecords == null ? const <String>{} : targets.keys);
+        if (broad.isNotEmpty) onHint(broad);
+      }
     } catch (error) {
       if (generation != _generation) return;
       _healthy = false;

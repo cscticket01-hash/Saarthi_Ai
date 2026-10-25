@@ -1,3 +1,4 @@
+const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createManagedSupport}=require('./managed-support');
 const {createManagedCardReader}=require('./managed-card-reader');
@@ -22,6 +23,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
  if(cardIssueEnabled&&!cardReaderEnforced)throw Error('Card issuance requires all-reader enforcement');
  const changeFeed=createSchoolChangeFeed({db,collections:[...COLLECTIONS].filter(c=>c!=='backups')});
+ const syncDelivery=createSchoolSyncDelivery({db,feed:changeFeed,now});
  async function changeHint(school,collection,id){
   let timer;try{await Promise.race([
    changeFeed.publishMany(school,Array.isArray(collection)?collection:[collection],id),
@@ -186,17 +188,20 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
   // Monitoring is best-effort; its failure never reverses a verified storage ACK.
   try{await db.doc('platform_schools/'+schoolId).update({syncServerEvidence:{version:1,observedAt:now(),...evidence}});}catch(_){}
  }
+ async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
+  const ticket=await deliveryBudget(syncDelivery.prepare(m.schoolId,body));
   try{const result=await signedRequest(m,body);
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
    }
-   if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);await changeHint(m.schoolId,body.collection,body.id);}
-   if(body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
+   if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);if(ticket){await deliveryBudget(syncDelivery.committed(ticket,result.recordRevision)).catch(()=>{});}else await changeHint(m.schoolId,body.collection,body.id);}
+   if(!ticket&&body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
    if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
   }catch(error){
+   if(ticket && error.code==='RECORD_REVISION_CONFLICT')await syncDelivery.rejected(ticket).catch(()=>{});
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action))await saveSyncEvidence(m.schoolId,{outcome:'failed',stage:body.action,code:
      ['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'].includes(error.code)?error.code:'SCRIPT_UNVERIFIED'});
    if((error.status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(error.code))||([503,504].includes(error.status)&&['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(error.code))){
@@ -486,13 +491,19 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
  }
  if(action==='managed/events'){
   if(!lease(m).allowed)fail(403,'School licence is inactive');
+  await deliveryBudget(syncDelivery.recover(m.schoolId,async ticket=>{
+   const response=await signed(m,{action:'managed_records',operation:'read',collection:ticket.collection,id:ticket.id,syncProtocol:2});
+   const record=response.records?.[ticket.id];
+   return response.schoolId===m.schoolId && response.syncProtocol===2 && record?.schoolId===m.schoolId &&
+    record._syncOperationId===ticket.operationId && typeof record._syncRevision==='string' && !!record._syncRevision;
+  })).catch(()=>{});
   const event=await changeFeed.wait(m.schoolId,b.cursor);
   const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||(fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true))fail(403,'School licence is inactive');
   await deviceAccess.authorize({req,body:b,identity:fresh,entitlement:lease(fresh)});
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -615,6 +626,29 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
    return matches[0];
   };
   return cardAuthority({request:{...b,operation},identity:m,readPerson});
+ }
+ if(action==='managed/records/batch'){
+  if(!Array.isArray(b.operations)||b.operations.length<1||b.operations.length>10||JSON.stringify(b.operations).length>256000)fail(400,'Invalid record batch');
+  const seen=new Set(),operationIds=new Set();
+  const operations=b.operations.map(op=>{
+   if(!op||!COLLECTIONS.has(op.collection)||['students_directory','teachers_directory','documents','backups'].includes(op.collection)||
+     op.operation!=='write'||op.syncProtocol!==2||typeof op.id!=='string'||!/^[^/]{1,200}$/.test(op.id)||['.','..','__proto__','prototype','constructor'].includes(op.id)||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(op.operationId||'')||typeof op.expectedRecordRevision!=='string'||op.expectedRecordRevision.length>100||(seen.has(op.collection+'/'+op.id)||operationIds.has(op.operationId)))fail(400,'Invalid batch operation');
+   seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,
+    syncProtocol:2,operationId:op.operationId,expectedRecordRevision:op.expectedRecordRevision,data:{...clean(op.data),schoolId:m.schoolId}};
+  });
+  const tickets=[];for(const op of operations)tickets.push(await deliveryBudget(syncDelivery.prepare(m.schoolId,op)));
+  const result=await signed(m,{action:'managed_records_batch',operations});
+  if(result.syncProtocol!==2||result.recordWriteBatchVersion!==1||!Array.isArray(result.acknowledgements)||result.acknowledgements.length>operations.length)fail(502,'Invalid batch acknowledgement');
+  const replied=new Set();
+  for(const ack of result.acknowledgements){
+   const index=operations.findIndex(op=>op.operationId===ack.operationId);
+   if(index<0||replied.has(ack.operationId)||typeof ack.success!=='boolean'||ack.success&&(typeof ack.recordRevision!=='string'||!ack.recordRevision))fail(502,'Unverified batch receipt');
+   replied.add(ack.operationId);
+   if(ack.success){if(tickets[index])await deliveryBudget(syncDelivery.committed(tickets[index],ack.recordRevision)).catch(()=>{});else await changeHint(m.schoolId,operations[index].collection,operations[index].id);}
+   else if(ack.code==='SCRIPT_RECORD_REVISION_CONFLICT'&&tickets[index])await syncDelivery.rejected(tickets[index]).catch(()=>{});
+  }
+  invalidate(m.schoolId);return result;
  }
  if(action==='managed/records'){
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete','recover'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=['write','recover'].includes(b.operation)?{...clean(b.data),schoolId:m.schoolId}:undefined;

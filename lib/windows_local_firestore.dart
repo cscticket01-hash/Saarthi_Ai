@@ -1807,7 +1807,7 @@ class _LocalSchoolDatabase {
         final childCollections = <String>{...studentOwnedCollections,
           '_local_student_documents', '_windows_document_outbox'};
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
-          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests',if(parentId is String)'students_directory',
+          '_windows_sync_conflicts','_windows_sync_conflict_history','_windows_sync_baselines','_windows_recycle_requests','_windows_local_deletions',if(parentId is String)'students_directory',
           if(freshStudent)...childCollections},recordScope:{collection:[id],if(parentId is String&&collection!='students_directory')'students_directory':[parentId]});
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
@@ -1827,12 +1827,20 @@ class _LocalSchoolDatabase {
           }
           completer.complete(false);return;
         }
-        if(sameDeletedDirectoryOwner(current,remote)) {
+        // Recover legacy delete identity only from its original atomic snapshot.
+        final evidence=(collections['_windows_local_deletions'] as Map?)?[operationId];
+        final recoveredIdentity=current['collection']=='teachers_directory' && current['operation']=='delete' &&
+          evidence is Map && evidence['operationId']==operationId && evidence['schoolId']==school &&
+          evidence['collection']==collection && evidence['documentId']==id && evidence['snapshot'] is Map &&
+          evidence['snapshot']['teacherId'] is String
+            ? <String,dynamic>{'teacherId':evidence['snapshot']['teacherId']} : current['deletedRecordIdentity'];
+        if(sameDeletedDirectoryOwner({...current,'deletedRecordIdentity':recoveredIdentity},remote)) {
           final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
           history.putIfAbsent(operationId,()=>_encodeMap({...current,'verifiedCloud':remote,
             'resolution':'explicit deletion follows the same verified person'}));
           queue[queueId]={...Map<String,dynamic>.from(current),
-            'baseCloudRevision':revision,'syncState':'pending','retryCount':0}
+            'baseCloudRevision':revision,'syncState':'pending','retryCount':0,
+            'deletedRecordIdentity':recoveredIdentity}
             ..remove('lastError')..remove('failureCategory')..remove('wireData')..remove('wireMode');
           _storeCollections(root,collections);await _writeRoot(root);
           completer.complete(false);return;

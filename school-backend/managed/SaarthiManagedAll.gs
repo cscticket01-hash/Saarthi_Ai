@@ -7280,6 +7280,8 @@ function VS_managedConnect(b) {
 function VS_managedDiagnostic(error) {
   const message=String(error && error.message || '');
   const known={
+    'Record revision conflict':'SCRIPT_RECORD_REVISION_CONFLICT',
+    'Sync operation ID conflict':'SCRIPT_OPERATION_ID_CONFLICT',
     'JSON category identity mismatch':'SCRIPT_JSON_IDENTITY_MISMATCH',
     'JSON readback verification failed':'SCRIPT_JSON_READBACK_FAILED',
     'JSON head missing; operator review required':'SCRIPT_JSON_HEAD_MISSING',
@@ -7397,9 +7399,9 @@ function VS_managedHandle(e) {
           if(part.sheet.getRange(1,1,1,1).getValues()[0][0]!=='Record Key')throw new Error('School tab identity requires review');
         });sheetsVerified=true;}
       }
-      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
+      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-25.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-25.2',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
@@ -7407,6 +7409,7 @@ function VS_managedHandle(e) {
     else if(b.action==='managed_attendance_batch'){result=VS_managedAttendanceBatch(b);}
     else if(b.action==='managed_summary'){result=VS_managedSummary();}
     else if(['managed_import_sheet_setup','managed_import_sheet_read'].indexOf(b.action)>=0){result=VS_importSheet(b);}
+    else if(b.action==='managed_records_batch'){result=VS_managedRecordBatch(b);}
     else if(b.action==='managed_records'){result=VS_managedRecord(b);}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
@@ -7912,7 +7915,7 @@ function VS_refreshRecordReadable(store,item,row){
     // At most 100 backfill rows; batch adjacent rows without touching gaps or
     // owner cells. Keep readback verification before advancing the cursor.
     const batches=[];
-    entries.forEach(e=>{const d=e.item.data,values=[VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
+    entries.forEach(e=>{const d=e.item.data,values=[e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
       if(lastBatch&&lastBatch.row+lastBatch.values.length===e.row)lastBatch.values.push(values);
       else batches.push({row:e.row,values:[values]});
     });
@@ -8209,6 +8212,31 @@ function VS_managedIncrementalRecords(b,readContext){
   });
   if(JSON.stringify(records).length>20*1024*1024)throw new Error('Delta export exceeds safe limit');
   return {syncProtocol:2,collectionRevision:revision,records:records,partialRecords:true,...(missing.length?{missingRecords:missing}:{})};
+}
+
+// Bounded transport batch; each row keeps its original CAS/operation receipt.
+// No cross-row atomicity is claimed. Parents, files and deletes retain their
+// existing dedicated ordering paths. Stop shared failures, keep unsent rows.
+function VS_managedRecordBatch(b) {
+ const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+ if(!Array.isArray(b.operations)||b.operations.length<1||b.operations.length>10||JSON.stringify(b.operations).length>256000)throw new Error('Invalid record batch');
+ const seen=new Set(),operationIds=new Set();
+ b.operations.forEach(op=>{
+  VS_validateManagedCollection(op.collection);
+  if(op.operation!=='write'||op.syncProtocol!==2||['students_directory','teachers_directory','documents','backups'].indexOf(op.collection)>=0||
+    !op.data||op.data.schoolId!==school||! /^[A-Za-z0-9_-]{16,100}$/.test(op.operationId||'')||typeof op.expectedRecordRevision!=='string'||
+    typeof op.id!=='string'||op.id.length<1||op.id.length>200||op.id.indexOf('/')>=0||(seen.has(op.collection+'/'+op.id)||operationIds.has(op.operationId)))throw new Error('Invalid record batch');
+  seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);
+ });
+ const start=Date.now(),acknowledgements=[];
+ for(const op of b.operations) {
+  if(Date.now()-start>20000)break;
+  try {const r=VS_managedRecord(op);acknowledgements.push({operationId:op.operationId,success:true,...r});}
+  catch(error){const code=VS_managedDiagnostic(error);acknowledgements.push({operationId:op.operationId,success:false,code});
+   if(['SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_OPERATION_FAILED'].indexOf(code)>=0)break;
+  }
+ }
+ return {syncProtocol:2,recordWriteBatchVersion:1,acknowledgements};
 }
 
 /** Managed mobile bridge. Only called AFTER central server verification and
