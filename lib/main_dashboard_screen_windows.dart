@@ -16281,7 +16281,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                       const SizedBox(height: 10),
                       TextField(controller: parentCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
                       const SizedBox(height: 10),
-                      TextField(controller: contactCtrl, keyboardType: TextInputType.phone, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Contact No *')),
+                      TextField(
+                        controller: contactCtrl,
+                        keyboardType: TextInputType.phone,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                        style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        decoration: _inputDecoration('Contact No *'),
+                      ),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: hostelFacility,
@@ -16356,6 +16365,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 content: Text(
                                   'Name, Roll No aur Contact bharna zaroori hai!',
                                 ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if (!RegExp(r'^[0-9]{10}$').hasMatch(contact)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text('Contact number mein exactly 10 digits daalein.'),
                               ),
                             );
                             return;
