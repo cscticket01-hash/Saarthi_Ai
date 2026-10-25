@@ -16,6 +16,7 @@ dependencies:
 
   sqlite3: 3.7.0
   archive: ^4.0.7
+  clock: ^1.1.2
   crypto: ^3.0.6
   cryptography: ^2.7.0
   http: ^1.2.0
