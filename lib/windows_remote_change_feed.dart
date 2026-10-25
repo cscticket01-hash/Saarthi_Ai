@@ -8,6 +8,7 @@ class WindowsRemoteChangeFeed {
     required this.allowedCollections,
     this.onError,
     this.onReset,
+    this.onVerified,
   });
   final Future<Map<String, dynamic>> Function(String school, String? cursor)
   read;
@@ -15,6 +16,7 @@ class WindowsRemoteChangeFeed {
   final Set<String> allowedCollections;
   final void Function(Object)? onError;
   final void Function()? onReset;
+  final void Function()? onVerified;
   Timer? _timer;
   String? _scope, _school, _cursor;
   int _generation = 0, _failures = 0;
@@ -59,6 +61,7 @@ class WindowsRemoteChangeFeed {
           names.toSet().length != names.length) {
         throw StateError('Unverified school change notification.');
       }
+      onVerified?.call();
       _healthy = true;
       _cursor = cursor;
       _failures = 0;

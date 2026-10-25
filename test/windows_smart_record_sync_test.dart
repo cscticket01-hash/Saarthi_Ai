@@ -8,6 +8,8 @@ import '../lib/windows_record_change_policy.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_schedule.dart';
 import '../lib/windows_pending_school_sync.dart';
+import '../lib/windows_sync_recovery.dart';
+import '../lib/windows_backend_bridge.dart';
 
 void main(){
  TestWidgetsFlutterBinding.ensureInitialized();
@@ -102,6 +104,26 @@ void main(){
   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},sendVersioned:(_)async=>'deleted-r3');
   final deletion=(await db.collection('_windows_local_deletions').doc(original['operationId']).get()).data()!;
   expect(deletion['cloudDeletionVerified'],true);expect((await ref.get()).exists,false);
+ });
+ test('verified reconnect reopens exhausted network documents while retaining quota, conflicts and foreign work',()async{
+  final queue=db.collection('_windows_document_outbox');
+  for(final category in ['networkPath','timeout','quota','authorization','conflict']) {
+   await queue.doc(category).set({'schoolId':school,'documentRevision':'original-$category',
+    'syncState':category=='conflict'?'conflict':'needsAttention','failureCategory':category,
+    'retryCount':8,'retryAtMillis':9999999999999,'localPath':'retained-file'});
+  }
+  await queue.doc('foreign').set({'schoolId':'other','syncState':'retry','failureCategory':'networkPath'});
+  expect(await WindowsBackendBridge.resumeNetworkDocuments(db.activeProfileId,school),2);
+  for(final category in ['networkPath','timeout','quota','authorization','conflict']) {
+   final item=(await queue.doc(category).get()).data()!;
+   expect(item['documentRevision'],'original-$category');expect(item['localPath'],'retained-file');
+   expect(item['retryCount'],{'networkPath','timeout'}.contains(category)?0:8);
+  }
+  expect((await queue.doc('foreign').get()).data()?['syncState'],'retry');
+  expect(networkRecoveryCandidate({'syncState':'needsAttention','failureCategory':'networkPath','retryCount':8}),true);
+  for(final category in ['quota','authorization','unknown','validation','conflict']) {
+   expect(networkRecoveryCandidate({'syncState':'needsAttention','failureCategory':category}),false);
+  }
  });
  test('idle discovery waits one hour; fresh local work and reconnect work still enter immediately',(){
   final time=DateTime.utc(2026,1,1),watch=WindowsCloudChangeWatch();watch.succeeded(time);

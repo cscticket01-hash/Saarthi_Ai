@@ -579,6 +579,24 @@ class WindowsBackendBridge {
     });
   }
 
+  /// Same document writer as Save/ACK: a reconnect cannot overwrite a newer file.
+  static Future<int> resumeNetworkDocuments(String profile, String school) =>
+      _documentWrite(() async {
+    final db=FirebaseFirestore.instance;
+    if(db.activeProfileId!=profile)return 0;
+    var resumed=0;
+    final rows=await db.collection('_windows_document_outbox').get();
+    for(final row in rows.docs) {
+      final item=row.data();
+      if(item['schoolId']!=school || !networkRecoveryCandidate(item))continue;
+      if(db.activeProfileId!=profile)return resumed;
+      await row.reference.set({...item,'syncState':'retry','retryCount':0,
+        'retryAtMillis':DateTime.now().millisecondsSinceEpoch});
+      resumed++;
+    }
+    return resumed;
+  });
+
   static Future<void> flushDocumentPending({
     Future<Map<String,dynamic>> Function(String)? readDeletionCloud,
     Future<Map<String, dynamic>> Function(Map<String, dynamic>)? send,

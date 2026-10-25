@@ -243,7 +243,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_syncing) _rerunRequested = true;
       scheduleSoon();
     },
+    onVerified: () { unawaited(_resumeNetworkPending()); },
     onError: (error) {
+      if({SyncFailureKind.networkPath,SyncFailureKind.timeout}.contains(windowsSyncRecovery(error).kind))
+        _networkUnavailableSchool=_activeSchoolSyncId;
       _recordActivity({
         'stage': 'changeFeedUnavailable',
         'schoolId': _activeSchoolSyncId,
@@ -252,6 +255,41 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       });
     },
   );
+
+  String? _networkUnavailableSchool;
+  bool _resumingNetwork=false;
+  Future<void> _resumeNetworkPending() async {
+    if(_networkUnavailableSchool!=_activeSchoolSyncId || _resumingNetwork || !automaticScheduleExpected ||
+        _syncing || _activating>0 || (_quotaRetryAt?.isAfter(DateTime.now())??false))return;
+    _resumingNetwork=true;
+    final db=FirebaseFirestore.instance,profile=_activeProfileId,school=_activeSchoolSyncId;
+    try {
+      var count=0;
+      final rows=await db.collection('_windows_firebase_outbox').get();
+      for(final row in rows.docs) {
+        if(!automaticScheduleExpected || _activeProfileId!=profile || db.activeProfileId!=profile)return;
+        final item=row.data();
+        if(item['schoolId']!=school || !networkRecoveryCandidate(item))continue;
+        if(await db.recordOutboxFailure(row.reference,item,state:'retry',
+          failureCategory:item['failureCategory'] as String,retryCount:0,
+          retryAtMillis:DateTime.now().millisecondsSinceEpoch,
+          error:'Verified school connection restored; original request retained.'))count++;
+      }
+      count+=await WindowsBackendBridge.resumeNetworkDocuments(profile,school);
+      if(_activeProfileId!=profile || db.activeProfileId!=profile)return;
+      _networkUnavailableSchool=null;
+      if(count==0)return;
+      _nextRetry=null;_failures=0;
+      if(recoveryDecision?.kind==SyncFailureKind.networkPath ||
+          recoveryDecision?.kind==SyncFailureKind.timeout || recoveryDecision?.kind==SyncFailureKind.unknown)
+        recoveryDecision=null;
+      await refreshDetails();
+      scheduleSoon(localMutation:true);
+    } catch(error) {
+      _recordActivity({'stage':'networkRecoveryDeferred','schoolId':school,
+        'at':DateTime.now().millisecondsSinceEpoch,'failureCategory':windowsSyncRecovery(error).kind.name});
+    } finally {_resumingNetwork=false;}
+  }
 
   // Read-only discovery stays out of the queue/retry owner. Hints never ACK
   // uploads or advance local manifests; only verified record apply does that.

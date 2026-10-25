@@ -21,9 +21,10 @@ Map<String, dynamic> event(
 void main() {
   test('verified listener health disables duplicate discovery until an error', () {
     fakeAsync((clock) {
-      var failRead = false;
+      var failRead = false, verified = 0;
       final feed = WindowsRemoteChangeFeed(
         allowedCollections: {'notices'},
+        onVerified: () => verified++,
         read: (school, cursor) async {
           if (failRead) throw StateError('Offline');
           return event(school);
@@ -34,6 +35,7 @@ void main() {
       expect(feed.isHealthy, false);
       clock.flushMicrotasks();
       expect(feed.isHealthy, true);
+      expect(verified, 1);
       failRead = true;
       clock.elapse(const Duration(milliseconds: 250));
       clock.flushMicrotasks();
@@ -42,6 +44,7 @@ void main() {
       clock.elapse(const Duration(seconds: 2));
       clock.flushMicrotasks();
       expect(feed.isHealthy, true);
+      expect(verified, 2);
       feed.stop();
       expect(feed.isHealthy, false);
     });
@@ -167,9 +170,10 @@ void main() {
   );
   test('foreign and malformed hints fail visibly with bounded backoff', () {
     fakeAsync((clock) {
-      var calls = 0, errors = 0;
+      var calls = 0, errors = 0, verified = 0;
       final reader = WindowsRemoteChangeFeed(
         allowedCollections: {'fee_payments'},
+        onVerified: () => verified++,
         read: (school, cursor) async {
           calls++;
           return event('another-school', collections: ['fee_payments']);
@@ -180,6 +184,7 @@ void main() {
       reader.start('a', 'school-a');
       clock.flushMicrotasks();
       expect(errors, 1);
+      expect(verified, 0);
       clock.elapse(const Duration(seconds: 1));
       expect(calls, 1);
       clock.elapse(const Duration(seconds: 1));

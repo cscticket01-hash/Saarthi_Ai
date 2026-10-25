@@ -83,7 +83,8 @@ void main() {
     test('$collection changed Save replaces same person using authenticated CAS', () async {
       final identity=collection=='teachers_directory'?'teacherId':'mobileStableId';
       final ref=db.collection(collection).doc('P1');
-      await ref.set({'schoolId':school,identity:'person-1','name':'Local'});
+      await db.applySyncedDocument(ref,{'id':'P1','schoolId':school,identity:'person-1','name':'Original','_syncRevision':'verified-r1'});
+      await ref.update({'name':'Local'});
       final q=await pending(), original=qData(await pending());
       final remote={'schoolId':school,'id':'P1',identity:'person-1','name':'Cloud',
         '_syncRevision':'cloud-r2','_syncOperationId':'other-pc'};
@@ -138,7 +139,8 @@ void main() {
 
   test('deferred sync callback cannot inherit a directory Save gesture', () async {
     final ref=db.collection('teachers_directory').doc('T1');
-    await ref.set({'schoolId':school,'teacherId':'person-1','name':'Local'});
+    await db.applySyncedDocument(ref,{'id':'T1','schoolId':school,'teacherId':'person-1','name':'Original','_syncRevision':'verified-r1'});
+    await ref.update({'name':'Local'});
     final q=await pending();
     await db.recordOutboxConflict(q.reference,q.data()!,{
       'schoolId':school,'id':'T1','teacherId':'person-1','name':'Cloud',
@@ -158,7 +160,7 @@ void main() {
           db.collection('school_notices').doc('trigger').set({'message':'Synthetic trigger'}));
       await completion.future.timeout(const Duration(seconds:10));
       expect((await q.reference.get()).data()?['syncState'],'conflict');
-      expect((await q.reference.get()).data()?['baseCloudRevision'],'');
+      expect((await q.reference.get()).data()?['baseCloudRevision'],'verified-r1');
     } finally { WindowsLocalFirestoreSyncControl.onTrackedMutation=original; }
   });
 

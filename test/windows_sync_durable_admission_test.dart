@@ -65,7 +65,8 @@ void main() {
 
   test('automatic readback never discards different data, different student generation or a raced local edit', () async {
     final ref = db.collection('students_directory').doc('VI_Roll_1');
-    await ref.set({'name':'Same name','mobileStableId':'local-generation'});
+    await db.applySyncedDocument(ref,{'id':'VI_Roll_1','schoolId':school,'name':'Original name','mobileStableId':'local-generation','_syncRevision':'known-r1'});
+    await ref.update({'name':'Same name'});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
     final original = queue.data();
     final cloud = {...Map<String,dynamic>.from(original['data'] as Map),
@@ -223,7 +224,9 @@ void main() {
   });
 
   test('stale cloud pull cannot re-conflict an administrator-reviewed replacement', () async {
-    await db.collection('teachers_directory').doc('teacher').set({'name':'Reviewed local','capturedAt':123});
+    final ref=db.collection('teachers_directory').doc('teacher');
+    await db.applySyncedDocument(ref,{'id':'teacher','schoolId':school,'name':'Original','capturedAt':123,'_syncRevision':'known-r1'});
+    await ref.update({'name':'Reviewed local'});
     final queue = (await db.collection('_windows_firebase_outbox').get()).docs.single;
     final original = queue.data();
     final remote = {'schoolId':school,'id':'teacher','name':'Cloud version',

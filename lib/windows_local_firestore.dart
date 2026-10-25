@@ -1846,13 +1846,13 @@ class _LocalSchoolDatabase {
             final rows = collections[name];
             return rows is Map && rows.entries.any((entry) => entry.value is Map &&
               recordBelongsToStudent(name, entry.key.toString(), entry.value as Map,
-                id, (expected['data'] as Map)['mobileStableId'] as String));
+                id, ((expected['data'] as Map)['mobileStableId'] as String? ?? '')));
           }) ||
           (queue.values.any((row) => row is Map &&
             !(row['collection'] == 'students_directory' && row['documentId'] == id) &&
             row['data'] is Map && recordBelongsToStudent(
               row['collection'].toString(), row['documentId'].toString(), row['data'] as Map,
-              id, (expected['data'] as Map)['mobileStableId'] as String)))
+              id, ((expected['data'] as Map)['mobileStableId'] as String? ?? ''))))
         );
         if ((automaticDuplicateReadback(expected, remote) || firstCreate || recordFieldIntentSatisfied(expected,remote)) &&
             remote['_syncOperationId'] != operationId && !linkedStudent) {
