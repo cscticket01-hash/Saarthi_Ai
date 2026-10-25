@@ -1456,11 +1456,15 @@ class _LocalSchoolDatabase {
               WindowsLocalFirestoreSyncControl
                   .onTrackedMutation;
           if (callback != null) {
-            Future<void>.microtask(() async {
-              try {
-                await callback();
-              } catch (_) {}
-            });
+            // A Save gesture's authority ends at its own write. Dart zones
+            // otherwise propagate it into deferred sync/card preparation.
+            runZoned(() {
+              Future<void>.microtask(() async {
+                try {
+                  await callback();
+                } catch (_) {}
+              });
+            }, zoneValues:{WindowsLocalFirestoreSyncControl._userSaveKey:false});
           }
         }
 

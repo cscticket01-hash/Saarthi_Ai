@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/platform/platform_config.dart';
@@ -133,6 +134,32 @@ void main() {
       await ref.update({'amount':150});
       expect((await q.reference.get()).data()?['syncState'],'conflict');
     }
+  });
+
+  test('deferred sync callback cannot inherit a directory Save gesture', () async {
+    final ref=db.collection('teachers_directory').doc('T1');
+    await ref.set({'schoolId':school,'teacherId':'person-1','name':'Local'});
+    final q=await pending();
+    await db.recordOutboxConflict(q.reference,q.data()!,{
+      'schoolId':school,'id':'T1','teacherId':'person-1','name':'Cloud',
+      '_syncRevision':'cloud-r2','_syncOperationId':'other-pc',
+    });
+    final original=WindowsLocalFirestoreSyncControl.onTrackedMutation;
+    final completion=Completer<void>();
+    try {
+      WindowsLocalFirestoreSyncControl.onTrackedMutation=() async {
+        WindowsLocalFirestoreSyncControl.onTrackedMutation=null;
+        try {
+          await ref.update({'name':'Background preparation'});
+          completion.complete();
+        } catch(error,stack) { completion.completeError(error,stack); }
+      };
+      await WindowsLocalFirestoreSyncControl.runDirectorySave(() =>
+          db.collection('school_notices').doc('trigger').set({'message':'Synthetic trigger'}));
+      await completion.future.timeout(const Duration(seconds:10));
+      expect((await q.reference.get()).data()?['syncState'],'conflict');
+      expect((await q.reference.get()).data()?['baseCloudRevision'],'');
+    } finally { WindowsLocalFirestoreSyncControl.onTrackedMutation=original; }
   });
 
   test('corrected validation retries; authorization retains original diagnosis', () async {
