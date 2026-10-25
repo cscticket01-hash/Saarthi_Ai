@@ -1856,6 +1856,8 @@ class _LocalSchoolDatabase {
           // Only authenticated reconciliation supplies this CAS base. Saving
           // unchanged data never consumes it; changed Save retains both copies.
           if ({'students_directory','teachers_directory'}.contains(collection) &&
+              remote['id'] == id &&
+              (remote['documentId'] == null || remote['documentId'] == id) &&
               remote['_syncDeleted'] != true &&
               remote['replacesStudentGeneration'] == null &&
               !remote.keys.any((key)=>key.toString().startsWith('_syncRecreates')))
