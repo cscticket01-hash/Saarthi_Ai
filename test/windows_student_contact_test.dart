@@ -32,7 +32,11 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(const MaterialApp(home: AllStudentsListScreen()));
-    await tester.pump();
+    for (var i = 0; i < 100 && find.byType(CircularProgressIndicator).evaluate().isNotEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.tap(find.text('Add Student'));
     await tester.pumpAndSettle();
     Finder field(String hint) => find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == hint);
@@ -50,7 +54,8 @@ void main() {
       await tester.tap(find.text('Save Student'));
       await tester.pump();
       expect(find.text('Add New Student'), findsOneWidget);
-      expect((await db.collection('students_directory').get()).docs, isEmpty);
+      final records = await tester.runAsync(() => db.collection('students_directory').get());
+      expect(records!.docs, isEmpty);
     }
     expect(find.text('Contact number mein exactly 10 digits daalein.'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
