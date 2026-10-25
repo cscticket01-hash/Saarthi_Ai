@@ -356,7 +356,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     try {
       final result = await Process.run(
         'powershell.exe',
-        ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        ['-NoProfile', '-STA', '-Command', script],
       );
       final path = (result.stdout ?? '').toString().trim();
       if (result.exitCode != 0 || path.isEmpty || !File(path).existsSync()) {

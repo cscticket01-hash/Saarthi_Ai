@@ -108,8 +108,6 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         '-NonInteractive',
         '-WindowStyle',
         'Hidden',
-        '-ExecutionPolicy',
-        'Bypass',
         '-Command',
         script,
       ], mode: ProcessStartMode.detached);

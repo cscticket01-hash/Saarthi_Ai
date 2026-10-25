@@ -1,0 +1,40 @@
+name: Free public installer malware review
+on:
+  push:
+    branches: [fix/release-publisher-trust]
+    paths: ['.github/workflows/free-release-scan.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install free scanner and installer extractor
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clamav innoextract
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam
+      - name: Download and hash-check exact public Windows installer
+        run: |
+          set -euo pipefail
+          mkdir -p scan evidence
+          curl --fail --location --retry 2 --output scan/installer.exe 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Setup_2.1.171.exe'
+          echo '7c36ae4c90fdb8f04c4e5bd1142dd7bba29cb90bbb84cc03a9d6d4ae893fe750  scan/installer.exe' | sha256sum --check -
+          sha256sum scan/installer.exe > evidence/SHA256SUMS.txt
+          innoextract --extract --output-dir scan/extracted scan/installer.exe
+      - name: Scan installer and extracted application without deleting files
+        run: |
+          set -euo pipefail
+          clamscan --version | tee evidence/scanner-version.txt
+          clamscan --recursive --infected --max-filesize=200M --max-scansize=500M --alert-exceeds-max=yes --log=evidence/clamav.log scan
+          echo 'ClamAV scan completed successfully. This is an independent engine result, not a Microsoft Defender or Chrome reputation verdict.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-installer-independent-scan-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30

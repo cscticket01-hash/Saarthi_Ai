@@ -37,3 +37,13 @@ Android Play Store publication requires the owner's verified Play Console accoun
 ## Validation scope
 
 Local Android verifier tests cover the permanent signer, wrong signer, debug signer, missing signer and multiple signers. PR CI validates workflow structure and Windows PowerShell parsing plus missing-credential blocking. Actual CA signing, Defender scanning and Android SDK binary verification run on the relevant hosted release runner once credentials/builds are available. No live release, certificate purchase, false-positive submission or Play publication is performed by this PR.
+
+## Free-only follow-up
+
+No certificate purchase or paid service is authorized. Unnecessary process-level PowerShell execution-policy bypass flags were removed from the update cleanup helper and Windows image/document pickers; the scripts and existing quoting are preserved. This cleanup is not evidence that those flags caused a malware alert.
+
+A separate free ClamAV workflow scans the exact SHA-256-pinned public Windows v2.1.171 installer and its extracted application without executing or deleting it. Scanner definitions, logs and hash evidence are retained. Its result must never be described as a Defender/SmartScreen/Chrome verdict. Extraction, update or scan failure is not a clean result.
+
+Microsoft software-developer file review and Google security review are external steps requiring the exact detection/warning and, when required, an authenticated vendor account/site ownership. No vendor submission or successful review is claimed without a receipt.
+
+Free SignPath Foundation signing requires a qualifying open-source license. This repository has no root LICENSE; its public visibility alone does not grant that license. Do not relicense the commercial school app or claim eligibility without the owner's separate decision and provider acceptance.
