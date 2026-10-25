@@ -4842,355 +4842,6 @@ void _handleLoginBack(bool didPop) {
     super.dispose();
   }
 
-  void _openAddStudentDialog() {
-    final originProfile=FirebaseFirestore.instance.activeProfileId;
-    final nameCtrl = TextEditingController();
-    final parentCtrl = TextEditingController();
-    final rollCtrl = TextEditingController();
-    final contactCtrl = TextEditingController();
-    final addressCtrl = TextEditingController();
-    final pinCtrl = TextEditingController();
-    final stateCtrl = TextEditingController();
-    final districtCtrl = TextEditingController();
-    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}');
-    final dobCtrl = TextEditingController();
-    String selectedClass = _directoryClass;
-    String hostelFacility = 'No';
-    List<int>? selectedPhotoBytes;
-    bool isSaving = false;
-
-    showDialog(
-      context: context,
-      barrierDismissible: !isSaving,
-      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
-        return StatefulBuilder(
-          builder: (context, setDlgState) {WindowsAppearance.watch(context);
-            return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              title:  Row(
-                children: [
-                  Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
-                  SizedBox(width: 10),
-                  Text('Add New Student', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: selectedClass,
-                              dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                              decoration: _inputDecoration('Class'),
-                              items: _classList.map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
-                              onChanged: (value) {
-                                if (value != null) setDlgState(() => selectedClass = value);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: rollCtrl,
-                              keyboardType: TextInputType.number,
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                              decoration: _inputDecoration('Roll No *'),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(controller: nameCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
-                      const SizedBox(height: 10),
-                      TextField(controller: parentCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
-                      const SizedBox(height: 10),
-                      TextField(controller: contactCtrl, keyboardType: TextInputType.phone, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Contact No *')),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: hostelFacility,
-                        dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                        decoration: _inputDecoration('Hostel Facility'),
-                        items: const [
-                          DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
-                          DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) setDlgState(() => hostelFacility = value);
-                        },
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(controller: addressCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Address')),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(child: TextField(controller: districtCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('District'))),
-                          const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: stateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('State'))),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('PIN Code'))),
-                          const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Admission Date'))),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(controller: dobCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(side: BorderSide(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.grey))),
-                  onPressed: isSaving ? null : () async {
-                    final picker = ImagePicker();
-                    final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-                    if (image == null) return;
-                    final bytes = await image.readAsBytes();
-                    setDlgState(() => selectedPhotoBytes = bytes);
-                  },
-                  icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70)),
-                  label: Text(selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo', style: TextStyle(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70))),
-                ),
-                TextButton(
-                  onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
-                  child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                  ),
-                  onPressed: isSaving
-                      ? null
-                      : () async {
-                          final name = nameCtrl.text.trim();
-                          final parent = parentCtrl.text.trim();
-                          final roll = rollCtrl.text.trim();
-                          final contact = contactCtrl.text.trim();
-
-                          if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Colors.redAccent,
-                                content: Text(
-                                  'Name, Roll No aur Contact bharna zaroori hai!',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-
-                          String normalizeRoll(String value) {
-                            final cleaned = value.trim();
-                            final number = int.tryParse(cleaned);
-
-                            if (number != null) {
-                              return number.toString();
-                            }
-
-                            return cleaned.toLowerCase();
-                          }
-
-                          setDlgState(() => isSaving = true);
-
-                          // One permanent student identity:
-                          // Class 1 + Roll 1/01/001 all use the SAME document ID.
-                          final normalizedNewRoll = normalizeRoll(roll);
-                          final docId = '${selectedClass}_Roll_$normalizedNewRoll';
-                          final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
-                          String finalPhotoUrl = localPhoto;
-                          bool driveSaved = false;
-
-                          try {
-                            // Duplicate protection:
-                            // 1, 01, 001, 0001 ko same roll maana jayega.
-
-                            final existingStudents =
-                                await FirebaseFirestore.instance
-                                    .collection('students_directory')
-                                    .where('class', isEqualTo: selectedClass)
-                                    .get();
-
-                            final alreadyExists =
-                                existingStudents.docs.any((doc) {
-                              final data = doc.data();
-                              final existingRoll =
-                                  data['rollNo']?.toString() ?? '';
-
-                              return normalizeRoll(existingRoll) ==
-                                  normalizedNewRoll;
-                            });
-
-                            if (alreadyExists) {
-                              setDlgState(() => isSaving = false);
-
-                              if (!mounted) return;
-
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  backgroundColor: Colors.orangeAccent,
-                                  content: Text(
-                                    '$selectedClass me Roll $roll already exist karta hai!',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            final scriptUrl =
-                                await _windowsGoogleScriptUrl(required: false);
-
-                            if (scriptUrl.isNotEmpty) {
-                              final base64Image =
-                                  selectedPhotoBytes != null
-                                      ? base64Encode(selectedPhotoBytes!)
-                                      : '';
-
-                              final response = await WindowsBackendBridge.post(
-                                Uri.parse(scriptUrl),
-                                headers: {
-                                  'Content-Type':
-                                      'text/plain;charset=utf-8',
-                                },
-                                body: jsonEncode({
-                                  'action': 'add_student',
-                                  'name': name,
-                                  'parentName': parent,
-                                  'studentClass': selectedClass,
-                                  'roll': normalizedNewRoll,
-                                  'contact': contact,
-                                  'photoBase64': base64Image,
-                                  'hostelFacility': hostelFacility,
-                                  'address': addressCtrl.text.trim(),
-                                  'district': districtCtrl.text.trim(),
-                                  'state': stateCtrl.text.trim(),
-                                  'pinCode': pinCtrl.text.trim(),
-                                  'joiningDate':
-                                      admissionDateCtrl.text.trim(),
-                                  'dateOfBirth': dobCtrl.text.trim(),
-                                }),
-                              );
-
-                              if (response.statusCode != 200) {
-                                throw Exception(
-                                  'Google save failed: ${response.statusCode}',
-                                );
-                              }
-
-                              final responseJson =
-                                  Map<String, dynamic>.from(
-                                jsonDecode(response.body),
-                              );
-
-                              if (responseJson['success'] != true) {
-                                throw Exception(
-                                  responseJson['message'] ??
-                                      'Student save failed',
-                                );
-                              }
-
-                              driveSaved = responseJson['cloudSyncPending'] != true;
-
-                              if (responseJson['photoUrl'] != null) {
-                                finalPhotoUrl =
-                                    responseJson['photoUrl'].toString();
-                              }
-                            }
-
-                            if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
-                            final studentRef = FirebaseFirestore.instance
-                                .collection('students_directory')
-                                .doc(docId);
-
-                            await studentRef.set({
-                              'mobileStableId': SchoolPersonIdentity.newGeneration(),
-                              'name': name,
-                              'parentName': parent,
-                              'class': selectedClass,
-                              'rollNo': normalizedNewRoll,
-                              'parentContact': contact,
-                              'photoUrl': finalPhotoUrl,
-                              'hostelFacility': hostelFacility,
-                              'address': addressCtrl.text.trim(),
-                              'pinCode': pinCtrl.text.trim(),
-                              'district': districtCtrl.text.trim(),
-                              'state': stateCtrl.text.trim(),
-                              'joiningDate':
-                                  admissionDateCtrl.text.trim(),
-                              'dateOfBirth': dobCtrl.text.trim(),
-                              'createdAt': FieldValue.serverTimestamp(),
-                              'updatedAt': FieldValue.serverTimestamp(),
-                            });
-
-                            final assignedTestUid =
-                                await _ensureTestStudentUid(studentRef);
-
-                            if (!mounted) return;
-
-                            Navigator.pop(dialogContext);
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: driveSaved
-                                    ? const Color(0xFF00A884)
-                                    : Colors.orangeAccent,
-                                content: Text(
-                                  (driveSaved
-                                          ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
-                                          : 'Student saved on this PC. Cloud sync pending.') +
-                                      (assignedTestUid != null
-                                          ? ' Test UID: $assignedTestUid'
-                                          : ''),
-                                ),
-                              ),
-                            );
-                            setState(() {
-                              _directoryClass = selectedClass;
-                              _rollController.text = normalizedNewRoll;
-                              _nameController.text = name;
-                              _parentContactController.text = contact;
-                              _studentPhotoUrl = finalPhotoUrl;
-                            });
-                            await _showIdCardPreview();
-                          } catch (e) {
-                            if (dialogContext.mounted) setDlgState(() => isSaving = false);
-
-                            if (!mounted) return;
-
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: Colors.redAccent,
-                                content: Text(
-                                  'Student save error: $e',
-                                ),
-                              ),
-                            );
-                          }
-                        },
-                  child: Text(
-                    isSaving ? 'Saving...' : 'Save Student',
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
   Future<void> _saveNotice() async {
     final title = _noticeTitleController.text.trim();
     final description = _noticeDescController.text.trim();
@@ -6737,22 +6388,6 @@ Widget _buildOverviewCards() {
           title: 'Student Directory & ID Cards',
           subtitle: 'Search student records and manage digital ID cards',
           accent: const Color(0xFF00A884),
-          trailing: TextButton.icon(
-            onPressed: _openAddStudentDialog,
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF00D9A5),
-              backgroundColor: const Color(0xFF00A884).withOpacity(0.09),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-            label: const Text(
-              'Add Student',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-            ),
-          ),
           child: Column(
             children: [
               if (_studentPhotoUrl != null && _studentPhotoUrl!.trim().isNotEmpty) ...[
@@ -16577,6 +16212,382 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   ];
 
 
+  void _openAddStudentDialog() {
+    final originProfile=FirebaseFirestore.instance.activeProfileId;
+    final nameCtrl = TextEditingController();
+    final parentCtrl = TextEditingController();
+    final rollCtrl = TextEditingController();
+    final contactCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
+    final stateCtrl = TextEditingController();
+    final districtCtrl = TextEditingController();
+    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}');
+    final dobCtrl = TextEditingController();
+    String selectedClass = _selectedClassFilter == 'All Classes' ? 'Class 1' : _selectedClassFilter;
+    String hostelFacility = 'No';
+    List<int>? selectedPhotoBytes;
+    bool isSaving = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: !isSaving,
+      builder: (dialogContext) {WindowsAppearance.watch(dialogContext);
+        return StatefulBuilder(
+          builder: (context, setDlgState) {WindowsAppearance.watch(context);
+            return AlertDialog(
+              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              title:  Row(
+                children: [
+                  Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
+                  SizedBox(width: 10),
+                  Text('Add New Student', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: selectedClass,
+                              dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                              decoration: _inputDecoration('Class'),
+                              items: _classes.where((value) => value != 'All Classes').map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
+                              onChanged: (value) {
+                                if (value != null) setDlgState(() => selectedClass = value);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: rollCtrl,
+                              keyboardType: TextInputType.number,
+                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                              decoration: _inputDecoration('Roll No *'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(controller: nameCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
+                      const SizedBox(height: 10),
+                      TextField(controller: parentCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
+                      const SizedBox(height: 10),
+                      TextField(controller: contactCtrl, keyboardType: TextInputType.phone, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Contact No *')),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: hostelFacility,
+                        dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        decoration: _inputDecoration('Hostel Facility'),
+                        items: const [
+                          DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
+                          DropdownMenuItem(value: 'Yes', child: Text('Hostel Facility: Yes')),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) setDlgState(() => hostelFacility = value);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(controller: addressCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Address')),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(child: TextField(controller: districtCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('District'))),
+                          const SizedBox(width: 10),
+                          Expanded(child: TextField(controller: stateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('State'))),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('PIN Code'))),
+                          const SizedBox(width: 10),
+                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Admission Date'))),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(controller: dobCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(side: BorderSide(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.grey))),
+                  onPressed: isSaving ? null : () async {
+                    final picker = ImagePicker();
+                    final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                    if (image == null) return;
+                    final bytes = await image.readAsBytes();
+                    setDlgState(() => selectedPhotoBytes = bytes);
+                  },
+                  icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70)),
+                  label: Text(selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo', style: TextStyle(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70))),
+                ),
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
+                  child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00A884),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final name = nameCtrl.text.trim();
+                          final parent = parentCtrl.text.trim();
+                          final roll = rollCtrl.text.trim();
+                          final contact = contactCtrl.text.trim();
+
+                          if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text(
+                                  'Name, Roll No aur Contact bharna zaroori hai!',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          String normalizeRoll(String value) {
+                            final cleaned = value.trim();
+                            final number = int.tryParse(cleaned);
+
+                            if (number != null) {
+                              return number.toString();
+                            }
+
+                            return cleaned.toLowerCase();
+                          }
+
+                          setDlgState(() => isSaving = true);
+
+                          // One permanent student identity:
+                          // Class 1 + Roll 1/01/001 all use the SAME document ID.
+                          final normalizedNewRoll = normalizeRoll(roll);
+                          final docId = '${selectedClass}_Roll_$normalizedNewRoll';
+                          final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
+                          String finalPhotoUrl = localPhoto;
+                          bool driveSaved = false;
+
+                          try {
+                            // Duplicate protection:
+                            // 1, 01, 001, 0001 ko same roll maana jayega.
+
+                            final existingStudents =
+                                await FirebaseFirestore.instance
+                                    .collection('students_directory')
+                                    .where('class', isEqualTo: selectedClass)
+                                    .get();
+
+                            final alreadyExists =
+                                existingStudents.docs.any((doc) {
+                              final data = doc.data();
+                              final existingRoll =
+                                  data['rollNo']?.toString() ?? '';
+
+                              return normalizeRoll(existingRoll) ==
+                                  normalizedNewRoll;
+                            });
+
+                            if (alreadyExists) {
+                              setDlgState(() => isSaving = false);
+
+                              if (!mounted) return;
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  backgroundColor: Colors.orangeAccent,
+                                  content: Text(
+                                    '$selectedClass me Roll $roll already exist karta hai!',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            final scriptUrl =
+                                await _windowsGoogleScriptUrl(required: false);
+
+                            if (scriptUrl.isNotEmpty) {
+                              final base64Image =
+                                  selectedPhotoBytes != null
+                                      ? base64Encode(selectedPhotoBytes!)
+                                      : '';
+
+                              final response = await WindowsBackendBridge.post(
+                                Uri.parse(scriptUrl),
+                                headers: {
+                                  'Content-Type':
+                                      'text/plain;charset=utf-8',
+                                },
+                                body: jsonEncode({
+                                  'action': 'add_student',
+                                  'name': name,
+                                  'parentName': parent,
+                                  'studentClass': selectedClass,
+                                  'roll': normalizedNewRoll,
+                                  'contact': contact,
+                                  'photoBase64': base64Image,
+                                  'hostelFacility': hostelFacility,
+                                  'address': addressCtrl.text.trim(),
+                                  'district': districtCtrl.text.trim(),
+                                  'state': stateCtrl.text.trim(),
+                                  'pinCode': pinCtrl.text.trim(),
+                                  'joiningDate':
+                                      admissionDateCtrl.text.trim(),
+                                  'dateOfBirth': dobCtrl.text.trim(),
+                                }),
+                              );
+
+                              if (response.statusCode != 200) {
+                                throw Exception(
+                                  'Google save failed: ${response.statusCode}',
+                                );
+                              }
+
+                              final responseJson =
+                                  Map<String, dynamic>.from(
+                                jsonDecode(response.body),
+                              );
+
+                              if (responseJson['success'] != true) {
+                                throw Exception(
+                                  responseJson['message'] ??
+                                      'Student save failed',
+                                );
+                              }
+
+                              driveSaved = responseJson['cloudSyncPending'] != true;
+
+                              if (responseJson['photoUrl'] != null) {
+                                finalPhotoUrl =
+                                    responseJson['photoUrl'].toString();
+                              }
+                            }
+
+                            if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
+                            final studentRef = FirebaseFirestore.instance
+                                .collection('students_directory')
+                                .doc(docId);
+
+                            await studentRef.set({
+                              'mobileStableId': SchoolPersonIdentity.newGeneration(),
+                              'name': name,
+                              'parentName': parent,
+                              'class': selectedClass,
+                              'rollNo': normalizedNewRoll,
+                              'parentContact': contact,
+                              'photoUrl': finalPhotoUrl,
+                              'hostelFacility': hostelFacility,
+                              'address': addressCtrl.text.trim(),
+                              'pinCode': pinCtrl.text.trim(),
+                              'district': districtCtrl.text.trim(),
+                              'state': stateCtrl.text.trim(),
+                              'joiningDate':
+                                  admissionDateCtrl.text.trim(),
+                              'dateOfBirth': dobCtrl.text.trim(),
+                              'createdAt': FieldValue.serverTimestamp(),
+                              'updatedAt': FieldValue.serverTimestamp(),
+                            });
+
+                            final assignedTestUid =
+                                await _ensureTestStudentUid(studentRef);
+
+                            if (!mounted) return;
+
+                            Navigator.pop(dialogContext);
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: driveSaved
+                                    ? const Color(0xFF00A884)
+                                    : Colors.orangeAccent,
+                                content: Text(
+                                  (driveSaved
+                                          ? 'Student Google Sheet, Drive aur Firestore me save ho gaya.'
+                                          : 'Student saved on this PC. Cloud sync pending.') +
+                                      (assignedTestUid != null
+                                          ? ' Test UID: $assignedTestUid'
+                                          : ''),
+                                ),
+                              ),
+                            );
+                            setState(() => _selectedClassFilter = selectedClass);
+                          } catch (e) {
+                            if (dialogContext.mounted) setDlgState(() => isSaving = false);
+
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: Colors.redAccent,
+                                content: Text(
+                                  'Student save error: $e',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  child: Text(
+                    isSaving ? 'Saving...' : 'Save Student',
+                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  InputDecoration _inputDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle:  TextStyle(
+        color: WindowsAppearance.resolve(Colors.white30),
+        fontSize: 11.5,
+      ),
+      filled: true,
+      fillColor: WindowsAppearance.resolve(const Color(0xFF0D171C)),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 13,
+        vertical: 13,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: BorderSide(
+          color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(
+          color: Color(0xFF00A884),
+          width: 1.15,
+        ),
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+
   Future<void> _exportExcel() async {
     if (_exportingExcel) return;
     final db = FirebaseFirestore.instance;
@@ -17504,7 +17515,22 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       appBar: AppBar(
         backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
         title: const Text('Student Directory Records'),
-        actions: [TextButton.icon(onPressed:_exportingExcel?null:_exportExcel,icon:const Icon(Icons.table_view_outlined),label:Text(_exportingExcel?_exportProgress:'Export Excel')),const SizedBox(width:12)],
+        actions: [TextButton.icon(
+            onPressed: _openAddStudentDialog,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF00D9A5),
+              backgroundColor: const Color(0xFF00A884).withOpacity(0.09),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+            label: const Text(
+              'Add Student',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+            ),
+          ), TextButton.icon(onPressed:_exportingExcel?null:_exportExcel,icon:const Icon(Icons.table_view_outlined),label:Text(_exportingExcel?_exportProgress:'Export Excel')),const SizedBox(width:12)],
       ),
       body: Column(
         children: [
