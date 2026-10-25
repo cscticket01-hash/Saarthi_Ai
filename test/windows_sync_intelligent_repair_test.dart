@@ -304,7 +304,8 @@ void main() {
       },
     );
     expect(admitted, 1);
-    expect(reads, ['one', 'two']);
+    // Local outbox iteration order is an implementation detail, not a sync contract.
+    expect(reads, unorderedEquals(['one', 'two']));
     final after = (await db.collection('_windows_firebase_outbox').get()).docs;
     final retained = {for (final row in after) row.data()['documentId']: row.data()};
     expect(retained['one']?['syncState'], 'needsAttention');
