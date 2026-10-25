@@ -93,6 +93,11 @@ bool recoverablePendingAttention(
     (explicitRetry ||
         (item['retryCount'] as num? ?? 0) < automaticRecordRetryLimit);
 
+/// A verified reconnect may reopen transport failures, never quota or review.
+bool networkRecoveryCandidate(Map item) =>
+    {'retry','needsAttention'}.contains(item['syncState']) &&
+    {'networkPath','timeout'}.contains(item['failureCategory']);
+
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
   if (error is PendingSyncAttention) {
     return SyncRecoveryDecision(

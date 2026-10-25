@@ -243,7 +243,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_syncing) _rerunRequested = true;
       scheduleSoon();
     },
+    onVerified: () { unawaited(_resumeNetworkPending()); },
     onError: (error) {
+      if({SyncFailureKind.networkPath,SyncFailureKind.timeout}.contains(windowsSyncRecovery(error).kind))
+        _networkUnavailableSchool=_activeSchoolSyncId;
       _recordActivity({
         'stage': 'changeFeedUnavailable',
         'schoolId': _activeSchoolSyncId,
@@ -252,6 +255,41 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       });
     },
   );
+
+  String? _networkUnavailableSchool;
+  bool _resumingNetwork=false;
+  Future<void> _resumeNetworkPending() async {
+    if(_networkUnavailableSchool!=_activeSchoolSyncId || _resumingNetwork || !automaticScheduleExpected ||
+        _syncing || _activating>0 || (_quotaRetryAt?.isAfter(DateTime.now())??false))return;
+    _resumingNetwork=true;
+    final db=FirebaseFirestore.instance,profile=_activeProfileId,school=_activeSchoolSyncId;
+    try {
+      var count=0;
+      final rows=await db.collection('_windows_firebase_outbox').get();
+      for(final row in rows.docs) {
+        if(!automaticScheduleExpected || _activeProfileId!=profile || db.activeProfileId!=profile)return;
+        final item=row.data();
+        if(item['schoolId']!=school || !networkRecoveryCandidate(item))continue;
+        if(await db.recordOutboxFailure(row.reference,item,state:'retry',
+          failureCategory:item['failureCategory'] as String,retryCount:0,
+          retryAtMillis:DateTime.now().millisecondsSinceEpoch,
+          error:'Verified school connection restored; original request retained.'))count++;
+      }
+      count+=await WindowsBackendBridge.resumeNetworkDocuments(profile,school);
+      if(_activeProfileId!=profile || db.activeProfileId!=profile)return;
+      _networkUnavailableSchool=null;
+      if(count==0)return;
+      _nextRetry=null;_failures=0;
+      if(recoveryDecision?.kind==SyncFailureKind.networkPath ||
+          recoveryDecision?.kind==SyncFailureKind.timeout || recoveryDecision?.kind==SyncFailureKind.unknown)
+        recoveryDecision=null;
+      await refreshDetails();
+      scheduleSoon(localMutation:true);
+    } catch(error) {
+      _recordActivity({'stage':'networkRecoveryDeferred','schoolId':school,
+        'at':DateTime.now().millisecondsSinceEpoch,'failureCategory':windowsSyncRecovery(error).kind.name});
+    } finally {_resumingNetwork=false;}
+  }
 
   // Read-only discovery stays out of the queue/retry owner. Hints never ACK
   // uploads or advance local manifests; only verified record apply does that.
@@ -1749,6 +1787,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
             );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          WindowsFirebaseRemote.recordFieldPatchSupported=health['recordFieldPatchVersion']==1;
+          WindowsFirebaseRemote.recordPointReadSupported=health['recordPointReadVersion']==1;
           _recordDeltasSupported =
               health['recordDeltaRecordsVersion'] == 1 &&
               health['brokerRecordDeltaRecordsVersion'] == 1;
@@ -1908,8 +1948,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               preparationStack = stack;
             }
           }
-          // Only card preparation can create a second set of credential writes.
-          if (publishIds) {
+          // Reconciliation can reopen a lost-ACK operation even without cards.
+          {
             try {
               _admitBatch();
               await _pushManagedOutbox();
@@ -2334,7 +2374,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     String? onlyQueueId,
     String? onlyOperationId,
     bool Function()? canAdmit,
-  }) => WindowsPendingSchoolSync.flush(
+  }) async {
+    final canonical=<String,Map<String,dynamic>>{};
+    await WindowsPendingSchoolSync.flush(
     profileId: _activeProfileId,
     onlyQueueId: onlyQueueId,
     onlyOperationId: onlyOperationId,
@@ -2343,6 +2385,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     onActivity: _recordActivity,
     canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
     send: (c, id, op, data) async {},
+    prepareVersioned:(ref,item)=>WindowsFirebaseRemote.prepareQueuedRecord(ref,item,_activeSchoolSyncId),
+    canonicalForAck:(item)=>canonical[item['operationId']],
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
       final queuedAt = item['queuedAt'];
@@ -2378,12 +2422,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         throw StateError('School changed before retaining verified dependencies.');
       }
       final revision = reply['recordRevision'] as String;
+      if(item['operation']!='delete' && reply['record'] is Map)
+        canonical[item['operationId'] as String]=Map<String,dynamic>.from(reply['record']);
       // Persist before the outbox ACK can remove its only recovery source.
       await WindowsSyncDependencies.retain(school, item['collection'] as String,
           item['documentId'] as String, revision);
       return revision;
     },
   );
+  }
 
   Future<Set<String>> _managedChangedCollections(
     String school,

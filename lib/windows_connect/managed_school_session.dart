@@ -27,6 +27,7 @@ class ManagedSchoolSession {
   }
 
   static final changed=ValueNotifier<int>(0);
+  static final activeTransfers=ValueNotifier<int>(0);
   /// The shared review/web login must not call dart:io platform APIs.
   /// Metadata changes no credential, registry admission or authorization rule.
   static Map<String,dynamic> deviceRegistrationBody({bool web=kIsWeb,
@@ -45,7 +46,13 @@ class ManagedSchoolSession {
     try {
       final metadata = action=='managed/session' || action=='managed/device/list'
           ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
-      final result = await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},token:await CentralSchoolCloud.firebaseToken());
+      final token=await CentralSchoolCloud.firebaseToken();
+      final visibleTransfer=action!='managed/events'; // A quiet event subscription is not data transfer.
+      if(visibleTransfer)activeTransfers.value++;
+      late final Map<String,dynamic> result;
+      try {
+        result=await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},token:token);
+      } finally {if(visibleTransfer)activeTransfers.value--;}
       final currentIdentity = await CentralSchoolCloud.saved();
       if (currentIdentity['schoolId'] != saved['schoolId'] || currentIdentity['uid'] != saved['uid']) {
         throw StateError('School changed during operation. Retry login.');

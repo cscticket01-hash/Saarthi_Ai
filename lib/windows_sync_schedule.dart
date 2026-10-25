@@ -189,7 +189,7 @@ class WindowsCloudChangeWatch {
   void succeeded(DateTime now) {
     _verified = true;
     failures = 0;
-    nextCheck = now.add(const Duration(seconds: 30));
+    nextCheck = now.add(const Duration(hours: 1));
   }
 
   void failed(DateTime now) {

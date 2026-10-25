@@ -15,6 +15,7 @@ const _bookkeeping = {
   '_syncDeletedFileId',
   '_syncFileCleanupComplete',
   '_syncUpdatedAt',
+  '_syncFieldRevisions',
 };
 Object? _canonical(Object? value) {
   if (value is Timestamp)

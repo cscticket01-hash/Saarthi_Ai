@@ -331,9 +331,11 @@ class WindowsFirebaseRemote {
         id == 'school_profile_cache') {
       requireSchoolProfile(item['data'] as Map);
     }
+    if(item['wireMode']=='fieldPatch1' && !recordFieldPatchSupported)
+      throw StateError('School Script field-patch support is required for this saved request.');
     final data = item['operation'] == 'delete'
         ? null
-        : await prepareManagedRecord(
+        : item['wireData'] is Map ? Map<String,dynamic>.from(item['wireData']) : await prepareManagedRecord(
             Map<String, dynamic>.from(item['data'] as Map),
             school,
             (action, body) =>
@@ -395,7 +397,40 @@ class WindowsFirebaseRemote {
         id,
         Map<String, dynamic>.from(result['record'] as Map),
       );
+    if(result['record']==null && data!=null && item['wireMode']!='fieldPatch1') {
+      result['record']={...data,'id':id,'_syncRevision':result['recordRevision'],
+        '_syncOperationId':item['operationId']};
+    }
     return result;
+  }
+
+  static bool recordFieldPatchSupported=false;
+  static bool recordPointReadSupported=false;
+  static Future<Map<String,dynamic>?> prepareQueuedRecord(
+      DocumentReference<Map<String,dynamic>> ref,Map<String,dynamic> item,String school) async {
+    if(item['wireData'] is Map)return item;
+    if(recordPointReadSupported && item['createIntent']==true && (item['baseCloudRevision']??'')=='') {
+      final reply=await ManagedSchoolSession.callForSchool(school,'managed/records',{
+        'operation':'read','collection':item['collection'],'id':item['documentId'],'syncProtocol':2,
+      });
+      if(reply['schoolId']!=school||reply['syncProtocol']!=2||reply['pointRead']!=true||reply['records'] is! Map)
+        throw StateError('Unverified record preflight. Original retained.');
+      final found=reply['records'][item['documentId']];
+      if(found is Map && found['_syncDeleted']!=true) {
+        await FirebaseFirestore.instance.recordOutboxConflict(ref,item,
+          {...Map<String,dynamic>.from(found),'id':item['documentId']});
+        return null;
+      }
+    }
+    final patch=recordFieldPatchSupported && item['fieldPatch'] is Map;
+    final source=Map<String,dynamic>.from(patch?item['fieldPatch']['set'] as Map:item['data'] as Map);
+    final data=await prepareManagedRecord(source,school,
+      (action,body)=>ManagedSchoolSession.callForSchool(school,action,body));
+    final wire=patch? <String,dynamic>{'schoolId':school,'_syncFieldPatch':{
+      ...Map<String,dynamic>.from(item['fieldPatch'] as Map),
+      'set':({...data}..remove('schoolId')),
+    }}:data;
+    return FirebaseFirestore.instance.bindOutboxWireData(ref,item,wire,patch?'fieldPatch1':'snapshot2');
   }
 
   /// Authenticated collection heads are discovery hints, never receipts.

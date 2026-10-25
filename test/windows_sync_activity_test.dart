@@ -59,7 +59,7 @@ void main() {
     watch.succeeded(now);
     expect(watch.hasVerifiedDiscovery, true);
     expect(watch.due(now.add(const Duration(seconds:29))),false);
-    expect(watch.due(now.add(const Duration(seconds:30))),true);
+    expect(watch.due(now.add(const Duration(hours:1))),true);
     final known={'fee_payments':'fee-1','students_directory':'students-1'};
     expect(changedWindowsCollections(known,known),isEmpty);
     expect(changedWindowsCollections(known,{...known,'fee_payments':'fee-2'}),{'fee_payments'});

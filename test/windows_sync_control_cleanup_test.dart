@@ -36,7 +36,7 @@ void main() {
     expect(find.text('Detailed status & safe controls'), findsNothing);
     expect(find.text('Needs attention'), findsNothing);
     expect(find.text('Pending Uploads'), findsOneWidget);
-    expect(find.text('3 Pending · 2 Need Attention\n1 Conflicts · 1 Failed'), findsOneWidget);
+    expect(find.text('3 Pending · 2 Need Attention\n1 Conflicts · 1 Failed\n0 file cleanup operations included'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Live Queue Activity'), 200,
         scrollable: find.byType(Scrollable).first);
     expect(find.text('Live Queue Activity'), findsOneWidget);
