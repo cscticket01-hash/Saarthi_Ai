@@ -256,7 +256,7 @@ test('notice deletion is acknowledged as a tombstone and removes mobile delta ev
  assert.equal(f.call(deletion).success,true);assert.equal(f.call(deletion).success,true);
  const next=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,knownRevisions:first.revisions,knownNoticeRevisions:{n:first.notices[0]._noticeRevision}});
  assert.deepEqual(next.noticeIds,[]);assert.deepEqual(next.notices,[]);
- assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-11.4');
+ assert.equal(f.call({action:'managed_health'}).scriptBundleVersion,'2026-10-25.2');
 });
 
 test('bounded migration resumes across requests and never activates a partial collection',()=>{
@@ -380,4 +380,38 @@ test('blank asset-only profile and empty identity overwrite never modify school 
  const bad=write({schoolName:'',principalName:'Principal',schoolContactNo:'123'});
  assert.equal(bad.success,false);assert.equal(bad.code,'SCRIPT_EMPTY_PROFILE_OVERWRITE');
  assert.equal(f.call({action:'managed_records',operation:'read',collection:'school_config'}).records.school_profile_cache.schoolName,'School');
+});
+
+test('mobile versioned lists transfer only changed visible records and acknowledge removals',()=>{
+ const f=storage(),write=(col,id,data)=>f.call({action:'managed_records',operation:'write',collection:col,id,data:{schoolId:A,...data}});
+ const token='a'.repeat(48);write('students_directory','pupil',{name:'Pupil',class:'1',rollNo:'1',dob:'2015-01-01',mobileLinkToken:token});
+ write('school_calendar','a',{title:'Retained'});write('school_calendar','b',{title:'Before'});
+ write('fee_ledger','own',{personId:'pupil',amount:50});write('fee_ledger','other',{personId:'another',amount:999});
+ const mobile=request=>f.call({action:'managed_mobile',request,lease:{schoolId:A,expiresAt:Date.now()+3600000}});
+ const login=mobile({action:'mobile_login',projectId:A,role:'student',personId:'pupil',linkToken:token,studentClass:'1',rollNo:'1',dob:'2015-01-01'});
+ write('fee_settings','class1',{className:'1',amount:10});write('fee_settings','class2',{className:'2',amount:20});
+ const legacy=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken});
+ const upgraded=mobile({action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1,knownRevision:legacy.revision,knownRevisions:legacy.revisions});assert.equal(upgraded.mobileRecordDeltaVersion,1);
+ const request={action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1};
+ const first=mobile(request);assert.equal(first.success,true);assert.equal(first.calendar.length,2);assert.equal(first.fees.length,1);assert.equal(first.fees[0].amount,50);
+ const knownGroupRecordRevisions=Object.fromEntries(Object.keys(first.groupRecordDeltas).map(key=>[key,Object.fromEntries(first[key].map(row=>[row._mobileRecordId,row._mobileRecordRevision]))]));
+ write('school_calendar','b',{title:'After'});
+ const next=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(next.success,true);assert.equal(next.calendar.length,1);assert.equal(next.calendar[0].title,'After');assert.deepEqual(next.groupRecordDeltas.calendar.ids,['a','b']);assert.equal(next.fees,undefined);
+ assert.equal(f.call({action:'managed_records',operation:'delete',collection:'school_calendar',id:'b'}).success,true);
+ const removed=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(removed.success,true);assert.deepEqual(removed.groupRecordDeltas.calendar.ids,['a']);assert.deepEqual(removed.calendar,[]);
+ const bad=mobile({...request,knownGroupRecordRevisions:{calendar:[]}});assert.equal(bad.success,false);
+ // Released clients can retain legacy noticeIds metadata after upgrading.
+ // Their checkpoint builder serializes that list as an empty record map.
+ const compatible=mobile({...request,knownGroupRecordRevisions:{...knownGroupRecordRevisions,noticeIds:{},legacyMetadata:{}}});
+ assert.equal(compatible.success,true);assert.deepEqual(compatible.groupRecordDeltas.calendar.ids,['a']);
+ assert.equal(compatible.noticeIds,undefined);assert.equal(compatible.legacyMetadata,undefined);
+ assert.equal(compatible.groupRecordDeltas.legacyMetadata,undefined);
+ assert.equal(compatible.fees.some(row=>row.personId==='another'),false);
+ for(const foreign of [{id:'a'.repeat(64)},[],null,'invalid']){
+  assert.equal(mobile({...request,knownGroupRecordRevisions:{foreign}}).success,false);
+ }
+ assert.equal(mobile({...request,knownGroupRecordRevisions:{calendar:{a:'invalid'}}}).success,false);
+
+ write('students_directory','pupil',{name:'Pupil',class:'2',rollNo:'1',dob:'2015-01-01',mobileLinkToken:token});
+ const reScoped=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(reScoped.success,true);assert.deepEqual(reScoped.groupRecordDeltas.feeStructures.ids,['class2']);assert.equal(reScoped.feeStructures[0].amount,20);
 });

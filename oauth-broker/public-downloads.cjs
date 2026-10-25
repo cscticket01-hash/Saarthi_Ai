@@ -7,7 +7,7 @@ const path=require('node:path');
 const {pipeline}=require('node:stream/promises');
 const repo='cscticket01-hash/Saarthi_Ai';
 // Verified release fallback keeps downloads available when GitHub rate-limits shared hosting IPs.
-const verifiedReleases=[{"tag_name":"windows-v2.1.171","assets":[{"name":"Vidya_Saarthi_Setup_2.1.171.exe","size":16945994,"digest":"sha256:7c36ae4c90fdb8f04c4e5bd1142dd7bba29cb90bbb84cc03a9d6d4ae893fe750","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Setup_2.1.171.exe"}]},{"tag_name":"android-v1.0.599","assets":[{"name":"Vidya-Saarthi-v1.0.599.apk","size":68311325,"digest":"sha256:a053e91a4fecad98f1d84d208ae743b47dbdd17b243a60ea7c5fafaf8e793ff9","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.599/Vidya-Saarthi-v1.0.599.apk"}]}];
+const verifiedReleases=[{"tag_name":"windows-v2.1.177","assets":[{"name":"Vidya_Saarthi_Setup_2.1.177.exe","size":16989532,"digest":"sha256:7c55411d44cba4fb1124d7fb78b778795cb40347f557af0c266687981db575a4","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.177/Vidya_Saarthi_Setup_2.1.177.exe"}]},{"tag_name":"android-v1.0.607","assets":[{"name":"Vidya-Saarthi-v1.0.607.apk","size":68311325,"digest":"sha256:be36a23026c433fc1304a4ecd43582a6c561c3340b4ef91927a6fc1377d27ee5","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.607/Vidya-Saarthi-v1.0.607.apk"}]}];
 function selectInstaller(releases,platform){
  const re=new RegExp(`^${platform}-v(\\d+)\\.(\\d+)\\.(\\d+)$`);
  return releases.filter(r=>!r.draft&&!r.prerelease&&re.test(r.tag_name)).sort((a,b)=>{

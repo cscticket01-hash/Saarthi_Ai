@@ -29,7 +29,7 @@ function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=500}
     events:[...(Array.isArray(old.events)?old.events:[]),...events].slice(-64)});
   },{maxAttempts:2});
  }
- return {enabled,publishMany,async publish(school,collection,id){return publishMany(school,[collection],id);
+ return {enabled,collections:[...allowed],publishMany,async publish(school,collection,id){return publishMany(school,[collection],id);
  },async wait(school,cursor){
   valid(school);if(!enabled)throw Object.assign(Error('Change feed unavailable'),{status:503,code:'CHANGE_FEED_UNAVAILABLE',publicMessage:true});
   if(cursor!==undefined&&(typeof cursor!=='string'||cursor.length>80||! /^(?:empty|[a-f0-9-]{36}):[0-9]{1,15}$/.test(cursor)))throw Object.assign(Error('Invalid change cursor'),{status:400,publicMessage:true});

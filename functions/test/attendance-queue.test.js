@@ -65,6 +65,17 @@ test('authoritative licence denial is retained for attention; temporary service 
 });
 module.exports={store,event};
 
+test('malformed or ambiguous cloud receipts never clear accepted attendance',async()=>{
+ for(const mode of ['not-array','duplicate','null-and-foreign']){
+  const s=store(),q=createAttendanceQueue({store:s,now:()=>1000,deliver:async(_,items)=>{
+   const good={operationId:items[0].operationId,success:true};
+   return mode==='not-array'?{}:mode==='duplicate'?[good,{...good,success:false}]:[null,{operationId:'foreign',success:true}];
+  }});
+  const accepted=await q.enqueue(event());await q.drain();
+  assert.equal(s.rows.size,1);assert.equal(s.rows.get(accepted.operationId).state,'retry');assert.equal(q.metrics.completed,0);
+ }
+});
+
 test('Firestore worker queries due operations only and defers claimed rows until lease expiry',async()=>{
  const calls=[];let claimed;
  const query={where:(field,op,value)=>{calls.push({field,op,value});return query;},orderBy:field=>{calls.push({orderBy:field});return query;},limit:()=>query,get:async()=>({docs:[]})};
