@@ -27,6 +27,139 @@ bool pendingRecordBackoffDue(
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
+  /// Read-only diagnosis followed by existing CAS owners. No inferred ACK,
+  /// credential repair, queue reset, or blind same-field conflict overwrite.
+  static Future<int> repair({
+    required String profileId,
+    required String school,
+    required Future<Map<String, dynamic>> Function(String, String) read,
+    bool Function()? canAdmit,
+    void Function(Map<String, dynamic>)? onActivity,
+    DateTime Function()? now,
+  }) async {
+    final db = FirebaseFirestore.instance, clock = now ?? DateTime.now;
+    void scope() {
+      if (db.activeProfileId != profileId ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed during repair.');
+    }
+
+    scope();
+    final rows = await db.collection('_windows_firebase_outbox').get();
+    scope();
+    var probes = 0, repaired = 0;
+    for (final row in rows.docs) {
+      if (probes >= 5 || canAdmit?.call() == false) break;
+      scope();
+      final item = row.data(),
+          state = item['syncState'],
+          category = item['failureCategory'];
+      if (item['schoolId'] != school ||
+          !{'conflict', 'needsAttention'}.contains(state) ||
+          state != 'conflict' &&
+              !{'networkPath', 'timeout', 'server'}.contains(category) ||
+          !{'set', 'update', 'delete'}.contains(item['operation']) ||
+          item['collection'] == 'documents' ||
+          item['operationId'] is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
+              .hasMatch(item['operationId'] as String) ||
+          item['baseCloudRevision'] is! String)
+        continue;
+      final journal = db
+          .collection('_windows_sync_status')
+          .doc('repair-${item['operationId']}');
+      final prior = (await journal.get()).data();
+      scope();
+      if ((prior?['nextProbeAt'] as num? ?? 0) > clock().millisecondsSinceEpoch)
+        continue;
+      final attempts = (prior?['attempts'] as num? ?? 0).toInt() + 1;
+      final delay = Duration(
+        minutes: (5 * (1 << attempts.clamp(0, 4).toInt())).clamp(5, 60).toInt(),
+      );
+      await journal.set({
+        'schoolId': school,
+        'operationId': item['operationId'],
+        'attempts': attempts,
+        'nextProbeAt': clock().add(delay).millisecondsSinceEpoch,
+        'outcome': 'diagnosing',
+      });
+      scope();
+      probes++;
+      final response = await read(
+        item['collection'] as String,
+        item['documentId'] as String,
+      );
+      scope();
+      if (response['schoolId'] != school ||
+          response['syncProtocol'] != 2 ||
+          response['pointRead'] != true ||
+          response['records'] is! Map ||
+          (response['records'] as Map).keys.any((k) => k != item['documentId']))
+        throw StateError('Repair readback unverified; original retained.');
+      final remote = response['records'][item['documentId']];
+      if (remote != null) {
+        if (remote is! Map ||
+            remote['schoolId'] != school ||
+            remote['_syncRevision'] is! String ||
+            (remote['_syncRevision'] as String).isEmpty)
+          throw StateError('Repair cloud identity unverified.');
+        await db.recordOutboxConflict(row.reference, item, {
+          ...Map<String, dynamic>.from(remote),
+          'id': item['documentId'],
+        });
+        scope();
+      }
+      final current = (await row.reference.get()).data();
+      scope();
+      var outcome = 'review_required';
+      if (current == null) {
+        outcome = 'verified_cloud_reconciled';
+        repaired++;
+      } else if (current['operationId'] == item['operationId'] &&
+          current['syncState'] == 'pending') {
+        outcome = 'retry_admitted';
+        repaired++;
+      } else if (current['operationId'] == item['operationId'] &&
+          current['syncState'] == 'needsAttention' &&
+          {
+            'networkPath',
+            'timeout',
+            'server',
+          }.contains(current['failureCategory']) &&
+          (remote == null
+              ? item['baseCloudRevision'] == ''
+              : remote['_syncRevision'] == item['baseCloudRevision'])) {
+        if (await db.recordOutboxFailure(
+          row.reference,
+          current,
+          state: 'retry',
+          error: 'Authenticated repair readback verified; original request retained.',
+          failureCategory: current['failureCategory'] as String,
+          retryCount: 0,
+          retryAtMillis: clock().millisecondsSinceEpoch,
+        )) {
+          outcome = 'retry_admitted';
+          repaired++;
+        }
+      }
+      await journal.set({
+        'outcome': outcome,
+        'verifiedReadbackAt': clock().millisecondsSinceEpoch,
+      }, const SetOptions(merge: true));
+      scope();
+      onActivity?.call({
+        'schoolId': school,
+        'queueCollection': '_windows_firebase_outbox',
+        'queueId': row.id,
+        'operationId': item['operationId'],
+        'stage': 'repairDiagnosed',
+        'outcome': outcome,
+        'at': clock().millisecondsSinceEpoch,
+      });
+    }
+    return repaired;
+  }
+
   static Future<void> flush({
     required String profileId,
     required Future<void> Function(
@@ -37,8 +170,12 @@ class WindowsPendingSchoolSync {
     )
     send,
     Future<String> Function(Map<String, dynamic> item)? sendVersioned,
-    Future<Map<String,dynamic>?> Function(DocumentReference<Map<String,dynamic>>,Map<String,dynamic>)? prepareVersioned,
-    Map<String,dynamic>? Function(Map<String,dynamic>)? canonicalForAck,
+    Future<Map<String, dynamic>?> Function(
+      DocumentReference<Map<String, dynamic>>,
+      Map<String, dynamic>,
+    )?
+    prepareVersioned,
+    Map<String, dynamic>? Function(Map<String, dynamic>)? canonicalForAck,
     bool Function()? canAdmit,
     String? onlyQueueId,
     String? onlyOperationId,
@@ -97,7 +234,7 @@ class WindowsPendingSchoolSync {
 
     int priority(Map<String, dynamic> d) {
       final collection = d['collection'];
-      if(collection=='students_directory')return -1;
+      if (collection == 'students_directory') return -1;
       if ({
         'attendance_records',
         'attendance_logs',
@@ -208,10 +345,12 @@ class WindowsPendingSchoolSync {
       // Explicit Sync Now can re-diagnose a legacy blocked request whose
       // category was never persisted. Preserve its exact operation/CAS base;
       // never rebase it or treat a successful transport response as an ACK.
-      final diagnoseLegacy = diagnoseUnclassified && sendVersioned != null &&
+      final diagnoseLegacy =
+          diagnoseUnclassified &&
+          sendVersioned != null &&
           item['syncState'] == 'needsAttention' &&
           (item['failureCategory'] == null || item['failureCategory'] == '') &&
-          {'set','delete'}.contains(operation) &&
+          {'set', 'delete'}.contains(operation) &&
           collection != 'documents' &&
           item['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
           item['operationId'] is String &&
@@ -228,25 +367,40 @@ class WindowsPendingSchoolSync {
         if (sendVersioned != null) {
           final prior = item['priorDeletion'];
           if (prior is Map) {
-            if (prior['schoolId'] != item['schoolId'] || prior['collection'] != collection ||
-                prior['documentId'] != id || prior['operation'] != 'delete' ||
-                prior['operationId'] is! String || prior['baseCloudRevision'] is! String) {
-              throw StateError('Original same-school deletion dependency required.');
+            if (prior['schoolId'] != item['schoolId'] ||
+                prior['collection'] != collection ||
+                prior['documentId'] != id ||
+                prior['operation'] != 'delete' ||
+                prior['operationId'] is! String ||
+                prior['baseCloudRevision'] is! String) {
+              throw StateError(
+                'Original same-school deletion dependency required.',
+              );
             }
-            final deletion = Map<String,dynamic>.from(prior);
+            final deletion = Map<String, dynamic>.from(prior);
             final deletedRevision = await sendVersioned(deletion);
             unchanged();
-            if (deletedRevision.trim().isEmpty) throw const MissingSyncAcknowledgement();
-            await db.acknowledgeOutbox(queued.reference,deletion,revision:deletedRevision);
+            if (deletedRevision.trim().isEmpty)
+              throw const MissingSyncAcknowledgement();
+            await db.acknowledgeOutbox(
+              queued.reference,
+              deletion,
+              revision: deletedRevision,
+            );
             final current = (await queued.reference.get()).data();
             unchanged();
-            if (current == null || current['operationId'] != item['operationId']) continue;
+            if (current == null ||
+                current['operationId'] != item['operationId'])
+              continue;
             item = current;
-            if (item['priorDeletion'] != null) throw StateError('Deletion acknowledgement not durable.');
+            if (item['priorDeletion'] != null)
+              throw StateError('Deletion acknowledgement not durable.');
           }
-          if(prepareVersioned!=null && item['operation']!='delete') {
-            final bound=await prepareVersioned(queued.reference,item);
-            unchanged();if(bound==null)continue;item=bound;
+          if (prepareVersioned != null && item['operation'] != 'delete') {
+            final bound = await prepareVersioned(queued.reference, item);
+            unchanged();
+            if (bound == null) continue;
+            item = bound;
           }
           final response = sendVersioned(item);
           report('waitingForAck', queued.id, item);
@@ -312,7 +466,8 @@ class WindowsPendingSchoolSync {
           error: e.toString(),
           diagnostic: documentFailureDiagnostic(e, 'recordRequestAndAck'),
         );
-        if (decision.independentRecords || recordConflict ||
+        if (decision.independentRecords ||
+            recordConflict ||
             {
               'SCRIPT_RECORD_VERIFY_FAILED',
               'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
@@ -323,8 +478,12 @@ class WindowsPendingSchoolSync {
         rethrow;
       }
       unchanged();
-      await db.acknowledgeOutbox(queued.reference, item, revision: revision,
-        canonicalRecord:canonicalForAck?.call(item));
+      await db.acknowledgeOutbox(
+        queued.reference,
+        item,
+        revision: revision,
+        canonicalRecord: canonicalForAck?.call(item),
+      );
       watch.stop();
       report(
         sendVersioned != null ? 'verified' : 'requestCompleted',

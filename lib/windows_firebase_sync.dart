@@ -1,3 +1,4 @@
+import 'windows_sync_recovery.dart';
 import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'school_profile_policy.dart';
@@ -320,8 +321,9 @@ class WindowsFirebaseRemote {
 
   static Future<Map<String, dynamic>> syncManagedRecord(
     Map<String, dynamic> item,
-    String school,
-  ) async {
+    String school, {
+    Map<String, dynamic>? batchReply,
+  }) async {
     if (item['schoolId'] != school)
       throw StateError('Pending record belongs to another school.');
     final collection = item['collection'].toString(),
@@ -331,11 +333,15 @@ class WindowsFirebaseRemote {
         id == 'school_profile_cache') {
       requireSchoolProfile(item['data'] as Map);
     }
-    if(item['wireMode']=='fieldPatch1' && !recordFieldPatchSupported)
-      throw StateError('School Script field-patch support is required for this saved request.');
+    if (item['wireMode'] == 'fieldPatch1' && !recordFieldPatchSupported)
+      throw StateError(
+        'School Script field-patch support is required for this saved request.',
+      );
     final data = item['operation'] == 'delete'
         ? null
-        : item['wireData'] is Map ? Map<String,dynamic>.from(item['wireData']) : await prepareManagedRecord(
+        : item['wireData'] is Map
+        ? Map<String, dynamic>.from(item['wireData'])
+        : await prepareManagedRecord(
             Map<String, dynamic>.from(item['data'] as Map),
             school,
             (action, body) =>
@@ -352,12 +358,13 @@ class WindowsFirebaseRemote {
         'deletedStudentGeneration': item['deletedStudentGeneration'],
       if (data != null) 'data': migrationJsonValue(data),
     };
-    Future<Map<String, dynamic>> sendPrepared() =>
-        ManagedSchoolSession.callForSchool(
-          school,
-          'managed/records',
-          requestBody,
-        );
+    Future<Map<String, dynamic>> sendPrepared() => batchReply != null
+        ? Future.value(batchReply)
+        : ManagedSchoolSession.callForSchool(
+            school,
+            'managed/records',
+            requestBody,
+          );
     Map<String, dynamic> result;
     try {
       result = await sendPrepared();
@@ -397,40 +404,230 @@ class WindowsFirebaseRemote {
         id,
         Map<String, dynamic>.from(result['record'] as Map),
       );
-    if(result['record']==null && data!=null && item['wireMode']!='fieldPatch1') {
-      result['record']={...data,'id':id,'_syncRevision':result['recordRevision'],
-        '_syncOperationId':item['operationId']};
+    if (result['record'] == null &&
+        data != null &&
+        item['wireMode'] != 'fieldPatch1') {
+      result['record'] = {
+        ...data,
+        'id': id,
+        '_syncRevision': result['recordRevision'],
+        '_syncOperationId': item['operationId'],
+      };
     }
     return result;
   }
 
-  static bool recordFieldPatchSupported=false;
-  static bool recordPointReadSupported=false;
-  static Future<Map<String,dynamic>?> prepareQueuedRecord(
-      DocumentReference<Map<String,dynamic>> ref,Map<String,dynamic> item,String school) async {
-    if(item['wireData'] is Map)return item;
-    if(recordPointReadSupported && item['createIntent']==true && (item['baseCloudRevision']??'')=='') {
-      final reply=await ManagedSchoolSession.callForSchool(school,'managed/records',{
-        'operation':'read','collection':item['collection'],'id':item['documentId'],'syncProtocol':2,
-      });
-      if(reply['schoolId']!=school||reply['syncProtocol']!=2||reply['pointRead']!=true||reply['records'] is! Map)
+  static bool recordWriteBatchSupported = false;
+  static Future<Map<String, Object>> prepareManagedBatch(
+    String school, {
+    required bool Function() canAdmit,
+  }) async {
+    if (!recordWriteBatchSupported || !canAdmit()) return {};
+    final db = FirebaseFirestore.instance, profile = db.activeProfileId;
+    final rows = (await db.collection('_windows_firebase_outbox').get()).docs;
+    // Keep parent creation and deletion dependency ordering with the original owner.
+    if (rows.any(
+      (r) =>
+          {
+            'students_directory',
+            'teachers_directory',
+          }.contains(r.data()['collection']) &&
+          {'pending', 'retry'}.contains(r.data()['syncState']),
+    ))
+      return {};
+    final ready = <Map<String, dynamic>>[],
+        operations = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      if (ready.length >= 10 || !canAdmit()) break;
+      if (db.activeProfileId != profile)
+        throw StateError('School changed before batch preparation.');
+      final item = row.data();
+      if (item['schoolId'] != school ||
+          !{'pending', 'retry'}.contains(item['syncState']) ||
+          item['operation'] != 'set' ||
+          {
+            'students_directory',
+            'teachers_directory',
+            'documents',
+            'backups',
+            'school_config',
+          }.contains(item['collection']) ||
+          item['priorDeletion'] != null ||
+          item['data'] is! Map ||
+          item['operationId'] is! String ||
+          (item['retryAtMillis'] as num? ?? 0) >
+              DateTime.now().millisecondsSinceEpoch)
+        continue;
+      final bound = await prepareQueuedRecord(row.reference, item, school);
+      if (bound == null) continue;
+      final op = <String, dynamic>{
+        'collection': bound['collection'],
+        'id': bound['documentId'],
+        'operation': 'write',
+        'syncProtocol': 2,
+        'operationId': bound['operationId'],
+        'expectedRecordRevision': bound['baseCloudRevision'] ?? '',
+        'data': migrationJsonValue(bound['wireData']),
+      };
+      if (utf8.encode(jsonEncode([...operations, op])).length > 250000) break;
+      ready.add(bound);
+      operations.add(op);
+    }
+    if (ready.length < 2 || !canAdmit()) return {};
+    final reply = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/records/batch',
+      {'operations': operations},
+    );
+    if (db.activeProfileId != profile)
+      throw StateError('School changed during batch.');
+    if (reply['schoolId'] != school ||
+        reply['syncProtocol'] != 2 ||
+        reply['recordWriteBatchVersion'] != 1 ||
+        reply['acknowledgements'] is! List)
+      throw StateError(
+        'Batch receipts unverified; original operations retained.',
+      );
+    final results = <String, Object>{};
+    for (final raw in reply['acknowledgements']) {
+      if (raw is! Map ||
+          !ready.any((r) => r['operationId'] == raw['operationId']) ||
+          results.containsKey(raw['operationId']) ||
+          raw['success'] is! bool)
+        throw StateError('Invalid batch receipt identity.');
+      final id = raw['operationId'] as String;
+      if (raw['success'] == true) {
+        if (raw['recordRevision'] is! String ||
+            (raw['recordRevision'] as String).isEmpty)
+          throw const MissingSyncAcknowledgement();
+        results[id] = {
+          'schoolId': school,
+          'syncProtocol': 2,
+          ...Map<String, dynamic>.from(raw),
+        };
+      } else {
+        final code = raw['code']?.toString() ?? 'SCRIPT_OPERATION_FAILED';
+        final conflict = {
+          'SCRIPT_RECORD_REVISION_CONFLICT',
+          'SCRIPT_OPERATION_ID_CONFLICT',
+        }.contains(code);
+        results[id] = CentralCloudException(
+          conflict
+              ? 409
+              : code == 'SCRIPT_PERMISSION_DENIED'
+              ? 403
+              : code == 'SCRIPT_QUOTA_EXCEEDED'
+              ? 429
+              : 503,
+          'school_cloud',
+          'Batch record retained for verified recovery.',
+          diagnosticCode: conflict
+              ? code == 'SCRIPT_OPERATION_ID_CONFLICT'
+                    ? 'OPERATION_ID_CONFLICT'
+                    : 'RECORD_REVISION_CONFLICT'
+              : code,
+        );
+      }
+    }
+    return results;
+  }
+
+  static bool recordFieldPatchSupported = false;
+  static bool recordPointReadSupported = false;
+  static Future<Map<String, dynamic>?> prepareQueuedRecord(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> item,
+    String school,
+  ) async {
+    if (item['wireData'] is Map) return item;
+    if (recordPointReadSupported &&
+        item['createIntent'] == true &&
+        (item['baseCloudRevision'] ?? '') == '') {
+      final reply = await ManagedSchoolSession.callForSchool(
+        school,
+        'managed/records',
+        {
+          'operation': 'read',
+          'collection': item['collection'],
+          'id': item['documentId'],
+          'syncProtocol': 2,
+        },
+      );
+      if (reply['schoolId'] != school ||
+          reply['syncProtocol'] != 2 ||
+          reply['pointRead'] != true ||
+          reply['records'] is! Map)
         throw StateError('Unverified record preflight. Original retained.');
-      final found=reply['records'][item['documentId']];
-      if(found is Map && found['_syncDeleted']!=true) {
-        await FirebaseFirestore.instance.recordOutboxConflict(ref,item,
-          {...Map<String,dynamic>.from(found),'id':item['documentId']});
+      final found = reply['records'][item['documentId']];
+      if (found is Map && found['_syncDeleted'] != true) {
+        await FirebaseFirestore.instance.recordOutboxConflict(ref, item, {
+          ...Map<String, dynamic>.from(found),
+          'id': item['documentId'],
+        });
         return null;
       }
     }
-    final patch=recordFieldPatchSupported && item['fieldPatch'] is Map;
-    final source=Map<String,dynamic>.from(patch?item['fieldPatch']['set'] as Map:item['data'] as Map);
-    final data=await prepareManagedRecord(source,school,
-      (action,body)=>ManagedSchoolSession.callForSchool(school,action,body));
-    final wire=patch? <String,dynamic>{'schoolId':school,'_syncFieldPatch':{
-      ...Map<String,dynamic>.from(item['fieldPatch'] as Map),
-      'set':({...data}..remove('schoolId')),
-    }}:data;
-    return FirebaseFirestore.instance.bindOutboxWireData(ref,item,wire,patch?'fieldPatch1':'snapshot2');
+    final patch = recordFieldPatchSupported && item['fieldPatch'] is Map;
+    final source = Map<String, dynamic>.from(
+      patch ? item['fieldPatch']['set'] as Map : item['data'] as Map,
+    );
+    final data = await prepareManagedRecord(
+      source,
+      school,
+      (action, body) =>
+          ManagedSchoolSession.callForSchool(school, action, body),
+    );
+    final wire = patch
+        ? <String, dynamic>{
+            'schoolId': school,
+            '_syncFieldPatch': {
+              ...Map<String, dynamic>.from(item['fieldPatch'] as Map),
+              'set': ({...data}..remove('schoolId')),
+            },
+          }
+        : data;
+    return FirebaseFirestore.instance.bindOutboxWireData(
+      ref,
+      item,
+      wire,
+      patch ? 'fieldPatch1' : 'snapshot2',
+    );
+  }
+
+  static Future<Map<String, dynamic>> readManagedPoints(
+    String school,
+    String collection,
+    Set<String> ids,
+  ) async {
+    if (ids.length > 64)
+      throw StateError('Bounded record notification required.');
+    final records = <String, dynamic>{};
+    for (final id in ids) {
+      final result = await ManagedSchoolSession.callForSchool(
+        school,
+        'managed/records',
+        {
+          'operation': 'read',
+          'collection': collection,
+          'id': id,
+          'syncProtocol': 2,
+        },
+      );
+      if (result['schoolId'] != school ||
+          result['syncProtocol'] != 2 ||
+          result['pointRead'] != true ||
+          result['records'] is! Map ||
+          (result['records'] as Map).keys.any((key) => key != id))
+        throw StateError('Unverified point read; notification retained.');
+      final row = result['records'][id];
+      if (row is! Map ||
+          row['schoolId'] != school ||
+          row['_syncRevision'] is! String ||
+          (row['_syncRevision'] as String).isEmpty)
+        throw StateError('Notified record requires authoritative recovery.');
+      records[id] = Map<String, dynamic>.from(row);
+    }
+    return records;
   }
 
   /// Authenticated collection heads are discovery hints, never receipts.

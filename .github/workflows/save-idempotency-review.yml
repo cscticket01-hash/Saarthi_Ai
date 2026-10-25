@@ -11,6 +11,8 @@ on:
       - 'lib/windows_sync_comparison.dart'
       - 'lib/windows_sync_recovery.dart'
       - 'lib/windows_sync_engine.dart'
+      - 'lib/windows_sync_inbox.dart'
+      - 'lib/windows_remote_change_feed.dart'
       - 'lib/windows_pending_school_sync.dart'
       - 'lib/windows_sync_conflict_review.dart'
       - 'lib/windows_sync_control_center.dart'
@@ -39,4 +41,4 @@ jobs:
       - name: Analyze changed sync source
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_local_firestore.dart lib/windows_sync_comparison.dart lib/windows_sync_recovery.dart lib/windows_sync_engine.dart test/windows_save_idempotency_test.dart
       - name: Verify real storage, double Save, conflict and ACK behavior
-        run: flutter test --concurrency=1 --timeout 120s --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} test/windows_save_idempotency_test.dart test/windows_smart_record_sync_test.dart test/windows_legacy_queue_recovery_test.dart test/windows_sync_review_responsiveness_test.dart test/windows_sync_comparison_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart
+        run: flutter test --concurrency=1 --timeout 120s --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} test/windows_save_idempotency_test.dart test/windows_smart_record_sync_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart test/windows_legacy_queue_recovery_test.dart test/windows_sync_review_responsiveness_test.dart test/windows_sync_comparison_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart
