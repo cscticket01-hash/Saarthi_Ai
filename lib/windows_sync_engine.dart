@@ -1951,8 +1951,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _admitBatch();
         await refreshDetails();
         if ((details.value['needsAttention'] as num? ?? 0) > 0)
-          throw StateError(
-            'Items need conflict review; both versions retained.',
+          throw PendingSyncAttention(
+            (details.value['needsAttention'] as num).toInt(),
+            (details.value['conflictCount'] as num? ?? 0).toInt(),
           );
         if ((details.value['pending'] as num? ?? 0) > 0) {
           // Legacy Drive requests are visible for review but are not serviced

@@ -15368,6 +15368,7 @@ class _AddTeacherScreenState
   // ============================================================
 
   Future<void> _saveTeacher() async {
+    if (_saving) return;
     final name =
         _nameCtrl.text.trim();
 
@@ -16353,6 +16354,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                   onPressed: isSaving
                       ? null
                       : () async {
+                          if (isSaving) return;
                           final name = nameCtrl.text.trim();
                           final parent = parentCtrl.text.trim();
                           final roll = rollCtrl.text.trim();

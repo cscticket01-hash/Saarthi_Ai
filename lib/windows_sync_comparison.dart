@@ -14,6 +14,7 @@ const _bookkeeping = {
   '_syncDeleted',
   '_syncDeletedFileId',
   '_syncFileCleanupComplete',
+  '_syncUpdatedAt',
 };
 Object? _canonical(Object? value) {
   if (value is Timestamp)
@@ -39,6 +40,41 @@ String syncPayloadHash(Map data) => sha256
       ),
     )
     .toString();
+
+/// Directory Save timestamps describe the save, not another person or edit.
+/// Keep identity, photos, lifecycle markers and every business field in proof.
+/// Financial/document dates remain significant in their original collections.
+bool sameSavedRecord(String collection, Map left, Map right) {
+  Map value(Map row) => {
+    for (final entry in row.entries)
+      if (!({'students_directory', 'teachers_directory'}.contains(collection) &&
+          {'createdAt', 'updatedAt'}.contains(entry.key)))
+        entry.key: entry.value,
+  };
+  return syncPayloadHash(value(left)) == syncPayloadHash(value(right));
+}
+
+/// An explicit changed Save may replace a reviewed directory version, using
+/// CAS against the last authenticated read. Never apply to another person,
+/// a deletion/recreation, documents or financial records.
+bool canSaveDirectoryConflict(Map queued, Map data) {
+  final proof = queued['directoryConflictBase'];
+  final collection = queued['collection'];
+  final field = collection == 'students_directory' ? 'mobileStableId' : 'teacherId';
+  return {'students_directory', 'teachers_directory'}.contains(collection) &&
+      queued['syncState'] == 'conflict' && queued['operation'] == 'set' &&
+      queued['priorDeletion'] == null && queued['reviewedFromOperationId'] == null &&
+      proof is Map && proof['schoolId'] == queued['schoolId'] &&
+      proof['documentId'] == queued['documentId'] &&
+      proof['revision'] is String && (proof['revision'] as String).isNotEmpty &&
+      proof['identityField'] == field && proof['identity'] is String &&
+      (proof['identity'] as String).isNotEmpty &&
+      queued['data'] is Map && queued['data'][field] == proof['identity'] &&
+      data[field] == proof['identity'] &&
+      (data['schoolId'] == null || data['schoolId'] == proof['schoolId']) &&
+      !data.keys.any((key) => key.toString().startsWith('_syncRecreates')) &&
+      data['replacesStudentGeneration'] == null;
+}
 
 bool identicalDocumentPayload(Map local, Map cloud) {
   if (local['schoolId'] == null ||
@@ -78,7 +114,7 @@ String compareSyncVersions(Map queued, Map cloud) {
   final local = queued['data'];
   if (local is! Map)
     return 'differs'; // File bytes must be verified by their owner.
-  if (syncPayloadHash(local) == syncPayloadHash(cloud)) return 'identical';
+  if (sameSavedRecord(queued['collection']?.toString() ?? '', local, cloud)) return 'identical';
   return 'differs (revision order unknown)';
 }
 

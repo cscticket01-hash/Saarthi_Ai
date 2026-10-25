@@ -1,0 +1,32 @@
+name: Windows duplicate Save and safe replacement review
+on:
+  pull_request:
+    paths:
+      - 'lib/windows_local_firestore.dart'
+      - 'lib/windows_sync_comparison.dart'
+      - 'lib/windows_sync_recovery.dart'
+      - 'lib/windows_sync_engine.dart'
+      - 'test/windows_save_idempotency_test.dart'
+      - '.github/workflows/save-idempotency-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  save-and-sync:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        sqlite: ['false', 'true']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze changed sync source
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_local_firestore.dart lib/windows_sync_comparison.dart lib/windows_sync_recovery.dart lib/windows_sync_engine.dart test/windows_save_idempotency_test.dart
+      - name: Verify real storage, double Save, conflict and ACK behavior
+        run: flutter test --concurrency=1 --timeout 120s --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} test/windows_save_idempotency_test.dart test/windows_sync_comparison_test.dart test/windows_sync_revision_test.dart test/windows_sync_durable_admission_test.dart

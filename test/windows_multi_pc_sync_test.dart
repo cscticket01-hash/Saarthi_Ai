@@ -211,9 +211,14 @@ void main() {
 
     // A retained stale operation can conflict even with unchanged collection
     // heads. Fetch only this missing checkpoint, retaining every other one.
+    // Restore an old-version pending fixture explicitly: unchanged Save now
+    // correctly creates no queue entry after a verified download.
     await rig.db.collection('school_notices').doc('N1').set(values);
-    final q = (await rig.queue()).single;
-    await q.reference.update({'baseCloudRevision':''});
+    expect(await rig.queue(), isEmpty);
+    await rig.db.collection('_windows_firebase_outbox').doc('legacy-stale-fixture').set({
+      ...original, 'operationId':'legacy-stale-operation',
+      'baseCloudRevision':'', 'syncState':'pending',
+    });
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
     await rig.pull({'school_notices'});
     expect(await rig.queue(),isEmpty);
