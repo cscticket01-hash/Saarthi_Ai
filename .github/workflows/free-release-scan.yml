@@ -21,11 +21,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p scan evidence
-          curl --fail --location --retry 2 --output scan/installer.exe 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Setup_2.1.171.exe'
-          echo '7c36ae4c90fdb8f04c4e5bd1142dd7bba29cb90bbb84cc03a9d6d4ae893fe750  scan/installer.exe' | sha256sum --check -
+          curl --fail --location --retry 2 --output scan/installer.exe 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.172/Vidya_Saarthi_Setup_2.1.172.exe'
+          echo '0636484f0c2fcb1ceb693015fe6bc1117422fa11b21e5eda97a223a336e604b7  scan/installer.exe' | sha256sum --check -
           sha256sum scan/installer.exe > evidence/SHA256SUMS.txt
-          curl --fail --location --retry 2 --output scan/portable.zip 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Windows_Portable_2.1.171.zip'
-          echo '7874667e3f5f07c653b16c5504d00c077db83ed7d7a5c8ca32dda62fec4ca1af  scan/portable.zip' | sha256sum --check -
+          curl --fail --location --retry 2 --output scan/portable.zip 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.172/Vidya_Saarthi_Windows_Portable_2.1.172.zip'
+          echo 'edb342122ae9debb94b212f9969a92e458c1402df71ce54fcb1f695d9582ce78  scan/portable.zip' | sha256sum --check -
           sha256sum scan/portable.zip >> evidence/SHA256SUMS.txt
           python3 -m zipfile -t scan/portable.zip
           python3 -m zipfile -e scan/portable.zip scan/portable
