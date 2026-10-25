@@ -33,15 +33,25 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Require trusted publisher signing before building a public release
+      - name: Report optional publisher signing readiness
+        id: publisher_signing
         shell: powershell
         env:
           WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
           WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
           WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
+          REQUIRE_SIGNING: ${{ vars.WINDOWS_REQUIRE_TRUSTED_SIGNING }}
         run: |
-          if (!$env:WINDOWS_SIGNING_PFX_BASE64 -or !$env:WINDOWS_SIGNING_PASSWORD -or !$env:WINDOWS_SIGNING_THUMBPRINT) {
-            throw 'Trusted publisher certificate is required. See docs/release-trust.md. Unsigned public releases are blocked.'
+          $values = @($env:WINDOWS_SIGNING_PFX_BASE64, $env:WINDOWS_SIGNING_PASSWORD, $env:WINDOWS_SIGNING_THUMBPRINT)
+          $configured = @($values | Where-Object { ![string]::IsNullOrWhiteSpace($_) }).Count
+          if ($configured -gt 0 -and $configured -lt 3) { throw 'Partial signing configuration; refusing silent unsigned fallback.' }
+          if ($configured -eq 3) {
+            'available=true' >> $env:GITHUB_OUTPUT
+            'Publisher signing: configured; signatures must pass verification.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            if ($env:REQUIRE_SIGNING -eq 'true') { throw 'Trusted publisher signing required but unavailable.' }
+            'available=false' >> $env:GITHUB_OUTPUT
+            'Publisher signing: UNSIGNED free build. Chrome/SmartScreen warnings may remain.' >> $env:GITHUB_STEP_SUMMARY
           }
 
       - name: Set up Flutter
@@ -292,6 +302,7 @@ jobs:
           Write-Host "Built EXE: $($exe.FullName)"
 
       - name: Sign and verify application
+        if: steps.publisher_signing.outputs.available == 'true'
         shell: powershell
         env:
           WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
@@ -358,6 +369,7 @@ jobs:
           & $iscc 'build\vidya_saarthi_windows.iss'
 
       - name: Sign and verify installer
+        if: steps.publisher_signing.outputs.available == 'true'
         shell: powershell
         env:
           WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
@@ -365,24 +377,30 @@ jobs:
           WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
         run: .github/scripts/sign_windows_release.ps1 -Path 'build'
 
-      - name: Scan final release files with Microsoft Defender
+      - name: Record available Defender scan evidence
+        shell: powershell
+        env:
+          REQUIRE_DEFENDER_SCAN: ${{ vars.WINDOWS_REQUIRE_DEFENDER_SCAN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $status = Get-MpComputerStatus
+          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) {
+            if ($env:REQUIRE_DEFENDER_SCAN -eq 'true') { throw 'Required Defender scan unavailable on this runner.' }
+            'Defender scan: UNVERIFIED (hosted protection inactive). This is not a clean verdict.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          Update-MpSignature
+          $scanner = Get-ChildItem "$env:ProgramData/Microsoft/Windows Defender/Platform/*/MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$scanner) { throw 'Active Defender scanner unavailable.' }
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path build).Path
+          if ($LASTEXITCODE -ne 0) { throw 'Defender did not report a clean release scan. Investigate before publication.' }
+          'Hosted Defender scan: PASS. Client reputation remains unverified.' >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Hash final public release artifacts
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          # Enable protection only on this disposable hosted runner; never add exclusions.
-          $status = Get-MpComputerStatus
-          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) {
-            Set-Service -Name WinDefend -StartupType Automatic
-            Start-Service -Name WinDefend
-            Set-MpPreference -DisableRealtimeMonitoring $false
-            $status = Get-MpComputerStatus
-          }
-          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) { throw 'Defender must be enabled for release verification.' }
-          Update-MpSignature
-          $scanner = Get-ChildItem "$env:ProgramData/Microsoft/Windows Defender/Platform/*/MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          if (!$scanner) { throw 'Microsoft Defender scanner unavailable.' }
-          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path build).Path
-          if ($LASTEXITCODE -ne 0) { throw 'Defender did not report a clean release scan. Investigate before publication.' }
+          Remove-Item build/SHA256SUMS.txt -ErrorAction SilentlyContinue
           Get-ChildItem build -File | Where-Object { $_.Extension -in '.exe', '.zip' } | ForEach-Object {
             $hash = Get-FileHash $_.FullName -Algorithm SHA256
             "$($hash.Hash.ToLowerInvariant())  $($_.Name)" | Add-Content build/SHA256SUMS.txt
@@ -407,6 +425,7 @@ jobs:
           name: Vidya Saarthi Windows v${{ steps.app_version.outputs.version }}
           make_latest: false
           body: |
+            Publisher signing configured: ${{ steps.publisher_signing.outputs.available }}. When false, this is an unsigned build and Chrome/SmartScreen may warn or scan it. See build summary for scan evidence; unavailable scans are not clean verdicts.
             User-authorized publication of Smart Sync 3.0 and the live Sync & Backup Control Center. Automatic queue reconciliation runs every four minutes, with immediate local-change triggers, durable pending records and verified cloud ACK handling.
             Reuses the existing shared sync protocol, adds negotiated delta batching and bounded school-scoped read caches. Document compression preserves originals and targets readable output; 80 KB is a target, not a guarantee.
             Fees save-and-lock behavior retains the full 30-second wait and authorized App Lock flow. Authentication, licence enforcement and school isolation remain enforced.

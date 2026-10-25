@@ -35,3 +35,26 @@ jobs:
           } catch {
             if ($_.Exception.Message -notlike 'Trusted Windows signing credentials missing.*') { throw }
           }
+      - name: Verify free-build and strict signing readiness decisions
+        shell: powershell
+        run: |
+          python -m pip install pyyaml
+          if ($LASTEXITCODE -ne 0) { throw 'YAML parser setup failed.' }
+          python -c "import pathlib,yaml; w=yaml.safe_load(pathlib.Path('.github/workflows/build-windows.yml').read_text()); s=next(s for s in w['jobs']['build-windows']['steps'] if s.get('id')=='publisher_signing'); pathlib.Path('publisher-readiness-test.ps1').write_text(s['run'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot extract actual release readiness step.' }
+          $env:GITHUB_STEP_SUMMARY = Join-Path $env:RUNNER_TEMP 'readiness-test-summary.txt'
+          $cases = @(
+            @{ values=@('', '', ''); strict=''; pass=$true; result='available=false' },
+            @{ values=@('', '', ''); strict='true'; pass=$false; result='' },
+            @{ values=@('test-only', '', ''); strict=''; pass=$false; result='' },
+            @{ values=@('test-only', 'test-only', 'test-only'); strict='true'; pass=$true; result='available=true' }
+          )
+          foreach ($case in $cases) {
+            $env:WINDOWS_SIGNING_PFX_BASE64, $env:WINDOWS_SIGNING_PASSWORD, $env:WINDOWS_SIGNING_THUMBPRINT = $case.values
+            $env:REQUIRE_SIGNING = $case.strict
+            $env:GITHUB_OUTPUT = Join-Path $env:RUNNER_TEMP ('readiness-' + [guid]::NewGuid() + '.txt')
+            & powershell.exe -NoProfile -NonInteractive -File publisher-readiness-test.ps1
+            if (($LASTEXITCODE -eq 0) -ne $case.pass) { throw 'Unexpected signing readiness decision.' }
+            if ($case.pass -and !(Get-Content $env:GITHUB_OUTPUT | Where-Object { $_ -eq $case.result })) { throw 'Incorrect available output.' }
+          }
+          exit 0
