@@ -97,7 +97,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     pendingWork:
         _hasAutomaticWork ||
         _remoteCollections.isNotEmpty ||
-        _remoteResetPending || _pendingIdInputs.isNotEmpty,
+        _remoteResetPending || _pendingIdInputs.isNotEmpty ||
+        (lastError != null && recoveryDecision?.retry == true && _failures <= 5),
   );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
