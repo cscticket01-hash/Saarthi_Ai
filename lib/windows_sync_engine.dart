@@ -1077,7 +1077,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (localMutation) _automaticMutationPending = true;
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
-      if ((!localMutation && _remoteCollections.isEmpty) ||
+      if ((!localMutation &&
+              _remoteCollections.isEmpty &&
+              _remoteRecordIds.isEmpty &&
+              !windowsIntegrityAuditDue(
+                now: DateTime.now(),
+                lastAttempt: _lastIntegrityAttempt,
+              )) ||
           !recoveryDecision!.independentRecords)
         return;
       recoveryDecision = null;

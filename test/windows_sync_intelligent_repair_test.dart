@@ -8,6 +8,8 @@ import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_inbox.dart';
 import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_sync_engine.dart';
+import '../lib/windows_firebase_sync.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +26,7 @@ void main() {
     );
   });
   tearDown(() async {
+    WindowsFirebaseRemote.recordWriteBatchSupported = false;
     await db.resetVolatileSession();
   });
   Map<String, dynamic> record(String id, String revision) => {
@@ -196,5 +199,74 @@ void main() {
       read: read,
     );
     expect(probes, 1);
+  });
+  test('bounded batch mixed receipts clear only acknowledged operations and retain failed original IDs', () async {
+    WindowsFirebaseRemote.recordWriteBatchSupported = true;
+    for (final id in ['one', 'two'])
+      await db.collection('school_notices').doc(id).set({'title': id});
+    final before = (await db.collection('_windows_firebase_outbox').get()).docs;
+    var sends = 0;
+    final results = await WindowsFirebaseRemote.prepareManagedBatch(
+      school,
+      canAdmit: () => true,
+      prepareRecord: (ref, item, school) => db.bindOutboxWireData(
+        ref,
+        item,
+        Map<String, dynamic>.from(item['data'] as Map),
+        'snapshot2',
+      ),
+      send: (school, ops) async {
+        sends++;
+        expect(ops, hasLength(2));
+        return {
+          'schoolId': school,
+          'syncProtocol': 2,
+          'recordWriteBatchVersion': 1,
+          'acknowledgements': [
+            for (final op in ops)
+              op['id'] == 'one'
+                  ? {
+                      'operationId': op['operationId'],
+                      'success': true,
+                      'recordRevision': 'verified-one',
+                    }
+                  : {
+                      'operationId': op['operationId'],
+                      'success': false,
+                      'code': 'SCRIPT_RECORD_REVISION_CONFLICT',
+                    },
+          ],
+        };
+      },
+    );
+    expect(sends, 1);
+    await expectLater(
+      WindowsPendingSchoolSync.flush(
+        profileId: db.activeProfileId,
+        send: (a, b, c, d) async {},
+        sendVersioned: (item) async {
+          final result = results[item['operationId']];
+          if (result is CentralCloudException) throw result;
+          return (result as Map)['recordRevision'] as String;
+        },
+      ),
+      throwsA(isA<CentralCloudException>()),
+    );
+    final left = (await db.collection('_windows_firebase_outbox').get())
+        .docs
+        .single
+        .data();
+    expect(left['documentId'], 'two');
+    expect(left['syncState'], 'conflict');
+    expect(
+      left['operationId'],
+      before
+          .singleWhere((r) => r.data()['documentId'] == 'two')
+          .data()['operationId'],
+    );
+    expect(
+      (await db.collection('school_notices').doc('one').get()).data()?['title'],
+      'one',
+    );
   });
 }

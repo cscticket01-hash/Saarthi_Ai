@@ -421,6 +421,14 @@ class WindowsFirebaseRemote {
   static Future<Map<String, Object>> prepareManagedBatch(
     String school, {
     required bool Function() canAdmit,
+    Future<Map<String, dynamic>?> Function(
+      DocumentReference<Map<String, dynamic>>,
+      Map<String, dynamic>,
+      String,
+    )?
+    prepareRecord,
+    Future<Map<String, dynamic>> Function(String, List<Map<String, dynamic>>)?
+    send,
   }) async {
     if (!recordWriteBatchSupported || !canAdmit()) return {};
     final db = FirebaseFirestore.instance, profile = db.activeProfileId;
@@ -458,7 +466,11 @@ class WindowsFirebaseRemote {
           (item['retryAtMillis'] as num? ?? 0) >
               DateTime.now().millisecondsSinceEpoch)
         continue;
-      final bound = await prepareQueuedRecord(row.reference, item, school);
+      final bound = await (prepareRecord ?? prepareQueuedRecord)(
+        row.reference,
+        item,
+        school,
+      );
       if (bound == null) continue;
       final op = <String, dynamic>{
         'collection': bound['collection'],
@@ -474,11 +486,11 @@ class WindowsFirebaseRemote {
       operations.add(op);
     }
     if (ready.length < 2 || !canAdmit()) return {};
-    final reply = await ManagedSchoolSession.callForSchool(
-      school,
-      'managed/records/batch',
-      {'operations': operations},
-    );
+    final reply = await (send != null
+        ? send(school, operations)
+        : ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {
+            'operations': operations,
+          }));
     if (db.activeProfileId != profile)
       throw StateError('School changed during batch.');
     if (reply['schoolId'] != school ||
