@@ -1,3 +1,15 @@
+/// A manual request must revisit already-blocked own-school conflicts even
+/// when the cloud collection head has not changed since the last download.
+Set<String> manualConflictReadCollections(Iterable<Map<String,dynamic>> rows, {
+  required String school,
+  required Set<String> allowed,
+}) => {
+  for(final row in rows)
+    if(school.isNotEmpty && row['schoolId']==school &&
+       row['syncState']=='conflict' && allowed.contains(row['collection']))
+      row['collection'] as String,
+};
+
 /// Derive display state from durable queue rows. An ACK event alone never
 /// removes a row: only its version-checked durable completion can do that.
 String projectWindowsSyncState(
@@ -121,6 +133,16 @@ String documentFailureExplanation(Map row) {
     'SCRIPT_TRANSPORT_ERROR': 'School Script could not be reached.',
     'SCRIPT_RESPONSE_READ_FAILED': 'School Script response could not be read.',
     'SCRIPT_OPERATION_FAILED': 'School Script did not complete the operation.',
+    'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED': 'Legacy or duplicate school record needs review.',
+    'SCRIPT_STUDENT_PARENT_PENDING': 'Student parent record must sync before its child records.',
+    'SCRIPT_STUDENT_GENERATION_DELETED': 'This student generation was deleted; stale upload retained for review.',
+    'SCRIPT_INVALID_SYNC_OPERATION': 'School Script rejected the saved operation format.',
+    'SCRIPT_SHEET_RECOVERY_REQUIRED': 'Verified school Sheet recovery is required.',
+    'SCRIPT_BLANK_SCHOOL_PROFILE': 'Required school profile fields are missing.',
+    'SCRIPT_WORKBOOK_REVIEW_REQUIRED': 'School workbook identity requires review.',
+    'SCRIPT_SYNC_STATE_UNAVAILABLE': 'School sync state could not be verified.',
+    'SCRIPT_SYNC_STATE_IDENTITY': 'School sync state identity differs.',
+    'STUDENT_SLOT_CONFLICT': 'Student class, section or roll is already occupied.',
     'fileMissing':
         'Local file could not be read. Restore access to the original file.',
   };
@@ -130,6 +152,7 @@ String documentFailureExplanation(Map row) {
     'requestAndReadback': 'Server request / cloud readback',
     'verifyAcknowledgement': 'Verify acknowledgement',
     'commitLocalReceipt': 'Save local receipt',
+    'recordRequestAndAck': 'Send saved record / verify acknowledgement',
   };
   final parts = <String>[];
   if (messages[row['failureCode']] != null)

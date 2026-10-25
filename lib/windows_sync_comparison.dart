@@ -19,12 +19,22 @@ const _bookkeeping = {
 Object? _canonical(Object? value) {
   if (value is Timestamp)
     return {'__vidya_type': 'timestamp', 'ms': value.millisecondsSinceEpoch};
+  if (value is DateTime)
+    return {'__vidya_type': 'timestamp', 'ms': value.millisecondsSinceEpoch};
   if (value is Map) {
+    // Exact wire/storage envelopes only; arbitrary user maps remain data.
+    if (value.length == 1 && value['__vsTimestamp'] is String) {
+      final parsed = DateTime.tryParse(value['__vsTimestamp'] as String);
+      if (parsed != null && RegExp(r'(Z|[+-][0-9]{2}:[0-9]{2})$').hasMatch(value['__vsTimestamp']))
+        return {'__vidya_type':'timestamp','ms':parsed.millisecondsSinceEpoch};
+    }
+    if (value.length == 2 && {'timestamp','datetime'}.contains(value['__vidya_type']) &&
+        value['ms'] is int)
+      return {'__vidya_type':'timestamp','ms':value['ms']};
     final keys = value.keys.map((k) => k.toString()).toList()..sort();
     return {for (final k in keys) k: _canonical(value[k])};
   }
   if (value is List) return value.map(_canonical).toList();
-  if (value is DateTime) return value.toUtc().toIso8601String();
   return value;
 }
 
@@ -114,8 +124,25 @@ String compareSyncVersions(Map queued, Map cloud) {
   final local = queued['data'];
   if (local is! Map)
     return 'differs'; // File bytes must be verified by their owner.
-  if (sameSavedRecord(queued['collection']?.toString() ?? '', local, cloud)) return 'identical';
+  if (local['schoolId'] != null && local['schoolId'] != queued['schoolId']) return 'differs';
+  if (sameSavedRecord(queued['collection']?.toString() ?? '',
+      {...local,'schoolId':queued['schoolId']}, cloud)) return 'identical';
   return 'differs (revision order unknown)';
+}
+
+/// Bounded field names explain a real conflict without disclosing values or
+/// pretending UUIDs establish which copy is newer.
+List<String> recordDifferenceFields(Map queued, Map cloud) {
+  final data=queued['data'];
+  if(data is! Map) return ['record payload'];
+  final local={...data,if(data['schoolId']==null)'schoolId':queued['schoolId']};
+  final keys=<String>{...local.keys.map((k)=>k.toString()),...cloud.keys.map((k)=>k.toString())}
+    ..removeAll(_bookkeeping);
+  if({'students_directory','teachers_directory'}.contains(queued['collection']))
+    keys.removeAll({'createdAt','updatedAt'});
+  final differences=keys.where((key)=>local.containsKey(key)!=cloud.containsKey(key) ||
+    jsonEncode(_canonical(local[key]))!=jsonEncode(_canonical(cloud[key]))).toList()..sort();
+  return differences.take(40).toList();
 }
 
 /// Only an identical complete value for the same logical record is disposable.

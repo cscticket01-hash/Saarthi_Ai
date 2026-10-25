@@ -187,7 +187,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
         remote = Map<String,dynamic>.from(result['cloud'] as Map);
         reviewedLocalHash = proof?['contentHash'] as String?;
         comparison = result['comparison'] as String;
-        differences = proof == null ? [] : documentDifferenceFields(proof, remote!);
+        differences = proof == null ? recordDifferenceFields(expected!, remote!) : documentDifferenceFields(proof, remote!);
       });
     } on TimeoutException {
       if (mounted && generation == verificationGeneration)
@@ -424,7 +424,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
                     Text(
                       'Record revision: base ${expected?['baseCloudRevision'] ?? 'unknown'} / cloud ${remote?['_syncRevision'] ?? 'unknown'}',
                     ),
-                    if (expected?['data'] is Map)
+                    if (document && expected?['data'] is Map)
                       Text(
                         'Payload hash: local ${syncPayloadHash(expected!['data'] as Map)} / cloud ${syncPayloadHash(remote!)}',
                       ),

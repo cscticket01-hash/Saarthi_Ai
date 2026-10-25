@@ -66,6 +66,11 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
         'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED',
         'SCHOOL_STORAGE_NOT_CONNECTED','SCRIPT_TRANSPORT_ERROR',
         'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED',
+        'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING',
+        'SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_INVALID_SYNC_OPERATION',
+        'SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_BLANK_SCHOOL_PROFILE',
+        'SCRIPT_WORKBOOK_REVIEW_REQUIRED','SCRIPT_SYNC_STATE_UNAVAILABLE',
+        'SCRIPT_SYNC_STATE_IDENTITY','STUDENT_SLOT_CONFLICT',
       }.contains(error.diagnosticCode) ? error.diagnosticCode : decision.kind.name,
     'failureHttpStatus':error is CentralCloudException ? error.status : null,
   };

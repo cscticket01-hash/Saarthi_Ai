@@ -13,6 +13,7 @@ import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_dependencies.dart';
+import '../lib/windows_sync_projection.dart';
 
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -125,6 +126,7 @@ class _Rig {
   Future<void> flush({
     Future<String> Function(Map<String, dynamic>)? sender,
     bool explicitRetry = false,
+    bool diagnoseUnclassified = false,
   }) async {
     final rows = explicitRetry ? await queue() : null;
     await WindowsPendingSchoolSync.flush(
@@ -134,6 +136,7 @@ class _Rig {
           : null,
       send: (a, b, c, d) async {},
       sendVersioned: sender ?? send,
+      diagnoseUnclassified: diagnoseUnclassified,
     );
   }
 
@@ -220,7 +223,10 @@ void main() {
       'baseCloudRevision':'', 'syncState':'pending',
     });
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
-    await rig.pull({'school_notices'});
+    final manualCollections=manualConflictReadCollections(
+      (await rig.queue()).map((row)=>row.data()),school:school,allowed:{'school_notices'});
+    expect(manualCollections,{'school_notices'});
+    await rig.pull(manualCollections);
     expect(await rig.queue(),isEmpty);
     final unchanged = (await rig.request({'action':'managed_records','operation':'read',
       'collection':'school_notices','syncProtocol':2}))['records']['N1'] as Map;
@@ -263,6 +269,29 @@ void main() {
     final rows=(await rig.db.collection('teachers_directory').get()).docs;
     expect(rows.length,1);
     expect(rows.single.data()['subject'],'Final explicit PC2');
+  });
+
+  test('manual diagnosis of a legacy lost ACK replays the original Script operation once', () async {
+    await rig.db.collection('school_notices').doc('legacy').set({
+      'schoolId':school,'message':'Synthetic retained request',
+    });
+    final q=(await rig.queue()).single, original=(await rig.queue()).single.data();
+    final revision=await rig.send(original); // Cloud committed; client lost ACK.
+    await q.reference.update({'syncState':'needsAttention','lastError':'Legacy unclassified failure'});
+    await rig.open('pc1');
+    await rig.flush();
+    expect(await rig.queue(),hasLength(1));
+    await rig.flush(diagnoseUnclassified:true);
+    expect(await rig.queue(),isEmpty);
+    final cloud=(await rig.request({'action':'managed_records','operation':'read',
+      'collection':'school_notices','syncProtocol':2}))['records']['legacy'] as Map;
+    expect(cloud['_syncRevision'],revision);
+    expect(cloud['_syncOperationId'],original['operationId']);
+    final receipt=(await rig.db.collection('_windows_sync_receipts').get()).docs.single.data();
+    expect(receipt['recordRevision'],revision);
+    await rig.open('pc2');
+    await rig.pull({'school_notices'});
+    expect((await rig.db.collection('school_notices').get()).docs.length,1);
   });
 
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {

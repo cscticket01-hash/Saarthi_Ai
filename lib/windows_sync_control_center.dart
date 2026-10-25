@@ -1417,7 +1417,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
                                       ),
                                       subtitle: Text(
-                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}\nNext step: ${decision['action']}\n${decision['reason']}',
+                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['failureCode'] == null ? '' : '\nCode: ${item['failureCode']}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}\nNext step: ${decision['action']}\n${decision['reason']}',
                                       ),
                                       trailing:
                                           (item['syncState'] ??
@@ -1449,6 +1449,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                                           .refreshDetails();
                                                     }),
                                               child: const Text('Review'),
+                                            )
+                                          : item['_queueCollection'] == '_windows_firebase_outbox' &&
+                                              item['syncState'] == 'needsAttention' &&
+                                              (item['failureCategory'] == null || item['failureCategory'] == '')
+                                          ? TextButton(
+                                              onPressed: active ? null : () => _run(engine.requestSync),
+                                              child: const Text('Diagnose saved request'),
                                             )
                                           : null,
                                     ),
