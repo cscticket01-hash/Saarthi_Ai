@@ -486,11 +486,13 @@ class WindowsFirebaseRemote {
       operations.add(op);
     }
     if (ready.length < 2 || !canAdmit()) return {};
+    final requestWatch = Stopwatch()..start();
     final reply = await (send != null
         ? send(school, operations)
         : ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {
             'operations': operations,
           }));
+    requestWatch.stop();
     if (db.activeProfileId != profile)
       throw StateError('School changed during batch.');
     if (reply['schoolId'] != school ||
@@ -513,6 +515,7 @@ class WindowsFirebaseRemote {
             (raw['recordRevision'] as String).isEmpty)
           throw const MissingSyncAcknowledgement();
         results[id] = {
+          'batchRequestMicros': requestWatch.elapsedMicroseconds,
           'schoolId': school,
           'syncProtocol': 2,
           ...Map<String, dynamic>.from(raw),

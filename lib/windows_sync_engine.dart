@@ -1886,27 +1886,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
-        if (WindowsFirebaseRemote.recordPointReadSupported) {
-          await WindowsPendingSchoolSync.repair(
-            profileId: syncOrigin,
-            school: _activeSchoolSyncId,
-            canAdmit: () =>
-                !isPaused &&
-                (_quotaRetryAt == null ||
-                    !_quotaRetryAt!.isAfter(DateTime.now())),
-            onActivity: _recordActivity,
-            read: (collection, id) => ManagedSchoolSession.callForSchool(
-              _activeSchoolSyncId,
-              'managed/records',
-              {
-                'operation': 'read',
-                'collection': collection,
-                'id': id,
-                'syncProtocol': 2,
-              },
-            ),
-          );
-        }
         final inbox = await WindowsSyncInbox.pending(
           syncOrigin,
           _activeSchoolSyncId,
@@ -1966,6 +1945,27 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               _remoteCollections.add(item['collection'] as String);
             }
           }
+        }
+        if (WindowsFirebaseRemote.recordPointReadSupported) {
+          await WindowsPendingSchoolSync.repair(
+            profileId: syncOrigin,
+            school: _activeSchoolSyncId,
+            canAdmit: () =>
+                !isPaused &&
+                (_quotaRetryAt == null ||
+                    !_quotaRetryAt!.isAfter(DateTime.now())),
+            onActivity: _recordActivity,
+            read: (collection, id) => ManagedSchoolSession.callForSchool(
+              _activeSchoolSyncId,
+              'managed/records',
+              {
+                'operation': 'read',
+                'collection': collection,
+                'id': id,
+                'syncProtocol': 2,
+              },
+            ),
+          );
         }
         _admitBatch();
         await syncLocalRestoreRequests(
@@ -2581,6 +2581,29 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ),
       canonicalForAck: (item) => canonical[item['operationId']],
       sendVersioned: (item) async {
+        // Refill only after this bounded batch has been consumed. Dedicated
+        // parent/file/delete paths retain the original serial admission rules.
+        if (onlyOperationId == null &&
+            batchReplies.isEmpty &&
+            WindowsFirebaseRemote.recordWriteBatchSupported &&
+            item['operation'] == 'set' &&
+            !{
+              'students_directory',
+              'teachers_directory',
+              'documents',
+              'backups',
+              'school_config',
+            }.contains(item['collection'])) {
+          final next = await WindowsFirebaseRemote.prepareManagedBatch(
+            _activeSchoolSyncId,
+            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+          );
+          if (next.isNotEmpty) {
+            batchReplies.addAll(next);
+            metrics['recordWriteRequests'] =
+                metrics['recordWriteRequests']! + 1;
+          }
+        }
         if (!batchReplies.containsKey(item['operationId']))
           metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
         final queuedAt = item['queuedAt'];
@@ -2597,7 +2620,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         final origin = FirebaseFirestore.instance.activeProfileId;
         final school = _activeSchoolSyncId;
         final watch = Stopwatch()..start();
-        final batched = batchReplies[item['operationId']];
+        final batched = batchReplies.remove(item['operationId']);
         if (batched is CentralCloudException) throw batched;
         final reply = await WindowsFirebaseRemote.syncManagedRecord(
           item,
@@ -2605,8 +2628,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           batchReply: batched is Map<String, dynamic> ? batched : null,
         );
         watch.stop();
-        metrics['lastRecordAckMicros'] = watch.elapsedMicroseconds;
-        _sample('cloudAckMicros', watch.elapsedMicroseconds);
+        metrics['lastRecordAckMicros'] =
+            batched is Map && batched['batchRequestMicros'] is int
+            ? batched['batchRequestMicros'] as int
+            : watch.elapsedMicroseconds;
+        // Consuming an already-verified batch receipt is not another cloud RTT.
+        if (batched == null)
+          _sample('cloudAckMicros', watch.elapsedMicroseconds);
         if (queuedMillis != null)
           _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
         final timing = reply['syncTiming'];
