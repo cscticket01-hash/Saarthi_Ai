@@ -99,6 +99,15 @@ void main() {
     expect(current['failureCode'],isNull);
     expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
   });
+  test('manual sync selects retained conflicts even without a new cloud head, within the current school', () {
+    expect(manualConflictReadCollections([
+      {'schoolId':school,'collection':'teachers_directory','syncState':'conflict'},
+      {'schoolId':school,'collection':'teachers_directory','syncState':'conflict'},
+      {'schoolId':'foreign','collection':'students_directory','syncState':'conflict'},
+      {'schoolId':school,'collection':'unknown','syncState':'conflict'},
+      {'schoolId':school,'collection':'students_directory','syncState':'needsAttention'},
+    ],school:school,allowed:{'teachers_directory','students_directory'}),{'teachers_directory'});
+  });
   test('same record binds missing payload school ID and normalizes exact timestamp envelopes', () {
     final time=DateTime.utc(2026,10,25,10,16,54,550);
     final queued={'schoolId':school,'collection':'teachers_directory','operation':'set',

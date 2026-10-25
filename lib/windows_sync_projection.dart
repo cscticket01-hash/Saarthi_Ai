@@ -1,3 +1,15 @@
+/// A manual request must revisit already-blocked own-school conflicts even
+/// when the cloud collection head has not changed since the last download.
+Set<String> manualConflictReadCollections(Iterable<Map<String,dynamic>> rows, {
+  required String school,
+  required Set<String> allowed,
+}) => {
+  for(final row in rows)
+    if(school.isNotEmpty && row['schoolId']==school &&
+       row['syncState']=='conflict' && allowed.contains(row['collection']))
+      row['collection'] as String,
+};
+
 /// Derive display state from durable queue rows. An ACK event alone never
 /// removes a row: only its version-checked durable completion can do that.
 String projectWindowsSyncState(

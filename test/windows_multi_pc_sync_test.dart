@@ -13,6 +13,7 @@ import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_dependencies.dart';
+import '../lib/windows_sync_projection.dart';
 
 const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -222,7 +223,10 @@ void main() {
       'baseCloudRevision':'', 'syncState':'pending',
     });
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
-    await rig.pull({'school_notices'});
+    final manualCollections=manualConflictReadCollections(
+      (await rig.queue()).map((row)=>row.data()),school:school,allowed:{'school_notices'});
+    expect(manualCollections,{'school_notices'});
+    await rig.pull(manualCollections);
     expect(await rig.queue(),isEmpty);
     final unchanged = (await rig.request({'action':'managed_records','operation':'read',
       'collection':'school_notices','syncProtocol':2}))['records']['N1'] as Map;
