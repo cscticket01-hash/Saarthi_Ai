@@ -1,0 +1,22 @@
+name: Add Student contact validation review
+on:
+  pull_request:
+    paths:
+      - 'lib/main_dashboard_screen_windows.dart'
+      - 'test/windows_student_contact_test.dart'
+      - '.github/workflows/student-contact-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contact-dialog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test --concurrency=1 test/windows_student_contact_test.dart

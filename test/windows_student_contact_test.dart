@@ -18,7 +18,7 @@ void main() {
         'managed': true, 'schoolId': school, 'uid': 'contact-test',
         'projectId': platformProjectId,
         'endpoint': 'https://school.example/school-cloud',
-        'firebaseRefreshToken': 'test-only', 'storageReady': false,
+        'firebaseRefreshToken': 'test-only', 'folderId': 'managed', 'storageReady': false,
       }),
     });
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
