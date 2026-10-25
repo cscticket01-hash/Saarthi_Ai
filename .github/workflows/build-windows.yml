@@ -33,6 +33,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Require trusted publisher signing before building a public release
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
+        run: |
+          if (!$env:WINDOWS_SIGNING_PFX_BASE64 -or !$env:WINDOWS_SIGNING_PASSWORD -or !$env:WINDOWS_SIGNING_THUMBPRINT) {
+            throw 'Trusted publisher certificate is required. See docs/release-trust.md. Unsigned public releases are blocked.'
+          }
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -280,6 +291,14 @@ jobs:
           if (-not $exe) { throw 'Windows EXE not found' }
           Write-Host "Built EXE: $($exe.FullName)"
 
+      - name: Sign and verify application
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
+        run: .github/scripts/sign_windows_release.ps1 -Path 'build/windows/x64/runner/Release'
+
       - name: Create Portable ZIP
         shell: powershell
         run: |
@@ -338,6 +357,30 @@ jobs:
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           & $iscc 'build\vidya_saarthi_windows.iss'
 
+      - name: Sign and verify installer
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
+        run: .github/scripts/sign_windows_release.ps1 -Path 'build'
+
+      - name: Scan final release files with Microsoft Defender
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $status = Get-MpComputerStatus
+          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) { throw 'Defender must be enabled for release verification.' }
+          Update-MpSignature
+          $scanner = Get-ChildItem "$env:ProgramData/Microsoft/Windows Defender/Platform/*/MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$scanner) { throw 'Microsoft Defender scanner unavailable.' }
+          & $scanner.FullName -Scan -ScanType 3 -File (Resolve-Path build).Path
+          if ($LASTEXITCODE -ne 0) { throw 'Defender did not report a clean release scan. Investigate before publication.' }
+          Get-ChildItem build -File | Where-Object { $_.Extension -in '.exe', '.zip' } | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLowerInvariant())  $($_.Name)" | Add-Content build/SHA256SUMS.txt
+          }
+
       - name: Upload Windows Build Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -345,6 +388,7 @@ jobs:
           path: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+            build/SHA256SUMS.txt
           retention-days: 30
           if-no-files-found: error
 
@@ -365,6 +409,7 @@ jobs:
           files: |
             build/Vidya_Saarthi_Setup_${{ steps.app_version.outputs.version }}.exe
             build/Vidya_Saarthi_Windows_Portable_${{ steps.app_version.outputs.version }}.zip
+            build/SHA256SUMS.txt
             school-backend/managed/SaarthiManagedAll.gs
             school-backend/managed/appsscript.json
             docs/manual-school-drive-setup.md
