@@ -80,6 +80,9 @@ void main() {
     await row.reference.update({'failureCategory':FieldValue.delete(),'operationId':'invalid'});
     await flush((_)async=>throw StateError('Invalid original identity cannot send'),diagnose:true);
     expect((await row.reference.get()).data()?['operationId'],'invalid');
+    await row.reference.update({'operationId':'synthetic-operation-123','operation':'update'});
+    await flush((_)async=>throw StateError('An old partial update cannot be replayed as a full write'),diagnose:true);
+    expect((await row.reference.get()).data()?['syncState'],'needsAttention');
   });
   test('late diagnostic response cannot replace a newer local Save', () async {
     final row=await legacy();

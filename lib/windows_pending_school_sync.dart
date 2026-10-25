@@ -209,6 +209,7 @@ class WindowsPendingSchoolSync {
       final diagnoseLegacy = diagnoseUnclassified && sendVersioned != null &&
           item['syncState'] == 'needsAttention' &&
           (item['failureCategory'] == null || item['failureCategory'] == '') &&
+          {'set','delete'}.contains(operation) &&
           collection != 'documents' &&
           item['schoolId'] == db.activeProfileIdentity['schoolSyncId'] &&
           item['operationId'] is String &&
