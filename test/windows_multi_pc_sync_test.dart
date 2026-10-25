@@ -21,6 +21,8 @@ const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 // The shared cloud is the real signed Apps Script implementation in a Node VM.
 // All files/accounts/records are synthetic; no production endpoint is called.
 class _Rig {
+  bool fieldPatchMode=false;
+  final canonicalReplies=<String,Map<String,dynamic>>{};
   final db = FirebaseFirestore.instance;
   late Directory root;
   late Process server;
@@ -115,11 +117,12 @@ class _Rig {
       'expectedRecordRevision': item['baseCloudRevision'] ?? '',
       if (item['deletedStudentGeneration'] != null)
         'deletedStudentGeneration': item['deletedStudentGeneration'],
-      if (item['operation'] != 'delete') 'data': item['data'],
+      if (item['operation'] != 'delete') 'data': item['wireData'] ?? item['data'],
     });
     expect(out['schoolId'], school);
     expect(out['syncProtocol'], 2);
     expect(out['recordRevision'], isNotEmpty);
+    if(out['record'] is Map)canonicalReplies[item['operationId'] as String]=Map<String,dynamic>.from(out['record']);
     return out['recordRevision'] as String;
   }
 
@@ -136,6 +139,14 @@ class _Rig {
           : null,
       send: (a, b, c, d) async {},
       sendVersioned: sender ?? send,
+      canonicalForAck:fieldPatchMode?(item)=>canonicalReplies[item['operationId']]:null,
+      prepareVersioned:fieldPatchMode?(ref,item)async {
+        if(item['wireData'] is Map)return item;
+        final patch=item['fieldPatch'];
+        return db.bindOutboxWireData(ref,item,patch is Map?
+          {'schoolId':school,'_syncFieldPatch':patch}:Map<String,dynamic>.from(item['data'] as Map),
+          patch is Map?'fieldPatch1':'snapshot2');
+      }:null,
       diagnoseUnclassified: diagnoseUnclassified,
     );
   }
@@ -292,6 +303,30 @@ void main() {
     await rig.open('pc2');
     await rig.pull({'school_notices'});
     expect((await rig.db.collection('school_notices').get()).docs.length,1);
+  });
+
+  test('field edits across two PCs preserve unrelated data, upload only changed fields and become idle', () async {
+    rig.fieldPatchMode=true;
+    await rig.db.collection('teachers_directory').doc('T1').set({'schoolId':school,'teacherId':'same-person',
+      'name':'Mahit Das','subject':'Before','photoUrl':'','createdAt':'2000-01-01'});
+    await rig.flush();
+    await rig.open('pc2');await rig.pull({'teachers_directory'});
+    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Science'});
+    await rig.open('pc1');await rig.db.collection('teachers_directory').doc('T1').update({'name':'Mohit Das'});
+    await rig.flush(sender:(item)async {
+      expect((item['wireData']['_syncFieldPatch']['set'] as Map).keys,['name']);return rig.send(item);
+    });
+    await rig.open('pc2');await rig.flush();
+    final merged=(await rig.db.collection('teachers_directory').doc('T1').get()).data()!;
+    expect(merged['name'],'Mohit Das');expect(merged['subject'],'Science');expect(merged['createdAt'],'2000-01-01');
+    await rig.db.collection('teachers_directory').doc('T1').update({'photoUrl':'https://drive.google.com/file/d/new-photo/view'});
+    await rig.flush(sender:(item)async {
+      expect((item['wireData']['_syncFieldPatch']['set'] as Map).keys,['photoUrl']);return rig.send(item);
+    });
+    await rig.open('pc1');await rig.pull({'teachers_directory'});
+    expect((await rig.db.collection('teachers_directory').doc('T1').get()).data()?['photoUrl'],contains('new-photo'));
+    await rig.db.collection('teachers_directory').doc('T1').update({'name':'Mohit Das','updatedAt':FieldValue.serverTimestamp()});
+    expect(await rig.queue(),isEmpty);
   });
 
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {

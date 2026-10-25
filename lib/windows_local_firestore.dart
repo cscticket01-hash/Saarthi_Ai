@@ -3,6 +3,7 @@ import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
 import 'windows_sync_comparison.dart';
+import 'windows_record_change_policy.dart';
 export 'school_timestamp.dart' show Timestamp;
 import 'dart:async';
 import 'dart:convert';
@@ -189,12 +190,13 @@ class FirebaseFirestore {
 
   WriteBatch batch() => WriteBatch._(this);
 
-  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected, {String? revision}) {
+  Future<void> acknowledgeOutbox(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic> expected, {String? revision, Map<String,dynamic>? canonicalRecord}) {
     ref.requireOriginProfile();
     if(revision!=null && revision.isEmpty)throw StateError('Verified cloud revision required. Pending retained.');
     if(ref.collectionPath!='_windows_firebase_outbox') throw ArgumentError('Outbox reference required');
     return _database.applyOperations([_WriteOperation._(type:_WriteType.delete,
-      collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision)]);
+      collection:ref.collectionPath, documentId:ref.id, data:expected, acknowledgedRevision:revision,
+      canonicalRecord:canonicalRecord)]);
   }
 
   /// Binds a legacy row only if its exact durable snapshot is still current.
@@ -208,6 +210,13 @@ class FirebaseFirestore {
       throw ArgumentError('Outbox reference required');
     }
     return _database.migrateOutboxIdentity(ref.id,expected,schoolId);
+  }
+
+  Future<Map<String,dynamic>?> bindOutboxWireData(DocumentReference<Map<String,dynamic>> ref,
+      Map<String,dynamic> expected, Map<String,dynamic> data, String mode) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_firebase_outbox')throw ArgumentError('Outbox required');
+    return _database.bindOutboxWireData(ref.id,expected,data,mode);
   }
 
   Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) =>
@@ -806,6 +815,7 @@ class _WriteOperation {
     this.merge = false,
     this.preservePending = false,
     this.acknowledgedRevision,
+    this.canonicalRecord,
     this.tombstoneRevision,
     this.tombstoneUpdatedAt,
   });
@@ -850,6 +860,7 @@ class _WriteOperation {
   }
 
   final _WriteType type;
+  final Map<String,dynamic>? canonicalRecord;
   final String collection;
   final String documentId;
   final Map<String, dynamic>? data;
@@ -1179,6 +1190,14 @@ class _LocalSchoolDatabase {
             '_windows_recycle_requests':operationIds.map((id)=>'local-restore-$id').toList(),
           };
           ownerCollections = ownerScope.keys.toSet();
+          for(final operation in operations) {
+            if(operation.canonicalRecord!=null && operation.data?['collection'] is String &&
+                operation.data?['documentId'] is String) {
+              final name=operation.data!['collection'] as String;
+              ownerScope.putIfAbsent(name,()=>[]).add(operation.data!['documentId'] as String);
+              ownerCollections.add(name);
+            }
+          }
         } else if (metadataOnly) {
           ownerScope = {for(final name in operations.map((o)=>o.collection).toSet())
             name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()};
@@ -1238,8 +1257,10 @@ class _LocalSchoolDatabase {
             final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
             final key = base64Url.encode(utf8.encode('${operation.collection}\\n${operation.documentId}')).replaceAll('=', '');
             baselines[key] = {'revision':operation.data?['_syncRevision'] ?? operation.tombstoneRevision, 'deleted':operation.data == null,
+              if(operation.data!=null)'record':_encodeMap(operation.data!),
               if(operation.data?['_syncRecreatesDeletedRevision'] is String) 'recreatedFrom':operation.data!['_syncRecreatesDeletedRevision']};
           }
+          final collectionWasTouched=touched.contains(operation.collection);
           touched.add(operation.collection);
 
           final rawCollection =
@@ -1273,6 +1294,21 @@ class _LocalSchoolDatabase {
                 final baselines = collections.putIfAbsent('_windows_sync_baselines',()=> <String,dynamic>{}) as Map;
                 baselines[operation.documentId] = {'revision':revision,'deleted':sent['operation']=='delete',
                   if(sent['data'] is Map && sent['data']['_syncRecreatesDeletedRevision'] is String) 'recreatedFrom':sent['data']['_syncRecreatesDeletedRevision']};
+                final canonical=operation.canonicalRecord;
+                if(canonical!=null) {
+                  if(canonical['schoolId']!=sent['schoolId'] || canonical['_syncRevision']!=revision ||
+                    canonical['id']!=null && canonical['id']!=sent['documentId'] || canonical['_syncDeleted']==true)
+                    throw StateError('Canonical acknowledgement identity did not verify.');
+                  baselines[operation.documentId]['record']=_encodeMap(canonical);
+                  final pending=docs[operation.documentId];
+                  if(pending is Map && pending['operationId']==sent['operationId']) {
+                    final records=collections.putIfAbsent(sent['collection'],()=> <String,dynamic>{}) as Map;
+                    if(records[sent['documentId']] is Map && sent['operation']!='delete') {
+                      records[sent['documentId']]=_encodeMap(canonical);
+                      touched.add(sent['collection'] as String);
+                    }
+                  }
+                }
                 final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
                 if(sent['operationId'] is String)receipts.putIfAbsent(sent['operationId'],()=>{
                   'schoolId':sent['schoolId'],'operationId':sent['operationId'],
@@ -1296,6 +1332,11 @@ class _LocalSchoolDatabase {
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
                   queued['baseCloudRevision'] = revision;
+                  if(canonical!=null && queued['data'] is Map && queued['wireData'] is! Map) {
+                    final patch=buildRecordFieldPatch(sent['collection'] as String,canonical,
+                      _decodeMap(Map<String,dynamic>.from(queued['data'])));
+                    if(patch==null)queued.remove('fieldPatch');else queued['fieldPatch']=_encodeMap(patch);
+                  }
                 }
                 if(queued is Map && queued['priorDeletion'] is Map &&
                     queued['priorDeletion']['operationId'] == sent['operationId']) {
@@ -1386,6 +1427,19 @@ class _LocalSchoolDatabase {
 
           if (WindowsLocalFirestoreSyncControl.trackingEnabled &&
               _shouldTrackForFirebase(operation.collection)) {
+            if(beforeSave!=null && operation.type!=_WriteType.delete && docs[operation.documentId] is Map) {
+              final candidate=Map<String,dynamic>.from(docs[operation.documentId] as Map);
+              for(final key in ['createdAt','updatedAt']) {
+                if(operation.data?[key] is _ServerTimestampValue) {
+                  if(beforeSave.containsKey(key))candidate[key]=beforeSave[key];else candidate.remove(key);
+                }
+              }
+              if(sameSavedRecord(operation.collection,beforeSave,candidate)) {
+                docs[operation.documentId]=beforeSave;
+                if(!collectionWasTouched)touched.remove(operation.collection);
+                continue;
+              }
+            }
             // Runs inside the same serialized transaction as queue writes.
             // Double-clicks cannot rotate an in-flight operation or its ACK.
             // Restore/lifecycle intents still use their original safeguards.
@@ -1394,6 +1448,7 @@ class _LocalSchoolDatabase {
                 sameSavedRecord(operation.collection, beforeSave,
                     docs[operation.documentId] as Map)) {
               docs[operation.documentId] = beforeSave;
+              if(!collectionWasTouched)touched.remove(operation.collection);
               continue;
             }
             _recordFirebaseOutbox(
@@ -1401,6 +1456,7 @@ class _LocalSchoolDatabase {
               operation,
               docs,
               userDirectorySave: userDirectorySave,
+              beforeSave:beforeSave,
             );
             if (deletedSnapshot != null) {
               final queue = collections['_windows_firebase_outbox'] as Map;
@@ -1426,6 +1482,10 @@ class _LocalSchoolDatabase {
                 intent['deletedStudentGeneration']=generation;
                 touched.addAll(studentOwnedCollections);
               }
+              final personKey=operation.collection=='students_directory'?'mobileStableId':
+                operation.collection=='teachers_directory'?'teacherId':null;
+              if(personKey!=null && deletedSnapshot[personKey] is String)
+                intent['deletedRecordIdentity']={personKey:deletedSnapshot[personKey]};
               // The snapshot, hidden local row and original delete intent commit
               // together. Never expire financial evidence or delete file bytes here.
             }
@@ -1437,6 +1497,7 @@ class _LocalSchoolDatabase {
           touched.addAll({'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history'});
           trackedMutation = true;
         }
+        if(touched.isEmpty && !trackedMutation) {completer.complete();return;}
         _storeCollections(
           root,
           collections,
@@ -1647,6 +1708,29 @@ class _LocalSchoolDatabase {
     return completer.future;
   }
 
+  Future<Map<String,dynamic>?> bindOutboxWireData(String id,Map<String,dynamic> expected,
+      Map<String,dynamic> data,String mode) {
+    final origin=_activeProfileId,school=_activeIdentity['schoolSyncId'];
+    final original=_encodeMap(expected),wire=_encodeMap(data),done=Completer<Map<String,dynamic>?>();
+    _writeTail=_writeTail.then((_)async {
+      try {
+        if(origin!=_activeProfileId||expected['schoolId']!=school||
+          !{'snapshot2','fieldPatch1'}.contains(mode))throw StateError('Original school wire binding required');
+        final root=await _readRoot(collections:{'_windows_firebase_outbox'});
+        if(origin!=_activeProfileId)throw StateError('School changed during wire binding');
+        final collections=_collections(root),queue=collections['_windows_firebase_outbox'];
+        final current=queue is Map?queue[id]:null;
+        if(current is! Map||_jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(original)) {
+          done.complete(null);return;
+        }
+        if(current['wireData'] is Map) {done.complete(_decodeMap(Map<String,dynamic>.from(current)));return;}
+        final bound={...Map<String,dynamic>.from(current),'wireMode':mode,'wireData':wire};
+        queue[id]=bound;_storeCollections(root,collections);await _writeRoot(root);
+        done.complete(_decodeMap(bound));
+      } catch(error,stack){done.completeError(error,stack);}
+    });return done.future;
+  }
+
   Future<bool> recordOutboxFailure(String queueId, Map<String,dynamic> expected,
       {required String state, required String error, String? failureCategory,
       int? retryCount, int? retryAtMillis, Map<String,dynamic>? diagnostic}) {
@@ -1717,8 +1801,9 @@ class _LocalSchoolDatabase {
           throw StateError('Original same-school operation and verified revision required.');
         }
         final parentId=expected['data'] is Map?expected['data']['studentId']:null;
-        final freshStudent = automaticDuplicateReadback(expected, remote) &&
-            identicalFreshStudent(expected, remote);
+        final firstCreate=firstCommittedCreateWins(expected,remote);
+        final freshStudent = expected['collection']=='students_directory' &&
+            (firstCreate || automaticDuplicateReadback(expected, remote) && identicalFreshStudent(expected, remote));
         final childCollections = <String>{...studentOwnedCollections,
           '_local_student_documents', '_windows_document_outbox'};
         final root = await _readRoot(collections:{collection,'_windows_firebase_outbox',
@@ -1727,13 +1812,30 @@ class _LocalSchoolDatabase {
         if (_activeProfileId != origin) throw StateError('School changed during conflict capture.');
         final collections = _collections(root), queue = collections['_windows_firebase_outbox'];
         final current = queue is Map ? queue[queueId] : null;
-        if(current is Map && (replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote))) {completer.complete(false);return;}
         final parent=(collections['students_directory'] as Map?)?[parentId];
         if(current is Map&&reusesDeletedStudentRecord(current,remote,parent is Map?parent:null)){completer.complete(false);return;}
         if (current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current)) != _jsonStableMap(_encodeMap(expected))) {
           completer.complete(false);
           return;
+        }
+        if(replacesDeletedStudent(current,remote)||deletesSameStudentGeneration(current,remote)) {
+          if(current['syncState']=='conflict'||current['syncState']=='needsAttention') {
+            queue[queueId]={...Map<String,dynamic>.from(current),'syncState':'pending','retryCount':0}
+              ..remove('lastError')..remove('failureCategory');
+            _storeCollections(root,collections);await _writeRoot(root);
+          }
+          completer.complete(false);return;
+        }
+        if(sameDeletedDirectoryOwner(current,remote)) {
+          final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
+          history.putIfAbsent(operationId,()=>_encodeMap({...current,'verifiedCloud':remote,
+            'resolution':'explicit deletion follows the same verified person'}));
+          queue[queueId]={...Map<String,dynamic>.from(current),
+            'baseCloudRevision':revision,'syncState':'pending','retryCount':0}
+            ..remove('lastError')..remove('failureCategory')..remove('wireData')..remove('wireMode');
+          _storeCollections(root,collections);await _writeRoot(root);
+          completer.complete(false);return;
         }
         // A different PC may already have published this exact intended value.
         // Reconciliation is a verified readback, not an ACK for our operation.
@@ -1752,7 +1854,7 @@ class _LocalSchoolDatabase {
               row['collection'].toString(), row['documentId'].toString(), row['data'] as Map,
               id, (expected['data'] as Map)['mobileStableId'] as String)))
         );
-        if (automaticDuplicateReadback(expected, remote) &&
+        if ((automaticDuplicateReadback(expected, remote) || firstCreate || recordFieldIntentSatisfied(expected,remote)) &&
             remote['_syncOperationId'] != operationId && !linkedStudent) {
           final local = (collections[collection] as Map?)?[id];
           if (local is Map &&
@@ -1762,13 +1864,16 @@ class _LocalSchoolDatabase {
                 () => <String,dynamic>{}) as Map;
             history[operationId] = _encodeMap({...expected,
               'verifiedCloud': remote,
-              'resolution': 'automatic identical authenticated readback',
+              'resolution': automaticDuplicateReadback(expected,remote)?'automatic identical authenticated readback':
+                firstCreate?'first committed create retained':
+                recordFieldIntentSatisfied(expected,remote)?'changed fields already verified in cloud':
+                'automatic identical authenticated readback',
               'resolvedAt': DateTime.now().millisecondsSinceEpoch});
             (collections[collection] as Map)[id] = _encodeMap(remote);
             queue.remove(queueId);
             final baselines = collections.putIfAbsent('_windows_sync_baselines',
                 () => <String,dynamic>{}) as Map;
-            baselines[queueId] = {'revision': revision, 'deleted': false};
+            baselines[queueId] = {'revision': revision, 'deleted': false,'record':_encodeMap(remote)};
             _storeCollections(root, collections);
             await _writeRoot(root);
             for (final name in [collection, '_windows_firebase_outbox']) {
@@ -2070,6 +2175,7 @@ class _LocalSchoolDatabase {
     _WriteOperation operation,
     Map<String, dynamic> finalDocs, {
     required bool userDirectorySave,
+    Map<String,dynamic>? beforeSave,
   }) {
     if (operation.type != _WriteType.delete && operation.collection == 'school_config' &&
         operation.documentId == 'school_profile_cache') {
@@ -2159,7 +2265,12 @@ class _LocalSchoolDatabase {
         previous['failureCategory'] == 'validation';
     final blocked = previous is Map &&
         {'conflict','needsAttention'}.contains(previous['syncState']) &&
-        !explicitDirectorySave && !correctedValidation;
+        !explicitDirectorySave && !correctedValidation && !isDelete;
+    final baseRecord=baselineEntry is Map && baselineEntry['record'] is Map
+      ? _decodeMap(Map<String,dynamic>.from(baselineEntry['record'])) : null;
+    final changes=!isDelete && baseRecord!=null && finalDocs[operation.documentId] is Map
+      ? buildRecordFieldPatch(operation.collection,baseRecord,
+          _decodeMap(Map<String,dynamic>.from(finalDocs[operation.documentId] as Map))) : null;
     queue[key] = <String, dynamic>{
       'operationId': base64Url.encode(List<int>.generate(24, (_) => Random.secure().nextInt(256))).replaceAll('=', ''),
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
@@ -2167,6 +2278,10 @@ class _LocalSchoolDatabase {
           previous is Map ? previous['baseCloudRevision'] ?? '' :
           baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
       'syncState':blocked ? previous['syncState'] : 'pending', 'retryCount':0,
+      if(changes!=null)'fieldPatch':_encodeMap(changes),
+      if(!isDelete && (previous is Map && previous['createIntent']==true ||
+          previous is! Map && beforeSave==null && (baselineEntry is! Map || (baselineEntry['revision']??'')=='')))
+        'createIntent':true,
       if (blocked) ...{
         for (final field in ['lastError','failureCategory','failureCode','failureStage','failureHttpStatus','directoryConflictBase'])
           if (previous[field] != null) field: previous[field],

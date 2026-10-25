@@ -37,6 +37,8 @@ class WindowsPendingSchoolSync {
     )
     send,
     Future<String> Function(Map<String, dynamic> item)? sendVersioned,
+    Future<Map<String,dynamic>?> Function(DocumentReference<Map<String,dynamic>>,Map<String,dynamic>)? prepareVersioned,
+    Map<String,dynamic>? Function(Map<String,dynamic>)? canonicalForAck,
     bool Function()? canAdmit,
     String? onlyQueueId,
     String? onlyOperationId,
@@ -242,6 +244,10 @@ class WindowsPendingSchoolSync {
             item = current;
             if (item['priorDeletion'] != null) throw StateError('Deletion acknowledgement not durable.');
           }
+          if(prepareVersioned!=null && item['operation']!='delete') {
+            final bound=await prepareVersioned(queued.reference,item);
+            unchanged();if(bound==null)continue;item=bound;
+          }
           final response = sendVersioned(item);
           report('waitingForAck', queued.id, item);
           revision = await response;
@@ -317,7 +323,8 @@ class WindowsPendingSchoolSync {
         rethrow;
       }
       unchanged();
-      await db.acknowledgeOutbox(queued.reference, item, revision: revision);
+      await db.acknowledgeOutbox(queued.reference, item, revision: revision,
+        canonicalRecord:canonicalForAck?.call(item));
       watch.stop();
       report(
         sendVersioned != null ? 'verified' : 'requestCompleted',

@@ -1749,6 +1749,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
             );
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          WindowsFirebaseRemote.recordFieldPatchSupported=health['recordFieldPatchVersion']==1;
+          WindowsFirebaseRemote.recordPointReadSupported=health['recordPointReadVersion']==1;
           _recordDeltasSupported =
               health['recordDeltaRecordsVersion'] == 1 &&
               health['brokerRecordDeltaRecordsVersion'] == 1;
@@ -1908,8 +1910,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               preparationStack = stack;
             }
           }
-          // Only card preparation can create a second set of credential writes.
-          if (publishIds) {
+          // Reconciliation can reopen a lost-ACK operation even without cards.
+          {
             try {
               _admitBatch();
               await _pushManagedOutbox();
@@ -2334,7 +2336,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     String? onlyQueueId,
     String? onlyOperationId,
     bool Function()? canAdmit,
-  }) => WindowsPendingSchoolSync.flush(
+  }) async {
+    final canonical=<String,Map<String,dynamic>>{};
+    await WindowsPendingSchoolSync.flush(
     profileId: _activeProfileId,
     onlyQueueId: onlyQueueId,
     onlyOperationId: onlyOperationId,
@@ -2343,6 +2347,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     onActivity: _recordActivity,
     canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
     send: (c, id, op, data) async {},
+    prepareVersioned:(ref,item)=>WindowsFirebaseRemote.prepareQueuedRecord(ref,item,_activeSchoolSyncId),
+    canonicalForAck:(item)=>canonical[item['operationId']],
     sendVersioned: (item) async {
       metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
       final queuedAt = item['queuedAt'];
@@ -2378,12 +2384,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         throw StateError('School changed before retaining verified dependencies.');
       }
       final revision = reply['recordRevision'] as String;
+      if(item['operation']!='delete' && reply['record'] is Map)
+        canonical[item['operationId'] as String]=Map<String,dynamic>.from(reply['record']);
       // Persist before the outbox ACK can remove its only recovery source.
       await WindowsSyncDependencies.retain(school, item['collection'] as String,
           item['documentId'] as String, revision);
       return revision;
     },
   );
+  }
 
   Future<Set<String>> _managedChangedCollections(
     String school,

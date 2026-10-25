@@ -15540,7 +15540,7 @@ class _AddTeacherScreenState
               .collection(
                 'teachers_directory',
               )
-              .doc();
+              .doc('Teacher_$normalizedPhone');
 
       await ref.set({
         'teacherId':

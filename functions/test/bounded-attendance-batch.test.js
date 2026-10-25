@@ -31,7 +31,7 @@ test('temporary and authoritative failures remain distinct and fast batches fini
 });
 test('signed full bundle exposes bounded batch capability and preserves school verification',()=>{
  const s=storage({bundle:true,lifecycle:true}),out=s.call({action:'managed_health'});
- assert.equal(out.success,true);assert.equal(out.scriptBundleVersion,'2026-10-19.1');assert.equal(out.attendanceBatchVersion,2);
+ assert.equal(out.success,true);assert.equal(out.scriptBundleVersion,'2026-10-25.1');assert.equal(out.attendanceBatchVersion,2);
  assert.equal(out.attendanceBatchMaxOperations,25);assert.equal(out.attendanceBatchBudgetMillis,45000);
  assert.equal(s.call({action:'managed_attendance_batch',operations:operations(1),lease:{schoolId:A,expiresAt:0}}).acknowledgements[0].success,false);
 });

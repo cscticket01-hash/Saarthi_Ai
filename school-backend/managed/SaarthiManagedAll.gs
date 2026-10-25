@@ -6922,7 +6922,7 @@ function VS_studentUnique(store,id,data,existing) {
 }
 function VS_syncRequestShape(b) {
   const data=Object.create(null);
-  if(b.operation==='write')Object.keys(b.data||{}).forEach(k=>{if(['_syncRevision','_syncOperationId','_syncRequestHash','_syncDeleted','_syncDeletedFileId','_syncFileCleanupComplete'].indexOf(k)<0)data[k]=b.data[k];});
+  if(b.operation==='write')Object.keys(b.data||{}).forEach(k=>{if(['_syncRevision','_syncOperationId','_syncRequestHash','_syncDeleted','_syncDeletedFileId','_syncFileCleanupComplete','_syncFieldRevisions'].indexOf(k)<0)data[k]=b.data[k];});
   return {operation:b.operation,data:data};
 }
 function VS_managedRecord(b) {
@@ -6930,9 +6930,63 @@ function VS_managedRecord(b) {
   const lock=LockService.getScriptLock();lock.waitLock(30000);
   try{return VS_managedRecordUnlocked(b);}finally{lock.releaseLock();}
 }
+// Capability-gated field edits. Same-field stale retries never overwrite a
+// later edit, including an A->B->A change. Per-field revisions prevent ABA.
+function VS_applyFieldPatch(b,existing,school) {
+  const patch=b.data&&b.data._syncFieldPatch;
+  if(!patch)return null;
+  if(b.operation!=='write'||b.syncProtocol!==2||!b.expectedRecordRevision||
+      ['documents','backups'].indexOf(b.collection)>=0||!existing||existing.schoolId!==school||existing.id!==b.id||b.data.schoolId!==school||existing.data._syncDeleted||
+      patch.version!==1||!patch.set||typeof patch.set!=='object'||Array.isArray(patch.set)||
+      !Array.isArray(patch.remove)||patch.remove.length>256||!patch.before||typeof patch.before!=='object'||
+      Object.keys(b.data).some(k=>k!=='schoolId'&&k!=='_syncFieldPatch'))throw new Error('Invalid sync operation');
+  const current=existing.data,identity=patch.identity||{},keys=[...new Set([...Object.keys(patch.set),...patch.remove])];
+  if(keys.length>256||keys.some(k=>typeof k!=='string'||!k||k.length>200||
+      ['id','schoolId','createdAt','__proto__','prototype','constructor'].indexOf(k)>=0||k.indexOf('_sync')===0)||
+      patch.remove.some(k=>Object.prototype.hasOwnProperty.call(patch.set,k)))throw new Error('Invalid sync operation');
+  for(const key of Object.keys(identity)) {
+    if(['mobileStableId','teacherId','studentId','personId'].indexOf(key)<0||typeof identity[key]!=='string'||!identity[key]||identity[key]!==current[key])
+      throw new Error('Record revision conflict');
+  }
+  for(const key of ['studentId','personId'])if(current[key]&&identity[key]!==current[key])throw new Error('Record revision conflict');
+  const personKey=b.collection==='students_directory'?'mobileStableId':b.collection==='teachers_directory'?'teacherId':null;
+  if(personKey&&(!identity[personKey]||identity[personKey]!==current[personKey]))throw new Error('Record revision conflict');
+  if(current._syncRecreatesDeletedRevision)throw new Error('Record revision conflict');
+  for(const key of [personKey,'studentId','personId'].filter(Boolean)) {
+    if(Object.prototype.hasOwnProperty.call(patch.set,key)&&patch.set[key]!==current[key]||patch.remove.indexOf(key)>=0)
+      throw new Error('Record revision conflict');
+  }
+  if(current._syncRevision!==b.expectedRecordRevision) {
+    for(const key of keys.filter(k=>k!=='updatedAt')) {
+      const proof=patch.before[key],exists=Object.prototype.hasOwnProperty.call(current,key);
+      const revision=current._syncFieldRevisions&&current._syncFieldRevisions[key]|| (exists?current._syncRevision:'absent');
+      if(!proof||typeof proof.exists!=='boolean'||proof.exists!==exists||proof.revision!==revision)
+        throw new Error('Record revision conflict');
+    }
+  }
+  const data=Object.assign({},current,patch.set,{schoolId:school});patch.remove.forEach(k=>delete data[k]);
+  return data;
+}
+function VS_nextFieldRevisions(previous,data,revision) {
+  const stamps=Object.assign({},previous&&previous._syncFieldRevisions||{});
+  const keys=new Set([...Object.keys(previous||{}),...Object.keys(data)]);
+  keys.forEach(key=>{if(key==='id'||key==='schoolId'||key.indexOf('_sync')===0)return;
+    const had=previous&&Object.prototype.hasOwnProperty.call(previous,key),has=Object.prototype.hasOwnProperty.call(data,key);
+    if(!had||!has||VS_layoutHash(previous[key])!==VS_layoutHash(data[key]))stamps[key]=revision;
+    else if(!stamps[key])stamps[key]=previous._syncRevision||revision;
+  });return stamps;
+}
 function VS_managedRecordUnlocked(b,readContext) {
   if(b.operation==='read'&&b.knownRecordRevisions!==undefined)return VS_managedIncrementalRecords(b,readContext);
   const store=VS_managedSheet(b.collection,readContext), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
+  if(b.operation==='read' && b.syncProtocol===2 && b.id!==undefined) {
+    if(typeof b.id!=='string'||!/^[^/]{1,200}$/.test(b.id)||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
+    const item=VS_sheetItem(store,b.id),records=Object.create(null),head=VS_sheetLifecycleEnabled()?VS_recordHead(b.collection,b.id):null;
+    if(!item&&head&&!head.head.deleted)throw new Error('Verified local Sheet recovery required before editing');
+    if(item){if(item.schoolId!==school||item.id!==b.id)throw new Error('Foreign school record');records[b.id]=item.data;}
+    else if(head&&head.head.deleted)records[b.id]={schoolId:school,_syncDeleted:true,_syncRevision:head.head.revision,_syncDeletedOwner:head.head.generation};
+    return {records:records,pointRead:true,syncProtocol:2,collectionRevision:PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy'};
+  }
   if(b.operation==='read') {
     VS_recoverMissingBackupRows(b.collection,store);
     VS_refreshStudentReadable(store);
@@ -6949,6 +7003,14 @@ function VS_managedRecordUnlocked(b,readContext) {
   const retained=VS_sheetLifecycleEnabled()?VS_recordHead(b.collection,b.id):null;
   if(!existing&&retained){const h=retained.head;existing={id:b.id,schoolId:school,data:{schoolId:school,_syncRevision:h.revision,_syncOperationId:h.operationId,_syncRequestHash:h.requestHash,...(h.deleted?{_syncDeleted:true,_syncDeletedOwner:h.generation,_syncRetiredStudentGenerations:h.retiredGenerations||[]}:{})}};
     if(!h.deleted)throw new Error('Verified local Sheet recovery required before editing');}
+  const wireHash=VS_layoutHash(VS_syncRequestShape(b));
+  const patchReplay=b.operation==='write'&&b.syncProtocol===2&&typeof b.expectedRecordRevision==='string'&&b.data&&b.data.schoolId===school&&b.data._syncFieldPatch&&existing&&existing.schoolId===school&&existing.id===b.id&&existing.data._syncOperationId===b.operationId;
+  if(patchReplay) {
+    if(existing.data._syncRequestHash!==wireHash)throw new Error('Sync operation ID conflict');
+    return {recordRevision:existing.data._syncRevision,syncProtocol:2,record:Object.assign({id:b.id},existing.data)};
+  }
+  const patched=VS_applyFieldPatch(b,existing,school);
+  if(patched)b=Object.assign({},b,{data:patched});
   const file=existing;
   if(existing&&b.createOnly===true){VS_recordJsonBackup(store,existing);return {skipped:true};}
   if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
@@ -6972,10 +7034,10 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(b.syncProtocol===2){
     if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
     if(existing&&existing.data._syncOperationId===b.operationId){
-      const digest=VS_layoutHash(VS_syncRequestShape(b));
+      const digest=wireHash;
       const original=existing.data._syncRequestHash||VS_layoutHash(VS_syncRequestShape({operation:existing.data._syncDeleted?'delete':'write',data:existing.data}));
       if(digest!==original)throw new Error('Sync operation ID conflict');
-      VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
+      VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:existing.data._syncDeleted?VS_managedDeletedFile(store,b.id,existing.data):undefined};
     }
     const replacement=VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.operation==='write'&&existing&&b.data&&/^p-[a-f0-9]{32,64}$/.test(b.data.mobileStableId||'')&&b.data.mobileStableId!==b.data.replacesStudentGeneration&&b.data.replacesStudentGeneration===(existing.data._syncDeleted?existing.data._syncDeletedOwner:VS_studentGeneration(existing.data,b.id));
     const childReplacement=VS_reusableStudentChild(b,existing);
@@ -6984,7 +7046,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     // The authoritative tombstone already fulfils that intent. Never rebase a
     // stale delete onto a live (possibly restored/new-generation) record.
     const alreadyDeleted=b.operation==='delete'&&existing&&existing.data._syncDeleted===true;
-    if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision&&!replacement&&!sameDeletion&&!childReplacement&&!alreadyDeleted)throw new Error('Record revision conflict');
+    if((existing&&existing.data._syncRevision||'')!==b.expectedRecordRevision&&!replacement&&!sameDeletion&&!childReplacement&&!alreadyDeleted&&!patched)throw new Error('Record revision conflict');
     if(replacement&&!existing.data._syncDeleted){VS_deleteStudentOwnedRecords(b.id,existing.data,b.operationId,b.data);}
   }
 
@@ -7000,10 +7062,10 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(b.operation==='write' && existing && existing.data._syncDeleted && !VS_reusableStudentChild(b,existing) && !(b.syncProtocol===2&&b.expectedRecordRevision===existing.data._syncRevision&&b.data&&(b.data._syncRecreatesDeletedRevision===existing.data._syncRevision||b.data._syncRecreatesDeletedOperationId&&b.data._syncRecreatesDeletedOperationId===existing.data._syncOperationId)&&b.collection!=='students_directory') && !(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&b.syncProtocol===2&&/^p-[a-f0-9]{32,64}$/.test(b.data&&b.data.mobileStableId||'')&&b.data.mobileStableId!==existing.data._syncDeletedOwner&&(b.expectedRecordRevision===existing.data._syncRevision||b.data.replacesStudentGeneration===existing.data._syncDeletedOwner)))throw new Error('Record revision conflict');
   if(b.operation==='delete'){
     if(VS_recycleEnabled()&&b.syncProtocol!==2)throw new Error('Invalid sync operation');
-    if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
+    if(existing&&existing.data._syncDeleted){VS_saveRecordHead(store,existing);if(existing.row){VS_refreshStudentReadable(store,existing,existing.row);VS_refreshRecordReadable(store,existing,existing.row);}VS_recordJsonBackup(store,existing);return {recordRevision:existing.data._syncRevision,syncProtocol:2,...(b.operation==='write'?{record:Object.assign({id:b.id},existing.data)}:{}),fileCleanup:VS_managedDeletedFile(store,b.id,existing.data)};}
     {
       const revision=Utilities.getUuid(),data={schoolId:school,_syncDeleted:true,_syncRevision:revision};
-      if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
+      if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=wireHash;}
       if(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&existing){VS_deleteStudentOwnedRecords(b.id,existing.data,b.operationId||revision);data._syncDeletedOwner=VS_studentGeneration(existing.data,b.id);data._syncRetiredStudentGenerations=[...new Set([...(existing.data._syncRetiredStudentGenerations||[]),data._syncDeletedOwner])];}
       if(VS_sheetLifecycleEnabled()&&existing&&existing.data.personId)data._syncDeletedOwner=existing.data.personId;
       if(b.collection==='documents' && existing){data.documentRevision=existing.data.documentRevision||'';const fileId=existing.data._syncDeletedFileId||existing.data.fileId;if(fileId)data._syncDeletedFileId=fileId;}
@@ -7030,14 +7092,15 @@ function VS_managedRecordUnlocked(b,readContext) {
   Object.keys(data).filter(k=>k.indexOf('_syncRecycle')===0).forEach(k=>delete data[k]);
   delete data._syncDeleted;delete data._syncOperationId;delete data._syncRevision;
   data._syncRevision=revision;
-  if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=VS_layoutHash(VS_syncRequestShape(b));}
+  if(['documents','backups'].indexOf(b.collection)<0)data._syncFieldRevisions=VS_nextFieldRevisions(existing&&existing.data,data,revision);
+  if(b.syncProtocol===2){data._syncOperationId=b.operationId;data._syncRequestHash=wireHash;}
   if(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'){
     delete data._syncRetiredStudentGenerations;delete data._syncDeletedOwner;
     if(existing){const retired=[...new Set([...(existing.data._syncRetiredStudentGenerations||[]),...(existing.data._syncDeleted?[existing.data._syncDeletedOwner]:b.data.replacesStudentGeneration?[b.data.replacesStudentGeneration]:[])].filter(v=>typeof v==='string'&&v))];if(retired.length)data._syncRetiredStudentGenerations=retired;}
   }
   delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2,studentUniquenessScope:studentUniquenessScope};
+  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2,record:Object.assign({id:b.id},data),studentUniquenessScope:studentUniquenessScope};
 }
 /** Opt-in recovery proof for isolated TEST. Financial/document rows require review. */
 function VS_enableTestBackupRecovery() {
@@ -7334,9 +7397,9 @@ function VS_managedHandle(e) {
           if(part.sheet.getRange(1,1,1,1).getValues()[0][0]!=='Record Key')throw new Error('School tab identity requires review');
         });sheetsVerified=true;}
       }
-      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
+      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-19.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-25.1',googleEmail:''};
     }
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}

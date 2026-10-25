@@ -741,8 +741,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lanes = details['lanes'] is Map ? details['lanes'] as Map
         : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
     final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
-    final syncing = engine.isSyncing && !engine.isPaused;
-    final phase =
+    final syncing = engine.isSyncing && !engine.isPaused && ManagedSchoolSession.activeTransfers.value>0;
+    final phase = engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
         details['displayState']?.toString() ??
         (syncing
             ? 'syncing'
@@ -755,6 +755,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ? 'pending'
             : 'idle');
     final phaseLabels = {
+      'preparing': 'Preparing changed data',
       'syncing': engine.isCheckingCloud ? 'Checking cloud' : 'Syncing',
       'needsAttention': 'Needs Attention',
       'offline': 'Offline',
@@ -779,7 +780,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               onTap: () => _jump(_queueKey),
               child: metric(
                 'Pending Uploads',
-                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed",
+                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
               ),
             ),
             if (other['pending'] is num && other['pending'] > 0)
@@ -969,7 +970,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.sync, color: _cyan),
                         title: Text(
-                          '${raw['collection'] ?? 'School record'}',
+                          '${raw['collection'] ?? (raw['_queueCollection']=='_windows_document_outbox' ? raw['deleted']==true?'Document cleanup':'Document upload':'School record')}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1237,7 +1238,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         title: const Text('Sync Engine 3.0'),
         actions: [
           AnimatedBuilder(
-            animation: Listenable.merge([engine.state, engine.details]),
+            animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers]),
             builder: (context, _) { WindowsAppearance.watch(context); return  Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: FilledButton.icon(
@@ -1287,7 +1288,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Expanded(
               child: AnimatedBuilder(
-                animation: Listenable.merge([engine.state, engine.details]),
+                animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers]),
                 builder: (context, _) {WindowsAppearance.watch(context);
                   final details = engine.details.value;
                   final ownSchool = db.activeProfileId == origin;
