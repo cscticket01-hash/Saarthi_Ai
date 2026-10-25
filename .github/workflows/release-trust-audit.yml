@@ -1,0 +1,87 @@
+name: Audit current release trust
+on:
+  push:
+    branches: [fix/release-publisher-trust]
+    paths:
+      - '.github/workflows/release-trust-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publisher-readiness:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check configured signing identity without exposing credentials
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          WINDOWS_SIGNING_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_THUMBPRINT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $missing = @()
+          foreach ($name in @('WINDOWS_SIGNING_PFX_BASE64', 'WINDOWS_SIGNING_PASSWORD', 'WINDOWS_SIGNING_THUMBPRINT')) {
+            if (![Environment]::GetEnvironmentVariable($name)) { $missing += $name }
+          }
+          if ($missing.Count) {
+            "Trusted publisher signing BLOCKED. Missing configuration names: $($missing -join ', ')" >> $env:GITHUB_STEP_SUMMARY
+            throw 'Trusted publisher signing is not configured. No public release attempted.'
+          }
+          $probe = Join-Path $env:RUNNER_TEMP 'vidya-signing-probe'
+          New-Item -ItemType Directory -Path $probe -Force | Out-Null
+          Add-Type -TypeDefinition 'public class SigningProbe { public static void Main() {} }' -OutputAssembly "$probe/probe.exe" -OutputType ConsoleApplication
+          & .github/scripts/sign_windows_release.ps1 -Path $probe
+          'Trusted publisher signing and timestamp smoke test: PASS. Probe was not executed or published.' >> $env:GITHUB_STEP_SUMMARY
+  windows-current-installer:
+    runs-on: windows-2022
+    steps:
+      - name: Fetch exact current public installer and inspect Authenticode
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $file = Join-Path $env:RUNNER_TEMP 'Vidya_Saarthi_Setup_2.1.171.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Setup_2.1.171.exe' -OutFile $file
+          $digest = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne '7c36ae4c90fdb8f04c4e5bd1142dd7bba29cb90bbb84cc03a9d6d4ae893fe750') { throw 'Published installer SHA-256 mismatch.' }
+          $sig = Get-AuthenticodeSignature $file
+          "Windows v2.1.171 SHA-256 verified. Authenticode status: $($sig.Status)" >> $env:GITHUB_STEP_SUMMARY
+          Write-Host "Authenticode status: $($sig.Status)"
+      - name: Scan exact public installer with Defender enabled
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Enable protection only on this disposable hosted runner; never add exclusions.
+          $status = Get-MpComputerStatus
+          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) {
+            Set-Service -Name WinDefend -StartupType Automatic
+            Start-Service -Name WinDefend
+            Set-MpPreference -DisableRealtimeMonitoring $false
+            $status = Get-MpComputerStatus
+          }
+          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) { throw 'Hosted Defender protection is unavailable; scan unverified.' }
+          Update-MpSignature
+          $scanner = Get-ChildItem "$env:ProgramData/Microsoft/Windows Defender/Platform/*/MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$scanner) { throw 'Hosted Defender scanner unavailable; scan unverified.' }
+          & $scanner.FullName -Scan -ScanType 3 -File (Join-Path $env:RUNNER_TEMP 'Vidya_Saarthi_Setup_2.1.171.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Defender scan failed or detected a threat. Review logs; no exclusion applied.' }
+          'Hosted Defender scan of exact public installer: PASS. Client SmartScreen reputation remains unverified.' >> $env:GITHUB_STEP_SUMMARY
+  android-current-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Verify exact public APK integrity and permanent signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'build-tools;36.0.0'
+          apk="$RUNNER_TEMP/Vidya-Saarthi-v1.0.599.apk"
+          curl --fail --location --retry 2 --output "$apk" 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.599/Vidya-Saarthi-v1.0.599.apk'
+          printf '%s  %s\n' 'a053e91a4fecad98f1d84d208ae743b47dbdd17b243a60ea7c5fafaf8e793ff9' "$apk" | sha256sum --check -
+          python3 .github/scripts/verify_android_release.py "$ANDROID_HOME/build-tools/36.0.0/apksigner" "$apk"
+          echo 'Exact Android v1.0.599 APK SHA-256 and permanent signing identity: PASS. Play Protect reputation remains unverified.' >> "$GITHUB_STEP_SUMMARY"

@@ -650,6 +650,12 @@ jobs:
         fi
 
         ls -lh build/app/outputs/flutter-apk/app-release.apk
+    - name: Verify final APK signature and permanent publisher identity
+      shell: bash
+      run: |
+        python3 .github/scripts/verify_android_release.py \
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+          build/app/outputs/flutter-apk/app-release.apk
     - name: Prepare Final APK
       shell: bash
       run: |
