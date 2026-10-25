@@ -85,10 +85,55 @@ class WindowsPendingSchoolSync {
       });
       scope();
       probes++;
-      final response = await read(
-        item['collection'] as String,
-        item['documentId'] as String,
-      );
+      // A read-only probe must never turn a transport failure into a queue
+      // acknowledgement. Only record-scoped transient failures can be skipped;
+      // shared network failures halt this pass, and authorization/quota/
+      // configuration/identity failures still reach the authoritative owner.
+      Map<String, dynamic> response;
+      try {
+        response = await read(
+          item['collection'] as String,
+          item['documentId'] as String,
+        );
+      } catch (error) {
+        scope();
+        final decision = windowsSyncRecovery(error);
+        if (!{
+          SyncFailureKind.networkPath,
+          SyncFailureKind.timeout,
+          SyncFailureKind.server,
+        }.contains(decision.kind)) {
+          await journal.set({
+            'outcome': 'probe_blocked',
+            'failureCategory': decision.kind.name,
+          }, const SetOptions(merge: true));
+          scope();
+          rethrow;
+        }
+        // The previously persisted nextProbeAt is a durable cooldown. Keep
+        // the exact original operation, its payload, and all local edits.
+        await journal.set({
+          'outcome': 'probe_deferred',
+          'failureCategory': decision.kind.name,
+          'lastProbeAt': clock().millisecondsSinceEpoch,
+        }, const SetOptions(merge: true));
+        scope();
+        onActivity?.call({
+          'schoolId': school,
+          'queueCollection': '_windows_firebase_outbox',
+          'queueId': row.id,
+          'operationId': item['operationId'],
+          'stage': 'repairDiagnosed',
+          'outcome': 'probe_deferred',
+          'failureCategory': decision.kind.name,
+          'at': clock().millisecondsSinceEpoch,
+        });
+        // A disconnected network is shared across records: avoid hammering
+        // the provider. A timed-out/5xx record probe may be record-specific,
+        // so independent, already-eligible rows may still be diagnosed.
+        if (decision.kind == SyncFailureKind.networkPath) break;
+        continue;
+      }
       scope();
       if (response['schoolId'] != school ||
           response['syncProtocol'] != 2 ||

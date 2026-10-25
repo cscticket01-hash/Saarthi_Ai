@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -268,5 +269,87 @@ void main() {
       (await db.collection('school_notices').doc('one').get()).data()?['title'],
       'one',
     );
+  });
+
+  test('isolated diagnostic timeout defers only that record; next record can recover without changing the original identity', () async {
+    for (final id in ['one', 'two']) {
+      final ref = db.collection('teachers_directory').doc(id);
+      await db.applySyncedDocument(ref, record(id, 'r1'));
+      await ref.update({'name': 'Local edit $id'});
+    }
+    final rows = (await db.collection('_windows_firebase_outbox').get()).docs;
+    expect(rows, hasLength(2));
+    final originals = {for (final row in rows) row.data()['documentId']: row.data()['operationId']};
+    for (final row in rows) {
+      await row.reference.update({
+        'syncState': 'needsAttention',
+        'failureCategory': 'timeout',
+      });
+    }
+    final events = <Map<String, dynamic>>[];
+    final reads = <String>[];
+    final admitted = await WindowsPendingSchoolSync.repair(
+      profileId: db.activeProfileId,
+      school: school,
+      onActivity: events.add,
+      read: (collection, id) async {
+        reads.add(id);
+        if (id == 'one') throw TimeoutException('record-scoped probe timeout');
+        return {
+          'schoolId': school,
+          'syncProtocol': 2,
+          'pointRead': true,
+          'records': {id: record(id, 'r1')},
+        };
+      },
+    );
+    expect(admitted, 1);
+    expect(reads, ['one', 'two']);
+    final after = (await db.collection('_windows_firebase_outbox').get()).docs;
+    final retained = {for (final row in after) row.data()['documentId']: row.data()};
+    expect(retained['one']?['syncState'], 'needsAttention');
+    expect(retained['one']?['operationId'], originals['one']);
+    expect(retained['two']?['operationId'], originals['two']);
+    expect(retained['two']?['syncState'], anyOf('pending', 'retry'));
+    expect((await db.collection('teachers_directory').doc('one').get()).data()?['name'], 'Local edit one');
+    expect(events.where((event) => event['outcome'] == 'probe_deferred').single['failureCategory'], 'timeout');
+    final journal = (await db.collection('_windows_sync_status').doc('repair-${originals['one']}').get()).data()!;
+    expect(journal['outcome'], 'probe_deferred');
+    expect((journal['nextProbeAt'] as num), greaterThan(DateTime.now().millisecondsSinceEpoch));
+    var repeatedReads = 0;
+    await WindowsPendingSchoolSync.repair(
+      profileId: db.activeProfileId,
+      school: school,
+      read: (collection, id) async {
+        repeatedReads++;
+        throw TimeoutException('must be cooled down');
+      },
+    );
+    expect(repeatedReads, 0);
+  });
+
+  test('network-wide repair probe stops further reads and does not acknowledge either pending record', () async {
+    for (final id in ['one', 'two']) {
+      final ref = db.collection('teachers_directory').doc(id);
+      await db.applySyncedDocument(ref, record(id, 'r1'));
+      await ref.update({'name': 'offline $id'});
+    }
+    final rows = (await db.collection('_windows_firebase_outbox').get()).docs;
+    for (final row in rows) {
+      await row.reference.update({'syncState': 'needsAttention', 'failureCategory': 'networkPath'});
+    }
+    var reads = 0;
+    expect(await WindowsPendingSchoolSync.repair(
+      profileId: db.activeProfileId,
+      school: school,
+      read: (collection, id) async {
+        reads++;
+        throw const SocketException('disconnected');
+      },
+    ), 0);
+    expect(reads, 1);
+    for (final row in (await db.collection('_windows_firebase_outbox').get()).docs) {
+      expect(row.data()['syncState'], 'needsAttention');
+    }
   });
 }

@@ -255,4 +255,39 @@ void main() {
       feed.stop();
     });
   });
+
+  test('stalled change feed times out, retries original cursor and ignores late response', () {
+    fakeAsync((clock) {
+      final first = Completer<Map<String, dynamic>>();
+      final seenCursors = <String?>[];
+      final hints = <Set<String>>[];
+      var errors = 0;
+      final reader = WindowsRemoteChangeFeed(
+        allowedCollections: {'fee_payments'},
+        readTimeout: const Duration(seconds: 3),
+        read: (school, cursor) {
+          seenCursors.add(cursor);
+          if (seenCursors.length == 1) return first.future;
+          return Future.value(event(school, collections: ['fee_payments']));
+        },
+        onHint: hints.add,
+        onError: (_) => errors++,
+      );
+      reader.start('profile', 'school');
+      clock.elapse(const Duration(seconds: 3));
+      clock.flushMicrotasks();
+      expect(errors, 1);
+      expect(reader.isHealthy, false);
+      expect(seenCursors, [null]);
+      clock.elapse(const Duration(seconds: 2));
+      clock.flushMicrotasks();
+      expect(seenCursors, [null, null]);
+      expect(hints, [{'fee_payments'}]);
+      expect(reader.isHealthy, true);
+      first.complete(event('school', collections: ['fee_payments']));
+      clock.flushMicrotasks();
+      expect(hints, hasLength(1));
+      reader.stop();
+    });
+  });
 }

@@ -1,0 +1,39 @@
+name: Unified Sync 3 repair review
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/windows_pending_school_sync.dart'
+      - 'lib/windows_remote_change_feed.dart'
+      - 'test/windows_sync_intelligent_repair_test.dart'
+      - 'test/windows_remote_change_feed_test.dart'
+      - '.github/workflows/sync3-unified-repair-review.yml'
+  push:
+    branches: [feature/sync3-unified-repair-20261026]
+permissions:
+  contents: read
+concurrency:
+  group: sync3-unified-repair-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  owner-regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        sqlite: ['false', 'true']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze existing Sync Engine owner and tests
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_pending_school_sync.dart lib/windows_remote_change_feed.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart
+      - name: Test exact-source repair and durable cursor behavior
+        env:
+          APPDATA: ${{ runner.temp }}/sync3-unified-repair
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} --concurrency=1 --timeout 120s test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart
