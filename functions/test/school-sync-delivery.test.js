@@ -34,3 +34,12 @@ test('explicit rejection cancels only the matching intent; student deletion wake
  const deletion=await owner.prepare(A,{...body,operation:'delete',collection:'students_directory'});await owner.committed(deletion,'deleted');
  assert.deepEqual(f.published[0],[A,f.feed.collections]);
 });
+
+test('a rejected duplicate cannot cancel a previously committed notification',async()=>{
+ const f=setup(),owner=f.create(),ticket=await owner.prepare(A,body);
+ f.feed.publishMany=async()=>{throw Error('publish interrupted');};await assert.rejects(owner.committed(ticket,'real-revision'));
+ await owner.rejected(ticket);
+ assert.equal(Object.values(f.docs.get('school_sync_delivery/'+A).entries)[0].state,'committed');
+ f.feed.publishMany=async(...args)=>f.published.push(args);
+ assert.equal((await owner.recover(A,async()=>false)).repaired,1);
+});

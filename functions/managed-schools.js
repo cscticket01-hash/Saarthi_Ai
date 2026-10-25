@@ -201,7 +201,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
    if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
   }catch(error){
-   if(ticket && [400,401,403,409].includes(error.status))await syncDelivery.remove(ticket).catch(()=>{});
+   if(ticket && error.code==='RECORD_REVISION_CONFLICT')await syncDelivery.rejected(ticket).catch(()=>{});
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action))await saveSyncEvidence(m.schoolId,{outcome:'failed',stage:body.action,code:
      ['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'].includes(error.code)?error.code:'SCRIPT_UNVERIFIED'});
    if((error.status===409&&['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCHOOL_STORAGE_NOT_CONNECTED'].includes(error.code))||([503,504].includes(error.status)&&['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(error.code))){
@@ -646,7 +646,7 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
    if(index<0||replied.has(ack.operationId)||typeof ack.success!=='boolean'||ack.success&&(typeof ack.recordRevision!=='string'||!ack.recordRevision))fail(502,'Unverified batch receipt');
    replied.add(ack.operationId);
    if(ack.success){if(tickets[index])await deliveryBudget(syncDelivery.committed(tickets[index],ack.recordRevision)).catch(()=>{});else await changeHint(m.schoolId,operations[index].collection,operations[index].id);}
-   else if(['SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED'].includes(ack.code)&&tickets[index])await syncDelivery.remove(tickets[index]).catch(()=>{});
+   else if(ack.code==='SCRIPT_RECORD_REVISION_CONFLICT'&&tickets[index])await syncDelivery.rejected(tickets[index]).catch(()=>{});
   }
   invalidate(m.schoolId);return result;
  }

@@ -21,6 +21,7 @@ function createSchoolSyncDelivery({db,feed,now=Date.now,maxPending=512}) {
   });
  }
  async function remove(ticket){return mutate(ticket.school,entries=>{if(entries[ticket.key]?.token===ticket.token)delete entries[ticket.key];});}
+ async function rejected(ticket){return mutate(ticket.school,entries=>{if(entries[ticket.key]?.token===ticket.token && entries[ticket.key].state==='prepared')delete entries[ticket.key];});}
  async function publish(ticket){
   const cols=ticket.operation==='delete'&&ticket.collection==='students_directory'?null:[ticket.collection];
   if(cols)await feed.publishMany(ticket.school,cols,ticket.id);
@@ -55,6 +56,6 @@ function createSchoolSyncDelivery({db,feed,now=Date.now,maxPending=512}) {
     nextAttemptAt:now()+Math.min(3600000,2000*2**Math.min(row.attempts,10))};}).catch(()=>{});}}
   return {repaired,pending:Object.keys(state.entries||{}).length-repaired};
  }
- return {prepare,committed,remove,recover};
+ return {prepare,committed,remove,rejected,recover};
 }
 module.exports={createSchoolSyncDelivery};
