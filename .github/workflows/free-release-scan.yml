@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Install free scanner and installer extractor
+      - name: Install free scanner and ZIP extractor
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y clamav innoextract
+          sudo apt-get install -y clamav unzip
           sudo systemctl stop clamav-freshclam || true
           sudo freshclam
       - name: Download and hash-check exact public Windows installer
@@ -24,8 +24,11 @@ jobs:
           curl --fail --location --retry 2 --output scan/installer.exe 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Setup_2.1.171.exe'
           echo '7c36ae4c90fdb8f04c4e5bd1142dd7bba29cb90bbb84cc03a9d6d4ae893fe750  scan/installer.exe' | sha256sum --check -
           sha256sum scan/installer.exe > evidence/SHA256SUMS.txt
-          innoextract --extract --output-dir scan/extracted scan/installer.exe
-      - name: Scan installer and extracted application without deleting files
+          curl --fail --location --retry 2 --output scan/portable.zip 'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.171/Vidya_Saarthi_Windows_Portable_2.1.171.zip'
+          echo '7874667e3f5f07c653b16c5504d00c077db83ed7d7a5c8ca32dda62fec4ca1af  scan/portable.zip' | sha256sum --check -
+          sha256sum scan/portable.zip >> evidence/SHA256SUMS.txt
+          unzip -q scan/portable.zip -d scan/portable
+      - name: Scan installer and same-release portable application without deleting files
         run: |
           set -euo pipefail
           clamscan --version | tee evidence/scanner-version.txt
