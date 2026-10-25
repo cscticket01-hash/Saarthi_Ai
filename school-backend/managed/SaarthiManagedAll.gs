@@ -7912,7 +7912,7 @@ function VS_refreshRecordReadable(store,item,row){
     // At most 100 backfill rows; batch adjacent rows without touching gaps or
     // owner cells. Keep readback verification before advancing the cursor.
     const batches=[];
-    entries.forEach(e=>{const d=e.item.data,values=[VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
+    entries.forEach(e=>{const d=e.item.data,values=[e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
       if(lastBatch&&lastBatch.row+lastBatch.values.length===e.row)lastBatch.values.push(values);
       else batches.push({row:e.row,values:[values]});
     });
