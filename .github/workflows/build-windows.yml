@@ -369,7 +369,14 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          # Enable protection only on this disposable hosted runner; never add exclusions.
           $status = Get-MpComputerStatus
+          if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) {
+            Set-Service -Name WinDefend -StartupType Automatic
+            Start-Service -Name WinDefend
+            Set-MpPreference -DisableRealtimeMonitoring $false
+            $status = Get-MpComputerStatus
+          }
           if (!$status.AntivirusEnabled -or !$status.RealTimeProtectionEnabled) { throw 'Defender must be enabled for release verification.' }
           Update-MpSignature
           $scanner = Get-ChildItem "$env:ProgramData/Microsoft/Windows Defender/Platform/*/MpCmdRun.exe" | Sort-Object FullName -Descending | Select-Object -First 1
