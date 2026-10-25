@@ -246,7 +246,7 @@ void main() {
     expect(conflict['syncState'],'conflict');
     await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Offline PC2'});
     expect((await rig.queue()).single.data()['operationId'],conflict['operationId']);
-    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Explicit Save PC2'});
+    await WindowsLocalFirestoreSyncControl.runDirectorySave(() => rig.db.collection('teachers_directory').doc('T1').update({'subject':'Explicit Save PC2'}));
     expect((await rig.queue()).single.data()['syncState'],'pending');
     await rig.open('pc1');
     await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Intervening PC1'});
@@ -255,7 +255,7 @@ void main() {
     await expectLater(rig.flush(),throwsA(isA<CentralCloudException>()));
     expect((await rig.queue()).single.data()['syncState'],'conflict');
     await rig.pull({'teachers_directory'});
-    await rig.db.collection('teachers_directory').doc('T1').update({'subject':'Final explicit PC2'});
+    await WindowsLocalFirestoreSyncControl.runDirectorySave(() => rig.db.collection('teachers_directory').doc('T1').update({'subject':'Final explicit PC2'}));
     await rig.flush();
     expect(await rig.queue(),isEmpty);
     await rig.open('pc1');

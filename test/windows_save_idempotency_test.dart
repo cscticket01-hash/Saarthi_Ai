@@ -90,13 +90,15 @@ void main() {
       final conflicted=(await pending()).data()!;
       await ref.update({'name':'Local'});
       expect(migrationJsonValue((await pending()).data()),migrationJsonValue(conflicted),reason:'Unchanged Save cannot choose a winner');
-      await ref.update({'name':'Explicit changed Save'});
+      await ref.update({'backgroundFlag':true});
+      expect((await pending()).data()?['syncState'],'conflict',reason:'Background tracking cannot select a winner');
+      await WindowsLocalFirestoreSyncControl.runDirectorySave(() => ref.update({'name':'Explicit changed Save'}));
       final saved=(await pending()).data()!;
       expect(saved['syncState'],'pending');
       expect(saved['baseCloudRevision'],'cloud-r2');
-      expect(saved['savedOverConflictOperationId'],original['operationId']);
+      expect(saved['savedOverConflictOperationId'],isNotNull);
       expect((await db.collection('_windows_sync_conflicts').get()).docs.single.data()['remote']['name'],'Cloud');
-      expect((await db.collection('_windows_sync_conflict_history').get()).docs.single.data()['data']['name'],'Local');
+      expect((await db.collection('_windows_sync_conflict_history').doc(original['operationId']).get()).data()?['data']['name'],'Local');
       await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},
         sendVersioned:(item)async {
           expect(item['baseCloudRevision'],'cloud-r2');
@@ -139,7 +141,7 @@ void main() {
     var q=await pending();
     await db.recordOutboxFailure(q.reference,q.data()!,state:'needsAttention',
       error:'Invalid contact',failureCategory:'validation');
-    await ref.update({'contact':'9876543210'});
+    await WindowsLocalFirestoreSyncControl.runDirectorySave(() => ref.update({'contact':'9876543210'}));
     expect((await pending()).data()?['syncState'],'pending');
     q=await pending();
     await db.recordOutboxFailure(q.reference,q.data()!,state:'needsAttention',

@@ -26,6 +26,13 @@ class WindowsLocalFirestoreSyncControl {
 
   static const Object _zoneKey =
       #vidyaSaarthiRemoteSyncWrite;
+  static const Object _userSaveKey = #vidyaSaarthiExplicitDirectorySave;
+  static bool get explicitDirectorySave => Zone.current[_userSaveKey] == true;
+
+  /// Only actual directory Save controls may select a changed local version.
+  /// ID-card preparation and other tracked background writes cannot do so.
+  static Future<T> runDirectorySave<T>(Future<T> Function() action) =>
+      runZoned<Future<T>>(action, zoneValues:{_userSaveKey:true});
 
   static WindowsLocalTrackedMutationCallback?
       onTrackedMutation;
@@ -1138,6 +1145,7 @@ class _LocalSchoolDatabase {
     }
 
     final profileAtEnqueue=_activeProfileId;
+    final userDirectorySave = WindowsLocalFirestoreSyncControl.explicitDirectorySave;
     final completer = Completer<void>();
 
     _writeTail = _writeTail.then((_) async {
@@ -1390,6 +1398,7 @@ class _LocalSchoolDatabase {
               collections,
               operation,
               docs,
+              userDirectorySave: userDirectorySave,
             );
             if (deletedSnapshot != null) {
               final queue = collections['_windows_firebase_outbox'] as Map;
@@ -2041,8 +2050,9 @@ class _LocalSchoolDatabase {
   void _recordFirebaseOutbox(
     Map<String, dynamic> collections,
     _WriteOperation operation,
-    Map<String, dynamic> finalDocs,
-  ) {
+    Map<String, dynamic> finalDocs, {
+    required bool userDirectorySave,
+  }) {
     if (operation.type != _WriteType.delete && operation.collection == 'school_config' &&
         operation.documentId == 'school_profile_cache') {
       // Keep legacy branding locally, but never turn an asset-only cache into a mutation.
@@ -2122,11 +2132,11 @@ class _LocalSchoolDatabase {
       // Only a save made AFTER observing this deletion may recreate this slot.
       (finalDocs[operation.documentId] as Map)['_syncRecreatesDeletedRevision'] = baselineEntry['revision'];
     }
-    final explicitDirectorySave = previous is Map && !isDelete &&
+    final explicitDirectorySave = userDirectorySave && previous is Map && !isDelete &&
         finalDocs[operation.documentId] is Map &&
         previous['schoolId'] == _activeIdentity['schoolSyncId'] &&
         canSaveDirectoryConflict(previous, finalDocs[operation.documentId] as Map);
-    final correctedValidation = previous is Map && !isDelete &&
+    final correctedValidation = userDirectorySave && previous is Map && !isDelete &&
         previous['syncState'] == 'needsAttention' &&
         previous['failureCategory'] == 'validation';
     final blocked = previous is Map &&

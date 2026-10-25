@@ -13037,13 +13037,13 @@ errorBuilder: (
                                   FieldValue.delete();
                             }
 
-                            await FirebaseFirestore
+                            await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore
                                 .instance
                                 .collection(
                                   'teachers_directory',
                                 )
                                 .doc(docId)
-                                .update(updateData);
+                                .update(updateData));
 
                             if (!mounted) return;
 
@@ -13977,13 +13977,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   FieldValue.delete();
                             }
 
-                            await FirebaseFirestore
+                            await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore
                                 .instance
                                 .collection(
                                   'teachers_directory',
                                 )
                                 .doc(docId)
-                                .update(updateData);
+                                .update(updateData));
 
                             if (!mounted) return;
 
@@ -17476,10 +17476,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 }
 
                                 if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
-                                await FirebaseFirestore.instance
+                                await WindowsLocalFirestoreSyncControl.runDirectorySave(() => FirebaseFirestore.instance
                                     .collection('students_directory')
                                     .doc(docId)
-                                    .update(updateData);
+                                    .update(updateData));
 
                                 if (!mounted) return;
 
