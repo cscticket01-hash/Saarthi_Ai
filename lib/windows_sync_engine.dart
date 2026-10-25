@@ -2089,7 +2089,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         state.value = SchoolCloudState.syncPending;
       await refreshDetails();
       if ((lastError != null &&
-              (_hasAutomaticWork || _pendingIdInputs.isNotEmpty) &&
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
           _rerunRequested ||

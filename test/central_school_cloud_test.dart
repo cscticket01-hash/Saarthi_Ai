@@ -30,12 +30,12 @@ class _StreamClient extends http.BaseClient {
   void close() { closes++; }
 }
 void main() {
-  test('45-second budget bounds delayed headers and delayed body with sanitized stage', () {
+  test('managed 120-second budget bounds headers and body without replay', () {
     for (final delayedHeaders in [true, false]) {
       fakeAsync((clock) {
         final body = StreamController<List<int>>();
         final transport = _StreamClient(() async {
-          if (delayedHeaders) await Future<void>.delayed(const Duration(seconds: 44));
+          if (delayedHeaders) await Future<void>.delayed(const Duration(seconds: 119));
           return http.StreamedResponse(body.stream, 200);
         });
         final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
@@ -45,7 +45,7 @@ void main() {
         cloud.send('POST', Uri.parse(cloud.endpoint), body: {'action':'managed/records'})
           .then<void>((_) { completed = true; }, onError: (Object error) { failure = error; });
         clock.flushMicrotasks();
-        clock.elapse(const Duration(seconds: 44)); clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 119)); clock.flushMicrotasks();
         expect(failure, isNull);
         clock.elapse(const Duration(seconds: 1)); clock.flushMicrotasks();
         expect(failure, isA<CentralRequestTimeout>());
@@ -58,6 +58,24 @@ void main() {
         cloud.close(); expect(transport.closes, 0);
       });
     }
+  });
+  test('managed response after 45 seconds succeeds exactly once', () {
+    fakeAsync((clock) {
+      final transport = _StreamClient(() async {
+        await Future<void>.delayed(const Duration(seconds: 60));
+        return http.StreamedResponse(Stream.value(utf8.encode('{"success":true}')), 200);
+      });
+      final cloud = CentralSchoolCloud(endpoint:'https://school.example/api', client:transport, closeClient:false);
+      var completed = false;
+      cloud.send('POST', Uri.parse(cloud.endpoint), body:{'action':'managed/changes'})
+          .then((_) { completed = true; });
+      clock.flushMicrotasks();
+      clock.elapse(const Duration(seconds:45)); clock.flushMicrotasks();
+      expect(completed, false);
+      clock.elapse(const Duration(seconds:15)); clock.flushMicrotasks();
+      expect(completed, true); expect(transport.sends, 1);
+      cloud.close();
+    });
   });
   test('no response headers are classified without retrying or resetting the shared client', () {
     fakeAsync((clock) {

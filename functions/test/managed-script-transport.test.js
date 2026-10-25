@@ -43,3 +43,19 @@ test('Apps Script lock timeout is retryable 504 without replay, raw errors or fa
  assert.equal(f.sent.length,1);
  assert.equal(JSON.parse(JSON.parse(f.sent[0].opt.body).payload).operationId,operationId);
 });
+
+test('redirect shares the original deadline rather than starting a second 90 seconds',async()=>{
+ let signal;const f=fixture(async(_,options)=>{
+  if(!signal){signal=options.signal;return {status:302,headers:new Headers({location:'https://script.googleusercontent.com/test'})};}
+  assert.equal(options.signal,signal);
+  return {status:200,ok:true,text:async()=>JSON.stringify({success:true,schoolId:A,recordRevision:'verified',syncProtocol:2})};
+ });
+ await f.call(body);assert.equal(f.sent.length,2);
+});
+test('legacy script lock and quota failures are retryable without leaking messages or replay',async()=>{
+ for(const [message,status,code] of [['Lock timed out NEVER_EXPOSE',504,'SCRIPT_TIMEOUT'],['Service invoked too many times NEVER_EXPOSE',429,'SCRIPT_QUOTA_EXCEEDED']]){
+  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,message})}));
+  await assert.rejects(f.call(body),e=>e.status===status&&e.code===code&&!e.message.includes('NEVER_EXPOSE'));
+  assert.equal(f.sent.length,1);
+ }
+});
