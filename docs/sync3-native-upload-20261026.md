@@ -17,4 +17,4 @@ These are simulated provider responses, not successful uploads to Google. Live T
 
 The TEST readiness workflow now rejects a deployed runtime SHA or Script version different from the checked-out source; healthy old runtimes cannot certify new code.
 
-Still pending: authorized TEST entitlement renewal, isolated matching deployment, real Drive upload/quota/latency acceptance, shared foreground/background dashboard-cache ownership, and physical Windows/Android/Web tests. No new background dashboard writer or second sync scheduler is introduced. Keep PR #135 DRAFT; no production rollout is authorized by this checkpoint.
+Still pending: authorized TEST entitlement renewal, isolated matching deployment, real Drive upload/quota/latency acceptance, physical Windows/Android/Web tests. Shared foreground/background cache code is now implemented separately; see docs/sync3-background-cache-20261026.md. No new background dashboard writer or second sync scheduler is introduced. Keep PR #135 DRAFT; no production rollout is authorized by this checkpoint.

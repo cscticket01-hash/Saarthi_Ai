@@ -8,15 +8,18 @@ void attendanceBackgroundDispatcher() {
   Workmanager().executeTask((task, _) async {
     WidgetsFlutterBinding.ensureInitialized();
     if (task != 'vs_attendance_reconcile_v2') return true;
+    final session = SchoolSession();
     try {
-      final session = SchoolSession();
       await session.restore();
       if (!session.loggedIn) return true;
       await session.flushAttendance();
+      if (session.cachedAccessAllowed) await session.refreshIfIdleDue();
       return true;
     } catch (_) {
       // SQLite leases recover unfinished attempts; no queue/data/session clearing.
       return false;
+    } finally {
+      await session.closeBackgroundInvocation();
     }
   });
 }

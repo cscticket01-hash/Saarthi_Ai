@@ -1,3 +1,4 @@
+import 'session_cache_store.dart';
 import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
@@ -98,13 +99,18 @@ class SchoolSession {
   SchoolSession({
     http.Client? client,
     this.cacheDirectory,
+    MobileSessionCacheStore? sharedSessionStore,
     AttendanceStore? attendanceStore,
     Future<void> Function(String value)? persistSession,
     this.cardPublicKey = QrCardAuthorization.configuredPublicKey,
   }) : _client = client ?? http.Client(),
        _attendanceStore = attendanceStore ?? AttendanceStore(),
-       _persistSession = persistSession;
+       _persistSession = persistSession,
+       _sharedSessionStore = sharedSessionStore ?? (persistSession == null && Platform.isAndroid ? MobileSessionCacheStore() : null);
   final Future<void> Function(String value)? _persistSession;
+  final MobileSessionCacheStore? _sharedSessionStore;
+  String? _sharedSnapshot;
+  int? _sharedSnapshotVersion;
   final http.Client _client;
   final String cardPublicKey;
   final AttendanceStore _attendanceStore;
@@ -118,7 +124,8 @@ class SchoolSession {
     if (!paused) await refreshDashboard(afterSignal: true);
   }
 
-  Future<Map<String, dynamic>> refreshIfIdleDue({DateTime? now}) {
+  Future<Map<String, dynamic>> refreshIfIdleDue({DateTime? now}) async {
+    await _adoptSharedSnapshot();
     final at = now ?? DateTime.now();
     if (syncPaused ||
         lastDashboardVerifiedAt != null &&
@@ -757,8 +764,14 @@ class SchoolSession {
         await _secure.read(key: 'vs_mobile_device') ??
         base64UrlEncode(List.generate(32, (_) => Random.secure().nextInt(256)));
     await _secure.write(key: 'vs_mobile_device', value: deviceId);
-    final raw = await _secure.read(key: 'vs_mobile_session');
-    if (raw == null) return;
+    final shared = await _sharedSessionStore?.readSnapshot();
+    final raw = shared == null
+        ? await _secure.read(key: 'vs_mobile_session') : shared.value;
+    if (raw == null) {
+      if (loggedIn) await clear(preserveSharedSession:true);
+      _sharedSnapshot = null; _sharedSnapshotVersion = shared?.version;
+      return;
+    }
     try {
       final d = jsonDecode(raw);
       final restoredLink = QrAuthenticationEngine.decode(d['qr']);
@@ -798,6 +811,7 @@ class SchoolSession {
           );
         _pdfCache = Map<String, dynamic>.from(d['pdfCache'] as Map? ?? {});
       }
+      _sharedSnapshot = raw; _sharedSnapshotVersion = shared?.version;
     } catch (_) {
       await clear();
     }
@@ -1076,6 +1090,7 @@ class SchoolSession {
   Future<void> _persist() async {
     if (!loggedIn) return;
     final generation = _generation;
+    final expectedCacheVersion = _sharedSnapshotVersion;
     final value = jsonEncode({
       'qr': link!.rawQr,
       'schoolToken': schoolToken,
@@ -1105,7 +1120,10 @@ class SchoolSession {
       if (generation == _generation) {
         if (_persistSession != null)
           await _persistSession!(value);
-        else
+        else if (_sharedSessionStore != null) {
+          _sharedSnapshotVersion = await _sharedSessionStore!.write(value, expectedVersion:expectedCacheVersion);
+          _sharedSnapshot = value;
+        } else
           await _secure.write(key: 'vs_mobile_session', value: value);
       }
     });
@@ -1190,6 +1208,7 @@ class SchoolSession {
             : 'School connection needs review. Cached data is retained.';
         final temporary =
             error is TimeoutException ||
+            (_sharedSessionStore != null && error is SchoolCacheFailure) ||
             error is SocketException ||
             error is http.ClientException ||
             (error is SchoolApiFailure && error.retryable);
@@ -1234,9 +1253,25 @@ class SchoolSession {
     }
   }
 
+  Future<void> _adoptSharedSnapshot() async {
+    if (_sharedSessionStore != null) {
+      final current = await _sharedSessionStore!.read();
+      if (current != _sharedSnapshot) {
+        final same = current != null && jsonDecode(current)['qr'] == link?.rawQr;
+        if (!same) {
+          await clear(preserveSharedSession: true);
+          throw SchoolAccessDenied('School session changed in another app worker.');
+        }
+        await restore();
+        if (!loggedIn) throw SchoolAccessDenied('School session is unavailable.');
+      }
+    }
+  }
+
   Future<Map<String, dynamic>> _refreshDashboard({
     bool afterSignal = false,
   }) async {
+    await _adoptSharedSnapshot();
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
     // Legacy responses can leave list metadata (notably noticeIds: []) in
@@ -1584,7 +1619,8 @@ class SchoolSession {
     await clear();
   }
 
-  Future<void> clear() async {
+  Future<void> clear({bool preserveSharedSession = false}) async {
+    final previousQr = link?.rawQr;
     _generation++;
     _recoveryTimer?.cancel();
     _refreshFailures = 0;
@@ -1630,7 +1666,13 @@ class SchoolSession {
     _expiresAt = 0;
     _policyExpiresAt = 0;
     final deletion = _storageTail.then(
-      (_) => _secure.delete(key: 'vs_mobile_session'),
+      (_) async {
+        if (preserveSharedSession) return;
+        if (_sharedSessionStore != null) {
+          await _sharedSessionStore!.clear(previousQr);
+          _sharedSnapshot = null;
+        } else { await _secure.delete(key: 'vs_mobile_session'); }
+      },
     );
     _storageTail = deletion.then<void>(
       (_) {},
@@ -1638,4 +1680,14 @@ class SchoolSession {
     );
     await deletion;
   }
+  /// End an existing WorkManager invocation without clearing durable identity,
+  /// pending attendance or its verified dashboard cache.
+  Future<void> closeBackgroundInvocation() async {
+    _recoveryTimer?.cancel();
+    await _storageTail;
+    try { await _attendanceFlush; } catch (_) { /* Durable owner retains retry state. */ }
+    _client.close();
+    await _sharedSessionStore?.close();
+  }
+
 }
