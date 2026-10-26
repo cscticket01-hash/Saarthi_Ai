@@ -106,7 +106,7 @@ class SchoolSession {
   }) : _client = client ?? http.Client(),
        _attendanceStore = attendanceStore ?? AttendanceStore(),
        _persistSession = persistSession,
-       _sharedSessionStore = sharedSessionStore ?? (persistSession == null && Platform.isAndroid ? MobileSessionCacheStore() : null);
+       _sharedSessionStore = sharedSessionStore ?? (persistSession == null && !kIsWeb && Platform.isAndroid ? MobileSessionCacheStore() : null);
   final Future<void> Function(String value)? _persistSession;
   final MobileSessionCacheStore? _sharedSessionStore;
   String? _sharedSnapshot;
