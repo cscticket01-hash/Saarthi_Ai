@@ -83,6 +83,12 @@ void main(){
     final back=SchoolSession(client:client(),sharedSessionStore:background);
     await front.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
     await front.refreshDashboard();
+    // Two same-owner writes queued before the first commit must serialize
+    // against the UPDATED own CAS, while explicit stale writes remain blocked.
+    await Future.wait([front.setSyncPaused(true),front.setSyncPaused(true)]);
+    expect(front.syncPaused,true);
+    expect(jsonDecode((await foreground.read())!)['syncPaused'],true);
+    await front.setSyncPaused(false);
     await back.restore();revision='second';await back.refreshDashboard();
     revision='third';await front.refreshDashboard();
     expect(observed,'second');expect(front.dashboard['revision'],'third');

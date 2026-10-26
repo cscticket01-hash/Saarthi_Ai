@@ -1091,7 +1091,6 @@ class SchoolSession {
   Future<void> _persist() async {
     if (!loggedIn) return;
     final generation = _generation;
-    final expectedCacheVersion = _sharedSnapshotVersion;
     final value = jsonEncode({
       'qr': link!.rawQr,
       'schoolToken': schoolToken,
@@ -1122,6 +1121,10 @@ class SchoolSession {
         if (_persistSession != null)
           await _persistSession!(value);
         else if (_sharedSessionStore != null) {
+          // Capture the CAS at EXECUTION time inside this session's serialized
+          // storage tail. Earlier queued writes may have advanced our own
+          // snapshot; an independent background owner still fails CAS.
+          final expectedCacheVersion = _sharedSnapshotVersion;
           _sharedSnapshotVersion = await _sharedSessionStore!.write(value, expectedVersion:expectedCacheVersion);
           _sharedSnapshot = value;
         } else
