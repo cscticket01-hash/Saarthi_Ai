@@ -46,6 +46,13 @@ Local full backend **546/546 PASS** (source before the final sequence-overflow g
 
 Next precise steps: exact-source final CI; then bounded external Sheets edits/readable-projection audit, Android/Web resumable/persistent retry ownership, provider-supported resumable media, deeper recovery postconditions, full 15k record/device acceptance and real end-to-end measurements. These are unfinished; do not relabel this incremental PR as complete release-ready.
 
+### Atomic replay and mobile quota milestone (source after b8d57f0d)
+Previous replay commit: `b8d57f0df580b80269649baf781f3b7296997050`. Replay source including the overflow guard passed **546/546 backend tests** locally. Additional atomic replay fixture now models transaction commit/rollback and rejects Firestore read-after-write misuse; injected page-write failure preserves the original hint head and exact retry advances once. Legacy transaction adapters lacking delete retain the original hot-window behavior instead of accumulating unbounded replay pages. Full backend with this addition: **547/547 PASS** locally.
+
+Mobile source: `lib/mobile/school_session.dart` now persists dashboard quota attempt/cooldown in the existing school/person-bound secure cache, rejects notification/resume/dashboard read bursts during a provider quota deadline, uses quota delay in the existing recovery timer, and preserves the prior verified dashboard timestamp and documents. It never acknowledges attendance or guarantees execution while Android is stopped. New test in `test/mobile_smart_sync_test.dart` verifies HTTP429, five duplicate signals, restart restoration, no extra network reads, and no false new verification. The same four-way exact-source CI now includes the mobile suite. These new Flutter changes require exact-commit CI before PASS can be claimed.
+
+Precise remaining engineering is unchanged: external direct Sheet edit/readable-projection audit, provider-supported resumable uploads/downloads, full mobile/Web applied-cursor convergence/background ownership, additional evidence-gated repair playbooks and end-to-end performance acceptance. Existing complete-file hash-verified retry is not resumable transfer. Existing 64-page fallback and quota guards are not proof of real-school pending resolution. No production changes authorized or performed.
+
 ## Preserve the original rules
 - School/profile identity isolation and signed authorization; never infer/migrate a school ID.
 - Initial sync + hourly idle reconciliation, immediate changed-record dispatch, no-op Save, any-date same-record edits, first committed same-key Add.

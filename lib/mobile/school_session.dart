@@ -714,6 +714,9 @@ class SchoolSession {
   String connectionMessage =
       'Cached school data; cloud verification has not completed.';
   int _refreshFailures = 0;
+  int _dashboardQuotaAttempts = 0, _dashboardQuotaRetryAt = 0;
+  DateTime? get dashboardQuotaRetryAt => _dashboardQuotaRetryAt > 0
+      ? DateTime.fromMillisecondsSinceEpoch(_dashboardQuotaRetryAt) : null;
   Timer? _recoveryTimer;
   final connectionChanges = ValueNotifier<int>(0);
   DateTime? lastDashboardVerifiedAt;
@@ -783,6 +786,8 @@ class SchoolSession {
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        _dashboardQuotaAttempts = (d['dashboardQuotaAttempts'] as int? ?? 0).clamp(0, 5).toInt();
+        _dashboardQuotaRetryAt = d['dashboardQuotaRetryAt'] as int? ?? 0;
         if (d['cacheRole'] == link!.role)
           _attendanceHistoryCache = Map<String, dynamic>.from(
             d['attendanceHistory'] as Map? ?? {},
@@ -1090,6 +1095,8 @@ class SchoolSession {
       'attendanceHistory': _attendanceHistoryCache,
       'dashboard': dashboard,
       'syncPaused': syncPaused,
+      'dashboardQuotaAttempts': _dashboardQuotaAttempts,
+      'dashboardQuotaRetryAt': _dashboardQuotaRetryAt,
       'lastDashboardVerifiedAt':
           lastDashboardVerifiedAt?.millisecondsSinceEpoch,
       'pdfCache': _pdfCache,
@@ -1113,6 +1120,9 @@ class SchoolSession {
   /// Failed refreshes preserve the last durable verified generation.
   Future<Map<String, dynamic>> refreshDashboard({bool afterSignal = false}) {
     if (syncPaused) return Future.value(dashboard);
+    if (_dashboardQuotaRetryAt > DateTime.now().millisecondsSinceEpoch) {
+      return Future.error(SchoolApiFailure(429, code: 'SCRIPT_QUOTA_EXCEEDED'));
+    }
     final running = _refresh;
     if (running != null) {
       if (!afterSignal) return running;
@@ -1186,7 +1196,10 @@ class SchoolSession {
         _refreshFailures++;
         _recoveryTimer?.cancel();
         if (temporary && _refreshFailures <= 5 && cachedAccessAllowed) {
-          _recoveryTimer = Timer(schoolRetryDelay(_refreshFailures), () {
+          final quotaWait = _dashboardQuotaRetryAt - DateTime.now().millisecondsSinceEpoch;
+          _recoveryTimer = Timer(quotaWait > 0
+              ? Duration(milliseconds: quotaWait)
+              : schoolRetryDelay(_refreshFailures), () {
             if (origin == _generation && cachedAccessAllowed) {
               unawaited(refreshDashboard().catchError((Object _) => dashboard));
             }
@@ -1197,6 +1210,28 @@ class SchoolSession {
       },
     );
     return pending;
+  }
+
+  Future<Map<String, dynamic>> _dashboardRequest(Map<String, dynamic> body) async {
+    final generation = _generation;
+    try {
+      return await schoolCall('mobile_dashboard', body);
+    } catch (error) {
+      if (generation == _generation && error is SchoolApiFailure &&
+          (error.status == 429 || error.code == 'SCRIPT_QUOTA_EXCEEDED')) {
+        _dashboardQuotaAttempts = (_dashboardQuotaAttempts + 1).clamp(1, 5).toInt();
+        _dashboardQuotaRetryAt = DateTime.now().add(
+          schoolRetryDelay(_dashboardQuotaAttempts, quota: true),
+        ).millisecondsSinceEpoch;
+        // Same durable identity-bound cache commit; no document or attendance
+        // acknowledgement is created by a dashboard quota refusal.
+        try { await _persist(); } catch (_) {
+          // The in-memory gate remains closed even if local storage is full.
+          connectionMessage = 'School quota cooldown could not be saved locally. Cached data retained.';
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> _refreshDashboard({
@@ -1245,7 +1280,7 @@ class SchoolSession {
         'Mobile record checkpoints exceed the supported limit; cached data retained.',
       );
     }
-    final result = await schoolCall('mobile_dashboard', {
+    final result = await _dashboardRequest({
       'mobileRecordDeltaVersion': 1,
       'knownGroupRecordRevisions': groupCheckpoints,
       if (afterSignal) 'afterSignal': true,
@@ -1358,6 +1393,8 @@ class SchoolSession {
     person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
     for (final key in removedPdfs.keys) _pdfCache.remove(key);
     lastDashboardVerifiedAt = DateTime.now();
+    final previousQuotaAt = _dashboardQuotaRetryAt, previousQuotaAttempts = _dashboardQuotaAttempts;
+    _dashboardQuotaRetryAt = 0;_dashboardQuotaAttempts = 0;
     try {
       // One cache commit binds content and its verified timestamp. No second
       // write can fail after the new dashboard has already been accepted.
@@ -1368,6 +1405,7 @@ class SchoolSession {
       dashboard = old;
       person = oldPerson;
       lastDashboardVerifiedAt = previousVerified;
+      _dashboardQuotaRetryAt = previousQuotaAt;_dashboardQuotaAttempts = previousQuotaAttempts;
       _pdfCache = oldPdfs;
       throw SchoolCacheFailure();
     }
@@ -1546,6 +1584,7 @@ class SchoolSession {
     _generation++;
     _recoveryTimer?.cancel();
     _refreshFailures = 0;
+    _dashboardQuotaRetryAt = 0;_dashboardQuotaAttempts = 0;
     syncPaused = false;
     _cachedAttendancePermit = null;
     _attendanceStatusDay = '';

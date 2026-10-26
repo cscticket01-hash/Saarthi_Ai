@@ -7,7 +7,14 @@ function sharedCloud(){
  const records=new Map(),listeners=new Map();let tail=Promise.resolve();
  const snapshot=p=>({exists:records.has(p),data:()=>structuredClone(records.get(p))});
  const db={doc:p=>({path:p,onSnapshot(next){const rows=listeners.get(p)||new Set();listeners.set(p,rows);rows.add(next);queueMicrotask(()=>{if(rows.has(next))next(snapshot(p));});return()=>{rows.delete(next);if(!rows.size)listeners.delete(p);};}}),
-  runTransaction(fn){const run=tail.then(()=>fn({get:async r=>snapshot(r.path),delete(r){records.delete(r.path);},set(r,v){records.set(r.path,structuredClone(v));for(const next of listeners.get(r.path)||[])queueMicrotask(()=>next(snapshot(r.path)));}}));tail=run.catch(()=>{});return run;}};
+  runTransaction(fn){const run=tail.then(async()=>{
+   const writes=[];
+   const result=await fn({get:async r=>{assert.equal(writes.length,0,'Firestore reads must precede writes');return snapshot(r.path);},
+    delete:r=>writes.push([r.path,null]),set:(r,v)=>writes.push([r.path,structuredClone(v)])});
+   for(const [path,value] of writes){if(value===null)records.delete(path);else records.set(path,value);}
+   for(const [path] of writes)for(const next of listeners.get(path)||[])queueMicrotask(()=>next(snapshot(path)));
+   return result;
+  });tail=run.catch(()=>{});return run;}};
  return {db,records,listeners};
 }
 test('five independent PCs receive a committed hint immediately across broker instances; other school stays isolated',async()=>{
@@ -213,4 +220,22 @@ test('replay retention, missing pages, corrupt pages and old publisher gaps alwa
  assert(cloud.records.size<=33);
  assert.equal((await feed.wait(A,cursor,{replayVersion:1})).reset,true);
  assert.equal(cloud.listeners.size,0);
+});
+
+
+test('replay page failure rolls back the hint head; retry publishes once without a cursor hole',async()=>{
+ const cloud=sharedCloud(),feed=createSchoolChangeFeed({db:cloud.db,collections:['fee_payments'],waitMillis:1});
+ await feed.publish(A,'fee_payments','before');
+ const original=structuredClone(cloud.records.get('school_sync_hints/'+A));
+ const transaction=cloud.db.runTransaction;
+ cloud.db.runTransaction=fn=>transaction(tx=>fn({...tx,set(ref,value){
+  if(ref.path.includes('/pages/'))throw Error('synthetic interrupted page write');
+  tx.set(ref,value);
+ }}));
+ await assert.rejects(feed.publish(A,'fee_payments','after'),/interrupted/);
+ assert.deepEqual(cloud.records.get('school_sync_hints/'+A),original);
+ cloud.db.runTransaction=transaction;
+ await feed.publish(A,'fee_payments','after');
+ const event=await feed.wait(A,original.epoch+':1',{replayVersion:1});
+ assert.equal(event.cursor,original.epoch+':2');assert.deepEqual(event.records.fee_payments,['after']);
 });

@@ -39,6 +39,12 @@ function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=500}
    project(old); // Reject corrupt identity/sequence instead of resetting it.
    if(previous+events.length>999999999999999)throw Error('Change sequence exhausted; review required');
    const epoch=old.epoch||randomUUID(),pages=new Map();
+   if(typeof tx.delete!=='function'){
+    // Legacy adapters retain only the original bounded hot window.
+    tx.set(r,{version:1,epoch,sequence:previous+events.length,
+     events:[...(Array.isArray(old.events)?old.events:[]),...events].slice(-64)});
+    return;
+   }
    for(const event of events){
     const index=Math.floor((event.sequence-1)/pageSize);
     if(!pages.has(index)){

@@ -892,4 +892,35 @@ void main() {
       expect(calls, 3);
     },
   );
+  test('dashboard quota survives restart and notification bursts without extra reads or false verification', () async {
+    var quota = false, reads = 0;
+    final client = MockClient((request) async {
+      final action = (jsonDecode(request.body)['request'] as Map)['action'];
+      if (action == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (action != 'mobile_dashboard') return http.Response(jsonEncode(response({})), 200);
+      reads++;
+      if (quota) return http.Response(jsonEncode({'success': false, 'code': 'SCRIPT_QUOTA_EXCEEDED'}), 429);
+      return http.Response(jsonEncode(response({'revision': 'verified-before-quota', 'notices': []})), 200);
+    });
+    final session = SchoolSession(client: client);
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();
+    final verified = session.lastDashboardVerifiedAt!.millisecondsSinceEpoch;
+    quota = true;
+    await expectLater(session.refreshDashboard(afterSignal: true), throwsA(isA<SchoolApiFailure>()));
+    expect(session.dashboardQuotaRetryAt!.millisecondsSinceEpoch,
+        greaterThan(DateTime.now().add(const Duration(seconds: 58)).millisecondsSinceEpoch));
+    for (var i = 0; i < 5; i++) {
+      await expectLater(session.refreshDashboard(afterSignal: true), throwsA(isA<SchoolApiFailure>()));
+    }
+    expect(reads, 2);
+    expect(session.lastDashboardVerifiedAt!.millisecondsSinceEpoch, verified);
+    final restored = SchoolSession(client: client);await restored.restore();
+    expect(restored.dashboard['revision'], 'verified-before-quota');
+    expect(restored.dashboardQuotaRetryAt, session.dashboardQuotaRetryAt);
+    await expectLater(restored.refreshDashboard(afterSignal: true), throwsA(isA<SchoolApiFailure>()));
+    expect(reads, 2);
+    await session.clear();await restored.clear();
+  });
+
 }
