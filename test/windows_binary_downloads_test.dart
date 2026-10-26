@@ -317,6 +317,50 @@ void main() {
     expect(restarted.entries.single.containsKey('transferOffset'), false);
   });
 
+  test('large media attempt deadline persists verified prefix for a later owner retry', () async {
+    original = List<int>.generate(700000, (i) => i % 251);
+    expected = {...expected, 'sha256': sha256.convert(original).toString(),
+      'sizeBytes': original.length};
+    var pauseAfterFirstChunk = true;
+    final offsets = <int>[];
+    remote = (body) async {
+      if (body['action'] == 'managed/file/inventory') {
+        return {...inventory([expected]), 'binaryRangeVersion': 1};
+      }
+      expect(body['action'], 'managed/file/download/part');
+      final offset = body['offset'] as int;
+      offsets.add(offset);
+      final end = (offset + 256 * 1024).clamp(0, original.length).toInt();
+      final chunk = original.sublist(offset, end);
+      if (pauseAfterFirstChunk && offset == 0) {
+        // Advance the injected clock after the first verified range ACK,
+        // modelling elapsed slow-provider time without an actual 3-minute CI wait.
+        clock += WindowsBinaryDownloads.transferAttemptBudget.inMilliseconds + 1000;
+        pauseAfterFirstChunk = false;
+      }
+      return {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+        'fileId': expected['fileId'], 'sha256': expected['sha256'],
+        'version': expected['version'], 'sizeBytes': original.length,
+        'offset': offset, 'nextOffset': end,
+        'chunkSha256': sha256.convert(chunk).toString(),
+        'base64': base64Encode(chunk)};
+    };
+    final first = manager();
+    await first.refreshInventory();
+    await expectLater(first.repairNext(), throwsA(isA<TimeoutException>()));
+    expect(first.entries.single['transferOffset'], 256 * 1024);
+    expect(first.summary['verifiedFiles'], 0);
+    expect(await first.verifiedPath('school_file_1'), isNull);
+    final restored = manager();
+    await restored.load();
+    expect(restored.entries.single['transferOffset'], 256 * 1024);
+    expect(await restored.repairNext(), false); // Respect persisted cooldown.
+    clock += 6000;
+    expect(await restored.repairNext(), true);
+    expect(offsets, [0, 262144, 524288]);
+    expect(await File((await restored.verifiedPath('school_file_1'))!).readAsBytes(), original);
+  });
+
   test('corrupt chunk is never appended or marked verified', () async {
     remote = (body) async => body['action'] == 'managed/file/inventory'
       ? {...inventory([expected]), 'binaryRangeVersion': 1}

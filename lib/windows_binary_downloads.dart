@@ -33,6 +33,9 @@ class WindowsBinaryDownloads {
   final DateTime Function() now;
   final double Function() jitter;
   static const retryLimit = 3;
+  // Bound the lifetime of a single foreground repair attempt. Its verified
+  // chunks remain resumable under the same durable school/file journal.
+  static const transferAttemptBudget = Duration(minutes: 3);
   static const maxBytes = 20 * 1024 * 1024;
   static const maxItems = 1000;
   final Map<String, Map<String, dynamic>> _items = {};
@@ -384,6 +387,7 @@ class WindowsBinaryDownloads {
 
   Future<List<int>> _downloadRange(Map<String, dynamic> item) async {
     final file = _rangeFile(item);
+    final deadline = now().add(transferAttemptBudget);
     if (!_activeRanges.add(file.path)) throw StateError('Binary transfer already active.');
     try {
       final type = await FileSystemEntity.type(file.path, followLinks: false);
@@ -410,11 +414,15 @@ class WindowsBinaryDownloads {
       }
       for (var chunks = 0; offset < size && chunks < 80; chunks++) {
         _guard();
+        final remaining = deadline.difference(now());
+        if (remaining <= Duration.zero) {
+          throw TimeoutException('Media repair attempt deadline reached; verified prefix retained.');
+        }
         final response = await request({
           'action': 'managed/file/download/part', 'schoolId': schoolId,
           'fileId': item['fileId'], 'expectedSha256': item['sha256'],
           'expectedVersion': item['version'], 'offset': offset, 'length': 256 * 1024,
-        }).timeout(const Duration(seconds: 40));
+        }).timeout(remaining < const Duration(seconds: 40) ? remaining : const Duration(seconds: 40));
         _guard();
         if (response['success'] != true || response['schoolId'] != schoolId ||
             response['binaryRangeVersion'] != 1 || response['fileId'] != item['fileId'] ||
