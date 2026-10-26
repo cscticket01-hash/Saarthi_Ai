@@ -27,8 +27,10 @@ async function run(){
  assert.ok(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD);
  let r=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+apiKey,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  assert.equal(r.http,200);const token=r.data.idToken;assert.ok(token);
+ const safeRead=require('./safe_test_read_retry.cjs');
  const call=async body=>{
-  const result=await post(endpoint,{...body,schoolId},token);
+  const result=await safeRead(post,endpoint,{...body,schoolId},token,report);
+  report.lastReadback={action:body.action,operation:body.operation||null,http:result.http,code:typeof result.data.code==='string'?result.data.code:null};
   assert.equal(result.http,200);assert.equal(result.data.success,true);assert.equal(result.data.schoolId,schoolId);return result.data;
  };
  const pass=name=>report.checks.push({name,status:'PASS'});
@@ -68,8 +70,11 @@ async function run(){
    assert.notEqual(rejected.data.success,true);
    // This observes rejection; the sanitized provider error does not expose the
    // owner-only exception, so do not claim an exact provider exception reason.
+   report.phase='expired_probe_retained_tombstone_read';
    const retained=(await read()).records[expiryId];
+   report.phase='expired_probe_unchanged_tombstone_assertion';
    assert.deepEqual(retained,row);
+   report.phase='expired_probe_retained_inventory_read';
    let retainedEntry=null;after='';
    for(let page=0;page<20;page++){
     const inventory=await call({action:'managed/recycle',operation:'list',collection:'school_notices',after});
@@ -77,6 +82,7 @@ async function run(){
     retainedEntry=inventory.entries.find(item=>item.id===expiryId);
     if(retainedEntry||!inventory.partial)break;after=inventory.nextAfter;
    }
+   report.phase='expired_probe_retained_inventory_assertion';
    assert.ok(retainedEntry);assert.equal(retainedEntry.status,'expired');assert.equal(retainedEntry.auditRetained,true);
    for(const field of ['deletedRevision','deletedAt','recoverUntil'])assert.equal(retainedEntry[field],entry[field]);
    report.expiry.expiredRestoreRejected=true;report.expiry.auditRetainedAfterProbe=true;
@@ -107,6 +113,6 @@ async function run(){
  const foreign=await post(endpoint,{action:'managed/recycle',operation:'list',collection:'school_notices',schoolId:'vs-ffffffffffffffffffffffffffffffff'},token);assert.notEqual(foreign.http,200);pass('Foreign school access rejected');
  report.status='PASS';report.fixtureRetained=true;report.permanentDeletion=false;
 }
-run().catch(()=>{report.status='FAIL';process.exitCode=1;}).finally(()=>{
+run().catch(error=>{report.status='FAIL';report.failureCategory=error?.name==='AssertionError'?'assertion':'request_or_runtime';process.exitCode=1;}).finally(()=>{
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync('build/cloud-prerequisites/recycle-live.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 });

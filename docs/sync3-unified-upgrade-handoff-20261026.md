@@ -7,9 +7,9 @@ Updated 2026-10-26. This checkpoint supersedes older blocked/missing-implementat
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Upgrade branch: `feature/sync3-unified-repair-20261026`.
 - PR: https://github.com/cscticket01-hash/Saarthi_Ai/pull/135 — OPEN, DRAFT.
-- Reviewed deployment checkpoint: `b68bf194a49899232544ea9ea16f5e64410aad15`; merge tree matches the reviewed `3bfb9ff` implementation tree. Both upgrade and isolated TEST branches were advanced without discarding TEST history. The only unique old TEST first-pairing patch was already present in the upgrade, including its passing regression.
+- Current isolated runtime: `c3753250fffdc0b4d0b9c98b3b01d4666e592a53`, including the ingress body-size correction. Earlier reviewed merge checkpoint `b68bf194a49899232544ea9ea16f5e64410aad15` matched the `3bfb9ff` implementation tree. Both upgrade and isolated TEST branches were advanced without discarding TEST history. The only unique old TEST first-pairing patch was already present in the upgrade, including its passing regression.
 - Existing isolated Render TEST service only: `srv-db3tgfu7bikc73abm7a0`, endpoint `https://saarthi-sync-v2-test.onrender.com/school-cloud`.
-- Deployment `dep-dbfgv77b9u1s73ctm48g` is LIVE at the reviewed checkpoint.
+- Earlier deployment `dep-dbfgv77b9u1s73ctm48g` established the b68 checkpoint; a subsequent isolated deployment now serves exact `c3753250...`, verified by native acceptance.
 - Production/main, production broker, published website and Windows/Android installers were not changed during this continuation. No real-school records were modified.
 
 Keep the one existing Sync Engine 3 owner, queues, journals and verified ACK path. Do not introduce another repair engine or scheduler. Preserve original operation IDs/revisions/timestamps, financial uniqueness, school isolation, the 1–5-PC policy, offline durability, immediate changed-record work, hourly idle reconciliation, no-op saves, true conflict review and student tombstone/generation/recycle protection. Notifications are not applied ACKs. Missing rows alone never authorize deletion or restoration. No queue reset, paid AI, security bypass or storage migration.
@@ -28,12 +28,14 @@ Core files include `lib/windows_pending_school_sync.dart`, `lib/windows_sync_eng
 
 ## Current code and readiness evidence
 
-All nine code/regression workflow categories passed at the reviewed checkpoint: unified repair, 400-school record capacity, multi-PC sync, platform builds/security/backend, JSON storage, document/student Sheet, Sheet recovery/lifecycle, duplicate Save, and standalone guardian removal. Guardian removal verifies the old separate engine remains removed.
+All nine code/regression workflow categories passed at the earlier reviewed checkpoint: unified repair, 400-school record capacity, multi-PC sync, platform builds/security/backend, JSON storage, document/student Sheet, Sheet recovery/lifecycle, duplicate Save, and standalone guardian removal. Guardian removal verifies the old separate engine remains removed.
 
 Exact deployed-source and Script readiness run **40291949316 PASS**:
 https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40291949316
 
-This establishes the matching isolated runtime/Script and authenticated readiness, not full native-upload, quota, latency or physical-device acceptance. Existing nonfatal analyzer warnings were not disabled or represented as zero warnings. Flutter execution evidence comes from GitHub CI; no local Flutter SDK is installed.
+This establishes the matching isolated runtime/Script and authenticated readiness at that checkpoint. Native upload subsequently passed on exact c375 source (below); quota, full cross-platform and physical-device acceptance remain separate.
+
+Current local code evidence: 579 backend tests, 20 broker tests and six recycle-harness tests PASS. Hosted elapsed-hour harness was corrected to exercise the actual verified-checkpoint-anchored production timer; its fresh full elapsed-hour result must be checked before claiming PASS. Existing nonfatal analyzer warnings were not disabled or represented as zero warnings. Flutter execution evidence comes from GitHub CI; no local Flutter SDK is installed.
 
 Historical source-specific evidence, retained for traceability:
 - At `79bcaaa3d0dc55d7aeaed8a88c5683b4ee587487`: 574/574 backend tests; 97 focused tests on each Windows/Linux × JSON/SQLite owner job; nine code workflow categories PASS. These counts describe that source, not every later commit.
@@ -52,10 +54,11 @@ TEST-account Drive REST GET and root capabilities were verified. TEST Script pro
 
 ## Real acceptance in progress: do not claim complete
 
-- First native-upload acceptance attempt reached an **HTTP 413 ingress rejection before the first upload chunk**. It did not establish successful native upload. A transport-size correction is being implemented/reviewed separately; inspect the latest head, tests and exact-source deployment before rerunning.
+- The initial native-upload attempt exposed HTTP 413 before its first chunk. The ingress-size correction is implemented and isolated runtime c375 is deployed. **Real native acceptance run 40295842699 PASS**: exact c375 runtime, Script `2026-10-26.2`, stable 768 KiB fixture; first 256 KiB chunk, fresh authoritative status offset 262144, remaining 512 KiB, final exact-size/hash private Drive readback. This proves real provider continuation from a confirmed prefix; it is not a physical network-cut, quota-load or force-stop test.
+  https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40295842699
 - Cloud prerequisites run **40291954545**, original job **121468858495**, failed before any login/pairing/fixture call: it waited 08:25–08:31 UTC for exact `b68bf194...` deployment and ended with `checks: []`. This was a deployment race, not evidence of storage corruption. Its rerun was started after matching deployment/readiness passed; check the rerun result before making acceptance claims.
 - `connect_isolated_test_storage.cjs` sends the existing approved URL without replacement permission. Ready same-URL pairing is a signed health read; a different stored URL rejects with 409. Subsequent `VS_TEST_REAL_SYNC=true` steps intentionally create bounded synthetic TEST records, a Drive fixture and attendance, scoped by hosted attempt identity, and refuse non-synthetic collisions.
-- No successful real native resumable upload, network interruption/resume, live quota/load limit or complete cross-platform acceptance is certified by this checkpoint.
+- Real native resumable upload and fresh-status continuation now PASS. Physical network interruption, live quota/load limits and complete cross-platform acceptance are not certified by this checkpoint.
 
 ## Measured capacity and practical limits
 
@@ -67,8 +70,8 @@ No billing or paid service was enabled. Provider quotas remain workload constrai
 
 ## Remaining acceptance and release gates
 
-1. Finish the HTTP 413 correction, run focused/full code tests as appropriate, update only the isolated TEST runtime, and rerun native upload acceptance against exact reviewed source.
-2. Complete real Drive/Sheets protocol compatibility, fixed-file identity/hash readback, interruption/lost-ACK/resume, safe quota-response and Save → cloud ACK → receiver apply timing checks. Preserve all uncertain pending work.
+1. Retain the passing exact-c375 native acceptance evidence; verify acceptance-only harness updates and their fresh hosted runs without changing the deployed runtime merely for documentation.
+2. Complete remaining real Drive/Sheets protocol compatibility, interruption/lost-ACK cases, safe quota-response and Save → cloud ACK → receiver apply timing checks; native fixed-file identity/hash readback and confirmed-prefix continuation have passed. Preserve all uncertain pending work.
 3. Review rerun cloud prerequisites and subsequent hosted Windows/browser/Android-emulator evidence. Label hosted/emulator results accurately; these do not replace physical tests.
 4. Physical Windows 1/2/5-PC plus Android/Web acceptance remains pending. Android minimize/background, reboot/force-stop/battery/network cases require real-device verification; OS-stopped execution cannot be guaranteed.
 5. Append final acceptance artifacts and commit-specific code evidence, then reassess release readiness. Keep PR DRAFT while material acceptance remains unresolved. No production/main merge or installer publication is performed by this checkpoint.

@@ -7,10 +7,10 @@ async function simulate(mode,elapsed,override={}){
  const env={GITHUB_ACTIONS:'true',VS_TEST_CONNECT_CONFIRM:schoolId,VS_TEST_LOGIN_EMAIL:'synthetic',VS_TEST_LOGIN_PASSWORD:'synthetic',VS_TEST_RECYCLE_MODE:mode,VS_TEST_RECYCLE_FIXTURE_ID:id,VS_TEST_RECYCLE_DELETED_REVISION:revision,VS_TEST_RECYCLE_DELETED_AT:String(deletedAt),VS_TEST_RECYCLE_RECOVER_UNTIL:String(deletedAt+86400000),...override};
  await new Promise(resolve=>{
  const process={env};
- vm.runInNewContext(source,{require:name=>name==='node:fs'?{mkdirSync(){},writeFileSync(){}}:require(name),process,AbortSignal,console:{log:value=>{report=JSON.parse(value);exitCode=process.exitCode;resolve();}},fetch:async(url,options)=>{
+ vm.runInNewContext(source,{require:name=>name==='node:fs'?{mkdirSync(){},writeFileSync(){}}:name==='./safe_test_read_retry.cjs'?((...args)=>require(name)(...args,{wait:async()=>{},random:()=>0.5})):require(name),process,AbortSignal,console:{log:value=>{report=JSON.parse(value);exitCode=process.exitCode;resolve();}},fetch:async(url,options)=>{
   const b=JSON.parse(options.body);calls.push(b);
   let data;if(url.startsWith('https://identitytoolkit'))data={idToken:'synthetic-token'};
-  else if(b.action==='managed/records'){recordReads++;data={records:{[id]:{schoolId,_syncDeleted:true,_syncRevision:override.CHANGE_AFTER_PROBE&&recordReads>1?'unexpected-revision':revision,_syncOperationId:id+'-delete',_syncRecycleFileId:'test-private-file',_syncRecycleUntil:deletedAt+86400000}}};}
+  else if(b.action==='managed/records'){recordReads++;if(override.TRANSIENT_RETAINED_READ&&recordReads===2)return {status:503,json:async()=>({success:false,code:'SCRIPT_TIMEOUT'})};data={records:{[id]:{schoolId,_syncDeleted:true,_syncRevision:override.CHANGE_AFTER_PROBE&&recordReads>1?'unexpected-revision':revision,_syncOperationId:id+'-delete',_syncRecycleFileId:'test-private-file',_syncRecycleUntil:deletedAt+86400000}}};}
   else if(b.action==='managed/recycle'&&b.operation==='restore')return {status:Number(override.PROBE_HTTP||502),json:async()=>({success:false,code:override.PROBE_CODE||'SCRIPT_OPERATION_FAILED'})};
   else if(b.action==='managed/recycle')data={recycleVersion:1,serverNow:deletedAt+elapsed,partial:false,entries:[{id,name:'Retained TEST elapsed expiry capture 12345',deletedRevision:revision,deletedAt,recoverUntil:deletedAt+86400000,status:elapsed>=86400000?'expired':'recoverable',auditRetained:true}]};
   else data={};
@@ -39,4 +39,12 @@ test('invalid fixture scope fails before authentication or cloud calls',async()=
 test('check refuses changed baseline revision and start resumes without another deletion',async()=>{
  const bad=await simulate('check-expiry',86400000,{VS_TEST_RECYCLE_DELETED_REVISION:'wrong-deleted-revision'});assert.equal(bad.report.status,'FAIL');
  const resumed=await simulate('start-expiry',1000);assert.equal(resumed.report.status,'WAITING_REAL_ELAPSED_DAY');assert(!resumed.calls.some(x=>['write','delete','restore','purge'].includes(x.operation)));
+});
+
+test('transient retained tombstone read retries read-only and still verifies unchanged expiry evidence',async()=>{
+ const r=await simulate('check-expiry',86400000,{TRANSIENT_RETAINED_READ:true});
+ assert.equal(r.report.status,'PASS');assert.equal(r.report.readRetries.length,1);
+ assert.equal(r.calls.filter(x=>x.action==='managed/records'&&x.operation==='read').length,3);
+ assert.equal(r.calls.filter(x=>x.operation==='restore').length,1);
+ assert(!r.calls.some(x=>['write','delete','purge'].includes(x.operation)));
 });
