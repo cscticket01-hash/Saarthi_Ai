@@ -7037,10 +7037,11 @@ function VS_testSyncTimingAdd(key,start){
 }
 function VS_managedRecord(b) {
   VS_BACKUP_READ_CACHE=null;
-  const p=PropertiesService.getScriptProperties();
-  const timed=p.getProperty('VS_MANAGED_SCHOOL_ID')==='vs-db8afb01a3be46a983c8284714d06e5d'&&
-    b.syncProtocol===2&&b.operation==='write'&&b.collection==='school_notices'&&
-    b.data&&b.data.syntheticTest===true;
+  // Cheap JS-only checks first: ordinary school traffic makes no new
+  // Apps Script PropertiesService call just to determine instrumentation.
+  const timed=b.syncProtocol===2&&b.operation==='write'&&b.collection==='school_notices'&&
+    b.data&&b.data.syntheticTest===true&&
+    PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID')==='vs-db8afb01a3be46a983c8284714d06e5d';
   const timing=timed?{version:1,scope:'isolated_synthetic_TEST_only',
     lockWaitMs:0,sheetSearchMs:0,sheetWriteFlushMs:0,finalVerificationMs:0,
     postVerificationMs:0,storageMode:'unknown',totalScriptMs:0}:null;
