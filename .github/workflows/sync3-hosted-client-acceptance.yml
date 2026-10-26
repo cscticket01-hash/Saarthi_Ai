@@ -25,6 +25,16 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create only this run's signed TEST synthetic student and private PDF fixture
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_REAL_SYNC: 'true'
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/connect_isolated_test_storage.cjs
       - name: Hosted Windows outbox to existing isolated TEST cloud and mobile Dart session
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
