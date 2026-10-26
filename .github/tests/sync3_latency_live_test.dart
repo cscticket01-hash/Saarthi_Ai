@@ -70,20 +70,38 @@ void main() {
       expect(RegExp(r'^[1-9][0-9]{0,19}$').hasMatch(run), true);
       expect(RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(attempt), true);
       final prefix = 'latency-v1-$run-$attempt';
-      final profile = 'TEST-$prefix', person = '$prefix-person';
-      final linkToken = sha256.convert(utf8.encode('$prefix/private-test-link')).toString();
+      final profile = 'TEST-$prefix';
+      // This retained synthetic TEST identity was created and read back by the
+      // existing hosted acceptance run 40325170060 (attempt 1). Reuse it
+      // rather than doing an unrelated student admission BEFORE taking any
+      // latency sample. The benchmark itself still writes 100 unique notices
+      // through the real Windows durable outbox and verifies receivers.
+      const fixtureRun = '40325170060-1';
+      const person = 'synthetic-hosted-person-$fixtureRun';
+      final linkToken = sha256.convert(utf8.encode('hosted-fresh/$fixtureRun')).toString();
+      report['identityFixture'] = 'retained verified synthetic isolated TEST person';
+      report['identityFixtureRun'] = fixtureRun;
       await db.changeLocalStorageLocation('${tmp.path}/windows');
       await db.switchProfile(profile, identity: {'schoolId': school, 'schoolSyncId': school});
       expect((await db.collection('_windows_firebase_outbox').get()).docs, isEmpty);
-      stage = 'fresh synthetic TEST person';
-      await ManagedSchoolSession.callForSchool(school, 'managed/records', {
-        'collection': 'students_directory', 'operation': 'write', 'id': person, 'syncProtocol': 2,
-        'operationId': '$prefix-person-create', 'expectedRecordRevision': '', 'data': {
-          'schoolId': school, 'syntheticTest': true, 'name': 'Synthetic latency TEST',
-          'class': '1', 'section': prefix, 'rollNo': '999999', 'dob': '2015-01-01',
-          'mobileStableId': person, 'mobileLinkToken': linkToken,
-        },
-      });
+      stage = 'read previously verified isolated TEST student identity';
+      final scopedPerson = await ManagedSchoolSession.callForSchool(
+        school, 'managed/records', {
+          'collection': 'students_directory', 'operation': 'read',
+          'id': person, 'syncProtocol': 2,
+        });
+      expect(scopedPerson['schoolId'], school);
+      final scopedRows = scopedPerson['records'];
+      expect(scopedRows, isA<Map>());
+      final synthetic = (scopedRows as Map)[person];
+      expect(synthetic, isA<Map>());
+      expect(synthetic['schoolId'], school);
+      expect(synthetic['syntheticTest'], true);
+      expect(synthetic['_syncDeleted'], isNot(true));
+      expect(synthetic['mobileStableId'], person);
+      expect(synthetic['mobileLinkToken'], linkToken);
+      expect(synthetic['_syncRevision'], isA<String>());
+      report['identityFixtureVerified'] = true;
       sqfliteFfiInit();
       Future<Database> openAttendance() => databaseFactoryFfi.openDatabase('${tmp.path}/attendance.db',
         options: OpenDatabaseOptions(version: 1, onCreate: (value, _) => AttendanceStore.createSchema(value)));
@@ -92,7 +110,7 @@ void main() {
         cacheDirectory: () async => tmp);
       final qr = SchoolLink.encodeCompact({'managed': true, 'schoolId': school, 'centralEndpoint': endpoint,
         'type': 'student', 'personId': person, 'linkToken': linkToken});
-      await mobile.login(SchoolLink.parse(qr), studentClass: '1', roll: '999999', dob: '2015-01-01');
+      await mobile.login(SchoolLink.parse(qr), studentClass: '1', roll: '900001', dob: '2015-01-01');
       await mobile.refreshDashboard(afterSignal: true);
       final receiver = mobile;
       final websiteKnown = <String, String>{};

@@ -9,7 +9,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sync3-canonical-test-latency
+  # Only one mutating isolated TEST suite may run at a time. Otherwise the
+  # shared Script lock makes measurements uninterpretable and can time out.
+  group: sync3-verified-test-school-mutations
   cancel-in-progress: false
 jobs:
   real-windows-mobile-website-protocol-latency:

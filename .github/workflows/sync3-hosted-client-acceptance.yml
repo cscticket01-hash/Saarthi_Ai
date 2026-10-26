@@ -12,7 +12,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sync3-test-hosted-client-acceptance
+  # Serialize ALL mutating TEST-school CI with bounded latency cohorts.
+  # The same Script lock/Google Sheets backing store cannot be load-tested
+  # alongside the hosted native/website acceptance chain.
+  group: sync3-verified-test-school-mutations
   cancel-in-progress: false
 jobs:
   hosted-test-client:
