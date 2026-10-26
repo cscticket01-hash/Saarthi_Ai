@@ -764,7 +764,8 @@ class SchoolSession {
         await _secure.read(key: 'vs_mobile_device') ??
         base64UrlEncode(List.generate(32, (_) => Random.secure().nextInt(256)));
     await _secure.write(key: 'vs_mobile_device', value: deviceId);
-    final shared = await _sharedSessionStore?.readSnapshot();
+    final shared = _sharedSessionStore == null ? null
+        : await _sharedSessionStore!.readSnapshot();
     final raw = shared == null
         ? await _secure.read(key: 'vs_mobile_session') : shared.value;
     if (raw == null) {
