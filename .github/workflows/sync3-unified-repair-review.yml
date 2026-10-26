@@ -15,6 +15,9 @@ on:
       - 'test/sync_recovery_policy_test.dart'
       - 'lib/mobile/school_session.dart'
       - 'test/mobile_smart_sync_test.dart'
+      - 'lib/windows_connect/managed_resumable_upload.dart'
+      - 'lib/windows_connect/central_school_cloud.dart'
+      - 'test/managed_resumable_upload_test.dart'
       - 'lib/windows_binary_downloads.dart'
       - 'test/windows_binary_downloads_test.dart'
       - 'lib/windows_remote_change_feed.dart'
@@ -45,8 +48,8 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze existing Sync Engine owner and tests
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_pending_school_sync.dart lib/windows_remote_change_feed.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart lib/windows_binary_downloads.dart test/windows_binary_downloads_test.dart lib/windows_firebase_sync.dart lib/sync_recovery_policy.dart lib/windows_sync_control_center.dart test/sync_recovery_policy_test.dart lib/mobile/school_session.dart test/mobile_smart_sync_test.dart lib/windows_sheet_integrity.dart test/windows_sheet_integrity_test.dart lib/managed_school_live_view.dart test/managed_school_live_view_test.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_pending_school_sync.dart lib/windows_remote_change_feed.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart lib/windows_binary_downloads.dart test/windows_binary_downloads_test.dart lib/windows_connect/managed_resumable_upload.dart test/managed_resumable_upload_test.dart lib/windows_firebase_sync.dart lib/sync_recovery_policy.dart lib/windows_sync_control_center.dart test/sync_recovery_policy_test.dart lib/mobile/school_session.dart test/mobile_smart_sync_test.dart lib/windows_sheet_integrity.dart test/windows_sheet_integrity_test.dart lib/managed_school_live_view.dart test/managed_school_live_view_test.dart
       - name: Test exact-source repair and durable cursor behavior
         env:
           APPDATA: ${{ runner.temp }}/sync3-unified-repair
-        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} --concurrency=1 --timeout 120s test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart test/windows_binary_downloads_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/windows_sheet_integrity_test.dart test/managed_school_live_view_test.dart
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=${{ matrix.sqlite }} --concurrency=1 --timeout 120s test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart test/windows_binary_downloads_test.dart test/managed_resumable_upload_test.dart test/sync_recovery_policy_test.dart test/mobile_smart_sync_test.dart test/windows_sheet_integrity_test.dart test/managed_school_live_view_test.dart

@@ -527,7 +527,7 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
@@ -714,6 +714,19 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
   if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
   const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
+ }
+ if(action==='managed/file/upload/resumable'){
+  if(!['begin','status','part'].includes(b.operation)||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||!/^[a-f0-9]{64}$/.test(b.sha256||'')||!Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>20*1024*1024||typeof b.name!=='string'||!b.name||b.name.length>200||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||b.mime.startsWith('application/vnd.google-apps.'))fail(400,'Invalid resumable school upload');
+  const payload={action:'managed_upload_resumable',operation:b.operation,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime};
+  if(b.operation==='part'){
+   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||typeof b.base64!=='string'||!b.base64||b.base64.length>700000||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||!/^[a-f0-9]{64}$/.test(b.chunkSha256||''))fail(400,'Invalid upload chunk');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(!bytes.length||bytes.length>512*1024||b.offset+bytes.length>b.sizeBytes||(b.offset+bytes.length<b.sizeBytes&&bytes.length%(256*1024)!==0)||createHash('sha256').update(bytes).digest('hex')!==b.chunkSha256)fail(400,'Invalid upload chunk');
+   Object.assign(payload,{offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256});
+  }
+  const out=await signed(m,payload);
+  if(out.uploadResumableVersion!==1||out.uploadKey!==b.uploadKey||out.sha256!==b.sha256||out.sizeBytes!==b.sizeBytes||typeof out.committed!=='boolean'||!Number.isSafeInteger(out.offset)||out.offset<0||out.offset>b.sizeBytes||out.committed&&out.offset!==b.sizeBytes||!out.committed&&out.offset===b.sizeBytes||out.committed&&!/^[A-Za-z0-9_-]{1,200}$/.test(out.fileId||''))fail(502,'Upload progress or completion is unverified','UPLOAD_ACK_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,uploadResumableVersion:1,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,offset:out.offset,committed:out.committed,...(out.committed?{fileId:out.fileId,fileUrl:'https://drive.google.com/file/d/'+out.fileId+'/view'}:{})};
  }
  if(action==='managed/file/upload'){
   if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});

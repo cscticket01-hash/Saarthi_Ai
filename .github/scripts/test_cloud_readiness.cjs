@@ -23,6 +23,10 @@ async function run() {
   let r = await request(endpoint + '/healthz');
   check('Firebase readiness', r, r.status === 200 && r.data.ready === true && r.data.projectId === 'saarthi-ai-df12b');
   report.runtimeCommit=/^[a-f0-9]{40}$/.test(r.data.runtimeCommit||'')?r.data.runtimeCommit:'Unknown';
+  const expectedRuntime=process.env.VS_EXPECTED_TEST_RUNTIME;
+  if(expectedRuntime&&(!/^[a-f0-9]{40}$/.test(expectedRuntime)||report.runtimeCommit!==expectedRuntime)){
+    report.status='BLOCKED';report.blocker='Isolated TEST runtime does not match the reviewed source; existing endpoint health is not new-code acceptance.';return;
+  }
   r = await request(endpoint, {action: 'managed/session', schoolId});
   check('Authentication required', r, r.status === 401);
   r = await request(endpoint, {action: 'managed/session', schoolId: 'vs-' + '0'.repeat(32)});
@@ -57,6 +61,10 @@ async function run() {
   }
   check('Owner-connected TEST storage', r, true);
   const version=r.data.scriptBundleVersion;
+  const expectedScript=process.env.VS_EXPECTED_TEST_SCRIPT_VERSION;
+  if(expectedScript&&version!==expectedScript){
+    report.status='BLOCKED';report.blocker='Isolated TEST Script version does not match the reviewed provider contract.';return;
+  }
   const expectedReviewedSourceBundle=require('./reviewed_script_version.cjs').currentReviewedScriptVersion();
   report.deployedScriptEvidence={scope:'existing isolated TEST signed health response',
     scriptBundleVersion:typeof version==='string'&&/^20\d{2}-\d{2}-\d{2}\.\d{1,3}$/.test(version)?version:'Unknown',

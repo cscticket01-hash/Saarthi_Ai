@@ -1,3 +1,4 @@
+import 'managed_resumable_upload.dart';
 import '../school_timestamp.dart' show Timestamp;
 
 import 'dart:convert';
@@ -752,6 +753,26 @@ class CentralSchoolCloud {
     if (data.isEmpty) throw StateError('School Drive is not connected.');
     if (expectedSchoolId != null && data['schoolId'] != expectedSchoolId)
       throw StateError('School changed before upload.');
+    if (data['managed'] == true && uploadKey != null) {
+      final encoded = raw.contains(',') ? raw.split(',').last : raw;
+      // Small files and mixed-version deployments retain the verified full upload.
+      if (encoded.length >= 700000) {
+        final capability = await api({'action':'managed/storage/check',
+          'schoolId':data['schoolId']}, token:await firebaseToken());
+        if (capability['uploadResumableVersion'] == 1 &&
+            capability['brokerUploadResumableVersion'] == 1) {
+          return uploadManagedChunks(schoolId:data['schoolId'],uploadKey:uploadKey,
+            name:name,mime:mime,bytes:base64Decode(encoded),request:(body) async {
+              final current = await saved();
+              if (current['schoolId'] != data['schoolId'] || current['uid'] != data['uid']) {
+                throw StateError('School changed before upload.');
+              }
+              check();
+              return api(body,token:await firebaseToken());
+            });
+        }
+      }
+    }
     if (data['managed'] == true)
       return api({
         'action': 'managed/file/upload',

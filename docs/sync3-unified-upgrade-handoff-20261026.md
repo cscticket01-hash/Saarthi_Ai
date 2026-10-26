@@ -62,10 +62,13 @@ The separate readiness workflow correctly fails; do not call all CI green or ful
 ## Remaining work, dependencies and precise next step
 1. Authorized TEST entitlement renewal and matching isolated deployment are prerequisites to real-cloud acceptance. First inspect TEST management/entitlement state read-only when available; do not expand access or modify production without required authorization.
 2. Run signed cloud/Drive/Sheets compatibility, 1/2/5 physical Windows devices plus Android/Web, provider quota/load and Save-to-ACK-to-apply timing acceptance. Keep synthetic and physical evidence distinct.
-3. Native provider resumable UPLOAD needs a supported negotiated provider contract; current idempotent verified full-upload fallback is retained. Do not mislabel download resume as upload resume.
+3. Native provider resumable UPLOAD now has an opt-in broker/Script contract and Windows owner integration; see docs/sync3-native-upload-20261026.md. The provider is still simulated in tests, not deployed or live-accepted. Existing idempotent full-upload fallback remains for mixed versions/opt-out.
 4. A new background dashboard writer requires proven shared foreground/background cache ownership/fencing; existing attendance worker is unchanged. OS-stopped execution cannot be guaranteed.
 5. Continue independent owner playbook/integrity regression work if evidence identifies gaps, without creating another engine or making unverified repairs.
 
 Optional new Script bundle2026-10-26.1 and corresponding broker are NOT deployed. Existing2026-10-25.2 remains supported via capability fallbacks; preserve URLs, school IDs, Drive roots, credentials/properties. Both capability flags are required for new audit. No main merge, production Render change, private school Script edit, Windows/Android installer publication, website publication or real-school writes authorized/performed.
 
 Release status: DRAFT; code/regression CI PASS on implementation459d34f, separate real TEST acceptance BLOCKED. Entire A–J production certification is incomplete. The next documentation-only head may retrigger workflows; distinguish its status from this verified implementation.
+
+## Continuation after 968b9ea1
+Native upload contract, client integration and regression additions are described in docs/sync3-native-upload-20261026.md. Script version is now 2026-10-26.2. Readiness requires exact runtime SHA and matching Script version. Earlier CI evidence above belongs to the earlier source; inspect new-head CI separately. TEST entitlement and production rollout state remain unchanged.
