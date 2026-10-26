@@ -573,6 +573,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final binary =
         (await db.collection('_windows_binary_status').doc('current').get())
             .data();
+    final batchHealth = (await db.collection('_windows_sync_status')
+        .doc('managed-batch-window').get()).data();
     final restoreInventory = await db
         .collection('_windows_recycle_requests')
         .get();
@@ -698,6 +700,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           )
           .length,
       'pendingRestores': restores.length,
+      if (batchHealth?['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
+        'batchTransport': batchHealth,
       'mediaInventoryState':
           (binary != null &&
               binary['schoolId'] == db.activeProfileIdentity['schoolSyncId'])

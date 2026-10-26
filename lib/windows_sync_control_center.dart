@@ -1500,6 +1500,23 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                       ? 'Not independently verified'
                                       : 'Authenticated school API network path verified in this session',
                                 ),
+                                metric(
+                                  'Next record batch window',
+                                  details['batchTransport'] is Map
+                                      ? '${details['batchTransport']['nextLimit']} records (max 10)'
+                                      : 'Not measured',
+                                ),
+                                metric(
+                                  'Last broker batch request',
+                                  details['batchTransport'] is Map
+                                      ? '${((details['batchTransport']['requestMicros'] as num) / 1000).toStringAsFixed(1)} ms · ${details['batchTransport']['successfulReceipts']}/${details['batchTransport']['submitted']} successful receipts'
+                                      : 'Not measured',
+                                ),
+                                metric(
+                                  'Batch measurement time',
+                                  stamp(details['batchTransport'] is Map
+                                      ? details['batchTransport']['observedAt'] : null),
+                                ),
                                 metric('Local database health', localHealth),
                                 metric('School cloud health', cloudHealth),
                                 metric(

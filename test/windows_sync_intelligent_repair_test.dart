@@ -432,4 +432,48 @@ void main() {
     });
   }
 
+  test('adaptive batch pressure survives restart and never clears unconsumed receipts', () async {
+    WindowsFirebaseRemote.recordWriteBatchSupported = true;
+    for (var i = 0; i < 12; i++) {
+      await db.collection('school_notices').doc('adaptive-$i').set({'title': 'Synthetic $i'});
+    }
+    final originalIds = (await db.collection('_windows_firebase_outbox').get()).docs
+        .map((row) => row.data()['operationId']).toSet();
+    Future<Map<String, dynamic>?> prepare(DocumentReference<Map<String, dynamic>> ref,
+        Map<String, dynamic> item, String school) => db.bindOutboxWireData(
+          ref, item, Map<String, dynamic>.from(item['data'] as Map), 'snapshot2');
+    var submitted = 0;
+    await expectLater(WindowsFirebaseRemote.prepareManagedBatch(
+      school, canAdmit: () => true, prepareRecord: prepare,
+      send: (_, ops) async {
+        submitted = ops.length;
+        throw CentralCloudException(503, 'school_cloud', 'synthetic batch interruption');
+      },
+    ), throwsA(isA<CentralCloudException>()));
+    expect(submitted, 10);
+    final healthRef = db.collection('_windows_sync_status').doc('managed-batch-window');
+    expect((await healthRef.get()).data()?['nextLimit'], 5);
+    await db.resetVolatileSession();
+    final results = await WindowsFirebaseRemote.prepareManagedBatch(
+      school, canAdmit: () => true, prepareRecord: prepare,
+      send: (_, ops) async {
+        expect(ops.length, 5);
+        return {
+          'schoolId': school, 'syncProtocol': 2, 'recordWriteBatchVersion': 1,
+          'acknowledgements': [for (final op in ops) {
+            'operationId': op['operationId'], 'success': true, 'recordRevision': 'synthetic-verified',
+          }],
+        };
+      },
+    );
+    expect(results.length, 5);
+    final health = (await healthRef.get()).data()!;
+    expect(health['measurementScope'], 'broker_request_only');
+    expect(health['successfulReceipts'], 5);
+    expect(health['nextLimit'], inInclusiveRange(5, 6));
+    final retained = (await db.collection('_windows_firebase_outbox').get()).docs;
+    expect(retained.length, 12, reason: 'Only the existing owner may consume each verified receipt');
+    expect(retained.map((row) => row.data()['operationId']).toSet(), originalIds);
+  });
+
 }

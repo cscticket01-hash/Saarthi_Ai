@@ -59,4 +59,19 @@ void main() {
     expect(quota.delay(1, jitter: 0), const Duration(seconds: 60));
     expect(quota.delay(100, jitter: 1), const Duration(seconds: 900));
   });
+  test('adaptive transport contracts under slow/partial responses and grows only on complete fast evidence', () {
+    var limit = 10;
+    for (var i = 0; i < 8; i++) {
+      limit = managedBatchWindow(current: limit, requestMicros: 9000000, complete: true);
+    }
+    expect(limit, 2);
+    expect(managedBatchWindow(current: 10, requestMicros: 500000, complete: false), 5);
+    expect(managedBatchWindow(current: 4, requestMicros: 0, complete: true), 4);
+    expect(managedBatchWindow(current: 4, requestMicros: 4000000, complete: true), 4);
+    for (var i = 0; i < 20; i++) {
+      limit = managedBatchWindow(current: limit, requestMicros: 500000, complete: true);
+    }
+    expect(limit, 10);
+  });
+
 }

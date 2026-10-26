@@ -30,6 +30,13 @@ Next precise step: inspect exact new-commit CI; fix every failure. Then continue
 ### CI correction after c1cfa1b4
 Exact-commit Linux jobs on run 40259335853 reported 36 PASS / 11 FAIL, all in newly added assertions/fixtures: six queue comparisons used object identity for reconstructed Timestamp values; five media fixtures mixed package and file import URIs, creating distinct exception class identities. Corrected tests to compare full durable queue values including timestamp milliseconds and to import the typed exception through the same package URI as the media source. No queue fields or security assertions were removed; runtime validation remains unchanged. Re-run exact-commit CI before calling this milestone verified.
 
+### Adaptive transport milestone (source after 24057a1a)
+`24057a1a9d261de24d6ff414880757e71e691dee` contains the CI fixture corrections above. Its new CI is running; no pass claim yet.
+
+Implemented next, pending exact-commit CI: existing `WindowsFirebaseRemote.prepareManagedBatch` uses a persisted per-school/per-profile window of 2–10 records. A failed/partial or >=8-second batch halves the next window; a fully verified <=2-second response grows it by one. Existing 250KB bound, parent/delete order, per-operation frozen requests, capability fallback, quota owner and individual ACKs remain unchanged. No scheduler or retry authority was added. Measurements cover the broker request only, not Android applied latency. Control Center displays actual last request timing, successful receipt count, next window and observation time; unmeasured state remains unknown. Focused regression retains all 12 queue operations through an interrupted 10-record batch, reloads the durable 5-record window, and proves that merely preparing successful receipts does not consume the queue. Policy tests cover slow/partial contraction and bounded recovery.
+
+Modified: `lib/sync_recovery_policy.dart`, `lib/windows_firebase_sync.dart`, `lib/windows_sync_engine.dart`, `lib/windows_sync_control_center.dart`, corresponding tests and four-way review workflow. Exact-source Flutter analyzer/tests and broader workflow results are required next. No measured real-cloud speedup is claimed. No Apps Script/broker protocol change is needed for adaptive window; existing batch capability negotiation still gates it.
+
 ## Preserve the original rules
 - School/profile identity isolation and signed authorization; never infer/migrate a school ID.
 - Initial sync + hourly idle reconciliation, immediate changed-record dispatch, no-op Save, any-date same-record edits, first committed same-key Add.

@@ -20,6 +20,23 @@ bool syncCheckpointDue(DateTime? lastVerified, DateTime now) =>
     lastVerified.isAfter(now) ||
     now.difference(lastVerified) >= const Duration(hours: 1);
 
+/// Transport window only: never changes retries, dependencies or ACK authority.
+/// Slow/partial requests reduce pressure; only a complete fast response grows.
+int managedBatchWindow({
+  required int current,
+  required int requestMicros,
+  required bool complete,
+}) {
+  final bounded = current.clamp(2, 10).toInt();
+  if (!complete || requestMicros >= 8000000) {
+    return (bounded ~/ 2).clamp(2, 10).toInt();
+  }
+  if (requestMicros > 0 && requestMicros <= 2000000) {
+    return (bounded + 1).clamp(2, 10).toInt();
+  }
+  return bounded;
+}
+
 /// Deterministic recovery decisions. A decision never deletes or acknowledges data.
 class SyncRecoveryDecision {
   const SyncRecoveryDecision(
