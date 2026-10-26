@@ -49,4 +49,11 @@ void main() {
       expect((await db.collection('_windows_sync_status').doc('sheet-integrity').get()).exists, false);
     }
   });
+  test('audit requires compatible broker AND Script; mixed upgrade order stays on safe fallback', () {
+    expect(WindowsSheetIntegrity.supported({'sheetIntegrityAuditVersion': 1}), false);
+    expect(WindowsSheetIntegrity.supported({'brokerSheetIntegrityAuditVersion': 1}), false);
+    expect(WindowsSheetIntegrity.supported({'sheetIntegrityAuditVersion': 1, 'brokerSheetIntegrityAuditVersion': 1}), true);
+    expect(WindowsSheetIntegrity.supported({'sheetIntegrityAuditVersion': 2, 'brokerSheetIntegrityAuditVersion': 1}), false);
+  });
+
 }

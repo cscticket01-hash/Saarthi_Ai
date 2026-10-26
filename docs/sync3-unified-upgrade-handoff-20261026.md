@@ -46,6 +46,15 @@ Additional protection: ordinary full/point readback now also rejects canonical r
 
 Final local normal backend suite: **563/563 PASS**. Added media regression corrupts a persisted partial transfer before restart and proves quarantine/refetch/final hash verification. Final Flutter and full-record CI remain to be checked. Remaining hard acceptance: real TEST profile permission/entitlement gate, optional new Script/broker deployment (not authorized to production), actual Windows/Android devices, provider quota and native Drive upload support. No promise of 100k concurrent users or unlimited free hosting is justified.
 
+### Final mixed-version capability gate
+On implementation `20c9920d2cc0ad94a040a971256d53ecca343df9`, dedicated CI 40268535139 PASS: actual reviewed Script record/CAS/Sheet fixture committed and authenticated-readback verified **100,000 students across 400 isolated school VMs** in 118.451s (runner-specific); 400 duplicate retries preserved original receipts, foreign-school writes rejected, peak RSS ~120.9MB. Sequential simulated schools, not production peak throughput. All four exact-source repair jobs passed on this checkpoint; complete platform/load statuses must be refreshed before final report.
+
+Real TEST diagnosis is now definitive: readiness run 40268535155 logs `allowed:false`, `status:expired`, `activated:false`, expiry **2026-10-22 21:23:42 IST**. Authentication and school identity pass. TEST profile refusal is an entitlement gate, not a reason to disable licence validation. No renewal or bypass performed. Browser console inspection timed out before any document edit. Real TEST code is still runtime `91b4282bf900ade767f5a12567ee22b2543e4a3f`; new PR source has not been deployed there.
+
+Final compatibility correction: optional Sheet audit requires BOTH `sheetIntegrityAuditVersion:1` from the school Script and `brokerSheetIntegrityAuditVersion:1` from the broker. A school updating Script before broker (or vice versa) retains the existing safe fallback. Added mixed-order negotiation regressions. Final local normal backend **564/564 PASS**; exact-source final Flutter/CI still required. No production deployment, release, billing or real-school records changed.
+
+Remaining clearly scoped: provider-native resumable uploads are not offered by the existing Apps Script upload contract (existing idempotent full-upload fallback retained); a future background-dashboard writer needs a proven shared foreground/background cache owner before it can be added safely; physical-device/provider quota/end-to-end latency acceptance and renewal of the isolated TEST entitlement remain. Do not claim full A–J production certification or unlimited free capacity.
+
 ## Exact repository state
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Branch: `feature/sync3-unified-repair-20261026`.

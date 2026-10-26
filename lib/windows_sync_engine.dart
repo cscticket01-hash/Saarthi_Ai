@@ -1871,7 +1871,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             throw StateError(
               'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
             );
-          _sheetAuditSupported = health['sheetIntegrityAuditVersion'] == 1;
+          _sheetAuditSupported = WindowsSheetIntegrity.supported(health);
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&

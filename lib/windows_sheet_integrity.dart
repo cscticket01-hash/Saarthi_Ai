@@ -3,6 +3,10 @@ import 'windows_local_firestore.dart';
 /// Bounded diagnosis invoked only by the existing serialized sync owner.
 /// Findings grant no record write, restore, queue mutation or acknowledgement.
 class WindowsSheetIntegrity {
+  static bool supported(Map<String, dynamic> health) =>
+      health['sheetIntegrityAuditVersion'] == 1 &&
+      health['brokerSheetIntegrityAuditVersion'] == 1;
+
   static Future<Map<String, dynamic>> audit({
     required String profile,
     required String school,

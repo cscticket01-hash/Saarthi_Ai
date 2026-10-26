@@ -62,3 +62,8 @@ test('neither full read nor point read can certify unmanaged canonical drift as 
   assert.equal(response.success,false);assert.equal(response.code,'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED');
  }
 });
+
+test('broker advertises its own audit capability independently of the deployed Script version',async()=>{
+ const f=fixture();const result=await f.call({action:'managed/storage/check',schoolId:A});
+ assert.equal(result.brokerSheetIntegrityAuditVersion,1);assert.equal(result.sheetIntegrityAuditVersion,undefined);
+});
