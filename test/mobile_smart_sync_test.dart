@@ -923,4 +923,27 @@ void main() {
     await session.clear();await restored.clear();
   });
 
+  test('oversized mobile checkpoint uses complete-group fallback instead of freezing dashboard refresh', () async {
+    var reads = 0;
+    final session = SchoolSession(client: MockClient((request) async {
+      final body = jsonDecode(request.body)['request'] as Map;
+      if (body['action'] == 'mobile_login') return http.Response(jsonEncode(login()), 200);
+      if (body['action'] != 'mobile_dashboard') return http.Response(jsonEncode(response({})), 200);
+      reads++;
+      if (reads == 1) return http.Response(jsonEncode(response({
+        'revision': 'one', 'mobileRecordDeltaVersion': 1, 'revisions': {'notices': 'group-one'},
+        'notices': [for (var i = 0; i < 1001; i++) {'id': 'notice-$i', '_mobileRecordId': 'notice-$i', '_mobileRecordRevision': 'a' * 64}],
+      })), 200);
+      expect((body['knownGroupRecordRevisions'] as Map).containsKey('notices'), false);
+      expect((body['knownRevisions'] as Map).containsKey('notices'), false);
+      expect(body.containsKey('knownNoticeRevisions'), false);
+      return http.Response(jsonEncode(response({'revision': 'two', 'mobileRecordDeltaVersion': 1,
+        'revisions': {'notices': 'group-two'}, 'notices': [], 'groupRecordDeltas': {'notices': {'ids': []}}})), 200);
+    }));
+    await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    await session.refreshDashboard();expect((session.dashboard['notices'] as List).length, 1001);
+    await session.refreshDashboard(afterSignal: true);expect(session.dashboard['notices'], isEmpty);
+    expect(reads, 2);await session.clear();
+  });
+
 }

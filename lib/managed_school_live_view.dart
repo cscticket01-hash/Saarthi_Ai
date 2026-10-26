@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 /// Polls revision metadata only while visible; unchanged groups remain cached.
 class ManagedSchoolLiveView extends StatefulWidget {
   const ManagedSchoolLiveView({super.key, required this.schoolId,
-    required this.schoolName, required this.load});
+    required this.schoolName, required this.load,
+    this.readTimeout = const Duration(seconds: 105)});
   final String schoolId, schoolName;
+  final Duration readTimeout;
   final Future<Map<String, dynamic>> Function(Map<String, String>) load;
   @override
   State<ManagedSchoolLiveView> createState() => _ManagedSchoolLiveViewState();
@@ -21,6 +23,7 @@ class _ManagedSchoolLiveViewState extends State<ManagedSchoolLiveView>
   final _groups = <String, Map<String, dynamic>>{};
   Timer? _timer;
   bool _busy = false, _follow = false;
+  int _generation = 0;
   String _selected = 'exams';
   String? _error;
   DateTime? _verifiedAt;
@@ -35,8 +38,17 @@ class _ManagedSchoolLiveViewState extends State<ManagedSchoolLiveView>
     });
   }
   @override
+  void didUpdateWidget(covariant ManagedSchoolLiveView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.schoolId != widget.schoolId) {
+      _generation++;_groups.clear();_revisions.clear();
+      _verifiedAt = null;_error = null;_busy = false;_follow = false;
+      unawaited(_refresh());
+    }
+  }
+  @override
   void dispose() {
-    _timer?.cancel(); WidgetsBinding.instance.removeObserver(this);super.dispose();
+    _generation++;_timer?.cancel(); WidgetsBinding.instance.removeObserver(this);super.dispose();
   }
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -46,10 +58,11 @@ class _ManagedSchoolLiveViewState extends State<ManagedSchoolLiveView>
   }
   Future<void> _refresh() async {
     if (!mounted || _busy) return;
+    final generation = _generation, school = widget.schoolId, load = widget.load;
     setState(() => _busy = true);
     try {
-      final response = await widget.load(Map<String, String>.from(_revisions));
-      if (!mounted) return;
+      final response = await load(Map<String, String>.from(_revisions)).timeout(widget.readTimeout);
+      if (!mounted || generation != _generation || school != widget.schoolId) return;
       if (response['schoolId'] != widget.schoolId) throw StateError('School response mismatch');
       final groups = Map<String, dynamic>.from(response['groups'] as Map);
       final revisions = Map<String, String>.from(response['revisions'] as Map);
@@ -58,7 +71,7 @@ class _ManagedSchoolLiveViewState extends State<ManagedSchoolLiveView>
         if (!labels.containsKey(entry.key)) throw StateError('Unknown school group');
         final group = Map<String, dynamic>.from(entry.value as Map);
         final rows = (group['rows'] as List).whereType<Map>().toList();
-        if (rows.length != (group['rows'] as List).length ||
+        if (rows.length > 100 || rows.length != (group['rows'] as List).length ||
             rows.any((row) => row['schoolId'] != widget.schoolId) ||
             group['count'] is! int || (group['count'] as int) < rows.length) {
           throw StateError('School record mismatch');
@@ -66,14 +79,19 @@ class _ManagedSchoolLiveViewState extends State<ManagedSchoolLiveView>
         parsed[entry.key] = group;
       }
       if (revisions.keys.any((key) => !labels.containsKey(key))) throw StateError('Unknown checkpoint');
+      if (parsed.keys.any((key) => !revisions.containsKey(key)) ||
+          revisions.entries.any((entry) => !parsed.containsKey(entry.key) &&
+            (!_groups.containsKey(entry.key) || _revisions[entry.key] != entry.value))) {
+        throw StateError('School checkpoint has no verified snapshot.');
+      }
       setState(() {
         _groups.addAll(parsed); _revisions.addAll(revisions);
         _verifiedAt = DateTime.now(); _error = null;
       });
     } catch (_) {
-      if (mounted) setState(() => _error = 'Cloud verification failed. Retained records may be stale.');
+      if (mounted && generation == _generation) setState(() => _error = 'Cloud verification failed. Retained records may be stale.');
     } finally {
-      if (mounted) {
+      if (mounted && generation == _generation) {
         setState(() => _busy = false);
         if (_follow && _visible) { _follow = false; unawaited(_refresh()); }
       }

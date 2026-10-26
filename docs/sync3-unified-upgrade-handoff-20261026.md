@@ -27,6 +27,16 @@ New implementation awaiting exact-commit Flutter CI:
 
 Local full backend with range additions: **562/562 PASS**. Final Flutter CI must pass before this milestone is marked verified. Remaining: provider-capable resumable UPLOAD (no native Drive upload protocol implemented), fuller Android/Web catch-up/background lifecycle acceptance and real cloud/physical throughput. Do not claim the entire A–J mission done or 100k real students production-certified.
 
+### Platform cache convergence milestone (after 40ee05f5)
+Resumable download/request budget commit `40ee05f56d742969ae8409119cd9fc6d2b3a3e65`: all four owner-review CI jobs SUCCESS (run 40267028263); local backend 562/562 PASS. Other reviews must be refreshed separately.
+
+Implemented next:
+- Read-only website school view clears old-school private rows/checkpoints and rejects late old-school responses when the widget changes school. A revision without its matching applied/cached snapshot cannot advance the view; reads are bounded by a watchdog and preview rows remain <=100. New regressions cover school switch with an in-flight old response and missing snapshot checkpoint rejection.
+- Android oversized permission-filtered checkpoint groups now use WHOLE-group fallback instead of throwing forever at >1000 records. Complete selected groups stay under 120KB, and modern list deltas omit duplicate legacy notice checkpoints. A >1000-notice cache regression verifies fresh authenticated removal/catch-up without truncating IDs or corrupting the old verified cache.
+- Added a separate read-only isolated TEST readiness workflow using the existing TEST-only GitHub secrets and the already-reviewed fixed TEST-school harness. No credentials are printed, no school records are written, and no deployment occurs. BLOCKED/FAIL report status fails that separate acceptance job; it cannot masquerade as a readiness PASS. This does not test the new code on a redeployed server or physical device.
+
+Next precise step: exact new-commit Flutter/CI verification and sanitized isolated readiness report. Fix failures. Existing attendance WorkManager keeps its leased queue authority; no concurrent background dashboard writer was added, because secure-cache writes across foreground/background isolates need a proven shared owner before adding that feature. OS-stopped execution is not guaranteed.
+
 ## Exact repository state
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Branch: `feature/sync3-unified-repair-20261026`.

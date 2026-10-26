@@ -1267,18 +1267,27 @@ class SchoolSession {
             r['_mobileRecordRevision'] is! String,
       ))
         continue;
-      groupCheckpoints[entry.key] = {
-        for (final row in rows)
-          row['_mobileRecordId'] as String:
-              row['_mobileRecordRevision'] as String,
+      // Whole-group fallback: large caches must not make refresh permanently
+      // fail, and an arbitrary truncated ID list could acknowledge removals.
+      if (rows.length > 1000) continue;
+      final checkpoint = <String, String>{
+        for (final row in rows) row['_mobileRecordId'] as String:
+          row['_mobileRecordRevision'] as String,
       };
+      final candidate = {...groupCheckpoints, entry.key: checkpoint};
+      if (candidate.values.fold<int>(0, (n, values) => n + values.length) > 1000 ||
+          utf8.encode(jsonEncode(candidate)).length > 120000) continue;
+      groupCheckpoints[entry.key] = checkpoint;
     }
-    if (groupCheckpoints.values.fold<int>(0, (n, rows) => n + rows.length) >
-            1000 ||
-        jsonEncode(groupCheckpoints).length > 200000) {
-      throw StateError(
-        'Mobile record checkpoints exceed the supported limit; cached data retained.',
-      );
+    final legacyNotices = <String, String>{};
+    if (dashboard['mobileRecordDeltaVersion'] != 1 && dashboard['notices'] is List &&
+        (dashboard['notices'] as List).length <= 1000) {
+      for (final notice in (dashboard['notices'] as List).whereType<Map>()) {
+        if (notice['id'] is String && notice['_noticeRevision'] is String) {
+          legacyNotices[notice['id'] as String] = notice['_noticeRevision'] as String;
+        }
+      }
+      if (utf8.encode(jsonEncode(legacyNotices)).length > 40000) legacyNotices.clear();
     }
     final result = await _dashboardRequest({
       'mobileRecordDeltaVersion': 1,
@@ -1295,12 +1304,7 @@ class SchoolSession {
                     groupCheckpoints.containsKey(entry.key)))
               entry.key: entry.value,
         },
-      if (dashboard['notices'] is List)
-        'knownNoticeRevisions': {
-          for (final notice in (dashboard['notices'] as List).whereType<Map>())
-            if (notice['id'] is String && notice['_noticeRevision'] is String)
-              notice['id']: notice['_noticeRevision'],
-        },
+      if (legacyNotices.isNotEmpty) 'knownNoticeRevisions': legacyNotices,
     });
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
