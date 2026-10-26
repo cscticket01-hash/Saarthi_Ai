@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
+import '../../lib/windows_connect/central_school_cloud.dart';
 import '../../lib/windows_firebase_sync.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
@@ -142,32 +144,87 @@ void main() {
             requests++; expect(boundSchool, school);
             return ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {'operations': operations});
           });
-        final receipts = await prepare();
-        final canonical = <String, Map<String, dynamic>>{}, revisions = <String, String>{};
-        await WindowsPendingSchoolSync.flush(profileId: profile,
-          send: (a, b, c, d) async => throw StateError('Versioned owner required.'),
-          prepareVersioned: (ref, item) => WindowsFirebaseRemote.prepareQueuedRecord(ref, item, school),
-          canonicalForAck: (item) => canonical[item['operationId']],
-          sendVersioned: (item) async {
-            expect(item['operationId'], originalOps[item['documentId']]);
-            if (receipts.isEmpty) receipts.addAll(await prepare());
-            final receipt = receipts.remove(item['operationId']);
-            if (receipt is Exception) throw receipt;
-            if (receipt == null) requests++;
-            final reply = await WindowsFirebaseRemote.syncManagedRecord(item, school,
-              batchReply: receipt is Map<String, dynamic> ? receipt : null);
-            if (reply['record'] is Map) canonical[item['operationId'] as String] = Map<String, dynamic>.from(reply['record']);
-            final revision = reply['recordRevision'] as String;
-            revisions[item['documentId'] as String] = revision;
-            return revision;
-          },
-          onActivity: (event) {
-            if (event['stage'] == 'verified') {
-              final row = rows.singleWhere((row) => row['id'] == event['documentId']);
-              row['queueToVerifiedAckMicros'] = timer.elapsedMicroseconds - (row['queuedMicros'] as int);
+        // Real Script batches may stop at their 20-second work budget or
+        // return a transient 429/503. One flush is not the whole production
+        // lifecycle: retry the SAME durable operations with recorded backoff.
+        // Never manufacture ACKs or silently discard unfinished rows.
+        final canonical = <String, Map<String, dynamic>>{},
+            revisions = <String, String>{};
+        var transientAttempts = 0;
+        for (var deliveryPass = 0; deliveryPass < 6; deliveryPass++) {
+          if (all.elapsed > const Duration(minutes: 45)) {
+            throw StateError('Real latency measurement deadline exceeded; original pending operations retained.');
+          }
+          try {
+            final receipts = await prepare();
+            await WindowsPendingSchoolSync.flush(
+              profileId: profile,
+              respectBackoff: true,
+              send: (a, b, c, d) async => throw StateError('Versioned owner required.'),
+              prepareVersioned: (ref, item) =>
+                  WindowsFirebaseRemote.prepareQueuedRecord(ref, item, school),
+              canonicalForAck: (item) => canonical[item['operationId']],
+              sendVersioned: (item) async {
+                expect(item['operationId'], originalOps[item['documentId']]);
+                if (receipts.isEmpty) receipts.addAll(await prepare());
+                final receipt = receipts.remove(item['operationId']);
+                if (receipt is Exception) throw receipt;
+                if (receipt == null) requests++;
+                final reply = await WindowsFirebaseRemote.syncManagedRecord(
+                  item, school,
+                  batchReply: receipt is Map<String, dynamic> ? receipt : null,
+                );
+                if (reply['record'] is Map) {
+                  canonical[item['operationId'] as String] =
+                      Map<String, dynamic>.from(reply['record']);
+                }
+                final revision = reply['recordRevision'] as String;
+                revisions[item['documentId'] as String] = revision;
+                return revision;
+              },
+              onActivity: (event) {
+                if (event['stage'] == 'verified') {
+                  final row = rows.singleWhere((row) => row['id'] == event['documentId']);
+                  row['queueToVerifiedAckMicros'] =
+                      timer.elapsedMicroseconds - (row['queuedMicros'] as int);
+                }
+              },
+            );
+          } on CentralCloudException catch (error) {
+            if (!{429, 500, 502, 503, 504}.contains(error.status)) rethrow;
+            transientAttempts++;
+          } on TimeoutException {
+            transientAttempts++;
+          } on SocketException {
+            transientAttempts++;
+          }
+          final left = (await db.collection('_windows_firebase_outbox').get()).docs;
+          if (left.isEmpty) break;
+          if (left.length > 5) throw StateError('Unrecognized pending TEST operations.');
+          for (final pending in left) {
+            final item = pending.data();
+            if (originalOps[item['documentId']] != item['operationId'] ||
+                item['schoolId'] != school ||
+                !{'pending', 'retry'}.contains(item['syncState'])) {
+              throw StateError('Original operation or safe retry state lost; pending retained.');
             }
-          });
+          }
+          if (deliveryPass == 5) {
+            throw StateError('Six bounded real provider delivery passes exhausted; pending retained.');
+          }
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final retryAt = left.map((doc) =>
+              (doc.data()['retryAtMillis'] as num? ?? now).toInt())
+              .reduce((a, b) => a > b ? a : b);
+          final sleepMillis = (retryAt - now + 250).clamp(1000, 60000).toInt();
+          await Future<void>.delayed(Duration(milliseconds: sleepMillis));
+        }
         expect((await db.collection('_windows_firebase_outbox').get()).docs, isEmpty);
+        final retryCount = transientAttempts;
+        // Per-cohort retry counts remain visible in the evidence even when
+        // every operation eventually receives a genuine authoritative ACK.
+        report['transientProviderAttempts'] =
+            (report['transientProviderAttempts'] as int? ?? 0) + retryCount;
         for (final row in rows) expect(row['queueToVerifiedAckMicros'], isA<int>());
         stage = 'cohort $cohort verified receiver apply';
         final observation = <String, dynamic>{'cohort': cohort, 'records': 5, 'writeRequests': requests};
