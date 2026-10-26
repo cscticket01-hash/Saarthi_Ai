@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/windows_binary_downloads.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
 
 void main() {
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -227,4 +228,60 @@ void main() {
       .writeAsString(jsonEncode({'schemaVersion':1, 'schoolId':other, 'items':{}}));
     await expectLater(manager().load(), throwsStateError);
   });
+  for (final status in [401, 403, 409, 422]) {
+    test('HTTP $status media failure requires review across restart and refresh', () async {
+      final cache = manager();await cache.refreshInventory();
+      var reads = 0;
+      remote = (_) async {
+        reads++;
+        throw CentralCloudException(status, 'school_cloud', 'synthetic protected failure');
+      };
+      await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+      expect(cache.summary['reviewRequired'], 1);
+      clock += 400000;
+      final restarted = manager();await restarted.load();
+      expect(await restarted.repairNext(), false);
+      expect(reads, 1);
+      remote = (_) async => inventory([{...expected, 'version': 'newer-version'}]);
+      await restarted.refreshInventory(restart: true);
+      expect(await restarted.repairNext(), false);
+      expect(restarted.summary['reviewRequired'], 1);
+      expect(await restarted.verifiedPath('school_file_1'), isNull);
+    });
+  }
+
+  test('quota cooldown covers other files and survives cache restart', () async {
+    final cache = manager(), second = {...expected, 'fileId': 'school_file_2'};
+    remote = (_) async => inventory([expected, second]);
+    await cache.refreshInventory();
+    var reads = 0;
+    remote = (_) async {
+      reads++;
+      throw CentralCloudException(429, 'school_cloud', 'synthetic quota');
+    };
+    await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+    final restarted = manager();await restarted.load();
+    expect(await restarted.repairNext(), false);
+    expect(await restarted.repairNext(administratorRetry: true), false);
+    expect(reads, 1);
+    expect(restarted.summary['retryAt'], greaterThan(clock + 59000));
+    clock += 70000;
+    remote = (body) async => download(body['fileId'] == 'school_file_1' ? expected : second, original);
+    expect(await restarted.repairNext(), true);
+  });
+
+  for (final status in [502, 503]) {
+    test('HTTP $status media recovery waits for durable cooldown then verifies exact bytes', () async {
+      final cache = manager();await cache.refreshInventory();
+      remote = (_) async => throw CentralCloudException(status, 'school_cloud', 'synthetic temporary failure');
+      await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+      final restarted = manager();await restarted.load();
+      expect(await restarted.repairNext(), false);clock += 6000;
+      remote = (_) async => download(expected, original);
+      expect(await restarted.repairNext(), true);
+      expect(restarted.summary['verifiedFiles'], 1);
+      expect(await File((await restarted.verifiedPath('school_file_1'))!).readAsBytes(), original);
+    });
+  }
+
 }

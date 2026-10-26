@@ -120,3 +120,56 @@ test('broker publishes only signed committed writes and rechecks membership afte
  await assert.rejects(denied,e=>e.status===403);
  assert.equal(cloud.listeners.size,0);
 });
+
+
+test('interior gaps, malformed hints and missing tails force broad reconciliation, including an apparently current cursor',()=>{
+ const cloud=sharedCloud(),feed=createSchoolChangeFeed({db:cloud.db,collections:['fee_payments','teachers_directory']});
+ const epoch='00000000-0000-4000-8000-000000000000';
+ const base={epoch,sequence:3,events:[1,2,3].map(sequence=>({sequence,collection:'fee_payments',id:'receipt-'+sequence}))};
+ assert.deepEqual(feed.project(base,epoch+':0').records.fee_payments,['receipt-1','receipt-2','receipt-3']);
+ for(const state of [
+  {...base,events:[base.events[0],base.events[2]]},
+  {...base,events:base.events.slice(0,2)},
+  {...base,events:[...base.events.slice(0,2),{...base.events[2],collection:'foreign'}]},
+  {...base,events:[...base.events.slice(0,2),{...base.events[2],id:''}]},
+  {...base,events:[]},
+ ])for(const cursor of [epoch+':0',epoch+':3']){
+  const event=feed.project(state,cursor);
+  assert.equal(event.reset,true);assert.deepEqual(event.collections,['fee_payments','teachers_directory']);assert.deepEqual(event.records,{});
+ }
+ for(const sequence of [-1,NaN,1.5,Number.MAX_SAFE_INTEGER])assert.throws(()=>feed.project({...base,sequence},epoch+':0'),e=>e.status===503);
+});
+
+test('corrupt durable snapshot rejects wait visibly and releases listener capacity',async()=>{
+ const cloud=sharedCloud(),feed=createSchoolChangeFeed({db:cloud.db,collections:['fee_payments'],waitMillis:20,maxWaiters:1});
+ cloud.records.set('school_sync_hints/'+A,{epoch:'bad',sequence:1,events:[]});
+ await assert.rejects(feed.wait(A),e=>e.status===503);
+ assert.equal(cloud.listeners.size,0);
+ cloud.records.delete('school_sync_hints/'+A);
+ assert.equal((await feed.wait(A)).reset,true);
+});
+
+test('15000 synthetic commits keep five reconnecting PCs discoverable with bounded hints and school isolation',async()=>{
+ const cloud=sharedCloud(),collections=['students_directory','fee_payments','attendance_records'];
+ const feed=createSchoolChangeFeed({db:cloud.db,collections,waitMillis:1});
+ const initial=(await feed.wait(A)).cursor,cursors=Array(5).fill(initial);
+ let exact=0,resets=0;const started=performance.now();
+ for(let i=1;i<=15000;i++){
+  await feed.publish(A,collections[i%3],'record-'+i);
+  for(let pc=0;pc<5;pc++)if(i%[1,7,61,127,1000][pc]===0){
+   const event=feed.project(cloud.records.get('school_sync_hints/'+A),cursors[pc]);
+   assert(event);assert.notEqual(event.cursor,cursors[pc]);
+   if(event.reset){resets++;assert.deepEqual(event.collections,collections);}
+   else {exact++;assert(Object.values(event.records).every(ids=>ids.length<=64));}
+   cursors[pc]=event.cursor;
+  }
+ }
+ for(let pc=0;pc<5;pc++){
+  const state=cloud.records.get('school_sync_hints/'+A),event=feed.project(state,cursors[pc]);
+  if(event)cursors[pc]=event.cursor;
+  assert.equal(cursors[pc],state.epoch+':15000');
+ }
+ assert.equal(cloud.records.size,1);assert.equal(cloud.records.get('school_sync_hints/'+A).events.length,64);
+ assert.equal((await feed.wait(B)).cursor,'empty:0');assert.equal(cloud.listeners.size,0);
+ console.log('SYNC3_HINT_LOAD',JSON.stringify({environment:'synthetic in-memory Firestore transactions; no provider throughput claim',commits:15000,pcs:5,exactCatchups:exact,gapReconciliations:resets,elapsedMillis:performance.now()-started}));
+});

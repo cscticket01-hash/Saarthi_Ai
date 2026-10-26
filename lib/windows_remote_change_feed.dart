@@ -34,7 +34,7 @@ class WindowsRemoteChangeFeed {
   bool _healthy = false;
   bool get isHealthy => _scope != null && _healthy;
   void start(String scope, String school) {
-    if (_scope == scope) return;
+    if (_scope == scope && _school == school) return;
     stop();
     _scope = scope;
     _school = school;
@@ -89,6 +89,14 @@ class WindowsRemoteChangeFeed {
           names.any((c) => c is! String || !allowedCollections.contains(c)) ||
           names.toSet().length != names.length) {
         throw StateError('Unverified school change notification.');
+      }
+      if (_cursor != null && out['reset'] != true) {
+        final prior = _cursor!.split(':'), next = cursor.split(':');
+        if (prior.first != next.first ||
+            int.parse(next.last) < int.parse(prior.last) ||
+            (cursor != _cursor && names.isEmpty)) {
+          throw StateError('Change notification gap requires reconciliation.');
+        }
       }
       final targets = <String, Set<String>>{};
       final raw = out['records'];

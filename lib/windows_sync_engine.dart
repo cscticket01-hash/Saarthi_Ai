@@ -1948,6 +1948,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         if (WindowsFirebaseRemote.recordPointReadSupported) {
           await WindowsPendingSchoolSync.repair(
+            explicitRetry: _manualSync,
             profileId: syncOrigin,
             school: _activeSchoolSyncId,
             canAdmit: () =>

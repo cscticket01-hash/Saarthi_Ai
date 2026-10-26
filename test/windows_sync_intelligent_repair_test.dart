@@ -353,4 +353,75 @@ void main() {
       expect(row.data()['syncState'], 'needsAttention');
     }
   });
+  test('hung diagnosis times out without accepting a late readback', () async {
+    final ref = db.collection('teachers_directory').doc('hung');
+    await db.applySyncedDocument(ref, record('hung', 'r1'));
+    await ref.update({'name': 'Local retained'});
+    final row = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await row.reference.update({'syncState': 'needsAttention', 'failureCategory': 'timeout'});
+    final original = (await row.reference.get()).data()!;
+    final response = Completer<Map<String, dynamic>>();
+    expect(await WindowsPendingSchoolSync.repair(
+      profileId: db.activeProfileId, school: school,
+      probeTimeout: const Duration(milliseconds: 10),
+      read: (_, _) => response.future,
+    ), 0);
+    response.complete({
+      'schoolId': school, 'syncProtocol': 2, 'pointRead': true,
+      'records': {'hung': record('hung', 'r2')},
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect((await row.reference.get()).data(), original);
+    expect((await ref.get()).data()?['name'], 'Local retained');
+  });
+
+  test('automatic probe budget survives restart; explicit diagnosis preserves attempts and queue', () async {
+    final ref = db.collection('teachers_directory').doc('budget');
+    await db.applySyncedDocument(ref, record('budget', 'r1'));
+    await ref.update({'name': 'Keep me'});
+    final row = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await row.reference.update({'syncState': 'needsAttention', 'failureCategory': 'server'});
+    final original = (await row.reference.get()).data()!;
+    var clock = DateTime(2026, 10, 26), reads = 0;
+    Future<Map<String, dynamic>> read(String c, String id) async {
+      reads++;
+      throw CentralCloudException(503, 'school_cloud', 'synthetic outage');
+    }
+    for (var i = 0; i < WindowsPendingSchoolSync.automaticRepairProbeLimit + 2; i++) {
+      await WindowsPendingSchoolSync.repair(
+        profileId: db.activeProfileId, school: school, read: read, now: () => clock,
+      );
+      await db.resetVolatileSession();
+      clock = clock.add(const Duration(hours: 2));
+    }
+    expect(reads, WindowsPendingSchoolSync.automaticRepairProbeLimit);
+    final journal = db.collection('_windows_sync_status').doc('repair-${original['operationId']}');
+    expect((await journal.get()).data()?['outcome'], 'probe_budget_exhausted');
+    expect((await row.reference.get()).data(), original);
+    await WindowsPendingSchoolSync.repair(
+      profileId: db.activeProfileId, school: school, read: read,
+      now: () => clock, explicitRetry: true,
+    );
+    expect(reads, WindowsPendingSchoolSync.automaticRepairProbeLimit + 1);
+    expect((await journal.get()).data()?['attempts'], reads);
+    expect((await row.reference.get()).data(), original);
+  });
+
+  for (final status in [401, 403, 409, 429]) {
+    test('HTTP $status diagnosis remains fail-closed and preserves exact queue', () async {
+      final ref = db.collection('teachers_directory').doc('blocked');
+      await db.applySyncedDocument(ref, record('blocked', 'r1'));
+      await ref.update({'name': 'Unsynced edit'});
+      final row = (await db.collection('_windows_firebase_outbox').get()).docs.single;
+      await row.reference.update({'syncState': 'needsAttention', 'failureCategory': 'timeout'});
+      final original = (await row.reference.get()).data();
+      await expectLater(WindowsPendingSchoolSync.repair(
+        profileId: db.activeProfileId, school: school,
+        read: (_, _) async => throw CentralCloudException(status, 'school_cloud', 'synthetic'),
+      ), throwsA(isA<CentralCloudException>()));
+      expect((await row.reference.get()).data(), original);
+      expect((await ref.get()).data()?['name'], 'Unsynced edit');
+    });
+  }
+
 }

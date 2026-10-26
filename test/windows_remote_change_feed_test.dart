@@ -290,4 +290,53 @@ void main() {
       reader.stop();
     });
   });
+  for (final bad in [
+    {'cursor': '00000000-0000-4000-8000-000000000000:1', 'collections': ['fee_payments']},
+    {'cursor': '11111111-1111-4111-8111-111111111111:3', 'collections': ['fee_payments']},
+    {'cursor': '00000000-0000-4000-8000-000000000000:3', 'collections': <String>[]},
+  ]) {
+    test('notification cannot advance through an unverified gap: ${bad['cursor']} ${bad['collections']}', () {
+      fakeAsync((clock) {
+        var errors = 0, persisted = 0;
+        final requests = <String?>[];
+        const original = '00000000-0000-4000-8000-000000000000:2';
+        final feed = WindowsRemoteChangeFeed(
+          allowedCollections: {'fee_payments'},
+          loadCursor: (_) async => original,
+          read: (school, cursor) async {
+            requests.add(cursor);
+            return {...event(school), ...bad};
+          },
+          persistEvent: (_, _) async { persisted++; },
+          onHint: (_) => fail('Unverified gap admitted'),
+          onError: (_) => errors++,
+        );
+        feed.start('profile', 'school');clock.flushMicrotasks();
+        expect(feed.isHealthy, false);expect(errors, 1);expect(persisted, 0);
+        clock.elapse(const Duration(seconds: 2));clock.flushMicrotasks();
+        expect(requests, [original, original]);expect(persisted, 0);
+        feed.stop();
+      });
+    });
+  }
+
+  test('same profile with a changed school restarts listener and discards old response', () {
+    fakeAsync((clock) {
+      final pending = <String, Completer<Map<String, dynamic>>>{};
+      final hints = <Set<String>>[];
+      final feed = WindowsRemoteChangeFeed(
+        allowedCollections: {'fee_payments'},
+        read: (school, _) => (pending[school] = Completer()).future,
+        onHint: hints.add,
+      );
+      feed.start('profile', 'school-a');feed.start('profile', 'school-b');
+      expect(pending.keys, unorderedEquals(['school-a', 'school-b']));
+      pending['school-a']!.complete(event('school-a', collections: ['fee_payments']));
+      clock.flushMicrotasks();expect(hints, isEmpty);
+      pending['school-b']!.complete(event('school-b', collections: ['fee_payments']));
+      clock.flushMicrotasks();expect(hints, hasLength(1));
+      feed.stop();
+    });
+  });
+
 }

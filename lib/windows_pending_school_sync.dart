@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_sync_recovery.dart';
@@ -27,6 +29,7 @@ bool pendingRecordBackoffDue(
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
+  static const automaticRepairProbeLimit = 5;
   /// Read-only diagnosis followed by existing CAS owners. No inferred ACK,
   /// credential repair, queue reset, or blind same-field conflict overwrite.
   static Future<int> repair({
@@ -36,7 +39,12 @@ class WindowsPendingSchoolSync {
     bool Function()? canAdmit,
     void Function(Map<String, dynamic>)? onActivity,
     DateTime Function()? now,
+    bool explicitRetry = false,
+    Duration probeTimeout = const Duration(seconds: 40),
   }) async {
+    if (probeTimeout <= Duration.zero) {
+      throw ArgumentError.value(probeTimeout, 'probeTimeout');
+    }
     final db = FirebaseFirestore.instance, clock = now ?? DateTime.now;
     void scope() {
       if (db.activeProfileId != profileId ||
@@ -70,7 +78,35 @@ class WindowsPendingSchoolSync {
           .doc('repair-${item['operationId']}');
       final prior = (await journal.get()).data();
       scope();
-      if ((prior?['nextProbeAt'] as num? ?? 0) > clock().millisecondsSinceEpoch)
+      if (prior != null &&
+          (prior['schoolId'] != school ||
+              prior['operationId'] != item['operationId'])) {
+        throw StateError('Repair journal identity unverified.');
+      }
+      // Budget survives restarts and hourly reconciliation. Manual diagnosis
+      // admits one more bounded probe; it never resets history or grants ACK.
+      if (!explicitRetry &&
+          (prior?['attempts'] as num? ?? 0) >= automaticRepairProbeLimit) {
+        if (prior?['outcome'] != 'probe_budget_exhausted') {
+          await journal.set({
+            'outcome': 'probe_budget_exhausted',
+            'reviewRequired': true,
+            'lastProbeAt': clock().millisecondsSinceEpoch,
+          }, const SetOptions(merge: true));
+          scope();
+          onActivity?.call({
+            'schoolId': school,
+            'operationId': item['operationId'],
+            'stage': 'repairDiagnosed',
+            'outcome': 'probe_budget_exhausted',
+            'failureCategory': category ?? 'conflict',
+            'at': clock().millisecondsSinceEpoch,
+          });
+        }
+        continue;
+      }
+      if (!explicitRetry &&
+          (prior?['nextProbeAt'] as num? ?? 0) > clock().millisecondsSinceEpoch)
         continue;
       final attempts = (prior?['attempts'] as num? ?? 0).toInt() + 1;
       final delay = Duration(
@@ -94,7 +130,7 @@ class WindowsPendingSchoolSync {
         response = await read(
           item['collection'] as String,
           item['documentId'] as String,
-        );
+        ).timeout(probeTimeout);
       } catch (error) {
         scope();
         final decision = windowsSyncRecovery(error);

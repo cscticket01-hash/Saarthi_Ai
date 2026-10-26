@@ -5,6 +5,9 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import 'sync_recovery_policy.dart';
+import 'windows_sync_recovery.dart';
+
 /// School-bound, content-addressed copies. Never modifies original files,
 /// record references, queues or receipts. Metadata alone is never available.
 class WindowsBinaryDownloads {
@@ -45,6 +48,8 @@ class WindowsBinaryDownloads {
   int _observedAt = 0;
   int _lastDownload = 0;
   int _generation = 0;
+  int _quotaRetryAt = 0;
+  String? _repairBlockedCategory;
 
   Directory get schoolDirectory => Directory(
     '${storageDirectory.path}${Platform.pathSeparator}$schoolId',
@@ -158,6 +163,8 @@ class WindowsBinaryDownloads {
       _cursor = decoded['cursor'] as String?;
       _fingerprint = decoded['inventoryFingerprint'] as String?;
       _cycleUnverified = decoded['cycleUnverified'] == true;
+      _quotaRetryAt = decoded['quotaRetryAt'] as int? ?? 0;
+      _repairBlockedCategory = decoded['repairBlockedCategory'] as String?;
       // Previous inventory is historical until an authenticated refresh succeeds.
       _available = false;
       _partial = true;
@@ -213,6 +220,8 @@ class WindowsBinaryDownloads {
       'cursor': _cursor, 'cycleUnverified': _cycleUnverified,
       'seenInventory': _seenInventory.toList(), 'items': _items,
       'inventoryFingerprint': _fingerprint,
+      'quotaRetryAt': _quotaRetryAt,
+      'repairBlockedCategory': _repairBlockedCategory,
     }), flush: true);
     _guard();
     await temporary.rename(target.path); // Unique target: atomic on Windows too.
@@ -274,6 +283,11 @@ class WindowsBinaryDownloads {
           'state': same ? (old == null ? null : old['state']) ?? 'pending' : 'pending',
           if (same && old != null) 'retryAttempts': old['retryAttempts'] ?? 0,
           if (same && old != null) 'retryAt': old['retryAt'] ?? 0,
+          // Inventory metadata cannot grant download authorization.
+          if (old?['automaticRetryBlocked'] == true) ...{
+            'automaticRetryBlocked': true,
+            'failureCategory': old!['failureCategory'],
+          },
           if (previous != null) 'previousSha256': previous,
           if (previousSize != null) 'previousSizeBytes': previousSize,
         };
@@ -324,16 +338,24 @@ class WindowsBinaryDownloads {
   /// Complete restart-safe retry of one item. Partial files never count as ACKs.
   /// Original usable version is retained until the new hash has been verified.
   Future<bool> repairNext({bool administratorRetry = false}) => _exclusive(() async {
+    // A local retry button cannot override a provider quota cooldown. Shared
+    // access/configuration denial blocks the entire lane, including new files.
+    if (_quotaRetryAt > now().millisecondsSinceEpoch ||
+        (_repairBlockedCategory != null && !administratorRetry)) return false;
     await _inspect();
     final candidates = _items.values.where((item) =>
       item['expected'] != false && item['verification'] == 'bytes_hashed' && item['state'] != 'verified').toList();
     if (candidates.isEmpty) return false;
     final eligible = candidates.where((item) =>
+      item['automaticRetryBlocked'] != true &&
       (item['retryAttempts'] as int? ?? 0) < retryLimit &&
       (item['retryAt'] as int? ?? 0) <= now().millisecondsSinceEpoch);
     if (eligible.isEmpty && !administratorRetry) return false;
     final item = eligible.isNotEmpty ? eligible.first : candidates.first;
-    if (eligible.isEmpty) item['retryAttempts'] = 0;
+    if (eligible.isEmpty) {
+      item['retryAttempts'] = 0;
+      item.remove('automaticRetryBlocked');
+    }
     final attempt = (item['retryAttempts'] as int? ?? 0) + 1;
     final delaySeconds = min(300, 5 * pow(2, attempt - 1)).toDouble();
     final random = jitter().clamp(0.0, 1.0);
@@ -394,15 +416,43 @@ class WindowsBinaryDownloads {
       }
       item['state'] = 'verified';
       item.remove('failure');
+      item.remove('failureCategory');
+      item.remove('automaticRetryBlocked');
       item['retryAttempts'] = 0;
       item['retryAt'] = 0;
       _lastDownload = now().millisecondsSinceEpoch;
+      _repairBlockedCategory = null;
       _failure = null;
       await _save();
       return true;
     } catch (error) {
       item['state'] = error is TimeoutException ? 'interrupted' : 'failed';
       item['failure'] = error is TimeoutException ? 'timeout' : 'download_unverified';
+      final decision = windowsSyncRecovery(error);
+      item['failureCategory'] = decision.kind.name;
+      if ({
+        SyncFailureKind.authorization,
+        SyncFailureKind.configuration,
+        SyncFailureKind.conflict,
+        SyncFailureKind.validation,
+      }.contains(decision.kind)) {
+        item['automaticRetryBlocked'] = true;
+        if ({SyncFailureKind.authorization, SyncFailureKind.configuration}
+            .contains(decision.kind)) {
+          _repairBlockedCategory = decision.kind.name;
+        }
+      } else if (decision.kind == SyncFailureKind.quota) {
+        // Stop the shared media lane for the existing quota-policy cooldown.
+        final deadline = now().add(decision.delay(attempt, jitter: random))
+            .millisecondsSinceEpoch;
+        _quotaRetryAt = max(_quotaRetryAt, deadline);
+        for (final pending in _items.values) {
+          if (pending['state'] != 'verified' &&
+              (pending['retryAt'] as int? ?? 0) < deadline) {
+            pending['retryAt'] = deadline;
+          }
+        }
+      }
       _failure = item['failure'] as String;
       if (currentSchool() == schoolId) await _save();
       rethrow;
@@ -437,7 +487,7 @@ class WindowsBinaryDownloads {
     int count(String state) => expected.where((item) => item['state'] == state).length;
     final verified = expected.where((item) => item['state'] == 'verified');
     final awaiting = expected.where((item) => item['verification'] == 'bytes_hashed' && item['state'] != 'verified');
-    final deadlines = awaiting.where((item) => (item['retryAttempts'] as int? ?? 0) < retryLimit)
+    final deadlines = awaiting.where((item) => item['automaticRetryBlocked'] != true && (item['retryAttempts'] as int? ?? 0) < retryLimit)
       .map((item) => item['retryAt'] as int? ?? 0).where((value) => value > now().millisecondsSinceEpoch).toList();
     deadlines.sort();
     return {
@@ -453,7 +503,12 @@ class WindowsBinaryDownloads {
       'knownBytes': expected.fold<int>(0, (sum, item) => sum + (item['sizeBytes'] as int)),
       'lastVerifiedDownloadAt': _lastDownload, 'observedAt': _observedAt,
       'retryAt': deadlines.isEmpty ? 0 : deadlines.first,
-      'retryBlocked': awaiting.where((item) => (item['retryAttempts'] as int? ?? 0) >= retryLimit).length,
+      'retryBlocked': awaiting.where((item) =>
+        item['automaticRetryBlocked'] == true ||
+        (item['retryAttempts'] as int? ?? 0) >= retryLimit).length,
+      'reviewRequired': awaiting.where((item) => item['automaticRetryBlocked'] == true).length,
+      'repairBlockedCategory': _repairBlockedCategory,
+      'quotaRetryAt': _quotaRetryAt,
       'hasMore': _cursor != null, 'busy': _busy, 'failure': _failure,
     };
   }

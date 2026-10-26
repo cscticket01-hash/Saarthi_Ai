@@ -11,6 +11,22 @@ Repository: `cscticket01-hash/Saarthi_Ai`. This work starts from main `9c1cacd6c
 3. Regression cases in `test/windows_sync_intelligent_repair_test.dart` and `test/windows_remote_change_feed_test.dart`: independent per-record timeout, shared disconnection stop, preserved local edits and original identities, durable cooldown, idle stalled listener and late-result suppression.
 4. Targeted CI on the branch validates Dart source and JSON/SQLite modes. **Do not mark tests PASS unless an exact-commit run completed successfully.**
 
+## Continuation milestone — bounded repair, media safety and notification integrity
+Starting head verified from GitHub: `283eeab79ccfeb7a3fcc22fcc554b3856da0c53f`; PR #135 OPEN/DRAFT; main remains `9c1cacd6cef905490e5249cc0958ae686dc4e68f`. All seven primary workflows on the starting head completed SUCCESS (runs 40229211359, 40229211340, 40229211339, 40229211283, 40229211218, 40229211301, 40229211304).
+
+Implemented in this milestone, pending exact-commit Flutter CI:
+- Existing record owner: 40-second probe deadline, five lifetime automatic diagnosis attempts per operation persisted in the existing journal, exhausted-budget escalation, identity validation. Explicit Sync Now can request another bounded diagnosis without resetting history, changing requests, granting ACKs or bypassing access/quota/conflict checks.
+- Existing media cache: classified permission/configuration/conflict/validation failures persist review blocks; school-wide access/configuration blocks and quota cooldown persist across restarts and inventory version changes. Administrative retry cannot skip quota cooldown. Temporary 502/503 and interrupted download retries still require exact byte hash/version/readback; original files remain untouched. No provider resumable protocol is invented.
+- Broker hint projection: detect missing interior events, missing tails and malformed IDs/collections; require broad reconciliation instead of silently advancing past gaps. Corrupt sequence/epoch rejects visibly and releases listeners. Invalid empty record IDs become broad hints.
+- Windows listener: reject backwards/non-reset epoch/empty advanced cursors before durable cursor writes; restart on school change even if profile scope is unchanged.
+- Four-way existing repair CI now covers binary-download regression tests too.
+
+Local evidence: backend full suite **542/542 PASS** after using already installed Firebase dependencies (initial run failed only because firebase-admin was absent in the clean worktree; rerun passed). Focused change-feed **11/11 PASS**. Synthetic in-memory Firestore listener run: 15,000 commits, 5 simulated clients, 17,384 exact catch-ups, 136 broad gap reconciliations, 5,522ms in one local run; this is not provider throughput or physical acceptance. `git diff --check` PASS. No local Flutter SDK found; do not label Flutter tests PASS until GitHub Actions finishes on the new commit.
+
+Modified sources: `lib/windows_pending_school_sync.dart`, `lib/windows_sync_engine.dart`, `lib/windows_binary_downloads.dart`, `lib/windows_remote_change_feed.dart`, `functions/school-change-feed.js`; corresponding regression tests; `.github/workflows/sync3-unified-repair-review.yml`.
+
+Next precise step: inspect exact new-commit CI; fix every failure. Then continue phase B durable partitioned event retention, phase C measured adaptive transport / provider media / bounded Sheets external-edit audits, and phase D mobile/web and physical acceptance. The current 64-event feed intentionally retains broad fallback; durable partitioned replay is **not implemented** by this milestone. No production merge/release/deploy or private school changes are authorized.
+
 ## Preserve the original rules
 - School/profile identity isolation and signed authorization; never infer/migrate a school ID.
 - Initial sync + hourly idle reconciliation, immediate changed-record dispatch, no-op Save, any-date same-record edits, first committed same-key Add.
