@@ -20,7 +20,7 @@ jobs:
       - name: Check out the exact deployed and reviewed TEST source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: c3753250fffdc0b4d0b9c98b3b01d4666e592a53
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -29,7 +29,7 @@ jobs:
         run: node --test .github/scripts/sync3_native_upload_acceptance.test.cjs
       - name: Verify one retained synthetic native upload in the isolated TEST school
         env:
-          VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
+          VS_EXPECTED_TEST_RUNTIME: c3753250fffdc0b4d0b9c98b3b01d4666e592a53
           VS_TEST_NATIVE_UPLOAD_ACCEPTANCE: '1'
           VS_TEST_NATIVE_UPLOAD_RUN_ID: sync3-native-20261026-b68bf194
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
