@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 
 import 'sync_recovery_policy.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_connect/central_school_cloud.dart';
 
 /// School-bound, content-addressed copies. Never modifies original files,
 /// record references, queues or receipts. Metadata alone is never available.
@@ -49,6 +50,8 @@ class WindowsBinaryDownloads {
   int _lastDownload = 0;
   int _generation = 0;
   int _quotaRetryAt = 0;
+  bool _rangeSupported = false;
+  static final Set<String> _activeRanges = {};
   String? _repairBlockedCategory;
 
   Directory get schoolDirectory => Directory(
@@ -164,6 +167,7 @@ class WindowsBinaryDownloads {
       _fingerprint = decoded['inventoryFingerprint'] as String?;
       _cycleUnverified = decoded['cycleUnverified'] == true;
       _quotaRetryAt = decoded['quotaRetryAt'] as int? ?? 0;
+      _rangeSupported = decoded['binaryRangeVersion'] == 1;
       _repairBlockedCategory = decoded['repairBlockedCategory'] as String?;
       // Previous inventory is historical until an authenticated refresh succeeds.
       _available = false;
@@ -221,6 +225,7 @@ class WindowsBinaryDownloads {
       'seenInventory': _seenInventory.toList(), 'items': _items,
       'inventoryFingerprint': _fingerprint,
       'quotaRetryAt': _quotaRetryAt,
+      'binaryRangeVersion': _rangeSupported ? 1 : 0,
       'repairBlockedCategory': _repairBlockedCategory,
     }), flush: true);
     _guard();
@@ -252,6 +257,7 @@ class WindowsBinaryDownloads {
       if (_cursor != null && _fingerprint != response['inventoryFingerprint']) {
         throw StateError('Cloud file inventory changed; restart verification.');
       }
+      _rangeSupported = response['binaryRangeVersion'] == 1;
       _fingerprint = response['inventoryFingerprint'] as String;
       final page = <Map<String, dynamic>>[];
       final seen = <String>{};
@@ -283,6 +289,10 @@ class WindowsBinaryDownloads {
           'state': same ? (old == null ? null : old['state']) ?? 'pending' : 'pending',
           if (same && old != null) 'retryAttempts': old['retryAttempts'] ?? 0,
           if (same && old != null) 'retryAt': old['retryAt'] ?? 0,
+          if (same && old != null && old['transferOffset'] != null)
+            'transferOffset': old['transferOffset'],
+          if (same && old != null && old['transferHash'] != null)
+            'transferHash': old['transferHash'],
           // Inventory metadata cannot grant download authorization.
           if (old?['automaticRetryBlocked'] == true) ...{
             'automaticRetryBlocked': true,
@@ -335,6 +345,102 @@ class WindowsBinaryDownloads {
     await _save();
   });
 
+  File _rangeFile(Map<String, dynamic> item) {
+    final key = sha256.convert(utf8.encode('${item['fileId']}/${item['version']}/${item['sha256']}'));
+    return File('${schoolDirectory.path}${Platform.pathSeparator}$key.transfer.part');
+  }
+
+  Future<List<int>> _downloadBytes(Map<String, dynamic> item) async {
+    if (_rangeSupported) {
+      try { return await _downloadRange(item); }
+      on CentralCloudException catch (error) {
+        if (error.status != 400 && error.status != 404) rethrow;
+        // A broker rollback must prove that the negotiated capability is gone.
+        // Access/quota failures never enter this backward-compatible fallback.
+        final capability = await request({'action': 'managed/file/inventory', 'schoolId': schoolId})
+            .timeout(const Duration(seconds: 40));
+        _guard();
+        if (capability['success'] != true || capability['schoolId'] != schoolId ||
+            capability['binaryInventoryVersion'] != 1 || capability['binaryRangeVersion'] == 1) rethrow;
+        _rangeSupported = false;
+      }
+    }
+    final response = await request({
+        'action': 'managed/file/download', 'schoolId': schoolId,
+        'fileId': item['fileId'], 'expectedSha256': item['sha256'],
+        'expectedVersion': item['version'],
+      }).timeout(const Duration(seconds: 40));
+      _guard();
+      if (response['success'] != true || response['schoolId'] != schoolId ||
+          response['binaryDownloadVersion'] != 1 ||
+          response['fileId'] != item['fileId'] ||
+          response['sha256'] != item['sha256'] || response['version'] != item['version'] ||
+          response['sizeBytes'] != item['sizeBytes'] || response['base64'] is! String ||
+          (response['base64'] as String).length > 28 * 1024 * 1024) {
+        throw StateError('Unverified binary download');
+      }
+      return base64Decode(response['base64'] as String);
+  }
+
+  Future<List<int>> _downloadRange(Map<String, dynamic> item) async {
+    final file = _rangeFile(item);
+    if (!_activeRanges.add(file.path)) throw StateError('Binary transfer already active.');
+    try {
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type != FileSystemEntityType.file && type != FileSystemEntityType.notFound) {
+        throw StateError('Unsafe partial binary transfer.');
+      }
+      var offset = item['transferOffset'] as int? ?? 0;
+      final size = item['sizeBytes'] as int;
+      var reusable = type == FileSystemEntityType.file && offset > 0 && offset <= size;
+      if (reusable) {
+        reusable = await file.length() == offset &&
+            (await sha256.bind(file.openRead()).first).toString() == item['transferHash'];
+      }
+      if (!reusable) {
+        if (type == FileSystemEntityType.file) {
+          final quarantine = '${file.path}.unverified-$_generation';
+          if (await FileSystemEntity.type(quarantine, followLinks: false) != FileSystemEntityType.notFound) {
+            throw StateError('Partial binary evidence collision.');
+          }
+          await file.rename(quarantine);
+        }
+        offset = 0;
+        await file.writeAsBytes(const [], flush: true);
+      }
+      for (var chunks = 0; offset < size && chunks < 80; chunks++) {
+        _guard();
+        final response = await request({
+          'action': 'managed/file/download/part', 'schoolId': schoolId,
+          'fileId': item['fileId'], 'expectedSha256': item['sha256'],
+          'expectedVersion': item['version'], 'offset': offset, 'length': 256 * 1024,
+        }).timeout(const Duration(seconds: 40));
+        _guard();
+        if (response['success'] != true || response['schoolId'] != schoolId ||
+            response['binaryRangeVersion'] != 1 || response['fileId'] != item['fileId'] ||
+            response['version'] != item['version'] || response['sha256'] != item['sha256'] ||
+            response['sizeBytes'] != size || response['offset'] != offset ||
+            response['base64'] is! String || (response['base64'] as String).length > 350000) {
+          throw StateError('Unverified binary transfer range.');
+        }
+        final chunk = base64Decode(response['base64'] as String);
+        if (chunk.isEmpty || chunk.length > 256 * 1024 || offset + chunk.length > size ||
+            response['nextOffset'] != offset + chunk.length ||
+            sha256.convert(chunk).toString() != response['chunkSha256']) {
+          throw StateError('Partial binary integrity check failed.');
+        }
+        await file.writeAsBytes(chunk, mode: FileMode.append, flush: true);
+        _guard();
+        offset += chunk.length;
+        item['transferOffset'] = offset;
+        item['transferHash'] = (await sha256.bind(file.openRead()).first).toString();
+        await _save(); // Verified prefix is durable before requesting more bytes.
+      }
+      if (offset != size) throw StateError('Binary range budget exceeded.');
+      return await file.readAsBytes(); // Final whole-file hash is checked by owner.
+    } finally { _activeRanges.remove(file.path); }
+  }
+
   /// Complete restart-safe retry of one item. Partial files never count as ACKs.
   /// Original usable version is retained until the new hash has been verified.
   Future<bool> repairNext({bool administratorRetry = false}) => _exclusive(() async {
@@ -366,21 +472,7 @@ class WindowsBinaryDownloads {
     await _save(); // Persist intent before any network operation.
     File? part;
     try {
-      final response = await request({
-        'action': 'managed/file/download', 'schoolId': schoolId,
-        'fileId': item['fileId'], 'expectedSha256': item['sha256'],
-        'expectedVersion': item['version'],
-      }).timeout(const Duration(seconds: 40));
-      _guard();
-      if (response['success'] != true || response['schoolId'] != schoolId ||
-          response['binaryDownloadVersion'] != 1 ||
-          response['fileId'] != item['fileId'] ||
-          response['sha256'] != item['sha256'] || response['version'] != item['version'] ||
-          response['sizeBytes'] != item['sizeBytes'] || response['base64'] is! String ||
-          (response['base64'] as String).length > 28 * 1024 * 1024) {
-        throw StateError('Unverified binary download');
-      }
-      final bytes = base64Decode(response['base64'] as String);
+      final bytes = await _downloadBytes(item);
       if (bytes.length != item['sizeBytes'] || bytes.length > maxBytes ||
           sha256.convert(bytes).toString() != item['sha256']) {
         throw StateError('Downloaded bytes failed integrity verification');
@@ -423,7 +515,12 @@ class WindowsBinaryDownloads {
       _lastDownload = now().millisecondsSinceEpoch;
       _repairBlockedCategory = null;
       _failure = null;
+      item.remove('transferOffset');item.remove('transferHash');
       await _save();
+      final transfer = _rangeFile(item);
+      if (await FileSystemEntity.type(transfer.path, followLinks: false) == FileSystemEntityType.file) {
+        try { await transfer.delete(); } catch (_) { /* verified bytes remain usable */ }
+      }
       return true;
     } catch (error) {
       item['state'] = error is TimeoutException ? 'interrupted' : 'failed';

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -474,6 +475,28 @@ void main() {
     final retained = (await db.collection('_windows_firebase_outbox').get()).docs;
     expect(retained.length, 12, reason: 'Only the existing owner may consume each verified receipt');
     expect(retained.map((row) => row.data()['operationId']).toSet(), originalIds);
+  });
+
+  test('large checkpoint requests omit whole groups without truncating records or collection revisions', () {
+    final large = {for (var i = 0; i < 15000; i++) 'student-$i': 'revision-00000000000000000000000000000000-$i'};
+    final small = {'one': 'verified-r1', 'two': 'verified-r2'};
+    final request = boundedManagedDeltaRequest(
+      {'students_directory': 'whole-student-revision', 'school_notices': 'whole-notice-revision'},
+      {'students_directory': large, 'school_notices': small},
+    );
+    expect(utf8.encode(jsonEncode(request)).length, lessThanOrEqualTo(200000));
+    expect((request['knownRecordRevisions'] as Map).containsKey('students_directory'), false);
+    expect(request['knownRecordRevisions']['school_notices'], small);
+    expect(request['knownRevisions']['students_directory'], 'whole-student-revision');
+    expect(large.length, 15000);
+  });
+  test('checkpoint byte budget accounts for Unicode and preserves complete selected maps', () {
+    final rows = {for (var i = 0; i < 900; i++) '${'প' * 40}-$i': 'r' * 40};
+    final request = boundedManagedDeltaRequest({'a': 'ra', 'b': 'rb'}, {'a': rows, 'b': rows});
+    expect(utf8.encode(jsonEncode(request)).length, lessThanOrEqualTo(200000));
+    final sent = request['knownRecordRevisions'] as Map;
+    expect(sent.length, 1);expect(sent.values.single, rows);
+    expect(() => boundedManagedDeltaRequest({'a': 'r'}, {'foreign': rows}), throwsArgumentError);
   });
 
 }

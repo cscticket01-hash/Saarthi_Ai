@@ -19,6 +19,32 @@ import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/managed_record_media.dart';
 
+/// Omit whole optional checkpoint groups to fit the broker's 256KB envelope.
+/// Never truncate IDs or invent a smaller baseline; omitted groups retain the
+/// existing verified full-collection read fallback and collection revision.
+Map<String, dynamic> boundedManagedDeltaRequest(
+  Map<String, String> revisions,
+  Map<String, Map<String, String>> checkpoints,
+) {
+  const budget = 200000;
+  final body = <String, dynamic>{
+    'collections': revisions.keys.toList(), 'knownRevisions': revisions,
+  };
+  final selected = <String, Map<String, String>>{};
+  for (final entry in checkpoints.entries) {
+    if (!revisions.containsKey(entry.key)) throw ArgumentError('Foreign checkpoint collection');
+    final candidate = {...body, 'knownRecordRevisions': {...selected, entry.key: entry.value}};
+    if (utf8.encode(jsonEncode(candidate)).length <= budget) {
+      selected[entry.key] = entry.value;
+    }
+  }
+  if (selected.isNotEmpty) body['knownRecordRevisions'] = selected;
+  if (utf8.encode(jsonEncode(body)).length > budget) {
+    throw StateError('School delta metadata exceeds request budget.');
+  }
+  return body;
+}
+
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
     required this.configSaved,
@@ -717,15 +743,10 @@ class WindowsFirebaseRemote {
     Map<String, String> revisions, {
     Map<String, Map<String, String>> knownRecordRevisions = const {},
   }) async {
+    final body = boundedManagedDeltaRequest(revisions, knownRecordRevisions);
+    final sentCheckpoints = body['knownRecordRevisions'] as Map? ?? const {};
     final result = await ManagedSchoolSession.callForSchool(
-      school,
-      'managed/changes',
-      {
-        'collections': revisions.keys.toList(),
-        'knownRevisions': revisions,
-        if (knownRecordRevisions.isNotEmpty)
-          'knownRecordRevisions': knownRecordRevisions,
-      },
+      school, 'managed/changes', body,
     );
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
@@ -738,7 +759,7 @@ class WindowsFirebaseRemote {
       final group = Map<String, dynamic>.from(changes[collection] as Map);
       if (group['partialRecords'] != null && group['partialRecords'] is! bool ||
           group['partialRecords'] == true &&
-              !knownRecordRevisions.containsKey(collection) ||
+              !sentCheckpoints.containsKey(collection) ||
           group['syncProtocol'] != 2 ||
           group['collectionRevision'] is! String ||
           group['records'] is! Map)

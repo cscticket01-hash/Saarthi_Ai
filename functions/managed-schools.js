@@ -155,6 +155,29 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
     if(sent?.failureCount>0)try{pushDiagnostics({event:'managed_push_hint_failure',code:'FCM_PARTIAL_FAILURE',count:sent.failureCount});}catch{}
    }
  }
+ // Bounded immutable-version media lane. Metadata/record requests never wait
+ // behind these full provider reads. Cached bytes are private to school+version.
+ const binaryParts=new Map(),binaryFlights=new Map();let binaryCacheBytes=0;
+ async function binaryBytes(m,b){
+  const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
+  if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
+  const bytes=Buffer.from(result.base64,'base64');
+  if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');
+  return {bytes,fileId:b.fileId,sha256:b.expectedSha256,version:b.expectedVersion,sizeBytes:bytes.length};
+ }
+ async function rangedBinary(m,b){
+  const key=hash(JSON.stringify([m.schoolId,b.fileId,b.expectedSha256,b.expectedVersion]));
+  for(const [id,item] of binaryParts)if(item.expiresAt<=now()){binaryCacheBytes-=item.bytes.length;binaryParts.delete(id);}
+  if(binaryParts.has(key))return binaryParts.get(key);
+  if(binaryFlights.has(key))return binaryFlights.get(key);
+  if(binaryFlights.size>=2)fail(503,'Media lane busy; retained transfer may retry','MEDIA_BACKPRESSURE');
+  const promise=(async()=>{
+   const item=await binaryBytes(m,b);
+   while(binaryCacheBytes+item.bytes.length>24*1024*1024&&binaryParts.size){const id=binaryParts.keys().next().value;binaryCacheBytes-=binaryParts.get(id).bytes.length;binaryParts.delete(id);}
+   const cached={...item,expiresAt:now()+120000};binaryParts.set(key,cached);binaryCacheBytes+=item.bytes.length;return cached;
+  })();binaryFlights.set(key,promise);
+  try{return await promise;}finally{if(binaryFlights.get(key)===promise)binaryFlights.delete(key);}
+ }
  const pairingTickets=new Map();
  function presence(m,access){
   if(!access.allowed||access.status!=='trial'&&!access.activated)return undefined;
@@ -677,7 +700,14 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   const ids=new Set();for(const item of result.items){if(!item||! /^[A-Za-z0-9_-]{1,200}$/.test(item.fileId||'')||ids.has(item.fileId)||!Number.isSafeInteger(item.sizeBytes)||item.sizeBytes<0||typeof item.name!=='string'||item.name.length>1000||typeof item.mime!=='string'||item.mime.length>200)fail(502,'Invalid binary inventory','BINARY_INVENTORY_UNVERIFIED');ids.add(item.fileId);
    if(item.verification==='bytes_hashed'){if(item.sizeBytes<1||item.sizeBytes>20*1024*1024||!/^[a-f0-9]{64}$/.test(item.sha256||'')||typeof item.version!=='string'||item.version.length>150)fail(502,'Invalid binary verification','BINARY_INVENTORY_UNVERIFIED');}
    else if(item.verification!=='unavailable'||result.partial!==true||result.coverageComplete!==false)fail(502,'Binary hashes unavailable','BINARY_INVENTORY_UNVERIFIED');
-  }return result;
+  }return {...result,binaryRangeVersion:1};
+ }
+ if(action==='managed/file/download/part'){
+  if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||!/^[a-f0-9]{64}$/.test(b.expectedSha256||'')||typeof b.expectedVersion!=='string'||b.expectedVersion.length<1||b.expectedVersion.length>150||!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=20*1024*1024||!Number.isSafeInteger(b.length)||b.length<1||b.length>512*1024)fail(400,'Invalid binary range');
+  const item=await rangedBinary(m,b);
+  if(b.offset>=item.sizeBytes)fail(400,'Binary range exceeds verified file');
+  const bytes=item.bytes.subarray(b.offset,Math.min(item.sizeBytes,b.offset+b.length));
+  return {success:true,schoolId:m.schoolId,binaryRangeVersion:1,fileId:item.fileId,sha256:item.sha256,version:item.version,sizeBytes:item.sizeBytes,offset:b.offset,nextOffset:b.offset+bytes.length,chunkSha256:createHash('sha256').update(bytes).digest('hex'),base64:bytes.toString('base64')};
  }
  if(action==='managed/file/download'){
   if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||!/^[a-f0-9]{64}$/.test(b.expectedSha256||'')||typeof b.expectedVersion!=='string'||b.expectedVersion.length<1||b.expectedVersion.length>150)fail(400,'Invalid binary download');

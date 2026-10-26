@@ -16,6 +16,17 @@ Capacity constraint: Google's current free Firestore quota is 50k document reads
 
 Next: inspect final backend and exact new-commit CI, fix failures, then provider-capable resumable media and platform convergence. Existing remaining list below is historical; Sheets audit and capacity-listener work above supersede its previously unimplemented audit items.
 
+### Next milestone — request budgets and resumable verified downloads
+Capacity/audit implementation commit `15c3f560ba2f456aec5ff3bdf3eb18d6326430e3`: local backend **559/559 PASS**; all four exact-source repair CI jobs PASS (run 40266105166). Other final platform/load statuses must still be checked. This commit contains the regenerated optional Script bundle `2026-10-26.1` and does not deploy it.
+
+New implementation awaiting exact-commit Flutter CI:
+- `boundedManagedDeltaRequest` keeps the whole JSON payload below 200KB before the existing 256KB broker envelope. Oversized optional record-checkpoint groups are omitted WHOLE, retaining verified collection revisions and the existing full-read fallback. IDs/maps are never truncated. Partial-response provenance checks use the checkpoints actually sent. Tests cover 15k IDs and UTF-8 byte accounting.
+- Negotiated broker `binaryRangeVersion:1` in verified inventories; read-only chunk endpoint binds school, file, original hash/version and exact offsets, verifies full upstream bytes, returns chunk hashes. Private immutable byte cache <=24MB, lazy two-minute expiry, at most two distinct upstream range reads in flight; cached chunks avoid repeating full provider reads. Broker restart/cache miss may still fetch the full provider file: this is client↔broker resume, NOT native Drive range/resumable upload.
+- Existing Windows binary owner stores durable verified-prefix offset/hash with its existing journal. Interrupted downloads resume the verified prefix after restart; corrupt partial files are quarantined, chunk hashes and final whole-file hash must pass before canonical cache adoption. Previous verified original remains usable. No Drive file or record queue is modified. A broker rollback requires an authenticated inventory capability recheck before full-download fallback; auth/quota errors cannot trigger that fallback.
+- New regression cases: interrupted range/restart/offset reuse, corrupt chunks, rollback negotiation, broker hash validation/cache reuse/school isolation/range bounds.
+
+Local full backend with range additions: **562/562 PASS**. Final Flutter CI must pass before this milestone is marked verified. Remaining: provider-capable resumable UPLOAD (no native Drive upload protocol implemented), fuller Android/Web catch-up/background lifecycle acceptance and real cloud/physical throughput. Do not claim the entire A–J mission done or 100k real students production-certified.
+
 ## Exact repository state
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Branch: `feature/sync3-unified-repair-20261026`.

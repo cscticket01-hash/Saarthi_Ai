@@ -284,4 +284,58 @@ void main() {
     });
   }
 
+  test('interrupted range transfer resumes verified prefix across restart, then verifies final hash', () async {
+    original = List<int>.generate(700000, (i) => i % 251);
+    expected = {...expected, 'sha256': sha256.convert(original).toString(), 'sizeBytes': original.length};
+    var interrupt = true;
+    final offsets = <int>[];
+    remote = (body) async {
+      if (body['action'] == 'managed/file/inventory') return {...inventory([expected]), 'binaryRangeVersion': 1};
+      expect(body['action'], 'managed/file/download/part');
+      final offset = body['offset'] as int;offsets.add(offset);
+      if (interrupt && offset > 0) throw TimeoutException('interrupted synthetic range');
+      final end = (offset + 256 * 1024).clamp(0, original.length).toInt();
+      final part = original.sublist(offset, end);
+      return {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+        'fileId': expected['fileId'], 'sha256': expected['sha256'], 'version': expected['version'],
+        'sizeBytes': original.length, 'offset': offset, 'nextOffset': end,
+        'chunkSha256': sha256.convert(part).toString(), 'base64': base64Encode(part)};
+    };
+    final first = manager();await first.refreshInventory();
+    await expectLater(first.repairNext(), throwsA(isA<TimeoutException>()));
+    expect(first.entries.single['transferOffset'], 256 * 1024);
+    expect(await first.verifiedPath('school_file_1'), isNull);
+    clock += 6000;interrupt = false;
+    final restarted = manager();await restarted.load();expect(await restarted.repairNext(), true);
+    expect(offsets, [0, 262144, 262144, 524288]);
+    expect(await File((await restarted.verifiedPath('school_file_1'))!).readAsBytes(), original);
+    expect(restarted.entries.single.containsKey('transferOffset'), false);
+  });
+
+  test('corrupt chunk is never appended or marked verified', () async {
+    remote = (body) async => body['action'] == 'managed/file/inventory'
+      ? {...inventory([expected]), 'binaryRangeVersion': 1}
+      : {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+          'fileId': expected['fileId'], 'sha256': expected['sha256'], 'version': expected['version'],
+          'sizeBytes': original.length, 'offset': 0, 'nextOffset': original.length,
+          'chunkSha256': '0' * 64, 'base64': base64Encode(original)};
+    final cache = manager();await cache.refreshInventory();
+    await expectLater(cache.repairNext(), throwsStateError);
+    expect(cache.summary['verifiedFiles'], 0);expect(await cache.verifiedPath('school_file_1'), isNull);
+  });
+
+  test('broker rollback requires authenticated capability read before complete-file fallback', () async {
+    var calls = 0;
+    remote = (_) async => {...inventory([expected]), 'binaryRangeVersion': 1};
+    final cache = manager();await cache.refreshInventory();
+    remote = (body) async {
+      calls++;
+      if (body['action'] == 'managed/file/download/part') throw CentralCloudException(400, 'school_cloud', 'Old broker');
+      if (body['action'] == 'managed/file/inventory') return inventory([expected]);
+      return download(expected, original);
+    };
+    expect(await cache.repairNext(), true);expect(calls, 3);
+    expect(cache.summary['verifiedFiles'], 1);
+  });
+
 }
