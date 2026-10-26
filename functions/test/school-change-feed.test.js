@@ -7,7 +7,7 @@ function sharedCloud(){
  const records=new Map(),listeners=new Map();let tail=Promise.resolve();
  const snapshot=p=>({exists:records.has(p),data:()=>structuredClone(records.get(p))});
  const db={doc:p=>({path:p,onSnapshot(next){const rows=listeners.get(p)||new Set();listeners.set(p,rows);rows.add(next);queueMicrotask(()=>{if(rows.has(next))next(snapshot(p));});return()=>{rows.delete(next);if(!rows.size)listeners.delete(p);};}}),
-  runTransaction(fn){const run=tail.then(()=>fn({get:async r=>snapshot(r.path),set(r,v){records.set(r.path,structuredClone(v));for(const next of listeners.get(r.path)||[])queueMicrotask(()=>next(snapshot(r.path)));}}));tail=run.catch(()=>{});return run;}};
+  runTransaction(fn){const run=tail.then(()=>fn({get:async r=>snapshot(r.path),delete(r){records.delete(r.path);},set(r,v){records.set(r.path,structuredClone(v));for(const next of listeners.get(r.path)||[])queueMicrotask(()=>next(snapshot(r.path)));}}));tail=run.catch(()=>{});return run;}};
  return {db,records,listeners};
 }
 test('five independent PCs receive a committed hint immediately across broker instances; other school stays isolated',async()=>{
@@ -169,7 +169,48 @@ test('15000 synthetic commits keep five reconnecting PCs discoverable with bound
   if(event)cursors[pc]=event.cursor;
   assert.equal(cursors[pc],state.epoch+':15000');
  }
- assert.equal(cloud.records.size,1);assert.equal(cloud.records.get('school_sync_hints/'+A).events.length,64);
+ assert(cloud.records.size<=33);assert.equal(cloud.records.get('school_sync_hints/'+A).events.length,64);
  assert.equal((await feed.wait(B)).cursor,'empty:0');assert.equal(cloud.listeners.size,0);
  console.log('SYNC3_HINT_LOAD',JSON.stringify({environment:'synthetic in-memory Firestore transactions; no provider throughput claim',commits:15000,pcs:5,exactCatchups:exact,gapReconciliations:resets,elapsedMillis:performance.now()-started}));
+});
+
+
+for(const pcs of [1,2,5])test('negotiated bounded replay catches up 1000 records across restart on '+pcs+' PCs without collection reset; legacy fallback preserved',async()=>{
+ const cloud=sharedCloud(),collections=['students_directory','fee_payments'];
+ let feed=createSchoolChangeFeed({db:cloud.db,collections,waitMillis:1});
+ await feed.publish(A,'fee_payments','initial');
+ const cursor=(await feed.wait(A)).cursor;
+ for(let i=0;i<1000;i++)await feed.publish(A,collections[i%2],'record-'+i);
+ assert.equal((await feed.wait(A,cursor)).reset,true);
+ feed=createSchoolChangeFeed({db:cloud.db,collections,waitMillis:1});
+ for(let pc=0;pc<pcs;pc++){
+ let current=cursor,received=0,pages=0;
+ while(true){
+  const event=await feed.wait(A,current,{replayVersion:1});
+  assert.equal(event.reset,false);if(event.hasMore)assert.equal(event.replayVersion,1);
+  received+=Object.values(event.records).reduce((n,ids)=>n+ids.length,0);
+  assert(Object.values(event.records).every(ids=>ids.length<=64));
+  current=event.cursor;pages++;
+  if(!event.hasMore)break;
+ }
+ assert.equal(received,1000);assert.equal(pages,16);assert(current.endsWith(':1001'));
+ }
+ assert.equal(cloud.listeners.size,0);
+});
+
+test('replay retention, missing pages, corrupt pages and old publisher gaps always reconcile safely',async()=>{
+ const cloud=sharedCloud(),feed=createSchoolChangeFeed({db:cloud.db,collections:['fee_payments'],waitMillis:1});
+ await feed.publish(A,'fee_payments','start');const cursor=(await feed.wait(A)).cursor;
+ for(let i=0;i<70;i++)await feed.publish(A,'fee_payments','record-'+i);
+ const path=[...cloud.records.keys()].find(p=>p.includes('/pages/'));
+ const original=cloud.records.get(path);
+ for(const value of [null,{...original,schoolId:B},{...original,events:original.events.slice(0,1)}]){
+  if(value)cloud.records.set(path,value);else cloud.records.delete(path);
+  assert.equal((await feed.wait(A,cursor,{replayVersion:1})).reset,true);
+ }
+ cloud.records.set(path,original);
+ for(let i=0;i<2100;i++)await feed.publish(A,'fee_payments','later-'+i);
+ assert(cloud.records.size<=33);
+ assert.equal((await feed.wait(A,cursor,{replayVersion:1})).reset,true);
+ assert.equal(cloud.listeners.size,0);
 });

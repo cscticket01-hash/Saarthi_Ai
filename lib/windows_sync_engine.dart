@@ -228,7 +228,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     read: (school, cursor) => ManagedSchoolSession.callForSchool(
       school,
       'managed/events',
-      {if (cursor != null) 'cursor': cursor},
+      {'changeFeedReplayVersion': 1, if (cursor != null) 'cursor': cursor},
     ),
     loadCursor: (school) => WindowsSyncInbox.cursor(_activeProfileId, school),
     persistEvent: (school, event) =>

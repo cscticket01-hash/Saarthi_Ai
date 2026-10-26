@@ -497,13 +497,14 @@ function createManagedSchools({deviceAccessEnforced=false,deviceManagementEnable
    return response.schoolId===m.schoolId && response.syncProtocol===2 && record?.schoolId===m.schoolId &&
     record._syncOperationId===ticket.operationId && typeof record._syncRevision==='string' && !!record._syncRevision;
   })).catch(()=>{});
-  const event=await changeFeed.wait(m.schoolId,b.cursor);
+  if(b.changeFeedReplayVersion!==undefined&&b.changeFeedReplayVersion!==1)fail(400,'Unsupported change replay version');
+  const event=await changeFeed.wait(m.schoolId,b.cursor,{replayVersion:b.changeFeedReplayVersion||0});
   const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||(fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true))fail(403,'School licence is inactive');
   await deviceAccess.authorize({req,body:b,identity:fresh,entitlement:lease(fresh)});
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health'}),brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>db.doc(attendanceCollection+'/'+id).get()));
