@@ -4,6 +4,8 @@ on:
     branches: [feature/sync3-unified-repair-20261026]
     paths:
       - '.github/tests/isolated_engine_live_test.dart'
+      - 'integration_test/sync_v2_android_live_test.dart'
+      - '.github/scripts/run_android_live_test.sh'
       - '.github/workflows/sync3-hosted-client-acceptance.yml'
   workflow_dispatch:
 permissions:
