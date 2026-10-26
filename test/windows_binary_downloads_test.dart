@@ -284,7 +284,7 @@ void main() {
     });
   }
 
-  test('interrupted range transfer resumes verified prefix across restart, then verifies final hash', () async {
+  for (final corruptPrefix in [false, true]) test('interrupted range transfer resumes safely after restart (corrupt prefix: $corruptPrefix)', () async {
     original = List<int>.generate(700000, (i) => i % 251);
     expected = {...expected, 'sha256': sha256.convert(original).toString(), 'sizeBytes': original.length};
     var interrupt = true;
@@ -305,9 +305,14 @@ void main() {
     await expectLater(first.repairNext(), throwsA(isA<TimeoutException>()));
     expect(first.entries.single['transferOffset'], 256 * 1024);
     expect(await first.verifiedPath('school_file_1'), isNull);
+    if (corruptPrefix) {
+      final partial = (await first.schoolDirectory.list().toList()).whereType<File>()
+          .singleWhere((file) => file.path.endsWith('.transfer.part'));
+      await partial.writeAsString('corrupt partial cache', flush: true);
+    }
     clock += 6000;interrupt = false;
     final restarted = manager();await restarted.load();expect(await restarted.repairNext(), true);
-    expect(offsets, [0, 262144, 262144, 524288]);
+    expect(offsets, corruptPrefix ? [0, 262144, 0, 262144, 524288] : [0, 262144, 262144, 524288]);
     expect(await File((await restarted.verifiedPath('school_file_1'))!).readAsBytes(), original);
     expect(restarted.entries.single.containsKey('transferOffset'), false);
   });

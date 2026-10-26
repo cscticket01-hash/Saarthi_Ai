@@ -6983,7 +6983,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     if(typeof b.id!=='string'||!/^[^/]{1,200}$/.test(b.id)||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
     const item=VS_sheetItem(store,b.id),records=Object.create(null),head=VS_sheetLifecycleEnabled()?VS_recordHead(b.collection,b.id):null;
     if(!item&&head&&!head.head.deleted)throw new Error('Verified local Sheet recovery required before editing');
-    if(item){if(item.schoolId!==school||item.id!==b.id)throw new Error('Foreign school record');records[b.id]=item.data;}
+    if(item){if(item.schoolId!==school||item.id!==b.id)throw new Error('Foreign school record');if(head&&VS_layoutHash(item.data)!==head.head.payloadHash)throw new Error('External Sheet edit requires review');records[b.id]=item.data;}
     else if(head&&head.head.deleted)records[b.id]={schoolId:school,_syncDeleted:true,_syncRevision:head.head.revision,_syncDeletedOwner:head.head.generation};
     return {records:records,pointRead:true,syncProtocol:2,collectionRevision:PropertiesService.getScriptProperties().getProperty('VS_RECORD_REV_'+b.collection)||'legacy'};
   }
@@ -8016,7 +8016,16 @@ function VS_saveRecordHead(store,item){
 function VS_missingRecordHeads(store,records,readContext){
   if(!VS_sheetLifecycleEnabled())return [];
   const sheet=VS_syncStateSheet(false,store.collection,readContext);if(!sheet||sheet.getLastRow()<2)return [];
-  return sheet.getRange(2,2,sheet.getLastRow()-1,1).getValues().filter(r=>r[0]).map(r=>JSON.parse(r[0])).filter(h=>h.schoolId===store.school&&h.collection===store.collection&&!Object.prototype.hasOwnProperty.call(records,h.id)).map(h=>({id:h.id,revision:h.revision,deleted:h.deleted}));
+  const missing=[],seen=new Set();
+  sheet.getRange(2,1,sheet.getLastRow()-1,2).getValues().forEach(row=>{
+    if(!row[0]&&!row[1])return;
+    const h=JSON.parse(row[1]);
+    if(h.schoolId!==store.school||h.collection!==store.collection||typeof h.id!=='string'||!h.id||row[0]!==VS_layoutHash([store.collection,h.id])||seen.has(h.id))throw new Error('Sync state identity mismatch');
+    seen.add(h.id);
+    if(!Object.prototype.hasOwnProperty.call(records,h.id))missing.push({id:h.id,revision:h.revision,deleted:h.deleted,generation:h.generation,retiredGenerations:h.retiredGenerations||[]});
+    else if(VS_layoutHash(records[h.id])!==h.payloadHash)throw new Error('External Sheet edit requires review');
+  });
+  return missing;
 }
 function VS_recoverSheetRecord(b,store){
   if(!VS_sheetLifecycleEnabled()||b.syncProtocol!==2||!b.data||b.data.schoolId!==store.school)throw new Error('Verified Sheet recovery required');

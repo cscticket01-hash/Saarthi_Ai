@@ -15,7 +15,8 @@ async function request(url, body, token) {
 }
 function check(name, result, ok) {
   report.checks.push({name, status: ok ? 'PASS' : 'FAIL', http: result.status,
-    elapsedMs: result.elapsedMs, reference: result.data.requestId || null});
+    elapsedMs: result.elapsedMs, reference: result.data.requestId || null,
+    ...(typeof result.data.code==='string'&&/^[A-Z][A-Z0-9_]{1,79}$/.test(result.data.code)?{code:result.data.code}:{})});
   if (!ok) throw new Error(name);
 }
 async function run() {
@@ -37,6 +38,13 @@ async function run() {
   const token = r.data.idToken, uid = r.data.localId;
   r = await request(endpoint, {action: 'managed/session', schoolId}, token);
   check('Authenticated TEST school identity', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && r.data.uid === uid);
+  report.entitlement={allowed:r.data.allowed===true,
+    status:['trial','licensed','expired','pending'].includes(r.data.status)?r.data.status:'unknown',
+    activated:r.data.activated===true,
+    expiresAt:Number.isSafeInteger(r.data.expiresAt)?r.data.expiresAt:null};
+  if(r.data.allowed!==true){
+    report.status='BLOCKED';report.blocker='Existing isolated TEST entitlement does not authorize school reads. Login passed; do not bypass or renew licence rules automatically.';return;
+  }
   r = await request(endpoint, {action: 'managed/profile', operation: 'read', schoolId}, token);
   check('Authenticated TEST profile response', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId);
   if (r.data.profile && r.data.profile.schoolName !== 'TEST Sync V2') throw new Error('TEST profile name mismatch');

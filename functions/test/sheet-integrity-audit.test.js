@@ -53,3 +53,12 @@ test('generic readable edits are diagnosed across fee/teacher/document-style pro
  const store=s.context.VS_managedSheet('school_notices'),item=s.context.VS_sheetItem(store,'notice');store.sheet.getRange(item.row,36,1,1).setValues([['Direct edit']]);
  assert.equal(audit(s).findings[0].reason,'readable_projection_change');
 });
+
+test('neither full read nor point read can certify unmanaged canonical drift as a verified snapshot',()=>{
+ const s=storage({lifecycle:true});assert(write(s,'one').success);
+ replacePayload(s,'one',data=>({...data,title:'Unverified external content'}));
+ for(const extra of [{},{id:'one'}]){
+  const response=s.call({action:'managed_records',operation:'read',collection:'school_notices',syncProtocol:2,...extra});
+  assert.equal(response.success,false);assert.equal(response.code,'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED');
+ }
+});
