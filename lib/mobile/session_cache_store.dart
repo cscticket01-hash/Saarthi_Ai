@@ -77,7 +77,12 @@ class MobileSessionCacheStore {
       final row=await _row(tx);
       // Sequential writes already queued by this SAME owner may advance its
       // prior version. A read of another owner's newer version grants no write.
-      if(row['version']!=expected&&row['version']!=_lastOwnWriteVersion)throw StaleSessionCache();
+      // Explicit snapshot CAS is never bypassed by this owner's prior write.
+      // Only an implicit queued write may follow a verified own commit.
+      if(row['version']!=expected &&
+          (expectedVersion!=null || row['version']!=_lastOwnWriteVersion)) {
+        throw StaleSessionCache();
+      }
       final version=(row['version'] as int)+1;
       await tx.update('session_snapshot',{'version':version,'envelope':await _encode(value)},where:'id=1 AND version=?',whereArgs:[row['version']]);return version;
     },exclusive:true);

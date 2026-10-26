@@ -26,6 +26,17 @@ void main(){
     await expectLater(foreground.write(snapshot('old-payload'),expectedVersion:a.version),throwsA(isA<StaleSessionCache>()));
     expect(jsonDecode((await foreground.read())!)['dashboard']['revision'],'second');
   });
+  test('explicit stale CAS never overwrites this same owner\'s newer encrypted snapshot',()async{
+    final initial=await foreground.readSnapshot();
+    final committed=await foreground.write(snapshot('verified'),expectedVersion:initial.version);
+    expect(committed,initial.version+1);
+    await expectLater(foreground.write(snapshot('stale'),expectedVersion:initial.version),
+      throwsA(isA<StaleSessionCache>()));
+    expect(jsonDecode((await background.read())!)['dashboard']['revision'],'verified');
+    // A subsequent owner write using its CURRENT version remains supported.
+    await foreground.write(snapshot('next'),expectedVersion:committed);
+    expect(jsonDecode((await background.read())!)['dashboard']['revision'],'next');
+  });
   test('logout tombstone survives restart and blocks an older worker resurrecting identity',()async{
     await foreground.read();await foreground.write(snapshot('first'));
     final old=await background.readSnapshot();await foreground.clear('school-A/person-1');
