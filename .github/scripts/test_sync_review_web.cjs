@@ -1,0 +1,134 @@
+// Actual Chromium UI against the isolated authenticated TEST cloud. Static
+// review files are intercepted locally under the configured allowed web origin;
+// no hosting deployment, production app request or production data is used.
+const {chromium}=require('playwright');
+const fs=require('node:fs'),path=require('node:path');
+const {installBrowserEvidence}=require('./review_fetch_evidence.cjs');
+(async()=>{
+ const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID;
+ if(process.env.VS_TEST_CONNECT_CONFIRM!==school||process.env.GITHUB_ACTIONS!=='true')throw Error('Isolated hosted TEST runner required');
+ const browser=await chromium.launch({headless:true});
+ const context=await browser.newContext();
+ const base=path.resolve('build/sync-review-web');
+ await context.route('https://vidyasaarthi.web.app/**',async route=>{
+  const relative=decodeURIComponent(new URL(route.request().url()).pathname).replace(/^\//,'')||'index.html';
+  const file=path.resolve(base,relative);
+  if(!file.startsWith(base+path.sep))throw Error('Invalid asset path');
+  if(!fs.existsSync(file)){await route.fulfill({status:404,body:''});return;}
+  const ext=path.extname(file),types={'.html':'text/html','.js':'application/javascript','.json':'application/json','.wasm':'application/wasm','.png':'image/png','.woff2':'font/woff2'};
+  await route.fulfill({status:200,contentType:types[ext]||'application/octet-stream',body:fs.readFileSync(file)});
+ });
+ fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
+ const network=[];
+ context.on('request',request=>{const url=new URL(request.url());if(url.hostname==='identitytoolkit.googleapis.com'&&url.pathname.endsWith('signInWithPassword')){try{const body=JSON.parse(request.postData());network.push({stage:'auth-input-validation',emailMatches:body.email===process.env.VS_TEST_LOGIN_EMAIL.trim(),passwordMatches:body.password===process.env.VS_TEST_LOGIN_PASSWORD});}catch(_){network.push({stage:'auth-input-validation',validJson:false});}}});
+ context.on('response',async response=>{const url=new URL(response.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname)){const entry={host:url.hostname,path:url.pathname,http:response.status()};if(url.hostname==='identitytoolkit.googleapis.com'&&response.status()>=400){try{const message=(await response.json()).error?.message;const allowed=['INVALID_LOGIN_CREDENTIALS','INVALID_EMAIL','MISSING_PASSWORD','MISSING_EMAIL','INVALID_PASSWORD','EMAIL_NOT_FOUND','TOO_MANY_ATTEMPTS_TRY_LATER','OPERATION_NOT_ALLOWED','API_KEY_HTTP_REFERRER_BLOCKED','API_KEY_INVALID','QUOTA_EXCEEDED'];entry.code=allowed.find(code=>typeof message==='string'&&(message===code||message.startsWith(code+' :')))||'OTHER_AUTH_ERROR';}catch(_){entry.code='UNREADABLE_AUTH_ERROR';}}network.push(entry);}});
+ context.on('requestfailed',request=>{const url=new URL(request.url());if(['saarthi-sync-v2-test.onrender.com','identitytoolkit.googleapis.com','securetoken.googleapis.com'].includes(url.hostname)){
+  const failure=request.failure()?.errorText;
+  network.push({host:url.hostname,path:url.pathname,http:0,
+   category:typeof failure==='string'&&/^net::ERR_[A-Z_]+$/.test(failure)?failure:'OTHER_TRANSPORT_FAILURE'});
+ }});
+ const page=await context.newPage();
+ await page.addInitScript(installBrowserEvidence,{endpoint:'https://saarthi-sync-v2-test.onrender.com/school-cloud',school,noticeId:`synthetic-web-notice-${run}`,title:`Synthetic website exchange ${run}`});
+ async function typeField(label,value){
+  const input=page.getByRole('textbox',{name:label,exact:true});
+  // Flutter installs its focused DOM editing bridge on a subsequent frame.
+  // Sending the first key immediately after click can drop it on hosted Chromium.
+  for(let attempt=0;attempt<3;attempt++){
+   await input.click();
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   await input.press('ControlOrMeta+A');
+   await input.pressSequentially(value,{delay:15});
+   if(await input.inputValue()===value){await input.press('Tab');return;}
+  }
+  throw Error('TEST field input did not match; no write attempted');
+ }
+ async function publishAndReadback(id){
+  await page.evaluate(()=>{window.__vsReviewEvidence=[];});
+  await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
+  await page.waitForFunction(()=>window.__vsReviewEvidence.some(e=>e.kind==='write'&&(e.complete||e.failed)),null,{timeout:180000});
+  const ack=await page.evaluate(()=>window.__vsReviewEvidence.find(e=>e.kind==='write'));
+  proof.writeVerification={http:ack.http,success:ack.success,schoolMatches:ack.schoolMatches,
+   protocolMatches:ack.protocolMatches,hasRevision:typeof ack.recordRevision==='string'&&ack.recordRevision.length>0};
+  if(!ack.complete||ack.http!==200||!ack.success||!ack.schoolMatches||!ack.protocolMatches||!ack.recordRevision)throw Error('Verified TEST write ACK required');
+  await page.waitForFunction(()=>window.__vsReviewEvidence.some(e=>e.kind==='read'&&(e.complete||e.failed)),null,{timeout:180000});
+  const read=await page.evaluate(()=>window.__vsReviewEvidence.find(e=>e.kind==='read'));
+  proof.readVerification={http:read.http,schoolMatches:read.schoolMatches,protocolMatches:read.protocolMatches,
+   hasNoticeChanges:read.hasNoticeChanges,noticeMatches:read.noticeMatches,unchanged:read.unchanged};
+  if(!read.complete||read.http!==200||!read.schoolMatches||!read.protocolMatches||!read.hasNoticeChanges||!(read.noticeMatches||read.unchanged))throw Error('Verified TEST post-write readback required');
+  await page.getByText('Website ACK and readback verified',{exact:true}).waitFor({timeout:180000});
+  return {operationId:ack.operationId,recordRevision:ack.recordRevision,readbackVerified:true};
+ }
+ const proof={scope:'Hosted Chromium actual TEST school review UI, locally intercepted static build; authenticated TEST backend',schoolId:school,status:'RUNNING',stage:'load UI'};
+ try {
+  await page.goto('https://vidyasaarthi.web.app/',{waitUntil:'domcontentloaded'});
+  proof.stage='TEST login';
+  await typeField('TEST email',process.env.VS_TEST_LOGIN_EMAIL);
+  await typeField('TEST password',process.env.VS_TEST_LOGIN_PASSWORD);
+  await page.getByRole('button',{name:'Connect TEST school',exact:true}).click();
+  await page.getByText('Cloud records verified',{exact:true}).waitFor({timeout:150000});
+  await page.getByText(`synthetic-hosted-notice-${run} | Actual Windows local-first TEST notice`,{exact:true}).waitFor({timeout:30000});
+  proof.windowsNoticeReadOnWebsite=true;
+  const id=`synthetic-web-notice-${run}`,title=`Synthetic website exchange ${run}`;
+  await typeField('Synthetic notice ID',id);
+  await typeField('Synthetic notice title',title);
+  proof.stage='offline draft save';
+  proof.syntheticInputBeforeSave={id:await page.getByRole('textbox',{name:'Synthetic notice ID',exact:true}).inputValue(),title:await page.getByRole('textbox',{name:'Synthetic notice title',exact:true}).inputValue()};
+  await context.setOffline(true);
+  await page.getByRole('button',{name:'Publish TEST notice',exact:true}).click();
+  await page.getByText('Cloud unavailable or verification failed; Sync pending. Retry unchanged; no ACK claimed.',{exact:true}).waitFor({timeout:90000});
+  proof.offlineDiagnostic=await page.getByText(/^TEST diagnostic: /).allTextContents();
+  proof.draftPersisted=await page.evaluate(()=>localStorage.getItem('flutter.isolated_sync_review_v1')!==null);
+  proof.stage='reload draft recovery';
+  await context.setOffline(false);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByText('Local TEST session restored; refresh or retry pending sync',{exact:true}).waitFor({timeout:30000});
+  proof.draftPersistedAfterReload=await page.evaluate(()=>localStorage.getItem('flutter.isolated_sync_review_v1')!==null);
+  await page.getByText(`Recovered pending TEST notice: ${id} | ${title}`,{exact:true}).waitFor({timeout:30000});
+  const restored=page.getByRole('textbox',{name:'Synthetic notice ID',exact:true});
+  await restored.click();
+  // Flutter updates its focused accessibility input on a subsequent frame.
+  await page.waitForFunction(expected=>Array.from(document.querySelectorAll('input,textarea')).some(input=>input.value===expected),id,{timeout:30000});
+  proof.restoredSyntheticId=await restored.inputValue();
+  if(proof.restoredSyntheticId!==id)throw Error('Durable TEST draft mismatch');
+  proof.offlineDraftAndReload=true;
+  proof.stage='cloud retry ACK';
+  const clock=performance.now();
+  const first=await publishAndReadback(id);
+  await page.getByText(`${id} | ${title}`,{exact:true}).waitFor();
+  proof.websiteWriteAndReadbackMs=Math.round(performance.now()-clock);
+  proof.stage='duplicate replay';
+  const replay=await publishAndReadback(id);
+  if(replay.operationId!==first.operationId||replay.recordRevision!==first.recordRevision)throw Error('Duplicate TEST operation identity/revision changed');
+  proof.actualDuplicateAckAndReadback=true;
+  if(await page.getByText(`${id} | ${title}`,{exact:true}).count()!==1)throw Error('Duplicate TEST row');
+  proof.duplicateReplayAndReadback=true;
+  proof.websiteNoticeId=id;proof.websiteNoticeTitle=title;proof.status='PASS';proof.stage='complete';
+  await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true});
+ } catch(e){
+  proof.status='FAIL';proof.network=network;
+  // Fixed categories only: never upload Playwright exception text, response
+  // bodies, credentials, headers or school records as debugging evidence.
+  proof.failureType=['TimeoutError','SyntaxError','TypeError','ReferenceError','Error'].includes(e?.name)?e.name:'OTHER_ERROR';
+  proof.failureCategory=e?.name==='TimeoutError'?'UI_OR_RESPONSE_TIMEOUT':
+   e?.message==='TEST response body verification timed out'?'BROWSER_RESPONSE_BODY_TIMEOUT':
+   e?.name==='SyntaxError'?'RESPONSE_JSON_NOT_VERIFIED':
+   e?.message==='TEST readback response did not finish'?'READBACK_RESPONSE_INCOMPLETE':
+   typeof e?.message==='string'&&e.message.includes('Network.getResponseBody')?'BROWSER_RESPONSE_BODY_UNAVAILABLE':
+   e?.message==='Verified TEST write ACK required'?'CLOUD_ACK_NOT_VERIFIED':
+   e?.message==='Verified TEST post-write readback required'?'CLOUD_READBACK_NOT_VERIFIED':
+   e?.message==='Duplicate TEST operation identity/revision changed'?'DUPLICATE_IDENTITY_CHANGED':
+   e?.message==='Duplicate TEST row'?'DUPLICATE_ROW':
+   typeof e?.message==='string'&&e.message.includes('strict mode violation')?'UI_LOCATOR_AMBIGUOUS':'OTHER_ACCEPTANCE_FAILURE';
+  proof.uiDiagnostic=await page.getByText(/^TEST diagnostic: /).allTextContents();
+  // Never capture login credentials in failure screenshots.
+  let cleared=true;
+  for(const label of ['TEST password','TEST email']){const input=page.getByRole('textbox',{name:label,exact:true});if(await input.count())await input.fill('',{timeout:1000}).catch(()=>{cleared=false;});}
+  if(cleared)await page.screenshot({path:'build/cloud-prerequisites/website-ui.png',fullPage:true}).catch(()=>{});
+  console.log(JSON.stringify(proof));throw e;
+ }
+ finally {
+  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
+  fs.writeFileSync('build/cloud-prerequisites/website-ui.json',JSON.stringify(proof));
+  await context.close();await browser.close();
+ }
+})().catch(()=>{console.error('Isolated TEST website UI acceptance failed. No success claimed.');process.exitCode=1;});

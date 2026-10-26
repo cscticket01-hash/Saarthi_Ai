@@ -1,0 +1,110 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {Readable}=require('node:stream');
+const {createHandler,isolatedTestSchool,managedFeatureOptions}=require('../../staging-school-cloud/server.cjs');
+async function request(error){
+ const logs=[];let status,body;const headers={};
+ const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/records',schoolId:'private-school',data:{password:'NEVER_LOG_THIS'}}))]);
+ Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json',authorization:'Bearer NEVER_LOG_THIS'}});
+ const res={setHeader:(k,v)=>headers[k]=v,writeHead:c=>status=c,end:v=>body=JSON.parse(v)};
+ await createHandler({handle:async()=>{throw error;},health:async()=>{},logger:v=>logs.push(v)})(req,res);
+ return {status,body,logs,headers};
+}
+test('upstream errors retain their actual HTTP status and always log a safe operation/reference',async()=>{
+ for(const status of [502,503,504,429,409,403]){
+  const e=Object.assign(new Error('secret school data NEVER_LOG_THIS'),{status});
+  const r=await request(e);assert.equal(r.status,status);assert.equal(r.body.success,false);
+  assert.equal(r.logs[0].event,'central_failure');assert.equal(r.logs[0].operation,'managed/records');assert.equal(r.logs[0].code,'UNKNOWN');
+  assert.equal(r.logs[0].requestId,r.body.requestId);assert.equal(r.body.requestId,r.headers['X-Saarthi-Request-Id']);
+  assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ }
+});
+test('isolated TEST mode fails closed and forwards only its school to existing authentication',async()=>{
+ const school='vs-'+ 'a'.repeat(32);
+ assert.equal(isolatedTestSchool({}),null);
+ for(const env of [{SAARTHI_ISOLATED_TEST_MODE:'true'},{SAARTHI_ISOLATED_TEST_MODE:'TRUE'},
+   {SAARTHI_ISOLATED_TEST_MODE:'true',SAARTHI_ISOLATED_TEST_SCHOOL_ID:'foreign'}])assert.throws(()=>isolatedTestSchool(env));
+ assert.equal(isolatedTestSchool({SAARTHI_ISOLATED_TEST_MODE:'true',SAARTHI_ISOLATED_TEST_SCHOOL_ID:school}),school);
+ for(const body of [{action:'managed/records',schoolId:'vs-'+ 'b'.repeat(32)},
+   {action:'developer/managed/create',schoolId:school},{action:'onboard',schoolId:school},
+   {action:'developer/managed/delete',schoolId:school},{action:'managed/records',schoolId:school},
+   {action:'managed/device/register'},{action:'managed/session'},{action:'managed/session',schoolId:'vs-'+ 'b'.repeat(32)}]){
+   let called=false,status,out;
+   const req=Readable.from([Buffer.from(JSON.stringify(body))]);Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json'}});
+   const res={setHeader(){},writeHead:s=>status=s,end:v=>out=JSON.parse(v)};
+   await createHandler({testSchoolId:school,logger:()=>{},health:async()=>{},handle:async req=>{
+     assert.equal(req.body.schoolId,school);
+     called=true;throw Object.assign(Error('School login required'),{status:401});}})(req,res);
+   assert.equal(called,body.action==='managed/records'&&body.schoolId===school||['managed/session','managed/device/register'].includes(body.action)&&body.schoolId===undefined);
+   assert.equal(status,called?401:403);assert.equal(out.success,false);
+ }
+});
+test('uncoded runtime errors remain unavailable without hiding diagnostic correlation',async()=>{
+ const r=await request(new TypeError('NEVER_LOG_THIS'));assert.equal(r.status,503);assert.equal(r.body.success,false);assert.equal(r.logs[0].code,'UNKNOWN');
+});
+test('TEST login bootstrap still rejects another school through real membership verification',async()=>{
+ const {fixture,A}=require('./helpers/managed-school-broker');
+ const f=fixture();
+ for(const account of ['A','B']){
+   let status,body;
+   const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/session'}))]);
+   Object.assign(req,{url:'/school-cloud',method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+account}});
+   const res={setHeader(){},writeHead:s=>status=s,end:v=>body=JSON.parse(v)};
+   await createHandler({testSchoolId:A,handle:f.handle,health:async()=>{},logger:()=>{}})(req,res);
+   assert.equal(status,account==='A'?200:403);
+   if(account==='A'){assert.equal(body.schoolId,A);assert.equal(body.uid,'A');}else assert.equal(body.success,false);
+ }
+});
+test('safe upstream category survives handler without a fake acknowledgement',async()=>{
+ const r=await request(Object.assign(new Error('School script identity or operation failed'),{status:502,code:'SCRIPT_OPERATION_FAILED',publicMessage:true}));
+ assert.equal(r.status,502);assert.equal(r.body.code,'SCRIPT_OPERATION_FAILED');assert.equal(r.body.success,false);
+});
+
+test('only verified allowlisted sync conflict context is exposed; raw request identity is never used',async()=>{
+ const context={schoolId:'vs-'+ 'a'.repeat(32),syncProtocol:2,operationId:'operation-123456789',password:'NEVER_LOG_THIS'};
+ const r=await request(Object.assign(new Error('Record revision conflict'),{status:409,code:'RECORD_REVISION_CONFLICT',publicMessage:true,syncDiagnostic:context}));
+ for(const value of [r.body,r.logs[0]]){assert.equal(value.schoolId,context.schoolId);assert.equal(value.operationId,context.operationId);assert.equal(value.syncProtocol,2);}
+ assert.equal(r.body.success,false);assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ for(const change of [{code:'UNKNOWN'},{syncDiagnostic:{...context,schoolId:'../private'}},{status:403}]){
+  const blocked=await request(Object.assign(new Error('private'),{status:409,code:'RECORD_REVISION_CONFLICT',syncDiagnostic:context},change));
+  assert.equal(blocked.body.schoolId,undefined);assert.equal(blocked.logs[0].schoolId,undefined);
+ }
+});
+
+test('verified Script transport diagnostics expose only fixed stages and categories',async()=>{
+ const context={schoolId:'vs-'+ 'a'.repeat(32),syncProtocol:2,operationId:'transport-operation-12345',scriptStage:'response',transportKind:'socket',token:'NEVER_LOG_THIS'};
+ const failure={status:503,code:'SCRIPT_RESPONSE_READ_FAILED',syncDiagnostic:context};
+ const r=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure));
+ for(const value of [r.body,r.logs[0]]){assert.equal(value.schoolId,context.schoolId);assert.equal(value.scriptStage,'response');assert.equal(value.transportKind,'socket');assert.equal(value.operationId,context.operationId);}
+ assert.equal(r.body.success,false);assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ for(const change of [{status:403},{code:'UNKNOWN'},{syncDiagnostic:{...context,schoolId:'../private'}}]){
+  const rejected=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure,change));assert.equal(rejected.body.schoolId,undefined);assert.equal(rejected.body.scriptStage,undefined);
+ }
+ const malformed=await request(Object.assign(new Error('NEVER_LOG_THIS'),failure,{syncDiagnostic:{...context,scriptStage:'private URL',transportKind:'private key'}}));
+ assert.equal(malformed.body.schoolId,context.schoolId);assert.equal(malformed.body.scriptStage,undefined);assert.equal(malformed.body.transportKind,undefined);
+});
+
+test('new managed rollout flags are strict and isolated TEST only',()=>{
+ const school='vs-'+'a'.repeat(32);
+ assert.deepEqual(managedFeatureOptions({},null),{deviceAccessEnforced:false,studentImportEnabled:false});
+ for(const env of [{SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'TRUE'},
+  {SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'}, {SAARTHI_TEST_STUDENT_IMPORT_ENABLED:'true'}])
+  assert.throws(()=>managedFeatureOptions(env,null));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'},school));
+ assert.deepEqual(managedFeatureOptions({SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true',
+  SAARTHI_TEST_STUDENT_IMPORT_ENABLED:'true',SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY:'synthetic-key'},school),
+  {deviceAccessEnforced:true,studentImportEnabled:true,deviceOfflinePrivateKey:'synthetic-key'});
+});
+
+test('management rollout is explicit and does not turn on TEST offline enforcement',()=>{
+ assert.deepEqual(managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true'},null),
+  {deviceAccessEnforced:false,studentImportEnabled:false,deviceManagementEnabled:true});
+ assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'TRUE'},null));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true',SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true'},null));
+});
+
+test('enrollment rollout is separately opt-in without changing access enforcement',()=>{
+ assert.deepEqual(managedFeatureOptions({SAARTHI_DEVICE_ENROLLMENT_ENABLED:'true'},null),
+  {deviceAccessEnforced:false,studentImportEnabled:false,deviceEnrollmentEnabled:true});
+ for(const value of ['TRUE','1',''])assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_ENROLLMENT_ENABLED:value},null));
+});

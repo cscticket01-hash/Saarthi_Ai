@@ -1,0 +1,30 @@
+name: Sync 3 400-school record capacity
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'school-backend/**'
+      - 'functions/**'
+      - '.github/workflows/sync3-record-capacity.yml'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-record-capacity-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-script-records:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Actual Script CAS and record readback across 400 synthetic school VMs
+        working-directory: functions
+        run: node --test test/sync-record-capacity.load.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-400-school-record-capacity
+          path: build/sync3-capacity/records.json

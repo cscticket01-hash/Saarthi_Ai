@@ -1,0 +1,19 @@
+{
+  "note": "Synthetic Node crypto fixture. No production secrets. Private signing key intentionally not stored.",
+  "endpoint": "https://fixture.example/school-cloud",
+  "deviceId": "ERERERERERERERERERERERERERERERERERERERERERE",
+  "credential": "FxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxc",
+  "publicKey": "c3s2fVeqwJL_-kPIeTUaT_2VZu8NpsGwTy6NX8JJS0g",
+  "authorizedAt": 1791700000000,
+  "payload": {
+    "version": 1,
+    "purpose": "vidya-pc-offline",
+    "schoolId": "vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "uid": "fixture-admin",
+    "deviceIdentity": "b59e65c402a629e6c5b28355c7628a1002262b55b43a52f941c02740e3bdfafc",
+    "generationHash": "451ba11a412a82cff1a8bba98e6e0cebf55f8f0542a6958877cab889e4ad3cc0",
+    "issuedAt": 1791700000000,
+    "expiresAt": 1791700900000
+  },
+  "token": "eyJ2ZXJzaW9uIjoxLCJwdXJwb3NlIjoidmlkeWEtcGMtb2ZmbGluZSIsInNjaG9vbElkIjoidnMtYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJ1aWQiOiJmaXh0dXJlLWFkbWluIiwiZGV2aWNlSWRlbnRpdHkiOiJiNTllNjVjNDAyYTYyOWU2YzViMjgzNTVjNzYyOGExMDAyMjYyYjU1YjQzYTUyZjk0MWMwMjc0MGUzYmRmYWZjIiwiZ2VuZXJhdGlvbkhhc2giOiI0NTFiYTExYTQxMmE4MmNmZjFhOGJiYTk4ZTZlMGNlYmY1NWY4ZjA1NDJhNjk1ODg3N2NhYjg4OWU0YWQzY2MwIiwiaXNzdWVkQXQiOjE3OTE3MDAwMDAwMDAsImV4cGlyZXNBdCI6MTc5MTcwMDkwMDAwMH0.2Pu84MvmlVvJMamelDA6hjwYxl7jK7bDxKgVA1Z_UotatsMPTpDzqThzNGGcqT5X2rnW9j5k9xCMnm_AeOh4CQ"
+}

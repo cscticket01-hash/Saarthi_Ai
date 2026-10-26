@@ -1,0 +1,570 @@
+import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:image/image.dart' as img;
+import 'package:http/http.dart' as http;
+
+import '../lib/windows_backend_bridge.dart';
+import '../lib/windows_sync_comparison.dart';
+import '../lib/storage/windows_sqlite_store.dart';
+import '../lib/windows_connect/central_school_cloud.dart';
+import '../lib/windows_local_firestore.dart';
+import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_local_storage.dart';
+import '../lib/windows_connect/managed_school_session.dart';
+import '../lib/platform/platform_config.dart';
+
+// Isolated signed-readback fixture. A legacy success bool is intentionally insufficient.
+Map<String,dynamic> documentAckFixture(Map<String,dynamic> payload, int at, {String? url}) => {
+  'success':true, 'cloudVerified':true, 'schoolId':payload['schoolId'], 'fileUrl':url,
+  if(payload['action']=='delete_student_document') 'deleteAcknowledgement':{
+    'success':true,'syncProtocol':2,'schoolId':payload['schoolId'],'collection':'documents',
+    'documentId':payload['documentId'],'operationId':payload['deleteOperationId'],'recordRevision':'fixture-record-$at'},
+  'document':{...payload, 'id':payload['documentId'], 'schoolId':payload['schoolId'],
+    '_syncRevision':'fixture-record-$at', 'uploadedAt':at,
+    if(payload['action']=='delete_student_document') '_syncDeleted':true,
+    if(payload['action']=='delete_student_document') 'documentRevision':payload['baseCloudRevision'],
+  },
+};
+
+Future<Map<String, dynamic>> persistedRoot() async {
+  final sqlite = await WindowsLocalStorage.sqliteFile();
+  if (WindowsLocalStorage.sqliteEnabled && await sqlite.exists()) {
+    final store = await WindowsSqliteStore.open(sqlite.path);
+    try {
+      return await store.readAllRoot();
+    } finally {
+      await store.close();
+    }
+  }
+  final file = await WindowsLocalStorage.databaseFile();
+  return await file.exists()
+      ? Map<String, dynamic>.from(jsonDecode(await file.readAsString()))
+      : {'profiles': {}};
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  final db = FirebaseFirestore.instance;
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({
+      CentralSchoolCloud.key: jsonEncode({
+        'managed': true,
+        'schoolId': school,
+        'uid': 'A',
+        'projectId': platformProjectId,
+        'endpoint': 'https://unreachable.example/school-cloud',
+        'folderId': 'managed',
+        'firebaseRefreshToken': 'saved-refresh',
+        'email': 'a@example.com',
+        'storageReady': false,
+      }),
+    });
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    await db.switchProfile(
+      'documents-${DateTime.now().microsecondsSinceEpoch}',
+      identity: {'schoolSyncId': school, 'schoolId': school},
+    );
+  });
+  test('actual bundle absent, existing and replay tombstones settle only matching queued deletions', () async {
+    final cases=jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
+    for(final c in cases){
+      final payload=Map<String,dynamic>.from(c['payload'] as Map), id=c['payload']['documentId'] as String;
+      final row={...payload,'deleted':true,'syncState':'retry','localPath':''};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      await WindowsBackendBridge.flushDocumentPending(send:(sent)async {
+        expect(sent['deleteOperationId'],payload['deleteOperationId']);
+        final ack={...Map<String,dynamic>.from(c['deleteResponse'] as Map),
+          'collection':'documents','documentId':id,'operationId':sent['deleteOperationId']};
+        return documentAcknowledgementFromReadback(sent,c['readback'] as Map,deleteAcknowledgement:ack);
+      });
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false,reason:c['name']);
+      expect((await db.collection('_local_student_documents').doc(id).get()).data()?['syncState'],'Synced');
+    }
+  });
+  test('document delete retries keep identity, while a later owner deletion gets a new identity', () {
+    final first={'documentRevision':'delete-first','baseCloudRevision':'same-original-generation'};
+    final later={...first,'documentRevision':'delete-after-restoration'};
+    expect(WindowsBackendBridge.documentDeleteOperationId('card',first),
+      WindowsBackendBridge.documentDeleteOperationId('card',Map.from(first)));
+    expect(WindowsBackendBridge.documentDeleteOperationId('card',first),
+      isNot(WindowsBackendBridge.documentDeleteOperationId('card',later)));
+  });
+  test('owner deletion atomically retires conflicted upload, retains originals and waits for parent ACK', () async {
+    final dir = await Directory.systemTemp.createTemp('deleted-owner');
+    try {
+      final path = '${dir.path}/original.pdf'; await File(path).writeAsBytes([1,2,3]);
+      await db.collection('students_directory').doc('S1').set({'name':'Original','mobileStableId':'stable-S1'});
+      final row = {'schoolId':school,'studentId':'S1','personId':'stable-S1','ownerRole':'student',
+        'documentRevision':'original-upload','localPath':path,'syncState':'conflict','baseCloudRevision':''};
+      await db.collection('_local_student_documents').doc('orphan').set(row);
+      await db.collection('_windows_document_outbox').doc('orphan').set(row);
+      await db.collection('students_directory').doc('S1').delete();
+      final retired = (await db.collection('_windows_document_outbox').doc('orphan').get()).data()!;
+      expect(retired['deleted'],true); expect(retired['syncState'],'Pending');
+      expect(retired['documentRevision'],isNot('original-upload'));
+      expect(retired['parentDeletionOperationId'],isA<String>());
+      await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Parent deletion not acknowledged'));
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,true);
+      expect(await File(path).readAsBytes(),[1,2,3]);
+      final proofRef = db.collection('_windows_local_deletions').doc(retired['parentDeletionOperationId']);
+      await proofRef.set({'cloudDeletionVerified':true,'deletedRevision':'parent-tombstone'},SetOptions(merge:true));
+      final cloud = {...row,'documentRevision':'uploaded-cloud','_syncRevision':'record-cloud','uploadedAt':12};
+      await expectLater(WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+        'success':true,'schoolId':school,'syncProtocol':2,'records':{'orphan':cloud}},
+        send:(_)async=>{'success':true}), throwsA(predicate((e)=>e.toString().contains('acknowledgement missing'))));
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,true);
+      expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+      await WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+        'success':true,'schoolId':school,'syncProtocol':2,'records':{'orphan':cloud}},
+        send:(payload)async {
+          expect(payload['action'],'delete_student_document');
+          expect(payload['baseCloudRevision'],'uploaded-cloud');
+          expect(payload['reviewedRecordRevision'],'record-cloud');
+          return documentAckFixture(payload,12);
+        });
+      expect((await db.collection('_windows_document_outbox').doc('orphan').get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc('orphan').get()).data()?['deleted'],true);
+      expect(await File(path).readAsBytes(),[1,2,3]);
+      final history = (await db.collection('_windows_sync_conflict_history').get()).docs;
+      expect(history.any((d)=> (d.data()['pending'] as Map?)?['documentRevision']=='original-upload'),true);
+      expect(history.any((d)=> (d.data()['verifiedCloud'] as Map?)?['documentRevision']=='uploaded-cloud'),true);
+    } finally { await dir.delete(recursive:true); }
+  });
+  test('reconcile uses explicit deletion evidence, never missing parents or foreign school', () async {
+    final row = {'schoolId':school,'studentId':'missing','documentRevision':'live','syncState':'conflict'};
+    await db.collection('_windows_document_outbox').doc('unknown').set(row);
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),row);
+    await db.collection('_windows_local_deletions').doc('proof').set({
+      'version':1,'schoolId':'other-school','collection':'students_directory','documentId':'missing',
+      'operationId':'proof','snapshot':{'name':'Other'}});
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),row);
+    await db.collection('_windows_local_deletions').doc('proof').set({'schoolId':school},SetOptions(merge:true));
+    await db.reconcileDeletedOwnerDocuments();
+    final retired = (await db.collection('_windows_document_outbox').doc('unknown').get()).data()!;
+    expect(retired['deleted'],true);
+    await db.reconcileDeletedOwnerDocuments();
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).data(),retired);
+    await db.collection('students_directory').doc('missing').set({'name':'Restored'});
+    await db.collection('_windows_local_deletions').doc('proof').set({'cloudDeletionVerified':true,'deletedRevision':'r'},SetOptions(merge:true));
+    await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Restored parent must block delete'));
+    expect((await db.collection('_windows_document_outbox').doc('unknown').get()).exists,true);
+  });
+  test('foreign cloud ownership cannot authorize a retired document delete', () async {
+    const id='foreign-cloud-owner';
+    final row={'schoolId':school,'studentId':'deleted-owner','ownerRole':'student',
+      'personId':'stable-owner','documentRevision':'upload','syncState':'conflict'};
+    await db.collection('_windows_document_outbox').doc(id).set(row);
+    await db.collection('_windows_local_deletions').doc('deleted-owner-proof').set({
+      'version':1,'schoolId':school,'collection':'students_directory','documentId':'deleted-owner',
+      'operationId':'deleted-owner-proof','snapshot':{'mobileStableId':'stable-owner'},
+      'cloudDeletionVerified':true,'deletedRevision':'parent-delete'});
+    var sent=false;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(readDeletionCloud:(_)async=>{
+      'success':true,'schoolId':school,'syncProtocol':2,'records':{id:{...row,
+        'personId':'different-owner','_syncRevision':'cloud-record'}}},
+      send:(_)async {sent=true; return {}; }),throwsStateError);
+    expect(sent,false);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+  });
+  test('document review measures retained bytes and rejects foreign-school files', () async {
+    final dir=await Directory.systemTemp.createTemp('document-review-proof');
+    try {
+      final file=File('${dir.path}/original');await file.writeAsBytes([1,2,3]);
+      final row={'schoolId':school,'localPath':file.path,'documentRevision':'op','studentId':'S1'};
+      final proof=await WindowsBackendBridge.documentReviewPayload('doc',row);
+      expect(proof['contentHash'],matches(RegExp(r'^[a-f0-9]{64}$')));
+      expect(await file.readAsBytes(),[1,2,3]);
+      await expectLater(WindowsBackendBridge.documentReviewPayload('doc',{...row,'schoolId':'foreign'}),throwsStateError);
+      expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    } finally {await dir.delete(recursive:true);}
+  });
+  for(final mode in ['missing-file','unverified-ack']) {
+    test('$mode retains failed document and allows an independent document ACK', () async {
+      final dir=await Directory.systemTemp.createTemp('independent-documents-');
+      try {
+        for(final id in ['a-failed','z-valid']) {
+          final path='${dir.path}/$id';
+          if(id!='a-failed'||mode!='missing-file')await File(path).writeAsBytes([1,2,3]);
+          final row={'schoolId':school,'studentId':'S1','documentRevision':'revision-$id',
+            'localPath':path,'syncState':'Pending','baseCloudRevision':'','deleted':false};
+          await db.collection('_local_student_documents').doc(id).set(row);
+          await db.collection('_windows_document_outbox').doc(id).set(row);
+        }
+        final sent=<String>[];
+        await expectLater(WindowsBackendBridge.flushDocumentPending(send:(payload)async{
+          final id=payload['documentId'] as String;sent.add(id);
+          return id=='a-failed'?{'success':true}:documentAckFixture(payload,42);
+        }),throwsA(anything));
+        expect(sent,contains('z-valid'));
+        expect((await db.collection('_windows_document_outbox').doc('z-valid').get()).exists,false);
+        final retained=(await db.collection('_windows_document_outbox').doc('a-failed').get()).data()!;
+        expect(retained['documentRevision'],'revision-a-failed');
+        expect(retained['failureCode'],mode=='missing-file'?'fileMissing':'ACK_UNVERIFIED');
+        expect(retained['failureStage'],mode=='missing-file'?'readLocalFile':'verifyAcknowledgement');
+        expect((await db.collection('_windows_sync_receipts').get()).docs.length,1);
+        if(mode=='unverified-ack') {
+          expect(await File('${dir.path}/a-failed').exists(),true);
+          var retried=false;
+          await WindowsBackendBridge.flushDocumentPending(respectBackoff:true,
+            send:(_)async{retried=true;return {};});
+          expect(retried,false);
+        }
+      }finally{await dir.delete(recursive:true);}
+    });
+  }
+  test('document revision conflict retains original and allows independent ACK', () async {
+    final dir = await Directory.systemTemp.createTemp('document-conflict-');
+    try {
+      for (final id in ['conflict-doc', 'independent-doc']) {
+        final path = '${dir.path}/$id';
+        await File(path).writeAsBytes([1, 2, 3]);
+        final row = {'schoolId':school, 'documentRevision':'revision-$id',
+          'localPath':path, 'syncState':'Pending', 'baseCloudRevision':'base',
+          'studentId':'S1', 'deleted':false};
+        await db.collection('_local_student_documents').doc(id).set(row);
+        await db.collection('_windows_document_outbox').doc(id).set(row);
+      }
+      final sent = <String>[];
+      await expectLater(WindowsBackendBridge.flushDocumentPending(send:(payload) async {
+        final id = payload['documentId'] as String;
+        sent.add(id);
+        if (id == 'conflict-doc') throw CentralCloudException(409,'school_cloud',
+          'Document version conflict; both copies retained',
+          diagnosticCode:'SCRIPT_DOCUMENT_REVISION_CONFLICT');
+        return documentAckFixture(payload,42);
+      }), throwsA(isA<CentralCloudException>()));
+      expect(sent, containsAll(['conflict-doc','independent-doc']));
+      final retained = (await db.collection('_windows_document_outbox').doc('conflict-doc').get()).data()!;
+      expect(retained['syncState'],'conflict');
+      expect(retained['documentRevision'],'revision-conflict-doc');
+      expect(retained['baseCloudRevision'],'base');
+      expect(await File(retained['localPath'] as String).exists(),true);
+      expect((await db.collection('_windows_document_outbox').doc('independent-doc').get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc('independent-doc').get()).data()?['syncState'],'Synced');
+    } finally { await dir.delete(recursive:true); }
+  });
+  test('malformed legacy pending request is retained instead of acknowledged', () async {
+    final ref = db.collection('_windows_google_outbox').doc('retained-invalid');
+    await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});
+    expect(await WindowsBackendBridge.flushPending(), 0);
+    final retained = (await ref.get()).data()!;
+    expect(retained['operationId'], 'original-operation');
+    expect(retained['queuedAt'], 42);
+    expect(retained['body'], 'invalid');
+    expect(retained['syncState'], 'needsAttention');
+  });
+  test('legacy duplicate and missing-record responses never guess an ACK', () async {
+    const url='https://script.google.com/macros/s/ReviewedTestDeployment/exec';
+    for(final result in [
+      {'success':false,'code':'STUDENT_ALREADY_EXISTS','message':'already exists'},
+      {'success':false,'message':'record not found'},
+      {'success':false,'message':'already deleted'},
+    ]) {
+      final ref=db.collection('_windows_google_outbox').doc('legacy-retained');
+      final body={'operationId':'original-operation','schoolId':school,'name':'Original'};
+      await ref.set({'action':result.containsKey('code')?'add_student':'delete_student',
+        'url':url,'body':body,'queuedAt':42});
+      final events=<Map<String,dynamic>>[];
+      expect(await WindowsBackendBridge.flushPending(readActiveUrl:()async=>url,
+        send:(a,b,c)async=>http.Response(jsonEncode(result),200),onActivity:events.add),0);
+      final retained=(await ref.get()).data()!;
+      expect(retained['body'],body);expect(retained['queuedAt'],42);
+      expect(retained['syncState'],'needsAttention');
+      expect(events.any((event)=>event['stage']=='verified'),false);
+    }
+  });
+  test('unclassified document failure is retained for review rather than blind retry', () async {
+    final ref=db.collection('_windows_document_outbox').doc('unknown-original');
+    await ref.set({'schoolId':school,'documentRevision':'original-revision',
+      'deleted':true,'localPath':''});
+    await expectLater(WindowsBackendBridge.flushDocumentPending(
+      send:(_)async=>throw StateError('Synthetic unclassified failure')),throwsStateError);
+    final retained=(await ref.get()).data()!;
+    expect(retained['documentRevision'],'original-revision');
+    expect(retained['syncState'],'needsAttention');
+    expect(retained['failureCategory'],'unknown');
+    await WindowsBackendBridge.flushDocumentPending(send:(_)async=>fail('Review row must not retry'));
+    expect((await ref.get()).exists,true);
+  });
+  test('pause prevents pending admission without changing queued evidence', () async {
+    final ref = db.collection('_windows_google_outbox').doc('paused-original');
+    await ref.set({'operationId': 'original-operation', 'body': 'invalid', 'queuedAt': 42});
+    final before = (await ref.get()).data();
+    expect(await WindowsBackendBridge.flushPending(canAdmit: () => false), 0);
+    expect((await ref.get()).data(), before);
+    await db.collection('_windows_document_outbox').doc('paused-document').set({
+      'operationId': 'original-document', 'schoolId': school,
+    });
+    await WindowsBackendBridge.flushDocumentPending(
+      canAdmit: () => false,
+      send: (_) async => fail('Paused request must not be sent'),
+    );
+    expect((await db.collection('_windows_document_outbox').get()).docs, hasLength(1));
+  });
+  test(
+      'synced multilingual inventory JSON is decoded without treating metadata as paths',
+      () async {
+    final metadata = <String, dynamic>{
+      'schoolId': school,
+      'studentId': 'S-1',
+      'documentId': 'doc-unicode',
+      'documentName': 'জন্ম সনদ – विद्यालय',
+      'fileId': 'existing-drive-file',
+      'fileUrl': 'https://drive.google.com/file/d/existing-drive-file/view',
+      'localPath': r'C:\School\documents\scan.pdf',
+      'documentRevision': 'preserved-revision',
+      'syncState': 'Synced',
+      'mimeType': 'application/pdf',
+      'sizeBytes': 12345,
+    };
+    expect(
+        () => http.Response(
+            jsonEncode({
+              'documents': [metadata]
+            }),
+            200),
+        throwsArgumentError);
+    await db.collection('documents').doc('doc-unicode').set(metadata);
+    final response = await WindowsBackendBridge.post(Uri.parse(''),
+        body: jsonEncode(
+            {'action': 'list_student_documents', 'studentId': 'S-1'}));
+    expect(response.statusCode, 200);
+    final rows = jsonDecode(response.body)['documents'] as List;
+    expect(rows.single['documentName'], metadata['documentName']);
+    expect(rows.single['fileId'], metadata['fileId']);
+    expect(rows.single['localPath'], metadata['localPath']);
+    expect(WindowsBackendBridge.normalizedDocumentPath(response.body), isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata), isNull);
+    expect(WindowsBackendBridge.normalizedDocumentPath(metadata['fileUrl']),
+        isNull);
+    expect(
+        WindowsBackendBridge.normalizedDocumentPath('bad\u0000path'), isNull);
+    final record =
+        (await db.collection('documents').doc('doc-unicode').get()).data();
+    expect(record!['documentRevision'], 'preserved-revision');
+    final origin = db.activeProfileId;
+    await db.switchProfile('inventory-restart-away');
+    await db.switchProfile(origin,
+        identity: {'schoolId': school, 'schoolSyncId': school});
+    final reopened = await WindowsBackendBridge.post(Uri.parse(''),
+        body: jsonEncode(
+            {'action': 'list_student_documents', 'studentId': 'S-1'}));
+    expect(jsonDecode(reopened.body)['documents'].single['fileId'],
+        'existing-drive-file');
+  });
+  test(
+      'offline replacement is durable, retains originals and queues only the newest generation',
+      () async {
+    final image = img.Image(width: 300, height: 400);
+    img.fill(image, color: img.ColorRgb8(255, 255, 255));
+    final bytes = img.encodeJpg(image);
+    Future<Map> save([String id = '']) async {
+      final response = await WindowsBackendBridge.post(
+        Uri.parse('https://unreachable.example'),
+        body: jsonEncode({
+          'action': 'upload_student_document',
+          'studentId': 'S-1',
+          'documentName': 'Birth Certificate',
+          'fileName': 'scan.jpg',
+          'mimeType': 'image/jpeg',
+          'fileBase64': base64Encode(bytes),
+          'replaceDocumentId': id,
+        }),
+      );
+      return jsonDecode(response.body) as Map;
+    }
+
+    final first = await save();
+    expect(first['cloudSyncPending'], true);
+    final id = first['documentId'] as String,
+        old = (first['document'] as Map)['originalPath'] as String;
+    final second = await save(id),
+        current = (second['document'] as Map)['originalPath'] as String;
+    expect(current, isNot(old));
+    expect(await File(old).readAsBytes(), bytes);
+    expect(await File(current).readAsBytes(), bytes);
+    final queue = (await db.collection('_windows_document_outbox').get()).docs;
+    expect(queue.length, 1);
+    expect(queue.single.data()['localPath'], current);
+    final origin = db.activeProfileId;
+    // Read the persisted file, then discard session RAM and reopen the tenant.
+    final disk = await persistedRoot();
+    expect(disk['profiles'][origin]['collections']['_windows_document_outbox'],
+        isNotEmpty);
+    await db.resetVolatileSession();
+    await db.switchProfile(
+      'foreign-documents',
+      identity: {'schoolSyncId': 'other'},
+    );
+    expect(
+        (await db.collection('_local_student_documents').get()).docs, isEmpty);
+    await expectLater(save(), throwsStateError);
+    await db.switchProfile(
+      origin,
+      identity: {'schoolSyncId': school, 'schoolId': school},
+    );
+    expect(
+      (await db.collection('_windows_document_outbox').get())
+          .docs
+          .single
+          .data()['localPath'],
+      current,
+    );
+    expect(
+      (await db.collection('_local_student_documents').doc(id).get())
+          .data()?['syncState'],
+      'Pending',
+    );
+    for (final outage in [
+      const SocketException('Synthetic offline path'),
+      TimeoutException('Synthetic provider response timeout'),
+      CentralCloudException(503,'school_cloud','Synthetic provider unavailable')
+    ]) {
+      await expectLater(
+          WindowsBackendBridge.flushDocumentPending(
+              send: (_) async => throw outage),
+          throwsA(same(outage)));
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          hasLength(1));
+      final retry = (await db.collection('_windows_document_outbox').get())
+          .docs
+          .single
+          .data();
+      expect(retry['syncState'], 'retry');
+      expect(retry['retryCount'], greaterThan(0));
+    }
+    expect(
+      (await db.collection('_windows_document_outbox').get()).docs.length,
+      1,
+    );
+    await WindowsBackendBridge.flushDocumentPending(
+      send: (payload) async {
+        expect(payload['schoolId'], school);
+        await save(id);
+        return documentAckFixture(payload,42,url:'https://drive.google.com/file/d/old/view');
+      },
+    );
+    expect(
+      (await db.collection('_windows_document_outbox').get()).docs.length,
+      1,
+    );
+    await WindowsBackendBridge.flushDocumentPending(
+      send: (payload) async => documentAckFixture(payload,43,url:'https://drive.google.com/file/d/current/view'),
+    );
+    expect(
+      (await db.collection('_windows_document_outbox').get()).docs,
+      isEmpty,
+    );
+    final deletion = await WindowsBackendBridge.post(
+      Uri.parse('https://unreachable.example'),
+      body: jsonEncode({
+        'action': 'delete_student_document',
+        'studentId': 'S-1',
+        'documentId': id,
+      }),
+    );
+    expect((jsonDecode(deletion.body) as Map)['cloudSyncPending'], true);
+    await WindowsBackendBridge.flushDocumentPending(
+      send: (payload) async {
+        expect(payload['action'], 'delete_student_document');
+        return documentAckFixture(payload,44);
+      },
+    );
+    expect(await File(old).exists(), true);
+    expect(
+      (await db.collection('_local_student_documents').doc(id).get())
+          .data()?['deleted'],
+      true,
+    );
+  });
+  test(
+      'malformed image and truncated PDF cannot create managed documents or outbox records',
+      () async {
+    for (final item in [
+      {
+        'mime': 'image/jpeg',
+        'bytes': [1, 2, 3]
+      },
+      {
+        'mime': 'application/pdf',
+        'bytes': utf8.encode('%PDF-1.7 incomplete body')
+      },
+    ]) {
+      await expectLater(
+          WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+              body: jsonEncode({
+                'action': 'upload_student_document',
+                'studentId': 'S-1',
+                'documentName': 'Bad',
+                'fileName': 'bad',
+                'mimeType': item['mime'],
+                'fileBase64': base64Encode(item['bytes'] as List<int>)
+              })),
+          throwsFormatException);
+      expect((await db.collection('_local_student_documents').get()).docs,
+          isEmpty);
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          isEmpty);
+    }
+  });
+
+  test('blocked and foreign school context cannot persist or save documents',
+      () async {
+    for (final identity in [
+      {'schoolSyncId': school, 'schoolId': school, 'blocked': true},
+      {
+        'schoolSyncId': school,
+        'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      },
+    ]) {
+      await db.switchProfile('invalid-document-context', identity: identity);
+      expect(await db.localPersistenceEnabled(), false);
+      await expectLater(
+          WindowsBackendBridge.post(Uri.parse('https://unreachable.example'),
+              body: jsonEncode({
+                'action': 'upload_student_document',
+                'studentId': 'S-1',
+                'fileBase64': base64Encode([1, 2, 3])
+              })),
+          throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs,
+          isEmpty);
+    }
+  });
+
+  test(
+      'standalone legacy OFF remains RAM-only without a managed school identity',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final profile = 'standalone-${DateTime.now().microsecondsSinceEpoch}';
+    await db.switchProfile(profile);
+    expect(await db.localPersistenceEnabled(), false);
+    await db
+        .collection('notices')
+        .doc('temporary')
+        .set({'text': 'session-only'});
+    final disk = await persistedRoot();
+    expect((disk['profiles'] as Map).containsKey(profile), false);
+    await db.resetVolatileSession();
+    expect((await db.collection('notices').get()).docs, isEmpty);
+  });
+
+  test(
+      'managed logout/session change invalidates the storage binding without changing legacy preference',
+      () async {
+    expect(await db.localPersistenceEnabled(), true);
+    FlutterSecureStorage.setMockInitialValues({});
+    ManagedSchoolSession.changed.value++;
+    expect(await db.localPersistenceEnabled(), false);
+    expect(await WindowsRuntimeFlags.localStorageEnabled(), false);
+  });
+}

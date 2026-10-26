@@ -1,0 +1,37 @@
+name: Keep complaint retention cleanup active
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: complaint-retention-heartbeat
+  cancel-in-progress: false
+jobs:
+  wake-cleanup-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # A free idle broker may sleep before its six-hour timer fires. Waking its
+      # existing school-cloud runtime runs the startup sweep; warm instances
+      # already run the same sweep on their six-hour interval. No school tokens,
+      # private records, extra service or public deletion endpoint are needed.
+      - name: Wake and verify the production cleanup runtime
+        env:
+          SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
+        run: |
+          node --input-type=module <<'JS'
+          const url=process.env.SCHOOL_CLOUD_URL.replace(/\/$/,'')+'/healthz';
+          let last;
+          for(let attempt=0;attempt<3;attempt++){
+            try{
+              const response=await fetch(url,{signal:AbortSignal.timeout(90000)});
+              const health=await response.json();
+              if(!response.ok||health.ready!==true)throw Error('Cleanup runtime is not ready');
+              console.log('Production cleanup runtime is awake and ready.');
+              process.exit(0);
+            }catch(error){last=error;}
+          }
+          console.error(last?.message||'Cleanup runtime could not be reached');
+          process.exit(1);
+          JS

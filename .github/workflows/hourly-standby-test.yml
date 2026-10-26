@@ -1,0 +1,35 @@
+name: Actual elapsed Windows hourly scheduler acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - .github/tests/windows_hourly_elapsed_test.dart
+      - .github/workflows/hourly-standby-test.yml
+permissions:
+  contents: read
+concurrency:
+  group: actual-elapsed-hourly-standby
+  cancel-in-progress: false
+jobs:
+  actual-hourly-scheduler:
+    if: github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Observe actual production timer for a full elapsed hour
+        timeout-minutes: 70
+        run: flutter test --concurrency=1 --timeout=70m .github/tests/windows_hourly_elapsed_test.dart
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: actual-hourly-scheduler-${{ github.sha }}
+          path: build/hourly-standby/elapsed.json
+          if-no-files-found: warn
+          retention-days: 14

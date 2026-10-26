@@ -1,0 +1,30 @@
+name: Authorized isolated TEST seven-day licence
+on:
+  push:
+    branches: [feature/sync3-unified-repair-20261026]
+    paths:
+      - .github/scripts/renew_sync3_test_licence.cjs
+      - .github/workflows/sync3-test-licence-renewal.yml
+permissions:
+  contents: read
+concurrency:
+  group: sync3-test-seven-day-licence-20261026
+  cancel-in-progress: false
+jobs:
+  renew-isolated-test:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/sync3-unified-repair-20261026'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix functions install --ignore-scripts --no-audit --no-fund
+      - name: Verify scoped renewal contract
+        run: node --test functions/test/sync3-test-licence-renewal.test.js
+      - name: Issue and activate one fixed seven-day TEST-only licence
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+          VS_AUTHORIZE_TEST_RENEWAL: sync3-test-seven-days-20261026
+        run: node .github/scripts/renew_sync3_test_licence.cjs

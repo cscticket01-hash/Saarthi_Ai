@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "saarthi-ai-df12b"
+  },
+  "targets": {
+    "saarthi-ai-df12b": {
+      "hosting": {
+        "vidyasaarthi": [
+          "vidyasaarthi"
+        ]
+      }
+    }
+  }
+}

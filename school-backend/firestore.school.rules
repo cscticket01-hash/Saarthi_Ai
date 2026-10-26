@@ -1,0 +1,466 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // COMMON FUNCTIONS
+    // ============================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Only an explicitly trusted administrator of THIS Firebase project.
+    // Sign in again after the owner sets the custom claim.
+    function isAdmin() {
+      return signedIn() && (
+        request.auth.token.get('admin', false) == true ||
+        request.auth.token.get('role', '') == 'admin'
+      );
+    }
+
+    // Firebase me media/file fields save nahi honge.
+    // Photos/PDF/Documents/ID Card/Report Card/Receipt media
+    // Google Drive + Local Storage me rahenge.
+    function forbiddenMediaKeys() {
+      return [
+        'idCardUrl',
+        'photoUrl',
+        'photoBase64',
+        'photoMimeType',
+
+        'logoUrl',
+        'logoFileId',
+        'logoBase64',
+        'logoMimeType',
+        'logoFileName',
+
+        'sealUrl',
+        'sealFileId',
+        'sealBase64',
+        'sealMimeType',
+        'sealFileName',
+
+        'principalSignatureUrl',
+        'principalSignatureFileId',
+        'principalSignatureBase64',
+        'principalSignatureMimeType',
+        'principalSignatureFileName',
+
+        'schoolLogoUrl',
+        'schoolSealUrl',
+
+        'reportCardUrl',
+        'reportCardFileId',
+
+        'receiptPdfUrl',
+        'pdfBase64',
+
+        'fileUrl',
+        'fileId',
+        'fileBase64',
+        'downloadUrl',
+
+        'driveUrl',
+        'sheetUrl'
+      ];
+    }
+
+    // CREATE me media/file key bilkul allowed nahi.
+    function createHasNoMedia() {
+      return !request.resource.data
+        .keys()
+        .hasAny(forbiddenMediaKeys());
+    }
+
+    // UPDATE me naya media/file field add/change nahi ho sakta.
+    // Purana legacy media field unchanged reh sakta hai,
+    // aur cleanup ke time delete kiya ja sakta hai.
+    function updateDoesNotAddOrChangeMedia() {
+      let diff = request.resource.data.diff(resource.data);
+
+      return !diff
+          .addedKeys()
+          .hasAny(forbiddenMediaKeys())
+        &&
+        !diff
+          .changedKeys()
+          .hasAny(forbiddenMediaKeys());
+    }
+
+
+    // ============================================================
+    // 1. USER PRIVATE DATA / AI CHAT HISTORY
+    // ============================================================
+
+    // ============================================================
+    // 2. SCHOOL NOTICES — TEXT ONLY
+    // ============================================================
+
+    match /school_notices/{noticeId} {
+
+      allow read: if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'title',
+          'description',
+          'category',
+          'timestamp',
+          'lastEdited'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.description is string
+        && request.resource.data.category is string
+        && request.resource.data.timestamp is int
+        && request.resource.data.lastEdited is int;
+
+      allow update:
+        if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'title',
+          'description',
+          'category',
+          'timestamp',
+          'lastEdited'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.description is string
+        && request.resource.data.category is string
+        && request.resource.data.timestamp is int
+        && request.resource.data.lastEdited is int;
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 3. STUDENTS DIRECTORY — TEXT/NUMBER ONLY
+    // ============================================================
+
+    match /students_directory/{studentId} {
+
+      allow read: if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin() && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 4. TEACHERS DIRECTORY — TEXT/NUMBER ONLY
+    // ============================================================
+
+    match /teachers_directory/{teacherId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 5. SCHOOL CONFIG
+    // Firebase connection/settings text allowed.
+    // Branding media/URLs are blocked.
+    // ============================================================
+
+    match /school_config/{docId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 6. STUDENT SCANNER INDEX
+    // ============================================================
+
+    match /student_scan_index/{cardCode} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 7. SCANNER DEVICES
+    // ============================================================
+
+    match /scanner_devices/{deviceId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 8. STUDENT ATTENDANCE — TEXT/NUMBER ONLY
+    // ============================================================
+
+    match /attendance_logs/{attendanceId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 9. TEACHER ATTENDANCE — TEXT/NUMBER ONLY
+    // ============================================================
+
+    match /teacher_attendance/{attendanceId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 10. TEACHER SCHEDULES
+    // ============================================================
+
+    match /teacher_schedules/{teacherId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 11. SCHOOL SETTINGS
+    // ============================================================
+
+    match /school_settings/{docId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 12. AUDIT LOGS
+    // ============================================================
+
+    match /audit_logs/{logId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update, delete:
+        if false;
+    }
+
+
+    // ============================================================
+    // FEES COLLECTION — TEXT/NUMBER ONLY IN FIREBASE
+    // Receipt PDF + Drive/Sheet URL Firebase me nahi.
+    // ============================================================
+
+    match /fee_settings/{docId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+    match /fee_ledger/{docId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+    match /fee_payments/{docId} {
+
+      allow read:
+        if isAdmin();
+
+      allow create:
+        if isAdmin()
+        && createHasNoMedia();
+
+      allow update:
+        if isAdmin()
+        && updateDoesNotAddOrChangeMedia();
+
+      allow delete:
+        if isAdmin();
+    }
+
+
+    // ============================================================
+    // 13. ANDROID APP UPDATE CONFIG
+    // APK URL yahan intentionally allowed hai.
+    // Ye school media storage nahi, trusted app-update metadata hai.
+    // ============================================================
+
+    match /app_config/android_update {
+
+      allow read: if true;
+
+      allow write:
+        if false;
+    }
+
+
+    // ============================================================
+    // 14. WINDOWS APP UPDATE CONFIG
+    // Existing compatibility rule retained.
+    // ============================================================
+
+    match /app_config/windows_update {
+
+      allow read:
+        if isAdmin();
+
+      allow write:
+        if false;
+    }
+
+
+    // New Windows/mobile operational collections. Mobile users reach these
+    // through their own school's verified Apps Script session, never directly.
+    match /{collection}/{documentId} {
+      allow read, delete: if isAdmin() && collection in [
+        'school_calendar', 'attendance_records', 'exam_results', 'teacher_salary'
+      ];
+      allow create: if isAdmin() && collection in [
+        'school_calendar', 'attendance_records', 'exam_results', 'teacher_salary'
+      ] && createHasNoMedia();
+      allow update: if isAdmin() && collection in [
+        'school_calendar', 'attendance_records', 'exam_results', 'teacher_salary'
+      ] && updateDoesNotAddOrChangeMedia();
+    }
+
+    // mobile_sessions and all other unlisted collections remain client-denied.
+    // ============================================================
+    // 15. DEFAULT DENY
+    // ============================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
