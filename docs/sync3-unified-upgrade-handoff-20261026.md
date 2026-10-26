@@ -55,6 +55,9 @@ Final compatibility correction: optional Sheet audit requires BOTH `sheetIntegri
 
 Remaining clearly scoped: provider-native resumable uploads are not offered by the existing Apps Script upload contract (existing idempotent full-upload fallback retained); a future background-dashboard writer needs a proven shared foreground/background cache owner before it can be added safely; physical-device/provider quota/end-to-end latency acceptance and renewal of the isolated TEST entitlement remain. Do not claim full A–J production certification or unlimited free capacity.
 
+### Independent 1/2/5-PC SQLite acceptance addition
+Added `test/windows_multi_pc_sync_test.dart` cases using 1, 2 and 5 independent real SQLite cache files and the actual signed Script VM. All PCs queue disjoint changes to the same teacher against the same cloud baseline while offline; caches reopen and reconnect in reverse order. Assertions preserve original operation IDs, changed-field-only wire payloads, all merged fields, verified individual queue clearing and no-op saves after catch-up. This is sequential simulation through the production storage API, not simultaneous physical machines. Existing two-OS multi-PC CI must pass these new cases before PASS is claimed. No runtime logic was changed by this milestone.
+
 ## Exact repository state
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Branch: `feature/sync3-unified-repair-20261026`.
