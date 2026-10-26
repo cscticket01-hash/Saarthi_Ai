@@ -1,5 +1,21 @@
 # Sync Engine 3 unified upgrade — authoritative continuation
 
+## Active continuation — 400-school / 100k-student target
+Starting head reverified `618e97ad07f9600815d068da835550550e5f32e2`; PR #135 still OPEN/DRAFT, main unchanged. No source from another session was overwritten.
+
+Implemented next milestone (exact-commit Flutter CI pending):
+- Existing feed multiplexes <=5 PC long polls through one school Firestore listener per broker process. Bounded global waiter budget is 2500 (old default 500 could not admit 400×5 clients). Per-school bound remains ten, and overload still returns 429. Runtime retains a listener for a bounded 30-second idle grace across ordinary poll renewals to avoid reconnect/read churn; no queue scheduler is introduced. Test adapters default to zero grace.
+- New synthetic capacity regression: 400 schools, 100,000 student-change hints, 1200 independent 1–5-PC cursors, 2000 bounded head/page documents, zero cross-school hint delivery; ~35.8 seconds local metadata fixture. A separate 2000-waiter test uses only 400 listeners. This is NOT 100,000 real records/cloud users or a capacity guarantee.
+- Optional `sheetIntegrityAuditVersion:1` in new Script bundle `2026-10-26.1`. Signed read-only audit examines at most 25 existing verified heads/page, including canonical payload, revision/operation/deletion cells, generic readable projection and student readable projection. It reports missing live rows, preserves tombstones and creates no workbook/record/head. Nonce anti-replay bookkeeping still applies. Direct edits are reported for review, not silently imported/restored.
+- Existing writer rejects unverified payload/head drift (including manually changed revision metadata), while preserving proven identical authenticated full-snapshot lost-ACK head recovery. Unrelated records remain independent. New fixed diagnostic `SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED` is fail-closed.
+- Existing Windows owner calls one capability-gated bounded audit page during an admitted scheduled check, persists school-bound page/collection progress, and shows the last-page findings in Control Center. Old `.2` Script safely omits this optional capability; no private Script was modified/deployed.
+
+Backend regression before the final extra audit cases: 557/557 PASS. Final full backend and new JSON/SQLite owner audit tests must be verified before claiming milestone complete. Source files: `functions/school-change-feed.js`, `functions/managed-schools.js`, `staging-school-cloud/server.cjs`, managed Script adapter/generated bundle, `lib/windows_sheet_integrity.dart`, engine/control-center/recovery policy and regression tests. Test fixture error corrected: signed read-only operations still legitimately consume nonce properties; audit assertions preserve every non-nonce property.
+
+Capacity constraint: Google's current free Firestore quota is 50k document reads/day and 20k writes/day; Apps Script has 6-minute executions and 30 simultaneous executions/user. Official sources: https://firebase.google.com/docs/firestore/quotas and https://developers.google.com/apps-script/guides/services/quotas (checked 2026-10-26). The number of stored pupils does not establish peak concurrent throughput. Daily attendance for 100k pupils would alone exceed 20k writes if every event produced even one central Firestore write; actual traffic/architecture must be measured. Do not enable billing or provision paid services without separate approval. Synthetic tests cannot certify free-host/provider capacity.
+
+Next: inspect final backend and exact new-commit CI, fix failures, then provider-capable resumable media and platform convergence. Existing remaining list below is historical; Sheets audit and capacity-listener work above supersede its previously unimplemented audit items.
+
 ## Exact repository state
 - Repository: `cscticket01-hash/Saarthi_Ai`.
 - Branch: `feature/sync3-unified-repair-20261026`.

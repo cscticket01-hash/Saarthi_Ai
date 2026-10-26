@@ -1517,6 +1517,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   stamp(details['batchTransport'] is Map
                                       ? details['batchTransport']['observedAt'] : null),
                                 ),
+                                metric(
+                                  'Last Sheet audit page',
+                                  details['sheetIntegrity'] is Map
+                                      ? '${details['sheetIntegrity']['collection']}: ${details['sheetIntegrity']['checked']} checked, ${(details['sheetIntegrity']['findings'] as List).length} findings · ${details['sheetIntegrity']['coverage']}'
+                                      : 'Not measured / capability unavailable',
+                                ),
                                 metric('Local database health', localHealth),
                                 metric('School cloud health', cloudHealth),
                                 metric(

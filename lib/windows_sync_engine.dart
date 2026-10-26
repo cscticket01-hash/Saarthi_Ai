@@ -40,6 +40,7 @@ import 'windows_local_firestore.dart';
 import 'windows_local_settings.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_sync_recovery.dart';
+import 'windows_sheet_integrity.dart';
 import 'windows_sync_comparison.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_platform_client.dart';
@@ -203,6 +204,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
   bool _recordDeltasSupported = false;
+  bool _sheetAuditSupported = false;
   bool _deltaBatchSupported = false;
   bool _changeHeadsSupported = false, _checkingHeads = false;
   final _remoteCollections = <String>{};
@@ -575,6 +577,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             .data();
     final batchHealth = (await db.collection('_windows_sync_status')
         .doc('managed-batch-window').get()).data();
+    final sheetIntegrity = (await db.collection('_windows_sync_status')
+        .doc('sheet-integrity').get()).data();
     final restoreInventory = await db
         .collection('_windows_recycle_requests')
         .get();
@@ -700,6 +704,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           )
           .length,
       'pendingRestores': restores.length,
+      if (sheetIntegrity?['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
+        'sheetIntegrity': sheetIntegrity,
       if (batchHealth?['schoolId'] == db.activeProfileIdentity['schoolSyncId'])
         'batchTransport': batchHealth,
       'mediaInventoryState':
@@ -1865,6 +1871,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             throw StateError(
               'School sync protocol mismatch: broker ${health['brokerRecordSyncVersion'] ?? 'unknown'}, school Script ${health['recordSyncVersion'] ?? 'unknown'}; required 2/2. Update the existing school Script deployment to the supplied bundle version; keep School ID/root/secret and /exec URL. Pending data retained.',
             );
+          _sheetAuditSupported = health['sheetIntegrityAuditVersion'] == 1;
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&
@@ -1889,6 +1896,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               health['brokerChangeHeadsVersion'] == 1;
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
+        }
+        if (_sheetAuditSupported && (scheduledCheck || integrityAudit) && !isPaused) {
+          final audit = await WindowsSheetIntegrity.audit(
+            profile: syncOrigin,
+            school: _activeSchoolSyncId,
+            collections: _firebaseCollections.where((name) => name != 'backups').toList(),
+            read: (collection, row) => ManagedSchoolSession.callForSchool(
+              _activeSchoolSyncId, 'managed/integrity/audit',
+              {'collection': collection, 'afterRow': row},
+            ),
+          );
+          if ((audit['findings'] as List).isNotEmpty) {
+            _recordActivity({
+              'stage': 'repairDiagnosed', 'outcome': 'external_sheet_review_required',
+              'failureCategory': 'configuration',
+            });
+          }
         }
         final inbox = await WindowsSyncInbox.pending(
           syncOrigin,

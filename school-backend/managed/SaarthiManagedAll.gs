@@ -7004,6 +7004,11 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(!existing&&retained){const h=retained.head;existing={id:b.id,schoolId:school,data:{schoolId:school,_syncRevision:h.revision,_syncOperationId:h.operationId,_syncRequestHash:h.requestHash,...(h.deleted?{_syncDeleted:true,_syncDeletedOwner:h.generation,_syncRetiredStudentGenerations:h.retiredGenerations||[]}:{})}};
     if(!h.deleted)throw new Error('Verified local Sheet recovery required before editing');}
   const wireHash=VS_layoutHash(VS_syncRequestShape(b));
+  // Only an identical authenticated full snapshot can repair a lost-ACK head.
+  const provenFullReplay=existing&&b.operation==='write'&&!(b.data&&b.data._syncFieldPatch)&&
+    existing.data._syncOperationId===b.operationId&&existing.data._syncRequestHash===wireHash&&
+    VS_layoutHash(VS_syncRequestShape({operation:'write',data:existing.data}))===wireHash;
+  if(existing&&retained&&VS_layoutHash(existing.data)!==retained.head.payloadHash&&!provenFullReplay)throw new Error('External Sheet edit requires review');
   const patchReplay=b.operation==='write'&&b.syncProtocol===2&&typeof b.expectedRecordRevision==='string'&&b.data&&b.data.schoolId===school&&b.data._syncFieldPatch&&existing&&existing.schoolId===school&&existing.id===b.id&&existing.data._syncOperationId===b.operationId;
   if(patchReplay) {
     if(existing.data._syncRequestHash!==wireHash)throw new Error('Sync operation ID conflict');
@@ -7280,6 +7285,7 @@ function VS_managedConnect(b) {
 function VS_managedDiagnostic(error) {
   const message=String(error && error.message || '');
   const known={
+    'External Sheet edit requires review':'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED',
     'Record revision conflict':'SCRIPT_RECORD_REVISION_CONFLICT',
     'Sync operation ID conflict':'SCRIPT_OPERATION_ID_CONFLICT',
     'JSON category identity mismatch':'SCRIPT_JSON_IDENTITY_MISMATCH',
@@ -7401,8 +7407,9 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,scriptBundleVersion:'2026-10-25.2',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,scriptBundleVersion:'2026-10-26.1',googleEmail:''};
     }
+    else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
     else if(b.action==='managed_view'){result=VS_managedView(b);}
     else if(b.action==='managed_mobile'){result=VS_managedMobile(b.request,b.lease);}
@@ -7455,6 +7462,7 @@ function VS_managedHandle(e) {
   }catch(error){
     const safe={
       'This QR does not belong to the active school':'This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.',
+      'External Sheet edit requires review':'External Sheet edit requires review',
       'Record revision conflict':'Record revision conflict',
       'Student class/section/roll conflict':'Student class/section/roll conflict',
       'Import Sheet school binding requires review':'Import Sheet school binding requires review',
@@ -8237,6 +8245,69 @@ function VS_managedRecordBatch(b) {
   }
  }
  return {syncProtocol:2,recordWriteBatchVersion:1,acknowledgements};
+}
+
+// Read-only, bounded audit of existing authoritative heads. No workbook/tab
+// creation, import, restore, revision rewrite or acknowledgement is permitted.
+function VS_managedIntegrityAudit(b) {
+  VS_validateManagedCollection(b.collection);
+  if(['mobile_sessions','mobile_users','mobile_complaints'].indexOf(b.collection)>=0)throw new Error('Unknown collection');
+  const start=b.afterRow===undefined?2:b.afterRow;
+  if(!Number.isSafeInteger(start)||start<2||start>10000000)throw new Error('Invalid integrity cursor');
+  const lock=LockService.getScriptLock();lock.waitLock(30000);
+  try {
+    const p=PropertiesService.getScriptProperties(),school=p.getProperty('VS_MANAGED_SCHOOL_ID'),context={};
+    const result={integrityAuditVersion:1,collection:b.collection,observedAt:Date.now(),checked:0,findings:[],nextRow:null,readOnly:true};
+    if(!VS_sheetLifecycleEnabled()||VS_collectionUsesJson(b.collection))return Object.assign(result,{coverage:'unsupported_storage'});
+    const headSheet=VS_syncStateSheet(false,b.collection,context);
+    if(!headSheet)return Object.assign(result,{coverage:'no_verified_heads'});
+    const state=VS_layoutState(b.collection);let store;
+    if(state&&['active','rollingBack'].indexOf(state.phase)>=0){
+      if(state.schoolId!==school)throw new Error('Sync state identity mismatch');
+      store=VS_layoutStore(state,context); // Active layouts cannot create tabs.
+    }else{
+      const id=p.getProperty('VS_MANAGED_SHEET_ID');
+      if(!id)return Object.assign(result,{coverage:'workbook_missing',findings:[{reason:'workbook_missing'}]});
+      const file=VS_managedFile(id);
+      if(file.isTrashed()||file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('School workbook identity mismatch');
+      const sheet=SpreadsheetApp.openById(id).getSheetByName(b.collection);
+      if(!sheet)return Object.assign(result,{coverage:'tab_missing',findings:[{reason:'tab_missing'}]});
+      store={school:school,collection:b.collection,sheet:sheet};
+    }
+    const last=headSheet.getLastRow(),end=Math.min(last,start+24),seen=new Set();
+    const rows=start<=end?headSheet.getRange(start,1,end-start+1,2).getValues():[];
+    rows.forEach(row=>{
+      if(!row[0]&&!row[1])return;
+      const head=JSON.parse(row[1]);
+      if(head.schoolId!==school||head.collection!==b.collection||typeof head.id!=='string'||!head.id||head.id.length>200||head.id.indexOf('/')>=0||typeof head.revision!=='string'||!head.revision||row[0]!==VS_layoutHash([b.collection,head.id])||seen.has(head.id))throw new Error('Sync state identity mismatch');
+      seen.add(head.id);result.checked++;
+      const candidates=(store.partitions||[store]).map(part=>({part:part,item:VS_sheetItem(part,head.id)})).filter(value=>value.item&&!value.item.layoutRedirect);
+      const selected=VS_layoutChoose(candidates.map(value=>value.item));
+      let reason=null;
+      if(!selected){if(!head.deleted)reason='missing_live_row';}
+      else if(selected.data._syncRevision!==head.revision||VS_layoutHash(selected.data)!==head.payloadHash)reason='unmanaged_payload_change';
+      else {
+        const source=candidates.find(value=>VS_layoutHash(value.item.data)===head.payloadHash),item=source.item,part=source.part;
+        const cells=part.sheet.getRange(item.row,1,1,6).getValues()[0];
+        if(String(cells[2])!==head.revision||String(cells[3])!==(head.deleted?'YES':'NO')||String(cells[4])!==(head.operationId||''))reason='unmanaged_metadata_change';
+        else if(b.collection==='students_directory'&&part.sheet.getMaxColumns()>=47){
+          const expected=VS_studentReadableValues(item),actual=part.sheet.getRange(item.row,34,1,14).getValues()[0];
+          if(actual.some((value,index)=>String(value)!==expected[index]&&String(value)!==expected[index].replace(/^'/,'')))reason='readable_projection_change';
+        }else if(b.collection!=='students_directory'){
+          const raw=p.getProperty('VS_RECORD_VIEW_FIELDS_'+(part.bookId||'legacy')+':'+part.sheet.getName());
+          if(raw){
+            const fields=JSON.parse(raw);
+            if(!Array.isArray(fields)||fields.length>128||fields.some(key=>typeof key!=='string'))throw new Error('Readable view identity requires review');
+            const empty=item.data._syncDeleted===true,expected=[empty?'':VS_recordReadableText(item.id)].concat(fields.map(key=>empty?'':VS_recordReadableText(item.data[key])));
+            const actual=part.sheet.getRange(item.row,34,1,expected.length).getValues()[0];
+            if(actual.some((value,index)=>String(value)!==expected[index]&&String(value)!==expected[index].replace(/^'/,'')))reason='readable_projection_change';
+          }
+        }
+      }
+      if(reason)result.findings.push({id:head.id,reason:reason});
+    });
+    result.nextRow=end<last?end+1:null;result.coverage='bounded_verified_heads';return result;
+  } finally {lock.releaseLock();}
 }
 
 /** Managed mobile bridge. Only called AFTER central server verification and

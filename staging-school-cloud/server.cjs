@@ -118,7 +118,7 @@ function fromEnvironment(env) {
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){

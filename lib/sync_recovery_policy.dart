@@ -109,6 +109,7 @@ class SyncRecoveryDecision {
       'SCRIPT_DOCUMENT_REVISION_REQUIRED',
       'SCRIPT_MIGRATION_CONFLICT',
       'SCRIPT_MISSING_MIGRATED_TAB',
+      'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED',
       'SCRIPT_RECORD_VERIFY_FAILED',
       'SCRIPT_STORAGE_NOT_PREPARED',
       'SCRIPT_WORKBOOK_REVIEW_REQUIRED',
@@ -120,6 +121,7 @@ class SyncRecoveryDecision {
         SyncFailureKind.configuration,
         review: true,
         independentRecords: {
+          'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED',
           'SCRIPT_RECORD_VERIFY_FAILED',
           'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
         }.contains(code),

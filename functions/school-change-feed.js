@@ -2,12 +2,38 @@
 const {randomUUID}=require('node:crypto');
 // Durable bounded hints only. Record data, receipts and conflict decisions stay
 // with the existing signed storage owner. Firestore listeners cross instances.
-function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=500}) {
- const allowed=new Set(collections);let waiting=0;const perSchool=new Map();
+function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=2500,idleGraceMillis=0}) {
+ const allowed=new Set(collections);let waiting=0;const perSchool=new Map(),subscriptions=new Map();
  const enabled=typeof db.doc('school_sync_hints/probe').onSnapshot==='function';
  const ref=id=>db.doc('school_sync_hints/'+id);
  const pageSize=64,retainedPages=32;
  const pageRef=(school,epoch,index)=>db.doc('school_sync_hints/'+school+'/pages/'+epoch+'-'+index);
+ // One Firestore subscription per school/process, shared by admitted PCs.
+ // Waiter limits still bound sockets and memory; no listener remains when idle.
+ function observe(school,next,error){
+  let entry=subscriptions.get(school);
+  if(!entry){if(subscriptions.size>=maxWaiters)throw Object.assign(Error('Change feed busy'),{status:429,publicMessage:true});entry={waiters:new Set(),started:false,ready:false};subscriptions.set(school,entry);}
+  clearTimeout(entry.idleTimer);
+  const waiter={next,error};entry.waiters.add(waiter);
+  if(entry.ready)queueMicrotask(()=>{if(entry.waiters.has(waiter))next(entry.latest);});
+  if(!entry.started){
+   entry.started=true;
+   try{entry.unsubscribe=ref(school).onSnapshot(snapshot=>{
+    entry.latest=snapshot;entry.ready=true;
+    for(const listener of [...entry.waiters])listener.next(snapshot);
+   },failure=>{for(const listener of [...entry.waiters])listener.error(failure);});}
+   catch(failure){for(const listener of [...entry.waiters])listener.error(failure);}
+   if(!entry.waiters.size){entry.unsubscribe?.();if(subscriptions.get(school)===entry)subscriptions.delete(school);}
+  }
+  return ()=>{
+   entry.waiters.delete(waiter);
+   if(!entry.waiters.size){
+    const close=()=>{if(!entry.waiters.size){entry.unsubscribe?.();if(subscriptions.get(school)===entry)subscriptions.delete(school);}};
+    if(idleGraceMillis>0){entry.idleTimer=setTimeout(close,Math.min(30000,idleGraceMillis));entry.idleTimer.unref?.();}
+    else close();
+   }
+  };
+ }
  function valid(id){if(!/^vs-[a-f0-9]{32}$/.test(id))throw Error('Invalid hint school');}
  function validRecordId(id){return typeof id==='string'&&id.length>0&&id.length<=200&&!['.','..','__proto__','prototype','constructor'].includes(id)&&!id.includes('/');}
  function project(state,cursor){
@@ -97,7 +123,7 @@ function createSchoolChangeFeed({db,collections,waitMillis=20000,maxWaiters=500}
    let done=false,unsubscribe,latest=cursor||'empty:0';
    const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);unsubscribe?.();error?reject(error):resolve(value);};
    const timer=setTimeout(()=>finish(null,{cursor:latest,reset:false,collections:[],records:{}}),waitMillis);
-   try{unsubscribe=ref(school).onSnapshot(snap=>{try{const state=snap.exists?snap.data():null;const event=project(state,cursor);latest=(state?.epoch||'empty')+':'+(state?.sequence||0);if(event)finish(null,event);}catch(error){finish(error);}},error=>finish(error));if(done)unsubscribe?.();}catch(error){finish(error);}
+   try{unsubscribe=observe(school,snap=>{try{const state=snap.exists?snap.data():null;const event=project(state,cursor);latest=(state?.epoch||'empty')+':'+(state?.sequence||0);if(event)finish(null,event);}catch(error){finish(error);}},error=>finish(error));if(done)unsubscribe?.();}catch(error){finish(error);}
   });return replayVersion===1?await replay(school,cursor,event):event;}finally{waiting--;const count=(perSchool.get(school)||1)-1;if(count)perSchool.set(school,count);else perSchool.delete(school);}
  },project};
 }
