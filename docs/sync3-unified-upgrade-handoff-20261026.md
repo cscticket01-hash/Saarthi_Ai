@@ -1,134 +1,71 @@
 # Sync Engine 3 unified upgrade — authoritative continuation
+Updated 2026-10-26 after final exact-source CI. This checkpoint supersedes older milestone notes.
 
-## Active continuation — 400-school / 100k-student target
-Starting head reverified `618e97ad07f9600815d068da835550550e5f32e2`; PR #135 still OPEN/DRAFT, main unchanged. No source from another session was overwritten.
+## Repository and safety
+Repository: cscticket01-hash/Saarthi_Ai
+Branch: feature/sync3-unified-repair-20261026
+PR: https://github.com/cscticket01-hash/Saarthi_Ai/pull/135 — OPEN, DRAFT.
+Latest implementation/test commit: 459d34fc2c3ccd2bf41e1dc103d3c542ee1743bd.
+Main verified unchanged: 9c1cacd6cef905490e5249cc0958ae686dc4e68f.
+The following documentation-only commit records this checkpoint; inspect current PR head before editing.
 
-Implemented next milestone (exact-commit Flutter CI pending):
-- Existing feed multiplexes <=5 PC long polls through one school Firestore listener per broker process. Bounded global waiter budget is 2500 (old default 500 could not admit 400×5 clients). Per-school bound remains ten, and overload still returns 429. Runtime retains a listener for a bounded 30-second idle grace across ordinary poll renewals to avoid reconnect/read churn; no queue scheduler is introduced. Test adapters default to zero grace.
-- New synthetic capacity regression: 400 schools, 100,000 student-change hints, 1200 independent 1–5-PC cursors, 2000 bounded head/page documents, zero cross-school hint delivery; ~35.8 seconds local metadata fixture. A separate 2000-waiter test uses only 400 listeners. This is NOT 100,000 real records/cloud users or a capacity guarantee.
-- Optional `sheetIntegrityAuditVersion:1` in new Script bundle `2026-10-26.1`. Signed read-only audit examines at most 25 existing verified heads/page, including canonical payload, revision/operation/deletion cells, generic readable projection and student readable projection. It reports missing live rows, preserves tombstones and creates no workbook/record/head. Nonce anti-replay bookkeeping still applies. Direct edits are reported for review, not silently imported/restored.
-- Existing writer rejects unverified payload/head drift (including manually changed revision metadata), while preserving proven identical authenticated full-snapshot lost-ACK head recovery. Unrelated records remain independent. New fixed diagnostic `SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED` is fail-closed.
-- Existing Windows owner calls one capability-gated bounded audit page during an admitted scheduled check, persists school-bound page/collection progress, and shows the last-page findings in Control Center. Old `.2` Script safely omits this optional capability; no private Script was modified/deployed.
+Keep one existing Sync Engine 3 owner, policy, queues, journals and verified ACK path. No separate repair engine/scheduler, paid AI, queue reset, security bypass or school migration. Preserve original operation IDs/revisions/times, financial uniqueness, school isolation, 1–5-PC policy, offline durability, immediate changed-record work, hourly idle reconciliation, no-op saves, true conflicts and student tombstone/generation/recycle protection. Notifications received are not applied ACKs. Missing records alone never authorize deletion/restoration.
 
-Backend regression before the final extra audit cases: 557/557 PASS. Final full backend and new JSON/SQLite owner audit tests must be verified before claiming milestone complete. Source files: `functions/school-change-feed.js`, `functions/managed-schools.js`, `staging-school-cloud/server.cjs`, managed Script adapter/generated bundle, `lib/windows_sheet_integrity.dart`, engine/control-center/recovery policy and regression tests. Test fixture error corrected: signed read-only operations still legitimately consume nonce properties; audit assertions preserve every non-nonce property.
+## Implemented milestones and commits
+- Existing owner improvements through 19c6c489788252886dcd6c431b27a67d7b54a683: bounded 40s diagnosis, durable five-attempt automatic repair budget, cooldown/escalation, protected error classification, exact operation journals; adaptive 2–10-record batches with individual receipts; bounded durable hint replay, gap reconciliation and Android persistent quota deadlines.
+- 15c3f560ba2f456aec5ff3bdf3eb18d6326430e3: school-scoped shared listener multiplexing, 2500 total bounded waiters, 30s listener idle grace, 400-school regressions; signed bounded external-Sheet audit integrated into existing Windows owner and Control Center.
+- 40ee05f56d742969ae8409119cd9fc6d2b3a3e65: verified resumable client-to-broker binary downloads and durable prefix journals; complete-group checkpoint body fallback under 200KB.
+- d8648181fc3dca8c77a984196ba0eb8f8e8b5ff1: Android oversized-cache fallback; website school-switch isolation, late-response fencing and applied-snapshot validation; separate read-only isolated TEST readiness workflow.
+- 20c9920d2cc0ad94a040a971256d53ecca343df9: full/point authoritative reads reject unproven external row/head drift; actual 100k-student Script fixture and dedicated CI; sanitized TEST entitlement diagnostics.
+- 49ab46cdd7b40c21a252992f4a245d57b536f5fd: optional audit requires BOTH broker and Script capability (safe mixed upgrade order).
+- 459d34fc2c3ccd2bf41e1dc103d3c542ee1743bd: 1, 2 and 5 independent SQLite cache files, offline disjoint same-record edits, reverse reconnection, original operation IDs, verified receipts and no-op save regressions. No runtime change in this last test commit.
 
-Capacity constraint: Google's current free Firestore quota is 50k document reads/day and 20k writes/day; Apps Script has 6-minute executions and 30 simultaneous executions/user. Official sources: https://firebase.google.com/docs/firestore/quotas and https://developers.google.com/apps-script/guides/services/quotas (checked 2026-10-26). The number of stored pupils does not establish peak concurrent throughput. Daily attendance for 100k pupils would alone exceed 20k writes if every event produced even one central Firestore write; actual traffic/architecture must be measured. Do not enable billing or provision paid services without separate approval. Synthetic tests cannot certify free-host/provider capacity.
+## Files / behavior
+Owner/recovery: lib/windows_pending_school_sync.dart, lib/windows_sync_engine.dart, lib/sync_recovery_policy.dart.
+Transport/media/feed/monitor: lib/windows_firebase_sync.dart, lib/windows_binary_downloads.dart, lib/windows_remote_change_feed.dart, lib/windows_sheet_integrity.dart, lib/windows_sync_control_center.dart.
+Platforms: lib/mobile/school_session.dart, lib/managed_school_live_view.dart.
+Backend: functions/school-change-feed.js, functions/managed-schools.js, staging-school-cloud/server.cjs.
+Script: school-backend/managed/SaarthiManagedAdapter.gs and generated SaarthiManagedAll.gs.
+Focused regression files and GitHub workflows accompany the source.
 
-Next: inspect final backend and exact new-commit CI, fix failures, then provider-capable resumable media and platform convergence. Existing remaining list below is historical; Sheets audit and capacity-listener work above supersede its previously unimplemented audit items.
+Sheet audit checks at most 25 existing authoritative heads/page. Reports canonical/readable projection drift and missing live rows, retains tombstones and never imports unverified external edits or restores a deleted row. Signed nonce bookkeeping remains. Writer/readback fail closed with SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED; proven identical authenticated full-snapshot lost-ACK repair is preserved. Windows persists bounded audit cursor and reports last-page findings, not whole-school health.
 
-### Next milestone — request budgets and resumable verified downloads
-Capacity/audit implementation commit `15c3f560ba2f456aec5ff3bdf3eb18d6326430e3`: local backend **559/559 PASS**; all four exact-source repair CI jobs PASS (run 40266105166). Other final platform/load statuses must still be checked. This commit contains the regenerated optional Script bundle `2026-10-26.1` and does not deploy it.
+Media uses optional binaryRangeVersion:1, exact school/file/hash/version/offset binding, chunk and final hashes, durable prefix journal, corrupt partial quarantine and previous verified-file fallback. Broker cache is bounded to 24MB/two-minute lazy expiry/two distinct upstream reads. Cold broker may still fetch the complete provider file. This is NOT native Drive resumable upload. No Drive originals are changed.
 
-New implementation awaiting exact-commit Flutter CI:
-- `boundedManagedDeltaRequest` keeps the whole JSON payload below 200KB before the existing 256KB broker envelope. Oversized optional record-checkpoint groups are omitted WHOLE, retaining verified collection revisions and the existing full-read fallback. IDs/maps are never truncated. Partial-response provenance checks use the checkpoints actually sent. Tests cover 15k IDs and UTF-8 byte accounting.
-- Negotiated broker `binaryRangeVersion:1` in verified inventories; read-only chunk endpoint binds school, file, original hash/version and exact offsets, verifies full upstream bytes, returns chunk hashes. Private immutable byte cache <=24MB, lazy two-minute expiry, at most two distinct upstream range reads in flight; cached chunks avoid repeating full provider reads. Broker restart/cache miss may still fetch the full provider file: this is client↔broker resume, NOT native Drive range/resumable upload.
-- Existing Windows binary owner stores durable verified-prefix offset/hash with its existing journal. Interrupted downloads resume the verified prefix after restart; corrupt partial files are quarantined, chunk hashes and final whole-file hash must pass before canonical cache adoption. Previous verified original remains usable. No Drive file or record queue is modified. A broker rollback requires an authenticated inventory capability recheck before full-download fallback; auth/quota errors cannot trigger that fallback.
-- New regression cases: interrupted range/restart/offset reuse, corrupt chunks, rollback negotiation, broker hash validation/cache reuse/school isolation/range bounds.
+Android complete checkpoint groups over budget fall back safely rather than truncate. Website school switch clears old private state and rejects late responses; revisions cannot advance without an applied or verified unchanged snapshot. Existing leased attendance WorkManager remains; no competing background dashboard writer was introduced.
 
-Local full backend with range additions: **562/562 PASS**. Final Flutter CI must pass before this milestone is marked verified. Remaining: provider-capable resumable UPLOAD (no native Drive upload protocol implemented), fuller Android/Web catch-up/background lifecycle acceptance and real cloud/physical throughput. Do not claim the entire A–J mission done or 100k real students production-certified.
+## Exact-source verification: 459d34fc2c3ccd2bf41e1dc103d3c542ee1743bd
+All NINE unique code/regression workflows completed SUCCESS (plus duplicate push repair review):
+- Unified repair: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666244 — four Windows/Linux JSON/SQLite jobs, 88 tests each.
+- Record capacity: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666255 — actual 100,000 synthetic student records across 400 isolated school VMs; authenticated commits/readbacks, duplicate retries and foreign-school rejection.
+- Multi-PC: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666546 — Windows AND Linux PASS; each 15 correctness +2 load +102 retained regressions, including independent 1/2/5 SQLite cache cases.
+- Platform: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666556 — backend 564/564, OAuth 19/19, security, Web, Android, Windows compile/crash recovery/fresh-start/restart smoke PASS. Original gated isolated-cloud job SKIPPED, not acceptance evidence.
+- JSON: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666327
+- Documents/student Sheet: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666253
+- Sheet recovery/lifecycle: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666521
+- Duplicate Save: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666285
+- Standalone guardian removal: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666588
+Local backend 564/564 PASS, syntax and diff checks PASS. Flutter evidence is GitHub CI; no local Flutter SDK. Existing nonfatal analyzer warnings were not disabled or represented as zero warnings.
 
-### Platform cache convergence milestone (after 40ee05f5)
-Resumable download/request budget commit `40ee05f56d742969ae8409119cd9fc6d2b3a3e65`: all four owner-review CI jobs SUCCESS (run 40267028263); local backend 562/562 PASS. Other reviews must be refreshed separately.
+## Measured scope and limits
+Actual Script/CAS/Sheet fixture: 400 sequential school VMs x250 students =100,000 committed/readback records; 400 duplicate retries prevented and cross-school writes rejected. Local run 305.107s, peak RSS approximately209.6MB. Earlier CI checkpoint20c992:118.451s, approximately120.9MB. Runner/fixture timings, not real provider throughput or a measured speedup.
+Metadata fixture separately covers100k hints,1200 independent cursors and2000 waiters sharing400 listeners. Not100k concurrent devices. Existing15k fsync attendance component uses mocked remote ACK.
+No real-cloud end-to-end latency, physical-device throughput or production capacity guarantee measured. School-count and stored-student count alone do not establish peak load. Official provider limits checked2026-10-26: https://firebase.google.com/docs/firestore/quotas and https://developers.google.com/apps-script/guides/services/quotas . Free-tier limits still apply; no billing or paid service enabled.
 
-Implemented next:
-- Read-only website school view clears old-school private rows/checkpoints and rejects late old-school responses when the widget changes school. A revision without its matching applied/cached snapshot cannot advance the view; reads are bounded by a watchdog and preview rows remain <=100. New regressions cover school switch with an in-flight old response and missing snapshot checkpoint rejection.
-- Android oversized permission-filtered checkpoint groups now use WHOLE-group fallback instead of throwing forever at >1000 records. Complete selected groups stay under 120KB, and modern list deltas omit duplicate legacy notice checkpoints. A >1000-notice cache regression verifies fresh authenticated removal/catch-up without truncating IDs or corrupting the old verified cache.
-- Added a separate read-only isolated TEST readiness workflow using the existing TEST-only GitHub secrets and the already-reviewed fixed TEST-school harness. No credentials are printed, no school records are written, and no deployment occurs. BLOCKED/FAIL report status fails that separate acceptance job; it cannot masquerade as a readiness PASS. This does not test the new code on a redeployed server or physical device.
+## Separate real TEST acceptance: BLOCKED / workflow FAIL
+https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40269666267
+Existing TEST school vs-db8afb01a3be46a983c8284714d06e5d at https://saarthi-sync-v2-test.onrender.com/school-cloud .
+Firebase health200, unauthenticated401, foreign-school403, Firebase login200 and own authenticated identity200 PASS. Own profile403: entitlement allowed:false,status:expired,activated:false, expiresAt1792684422069 (22Oct2026 21:23:42.069 IST). Do not bypass/disable licence checks or silently renew.
+Deployed TEST runtime91b4282bf900ade767f5a12567ee22b2543e4a3f is NOT this PR. No new-source deployment or real-school modification occurred. Existing GitHub TEST secrets already work; never request passwords/tokens in chat. Browser console unavailable/timed out; no entitlement document edited.
+The separate readiness workflow correctly fails; do not call all CI green or full real-cloud acceptance passed.
 
-Next precise step: exact new-commit Flutter/CI verification and sanitized isolated readiness report. Fix failures. Existing attendance WorkManager keeps its leased queue authority; no concurrent background dashboard writer was added, because secure-cache writes across foreground/background isolates need a proven shared owner before adding that feature. OS-stopped execution is not guaranteed.
+## Remaining work, dependencies and precise next step
+1. Authorized TEST entitlement renewal and matching isolated deployment are prerequisites to real-cloud acceptance. First inspect TEST management/entitlement state read-only when available; do not expand access or modify production without required authorization.
+2. Run signed cloud/Drive/Sheets compatibility, 1/2/5 physical Windows devices plus Android/Web, provider quota/load and Save-to-ACK-to-apply timing acceptance. Keep synthetic and physical evidence distinct.
+3. Native provider resumable UPLOAD needs a supported negotiated provider contract; current idempotent verified full-upload fallback is retained. Do not mislabel download resume as upload resume.
+4. A new background dashboard writer requires proven shared foreground/background cache ownership/fencing; existing attendance worker is unchanged. OS-stopped execution cannot be guaranteed.
+5. Continue independent owner playbook/integrity regression work if evidence identifies gaps, without creating another engine or making unverified repairs.
 
-### Full record capacity and authoritative-read proof milestone
-Platform/cache commit `d8648181fc3dca8c77a984196ba0eb8f8e8b5ff1`: all four exact-source owner jobs PASS (run 40267593280). Separate real TEST readiness run 40267593349 reached HTTP200 Firebase health, 401 unauthenticated rejection, 403 foreign-school rejection, successful Firebase login and authenticated TEST identity. Authenticated TEST profile read then returned **HTTP403**, reference `ca445898-b109-4ecf-a243-a8f91f2cb284`, on deployed TEST runtime `91b4282bf900ade767f5a12567ee22b2543e4a3f`. No enforcement/licence bypass, renewal or production modification performed. Harness now records sanitized fixed diagnostic codes and entitlement allowed/status/expiry evidence so the exact refusal can be identified without exporting tokens/credentials/PII.
+Optional new Script bundle2026-10-26.1 and corresponding broker are NOT deployed. Existing2026-10-25.2 remains supported via capability fallbacks; preserve URLs, school IDs, Drive roots, credentials/properties. Both capability flags are required for new audit. No main merge, production Render change, private school Script edit, Windows/Android installer publication, website publication or real-school writes authorized/performed.
 
-Local dedicated actual-Script record fixture PASS: **400 school VMs, 100,000 student records committed and authenticated full readback verified, 400 duplicate operations returned original receipts without duplicate rows, foreign-school writes rejected**. Total 305.107s; peak RSS ~209.6MB in this runner. Checkpoints 1000/5000/15000/75000/100000 passed. Schools were simulated sequentially using isolated VMs and Sheet fixtures, not 400 simultaneously active providers or physical PCs. `functions/test/helpers/managed-storage.js` now supports explicit synthetic school IDs; its default school behavior is preserved. New `.github/workflows/sync3-record-capacity.yml` reruns this workload independently on the final source and saves sanitized metrics.
-
-Additional protection: ordinary full/point readback now also rejects canonical row/head drift instead of certifying externally edited data as a verified snapshot. Missing authoritative tombstones retain generation/retired-generation evidence; no missing live row is restored automatically. Proven identical signed full-snapshot lost-ACK head repair remains supported. New regression covers rejection through both read paths. This source addition requires the final exact-source capacity rerun (the local 100k run preceded this last read-proof guard).
-
-Final local normal backend suite: **563/563 PASS**. Added media regression corrupts a persisted partial transfer before restart and proves quarantine/refetch/final hash verification. Final Flutter and full-record CI remain to be checked. Remaining hard acceptance: real TEST profile permission/entitlement gate, optional new Script/broker deployment (not authorized to production), actual Windows/Android devices, provider quota and native Drive upload support. No promise of 100k concurrent users or unlimited free hosting is justified.
-
-### Final mixed-version capability gate
-On implementation `20c9920d2cc0ad94a040a971256d53ecca343df9`, dedicated CI 40268535139 PASS: actual reviewed Script record/CAS/Sheet fixture committed and authenticated-readback verified **100,000 students across 400 isolated school VMs** in 118.451s (runner-specific); 400 duplicate retries preserved original receipts, foreign-school writes rejected, peak RSS ~120.9MB. Sequential simulated schools, not production peak throughput. All four exact-source repair jobs passed on this checkpoint; complete platform/load statuses must be refreshed before final report.
-
-Real TEST diagnosis is now definitive: readiness run 40268535155 logs `allowed:false`, `status:expired`, `activated:false`, expiry **2026-10-22 21:23:42 IST**. Authentication and school identity pass. TEST profile refusal is an entitlement gate, not a reason to disable licence validation. No renewal or bypass performed. Browser console inspection timed out before any document edit. Real TEST code is still runtime `91b4282bf900ade767f5a12567ee22b2543e4a3f`; new PR source has not been deployed there.
-
-Final compatibility correction: optional Sheet audit requires BOTH `sheetIntegrityAuditVersion:1` from the school Script and `brokerSheetIntegrityAuditVersion:1` from the broker. A school updating Script before broker (or vice versa) retains the existing safe fallback. Added mixed-order negotiation regressions. Final local normal backend **564/564 PASS**; exact-source final Flutter/CI still required. No production deployment, release, billing or real-school records changed.
-
-Remaining clearly scoped: provider-native resumable uploads are not offered by the existing Apps Script upload contract (existing idempotent full-upload fallback retained); a future background-dashboard writer needs a proven shared foreground/background cache owner before it can be added safely; physical-device/provider quota/end-to-end latency acceptance and renewal of the isolated TEST entitlement remain. Do not claim full A–J production certification or unlimited free capacity.
-
-### Independent 1/2/5-PC SQLite acceptance addition
-Added `test/windows_multi_pc_sync_test.dart` cases using 1, 2 and 5 independent real SQLite cache files and the actual signed Script VM. All PCs queue disjoint changes to the same teacher against the same cloud baseline while offline; caches reopen and reconnect in reverse order. Assertions preserve original operation IDs, changed-field-only wire payloads, all merged fields, verified individual queue clearing and no-op saves after catch-up. This is sequential simulation through the production storage API, not simultaneous physical machines. Existing two-OS multi-PC CI must pass these new cases before PASS is claimed. No runtime logic was changed by this milestone.
-
-## Exact repository state
-- Repository: `cscticket01-hash/Saarthi_Ai`.
-- Branch: `feature/sync3-unified-repair-20261026`.
-- PR: https://github.com/cscticket01-hash/Saarthi_Ai/pull/135 — OPEN, DRAFT; do not merge or release.
-- Latest implementation commit: `19c6c489788252886dcd6c431b27a67d7b54a683`.
-- Baseline/main verified unchanged: `9c1cacd6cef905490e5249cc0958ae686dc4e68f`.
-- A subsequent documentation-only checkpoint may contain this file. Read current PR head before editing; never overwrite another session's changes.
-
-One existing Sync Engine 3 is the only queue/recovery authority. The removed standalone guardian must not be recreated. No separate repair scheduler, paid AI API, queue reset or school migration was added.
-
-## Implemented and tested milestones
-1. Starting branch `283eeab79ccfeb7a3fcc22fcc554b3856da0c53f`: record-scoped diagnostic timeout/5xx isolation and notification watchdog; all seven original workflows verified successful before continuation.
-2. `c1cfa1b4a2a851186739525fd87377cd3a5179e5`: existing owner gets a 40-second read-only diagnosis deadline, persistent five-attempt automatic budget per operation, exhausted-budget escalation and journal identity guards. Explicit Sync Now may admit another bounded diagnosis but preserves attempt history and exact pending requests. Late readback never acknowledges anything. Media retries classify protected errors, retain review blocks and school-wide authorization/configuration/quota gates across restart/inventory refresh. Broker detects interior/tail hint gaps and malformed metadata. Windows rejects backwards/non-reset epoch/empty advancing cursors before durable persistence and restarts on same-profile school change.
-3. `24057a1a9d261de24d6ff414880757e71e691dee`: corrected CI fixtures, without weakening assertions: compare reconstructed Timestamp values, not object identity; use consistent package imports for typed media exceptions. Initial CI had 36 PASS / 11 FAIL for these fixture errors; corrected runs passed.
-4. `189a0fcd8997853d0641e1958558e0c65a8b9fd1`: existing `prepareManagedBatch` uses a durable school/profile-specific 2–10 record window. Failed/partial or >=8s requests halve it; complete <=2s responses grow by one. Existing 250KB bound, capability gate, parent/delete ordering, frozen request IDs and individual receipts remain authoritative. Control Center shows actual broker-request timing, observation time, next window and successful receipt counts; it does not claim downstream device apply latency.
-5. `b8d57f0df580b80269649baf781f3b7296997050`: negotiated durable metadata replay pages in the existing Firestore hint owner, atomically with the legacy hot window. <=64 hints/page; <=32 retained pages/school/epoch; <=64 events per response and at most two page reads/request. Up to 2048 recent hints are retained (oldest partial page can reduce effective history). Old clients/brokers use the existing broad reconciliation fallback. Missing/foreign/corrupt/expired pages and old-publisher gaps never become fake ACKs or inferred deletions. Windows requests replay using its existing durable inbox and independent applied progress.
-6. `19c6c489788252886dcd6c431b27a67d7b54a683`: atomic replay fault fixture models rollback and enforces Firestore reads-before-writes. Injected page-write interruption leaves the original hint head unchanged; exact retry advances once. Legacy transaction adapters without delete retain the original bounded hot window. Android dashboard quota deadline/attempt state persists in the existing school/person-bound secure cache. Duplicate notifications/resume/restart cannot bypass provider cooldown or fabricate a new verified dashboard timestamp. Existing recovery timer remains the owner; no claim of execution while the OS stops the app.
-
-## Modified files
-- Owner/recovery: `lib/windows_pending_school_sync.dart`, `lib/windows_sync_engine.dart`, `lib/sync_recovery_policy.dart`.
-- Transport/media/monitor: `lib/windows_firebase_sync.dart`, `lib/windows_binary_downloads.dart`, `lib/windows_remote_change_feed.dart`, `lib/windows_sync_control_center.dart`.
-- Android: `lib/mobile/school_session.dart`.
-- Broker: `functions/school-change-feed.js`, `functions/managed-schools.js`.
-- Tests: `functions/test/school-change-feed.test.js`, `test/windows_sync_intelligent_repair_test.dart`, `test/windows_binary_downloads_test.dart`, `test/windows_remote_change_feed_test.dart`, `test/sync_recovery_policy_test.dart`, `test/mobile_smart_sync_test.dart`.
-- Review workflow: `.github/workflows/sync3-unified-repair-review.yml`.
-
-## Exact verification on implementation commit 19c6c489
-- Full backend: **547/547 PASS** locally and in CI. OAuth broker/download suite: **19/19 PASS** in platform backend job.
-- Four exact-source jobs: **74 tests PASS per job**, Windows JSON, Windows SQLite, Linux JSON, Linux SQLite. Push run https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261008175 and PR run https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012520 both SUCCESS.
-- Analyzer has zero errors. Ten existing warnings/info were reported under the repository's existing non-fatal warning/info policy (unnecessary imports/type checks/non-null assertions); no checks were disabled to hide failures.
-- JSON school storage SUCCESS: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012629.
-- Document conflict / student Sheet SUCCESS: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012631.
-- Sheet recovery / student lifecycle SUCCESS: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012610.
-- Duplicate Save / safe replacement SUCCESS: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012527.
-- Standalone Self-Healing removal SUCCESS: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012525.
-- Multi-PC review: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012554. SUCCESS on Windows and Linux: each job passed 12 correctness tests, 2 load tests and 102 retained queue/scheduler regressions.
-- Platform review: https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/40261012518. SUCCESS: backend, school-security, Android unsigned preview, Web build, Windows compile, real OS SQLite crash recovery and fresh-start/restart smoke checks all completed successfully. Private isolated-test-cloud job SKIPPED by existing branch gate; not real-cloud acceptance.
-- `git diff --check` and Node syntax checks PASS. No local Flutter SDK; Flutter evidence comes from exact-source GitHub Actions, not a fabricated local test run.
-
-## Synthetic measurements — never present as real provider/device speed
-- 15,000 notification commits, five reconnect schedules: 17,384 exact catch-ups, 136 broad gap reconciliations, ~5818ms in one local in-memory Firestore simulation. At most 33 retained head/page documents. This measures metadata only.
-- Negotiated replay: 1000 hints caught up in 16 bounded responses/client after broker restart, tested with 1, 2 and 5 independent cursors; legacy reset, expiry, missing/foreign/truncated pages tested.
-- Linux two independent SQLite caches plus actual Apps Script source in a synthetic VM: 1000 students upload/ACK 7.611s, verified apply 0.667s; 5000 students upload/ACK 119.489s, verified apply 2.740s. 12 correctness, 2 load and 102 retained regression tests passed in that job. Not physical PCs or cloud latency.
-- Windows two-SQLite-PC synthetic VM: 1000 students upload/ACK 15.955s, verified apply 1.028s; 5000 students upload/ACK 166.260s, verified apply 7.868s. Runner/fixture measurements, not physical networking.
-- Existing fsync-backed attendance queue component, mocked remote ACK: 15,000 submitted/completed, zero data loss, zero final pending, 1000 duplicate submissions prevented, total 3.185s, enqueue durable-accept p95 97.56ms. This is not Google/Firebase acknowledgement latency or a measured improvement over a baseline. Existing 1k/5k/10k/25k/50k component cases also passed.
-- No measured real-world speedup, Android applied latency, device availability or provider quota headroom is claimed.
-
-## Preserved safety and compatibility
-Strict school/profile/device authorization; 1–5 Windows PC policy; offline storage; durable queues; original operation IDs/times/revisions; exact frozen retry wire data; no-op saves; immediate changed-record dispatch and hourly idle reconciliation; no fake ACK; no pending deletion without verified owner acknowledgement; no blind newer-cloud overwrite; same-field review; protected financial event IDs; student deletion generations and recycle retention; exact media hashes and previous verified file fallback.
-
-A received hint cursor is not an applied record/ACK cursor. Replay emits hints only; authenticated authoritative point reads/deltas remain mandatory. Explicit tombstones govern deletions. Missing local/cloud rows are not proof of deletion or permission to resurrect data. Actual true conflicts, auth, unknown identity, unverified content and quota constraints are never silently bypassed.
-
-Current Apps Script baseline remains `2026-10-25.2`; this continuation did not modify the Script source or deploy any school project. Batch capability negotiation and old transport fallbacks remain. Preserve existing school IDs, Drive roots, Script properties/secrets and `/exec` URLs. The independently deployed production-used broker branch was previously at `533c49d0a9abb9abf67fc05894e3ba9d42549490`; do not assume this PR is deployed there.
-
-Replay adds a page write alongside the existing hint-head write and an expired-page delete on rotation, within existing Firestore. Provider quotas/contention/retention behavior require isolated real-cloud acceptance before rollout. No extra service was provisioned.
-
-## Remaining work in execution order — unfinished engineering, not claimed blocked by permissions
-1. Refresh final CI on the exact current PR source; diagnose failures before new changes. Keep draft.
-2. Design and implement bounded external Google Sheet edits/readable-projection auditing against existing authoritative revision/payload proofs, including metadata bypass and deleted-row protection. Do not treat a missing point read as a delete or automatically import unverified external edits. Current derived readable fields are not an authorized write API.
-3. Extend the existing owner's allowlisted repair playbooks/postconditions and tests for cache corruption/rebuild, missing-ACK evidence, notification delivery and media recovery. Distinguish diagnosis, retry admission and verified repair. Do not create another engine, scheduler or queue writer.
-4. Provider-capable resumable transfer journals/offsets/chunk integrity with feature negotiation and duplicate-safe full-transfer fallback. Current verified complete-file retry is **not** resumable upload/download; originals must remain untouched.
-5. Android/Web applied-state convergence and durable page checkpoint/resume, broader persistent retry limits/background lifecycle ownership and OS constraints. Existing quota improvement is not full background sync implementation.
-6. Measure changed-record priority, batch pressure and end-to-end Save → broker → durable Script ACK → Android/Web apply, with truthful p50/p95/p99 and quota evidence; keep the existing parent/file/delete dependency rules.
-7. Expand full-record 15k acceptance (current 15k tests are notifications/queue components); injected disconnects/restart/401/403/409/429/502/503/timeouts, 24h recycle boundary, school isolation and media interruption across all relevant owners.
-8. Real two/five physical Windows PCs plus Android/Web, isolated signed cloud/Drive/Sheets quota tests and existing-school `.2` compatibility acceptance. Physical devices/private school credentials were not accessed. Do not claim their pending rows are cleared.
-
-## Final checkpoint
-All eight unique review workflows (plus duplicate exact-source push review) completed SUCCESS on implementation commit `19c6c489788252886dcd6c431b27a67d7b54a683`. This documentation-only checkpoint changes no runtime/test/workflow code; subsequent CI on the documentation head is separate. PR remains DRAFT and full-mission release acceptance is still incomplete. Final tree was compared with the GitHub implementation before checkpointing; unrelated older worktrees were preserved.
-
-## Exact next implementation step
-After current CI finishes, start item 2 with `VS_managedDelta`, `VS_sheetItem`, `VS_recordHead`, `VS_sheetDecode`, `VS_seedRecordHeads`, existing recovery routes and `functions/test/helpers/managed-storage.js`. Read existing rules first. Design a bounded read-only audit/report before any automatic mutation; account for interrupted writer/head updates and deliberate tombstones, so an external edit is not confused with safe lost-ACK replay. Add synthetic VM fixtures and compatibility tests, then regenerate the Script bundle through the existing builder only if source changes. New capabilities must be optional; no existing private deployment change is authorized.
-
-## Release gates
-Not release-ready for the complete A–J mission. Engineering and physical/cloud acceptance above remain. No main merge, Windows/Android release, website publication, production Render deployment, private Apps Script modification or real-school writes were performed or are authorized by the current request. Complete independent development and maintain this handoff after every milestone; never ask for secrets in chat.
+Release status: DRAFT; code/regression CI PASS on implementation459d34f, separate real TEST acceptance BLOCKED. Entire A–J production certification is incomplete. The next documentation-only head may retrigger workflows; distinguish its status from this verified implementation.
