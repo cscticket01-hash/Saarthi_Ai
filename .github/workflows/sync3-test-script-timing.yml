@@ -1,0 +1,19 @@
+name: TEST-only Apps Script latency instrumentation review
+on:
+  push:
+    branches: [feature/sync3-unified-repair-20261026]
+    paths:
+      - 'school-backend/managed/SaarthiManagedAll.gs'
+      - 'functions/test/sync3-test-timing.test.js'
+      - '.github/workflows/sync3-test-script-timing.yml'
+permissions:
+  contents: read
+jobs:
+  test-only-observability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test functions/test/sync3-test-timing.test.js

@@ -6754,6 +6754,11 @@ function VS_studentReadableBackfill(store) {
   });return remaining;
 }
 function VS_sheetItem(store,id) {
+  const started=VS_TEST_SYNC_TIMING?Date.now():0;
+  try{return VS_sheetItemCore(store,id);}
+  finally{if(started)VS_testSyncTimingAdd('sheetSearchMs',started);}
+}
+function VS_sheetItemCore(store,id) {
   if(store.json){const records=VS_jsonRead(store).records;return Object.prototype.hasOwnProperty.call(records,id)?{id:id,schoolId:store.school,data:records[id]}:null;}
   if(store.partitions)return VS_layoutItem(store,id);
   const key=Utilities.base64EncodeWebSafe(id),last=store.sheet.getLastRow();
@@ -6798,6 +6803,7 @@ function VS_studentReadable(store,item,row) {
   if(cursor>=row){p.setProperty(key,String(Math.max(cursor,row+1)));if(cursor>=store.sheet.getLastRow()&&store.sheet.hideColumns)store.sheet.hideColumns(1,33);}
 }
 function VS_sheetPut(store,item) {
+  if(VS_TEST_SYNC_TIMING)VS_TEST_SYNC_TIMING.storageMode=store.json?'json':store.partitions?'partitioned_sheets':'sheets';
   if(store.json)return VS_jsonPut(store,item);
   if(store.partitions)return VS_layoutPut(store,item);
   const text=JSON.stringify({id:item.id,schoolId:item.schoolId,data:item.data,...(item.layoutRedirect?{layoutRedirect:item.layoutRedirect}:{}),...(item.layoutPrevious?{layoutPrevious:item.layoutPrevious}:{})});
@@ -6811,13 +6817,19 @@ function VS_sheetPut(store,item) {
   for(let n=0;n<27;n++){const part=text.slice(n*20000,(n+1)*20000);values.push(part?JSON.stringify(part):'');}
   const row=old?old.row:Math.max(2,store.sheet.getLastRow()+1);
   if(row>store.sheet.getMaxRows())store.sheet.insertRowsAfter(store.sheet.getMaxRows(),Math.max(100,row-store.sheet.getMaxRows()));
+  const writeStarted=VS_TEST_SYNC_TIMING?Date.now():0;
   store.sheet.getRange(row,1,1,33).setValues([values]);SpreadsheetApp.flush();
+  if(writeStarted)VS_testSyncTimingAdd('sheetWriteFlushMs',writeStarted);
+  const verifyStarted=VS_TEST_SYNC_TIMING?Date.now():0;
   const saved=VS_sheetItem(store,item.id);
   if(!saved||JSON.stringify(saved.data)!==JSON.stringify(data))throw new Error('School record verification failed');
+  if(verifyStarted)VS_testSyncTimingAdd('finalVerificationMs',verifyStarted);
+  const afterVerify=VS_TEST_SYNC_TIMING?Date.now():0;
   VS_saveRecordHead(store,saved);
   VS_recordJsonBackup(store,saved);
   VS_refreshStudentReadable(store,item,row);
   VS_refreshRecordReadable(store,item,row);
+  if(afterVerify)VS_testSyncTimingAdd('postVerificationMs',afterVerify);
 }
 function VS_sheetRecords(store) {
   if(store.json)return VS_jsonRead(store).records;
@@ -7016,10 +7028,35 @@ function VS_syncRequestShape(b) {
   if(b.operation==='write')Object.keys(b.data||{}).forEach(k=>{if(['_syncRevision','_syncOperationId','_syncRequestHash','_syncDeleted','_syncDeletedFileId','_syncFileCleanupComplete','_syncFieldRevisions'].indexOf(k)<0)data[k]=b.data[k];});
   return {operation:b.operation,data:data};
 }
+// TEST-only duration diagnostics. No change to lock ownership, CAS,
+// ACK rules, student content, queue processing or storage. Never enabled for
+// real schools; only isolated synthetic version-2 TEST notice writes qualify.
+var VS_TEST_SYNC_TIMING=null;
+function VS_testSyncTimingAdd(key,start){
+  if(VS_TEST_SYNC_TIMING)VS_TEST_SYNC_TIMING[key]=(VS_TEST_SYNC_TIMING[key]||0)+Math.max(0,Date.now()-start);
+}
 function VS_managedRecord(b) {
   VS_BACKUP_READ_CACHE=null;
-  const lock=LockService.getScriptLock();lock.waitLock(30000);
-  try{return VS_managedRecordUnlocked(b);}finally{lock.releaseLock();}
+  const p=PropertiesService.getScriptProperties();
+  const timed=p.getProperty('VS_MANAGED_SCHOOL_ID')==='vs-db8afb01a3be46a983c8284714d06e5d'&&
+    b.syncProtocol===2&&b.operation==='write'&&b.collection==='school_notices'&&
+    b.data&&b.data.syntheticTest===true;
+  const timing=timed?{version:1,scope:'isolated_synthetic_TEST_only',
+    lockWaitMs:0,sheetSearchMs:0,sheetWriteFlushMs:0,finalVerificationMs:0,
+    postVerificationMs:0,storageMode:'unknown',totalScriptMs:0}:null;
+  const began=Date.now(),lock=LockService.getScriptLock();
+  // Acquire the EXACT SAME lock with the EXACT SAME deadline.
+  const waiting=Date.now();lock.waitLock(30000);
+  if(timing)timing.lockWaitMs=Date.now()-waiting;
+  try{
+    if(timing)VS_TEST_SYNC_TIMING=timing;
+    const result=VS_managedRecordUnlocked(b);
+    if(timing){timing.totalScriptMs=Date.now()-began;result.testScriptTiming=timing;}
+    return result;
+  }finally{
+    VS_TEST_SYNC_TIMING=null;
+    lock.releaseLock();
+  }
 }
 // Capability-gated field edits. Same-field stale retries never overwrite a
 // later edit, including an A->B->A change. Per-field revisions prevent ABA.
@@ -7971,9 +8008,12 @@ function VS_jsonStore(collection){
   return store;
 }
 function VS_jsonPut(store,item){
+  const commitStarted=VS_TEST_SYNC_TIMING?Date.now():0;
+  if(VS_TEST_SYNC_TIMING)VS_TEST_SYNC_TIMING.storageMode='json';
   if(item.schoolId!==store.school||!item.data||item.data.schoolId!==store.school)throw new Error('Foreign school record');
   if(JSON.stringify(item).length>512*1024)throw new Error('Record too large; upload files separately');
   const records=VS_jsonRead(store).records;records[item.id]=item.data;VS_jsonCommit(store,records);
+  if(commitStarted)VS_testSyncTimingAdd('jsonReadCommitMs',commitStarted);
 }
 
 // Readable non-student columns derive only from the committed canonical row.
