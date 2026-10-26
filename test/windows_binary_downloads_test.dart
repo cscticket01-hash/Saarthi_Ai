@@ -354,8 +354,9 @@ void main() {
     final restored = manager();
     await restored.load();
     expect(restored.entries.single['transferOffset'], 256 * 1024);
-    expect(await restored.repairNext(), false); // Respect persisted cooldown.
-    clock += 6000;
+    // The injected four-minute elapsed clock jump already exceeds the
+    // five-second durable retry cooldown of the FIRST owner attempt. The
+    // restored owner must therefore resume immediately, not wait again.
     expect(await restored.repairNext(), true);
     expect(offsets, [0, 262144, 524288]);
     expect(await File((await restored.verifiedPath('school_file_1'))!).readAsBytes(), original);
