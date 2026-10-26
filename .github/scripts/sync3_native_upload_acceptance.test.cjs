@@ -46,3 +46,8 @@ test('foreign-school progress and corrupted readback never pass',async()=>{
   const f=fixture(change),r=await acceptance({env,request:f.request});assert.equal(r.status,'FAIL');
  }
 });
+
+test('HTTP rejection retains only sanitized status, allowlisted code and request ID',async()=>{
+ const f=fixture(),request=async(url,body,token)=>body?.operation==='part'?{status:413,data:{success:false,code:'REQUEST_TOO_LARGE',requestId:'12345678-1234-1234-1234-123456789abc',message:'SECRET_RESPONSE',token:'SECRET_TOKEN'}}:f.request(url,body,token);
+ const r=await acceptance({env,request});assert.equal(r.status,'FAIL');assert.deepEqual(r.failure,{http:413,code:'REQUEST_TOO_LARGE',requestId:'12345678-1234-1234-1234-123456789abc'});assert(!JSON.stringify(r).includes('SECRET'));
+});

@@ -1,9 +1,0 @@
-# Shared mobile cache ownership
-
-Android now uses one SQLite snapshot with authenticated AES-256-GCM encryption. The encryption key stays in platform secure storage. Independent foreground/WorkManager connections use an exclusive SQLite transaction and snapshot-version compare-and-swap; reading a newer snapshot never grants permission to write an older payload. Writes already queued by the same owner retain their order. Session deletion leaves a versioned tombstone so a stale worker cannot restore a logged-out identity. An older account cannot clear a newer different-account snapshot.
-
-The existing secure-storage session migrates once inside the database transaction; no raw QR, password or session token enters SQLite. Ciphertext integrity errors fail closed without replacing the row. A new app worker adopts the currently verified snapshot before building its next delta checkpoint. Failed cache commits remain unacknowledged and retry through the existing bounded SchoolSession policy.
-
-The existing attendance WorkManager invocation also performs SchoolSession's existing hourly-idle dashboard reconciliation, after attendance flush. No second worker, repair engine, scheduler or independent dashboard ACK path is added. The existing fifteen-minute OS invocation is not a promise of fifteen-minute execution: Android may defer or stop tasks. In-memory retry timers and transient clients/connections are closed at task completion; pending attendance and verified data remain durable.
-
-Tests use independent SQLite connections for stale foreground/background writes, late logout, account switch, restart, encrypted persistence and corrupt-ciphertext retention, plus SchoolSession integration. These are automated storage/runtime tests; actual Android background, force-stop, reboot and battery-optimization acceptance is still required before production rollout.

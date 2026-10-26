@@ -44,9 +44,14 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       for await(const chunk of req){bytes+=chunk.length;if(bytes>28*1024*1024 || bytes>256*1024&&!req.headers.authorization)return send(413,{success:false,message:'Request is too large'});chunks.push(chunk);}
       let body;
       try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return send(bytes>256*1024?413:400,{success:false,message:bytes>256*1024?'Request is too large':'Invalid JSON'});}
-      if(bytes>256*1024&&body?.action!=='managed/file/upload')return send(413,{success:false,message:'Request is too large'});
       operation=/^(managed\/|developer\/managed\/)[a-zA-Z0-9_/-]{1,80}$/.test(body?.action||'')?body.action:undefined;
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
+      // Native parts carry up to 512 KiB binary as <=700000 base64 bytes.
+      // Keep ordinary JSON at 256 KiB and the existing full-upload cap unchanged.
+      const nativePart=body?.action==='managed/file/upload/resumable'&&body.operation==='part';
+      const bodyLimit=body?.action==='managed/file/upload'?28*1024*1024:nativePart?700000+4096:256*1024;
+      if(bytes>bodyLimit||nativePart&&(typeof body.base64!=='string'||body.base64.length>700000))
+        return send(413,{success:false,code:'REQUEST_TOO_LARGE',message:'Request is too large'});
       // First Windows login has no saved school ID yet. Bind its authenticated
       // session lookup to the configured TEST school; membership must still match.
       if(testSchoolId&&['managed/session','managed/device/register'].includes(body?.action)&&body.schoolId==null)

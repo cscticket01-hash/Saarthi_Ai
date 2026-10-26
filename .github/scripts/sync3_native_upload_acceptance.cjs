@@ -26,7 +26,12 @@ async function acceptance({env=process.env,request=transport,report={checks:[]}}
   let token;
   async function call(body){
    const start=performance.now();const r=await request(ENDPOINT,{...body,schoolId:SCHOOL},token);
-   requireCheck(r.status===200&&r.data&&r.data.success===true&&r.data.schoolId===SCHOOL,stage);
+   if(r.status!==200||!r.data||r.data.success!==true||r.data.schoolId!==SCHOOL){
+    report.failure={http:Number.isInteger(r.status)&&r.status>=100&&r.status<=599?r.status:null,
+     ...(typeof r.data?.code==='string'&&/^[A-Z][A-Z0-9_]{1,79}$/.test(r.data.code)?{code:r.data.code}:{}),
+     ...(typeof r.data?.requestId==='string'&&/^[a-f0-9-]{36}$/.test(r.data.requestId)?{requestId:r.data.requestId}:{})};
+    throw new Error(stage);
+   }
    report.checks.push({name:stage,status:'PASS',elapsedMs:Math.round(performance.now()-start)});return r.data;
   }
   stage='matching TEST runtime';let r=await request(ENDPOINT+'/healthz');
