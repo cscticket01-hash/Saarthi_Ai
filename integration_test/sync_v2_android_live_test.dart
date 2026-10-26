@@ -208,13 +208,22 @@ void main() {
           metrics['androidQueueToVerifiedCloudReadMs'] =
               ack.elapsedMilliseconds;
           print('VS_ANDROID_TEST_STAGE attendance_verified');
-          await restored.saveAttendance(
-              {'latitude': 24.8, 'longitude': 92.7, 'accuracy': 5},
-              captured,
-              'entry');
+          // A verified check-in must lock out same-day duplicate captures,
+          // even if the retry uses the original timestamp and coordinates.
+          // Do not bypass the real attendance safety policy in acceptance.
+          await expectLater(
+              restored.saveAttendance(
+                  {'latitude': 24.8, 'longitude': 92.7, 'accuracy': 5},
+                  captured,
+                  'entry'),
+              throwsA(isA<StateError>().having(
+                  (error) => error.message,
+                  'same-day attendance lock',
+                  contains('Locked until tomorrow'))));
           await restored.flushAttendance();
           expect(restored.attendancePending,
-              0); // Native SQLite duplicate does not create a second capture.
+              0); // Native SQLite must have no second queued operation.
+          metrics['sameDayDuplicateCaptureRejected'] = true;
           await SchoolSession.instance.restore();
           expect(SchoolSession.instance.loggedIn, true);
           metrics['nativeCloudChecks'] = 'PASS';
