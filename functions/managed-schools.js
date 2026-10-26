@@ -205,11 +205,14 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
  // an unauthenticated request's schoolId or arbitrary Script response.
  const syncEvidenceWrites=new Map();
  async function saveSyncEvidence(schoolId,evidence){
-  const prior=syncEvidenceWrites.get(schoolId);if(prior&&prior.outcome===evidence.outcome&&now()-prior.at<60000)return;
-  if(syncEvidenceWrites.size>=1000)syncEvidenceWrites.delete(syncEvidenceWrites.keys().next().value);
-  syncEvidenceWrites.set(schoolId,{at:now(),outcome:evidence.outcome});
+  const signature=JSON.stringify([evidence.outcome,evidence.stage,evidence.protocol??null,evidence.code??null]);
+  const prior=syncEvidenceWrites.get(schoolId);if(prior&&prior.signature===signature&&now()-prior.at<60000)return;
   // Monitoring is best-effort; its failure never reverses a verified storage ACK.
-  try{await db.doc('platform_schools/'+schoolId).update({syncServerEvidence:{version:1,observedAt:now(),...evidence}});}catch(_){}
+  try{
+   await db.doc('platform_schools/'+schoolId).update({syncServerEvidence:{version:1,observedAt:now(),...evidence}});
+   if(syncEvidenceWrites.size>=1000)syncEvidenceWrites.delete(syncEvidenceWrites.keys().next().value);
+   syncEvidenceWrites.set(schoolId,{at:now(),signature});
+  }catch(_){}
  }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){

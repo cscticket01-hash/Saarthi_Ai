@@ -67,3 +67,22 @@ test('optional Windows fleet metadata is bounded, tenant scoped and never retain
  const next=await f.call({action:'managed/sync/status',report:base});assert.equal(next.latestWindowsReport.appVersion,undefined);
  assert.equal(f.docs.get('platform_schools/'+B).syncWindowsReport,undefined);
 });
+
+test('monitor records protocol transitions immediately and throttles identical evidence only',async()=>{
+ let protocol=1;
+ const f=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,syncProtocol:protocol,records:{}})}));
+ const read=()=>f.call({action:'managed/records',operation:'read',collection:'school_settings',syncProtocol:2});
+ await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.protocol,1);
+ protocol=2;await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.protocol,2);
+ let writes=0;const doc=f.db.doc;f.db.doc=path=>{const ref=doc(path);const update=ref.update;ref.update=async value=>{writes++;return update(value);};return ref;};
+ await read();assert.equal(writes,0,'Repeated identical evidence remains bounded');
+});
+
+test('failed monitoring persistence does not suppress the next verified response',async()=>{
+ const f=fixture(async(_,options)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(options.body).schoolId,success:true,syncProtocol:2,records:{}})}));
+ const doc=f.db.doc;let failOnce=true;
+ f.db.doc=path=>{const ref=doc(path);if(path==='platform_schools/'+A){const update=ref.update;ref.update=async value=>{if(failOnce){failOnce=false;throw Error('Transient metadata outage');}return update(value);};}return ref;};
+ const read=()=>f.call({action:'managed/records',operation:'read',collection:'school_settings',syncProtocol:2});
+ await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence,null);
+ await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.protocol,2);
+});
