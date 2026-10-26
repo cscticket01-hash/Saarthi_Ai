@@ -354,9 +354,12 @@ void main() {
     final restored = manager();
     await restored.load();
     expect(restored.entries.single['transferOffset'], 256 * 1024);
-    // The injected four-minute elapsed clock jump already exceeds the
-    // five-second durable retry cooldown of the FIRST owner attempt. The
-    // restored owner must therefore resume immediately, not wait again.
+    // Verified progress relinquishes the time slice WITHOUT exhausting the
+    // three-attempt outage retry budget, but enforces a new five-second
+    // cooldown before resuming on the SAME durable file identity.
+    expect(restored.entries.single['retryAttempts'], 0);
+    expect(await restored.repairNext(), false);
+    clock += 6000;
     expect(await restored.repairNext(), true);
     expect(offsets, [0, 262144, 524288]);
     expect(await File((await restored.verifiedPath('school_file_1'))!).readAsBytes(), original);

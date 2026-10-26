@@ -9,6 +9,12 @@ import 'sync_recovery_policy.dart';
 import 'windows_sync_recovery.dart';
 import 'windows_connect/central_school_cloud.dart';
 
+// Yielding an already-verified prefix is healthy, bounded progress rather than
+// an outage. It must not consume the three automatic network-error attempts.
+class _VerifiedPrefixDeadline extends TimeoutException {
+  _VerifiedPrefixDeadline() : super('Media attempt deadline reached; verified prefix retained.');
+}
+
 /// School-bound, content-addressed copies. Never modifies original files,
 /// record references, queues or receipts. Metadata alone is never available.
 class WindowsBinaryDownloads {
@@ -416,7 +422,7 @@ class WindowsBinaryDownloads {
         _guard();
         final remaining = deadline.difference(now());
         if (remaining <= Duration.zero) {
-          throw TimeoutException('Media repair attempt deadline reached; verified prefix retained.');
+          throw _VerifiedPrefixDeadline();
         }
         final response = await request({
           'action': 'managed/file/download/part', 'schoolId': schoolId,
@@ -470,6 +476,7 @@ class WindowsBinaryDownloads {
       item['retryAttempts'] = 0;
       item.remove('automaticRetryBlocked');
     }
+    final previousVerifiedOffset = item['transferOffset'] as int? ?? 0;
     final attempt = (item['retryAttempts'] as int? ?? 0) + 1;
     final delaySeconds = min(300, 5 * pow(2, attempt - 1)).toDouble();
     final random = jitter().clamp(0.0, 1.0);
@@ -535,6 +542,14 @@ class WindowsBinaryDownloads {
       item['failure'] = error is TimeoutException ? 'timeout' : 'download_unverified';
       final decision = windowsSyncRecovery(error);
       item['failureCategory'] = decision.kind.name;
+      if (error is _VerifiedPrefixDeadline &&
+          (item['transferOffset'] as int? ?? 0) > previousVerifiedOffset) {
+        // A hash-verified, fsynced prefix advanced this school/file/version.
+        // Release only the time-slice budget; actual transport failures still
+        // consume the original bounded automatic retry allowance.
+        item['retryAttempts'] = 0;
+        item['retryAt'] = now().add(const Duration(seconds: 5)).millisecondsSinceEpoch;
+      }
       if ({
         SyncFailureKind.authorization,
         SyncFailureKind.configuration,
