@@ -12,6 +12,14 @@ import '../lib/windows_sync_engine.dart';
 import '../lib/windows_firebase_sync.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 
+// Compare persisted values, including timestamps reconstructed after disk reads.
+Object? durableValue(Object? value) {
+  if (value is Timestamp) return value.millisecondsSinceEpoch;
+  if (value is Map) return value.map((key, entry) => MapEntry(key, durableValue(entry)));
+  if (value is List) return value.map(durableValue).toList();
+  return value;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -371,7 +379,7 @@ void main() {
       'records': {'hung': record('hung', 'r2')},
     });
     await Future<void>.delayed(Duration.zero);
-    expect((await row.reference.get()).data(), original);
+    expect(durableValue((await row.reference.get()).data()), durableValue(original));
     expect((await ref.get()).data()?['name'], 'Local retained');
   });
 
@@ -397,14 +405,14 @@ void main() {
     expect(reads, WindowsPendingSchoolSync.automaticRepairProbeLimit);
     final journal = db.collection('_windows_sync_status').doc('repair-${original['operationId']}');
     expect((await journal.get()).data()?['outcome'], 'probe_budget_exhausted');
-    expect((await row.reference.get()).data(), original);
+    expect(durableValue((await row.reference.get()).data()), durableValue(original));
     await WindowsPendingSchoolSync.repair(
       profileId: db.activeProfileId, school: school, read: read,
       now: () => clock, explicitRetry: true,
     );
     expect(reads, WindowsPendingSchoolSync.automaticRepairProbeLimit + 1);
     expect((await journal.get()).data()?['attempts'], reads);
-    expect((await row.reference.get()).data(), original);
+    expect(durableValue((await row.reference.get()).data()), durableValue(original));
   });
 
   for (final status in [401, 403, 409, 429]) {
@@ -419,7 +427,7 @@ void main() {
         profileId: db.activeProfileId, school: school,
         read: (_, _) async => throw CentralCloudException(status, 'school_cloud', 'synthetic'),
       ), throwsA(isA<CentralCloudException>()));
-      expect((await row.reference.get()).data(), original);
+      expect(durableValue((await row.reference.get()).data()), durableValue(original));
       expect((await ref.get()).data()?['name'], 'Unsynced edit');
     });
   }

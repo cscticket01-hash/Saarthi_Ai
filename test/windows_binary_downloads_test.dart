@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/windows_binary_downloads.dart';
-import '../lib/windows_connect/central_school_cloud.dart';
+import 'package:saarthi_ai/windows_connect/central_school_cloud.dart';
 
 void main() {
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';

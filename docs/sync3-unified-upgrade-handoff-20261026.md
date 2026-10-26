@@ -27,6 +27,9 @@ Modified sources: `lib/windows_pending_school_sync.dart`, `lib/windows_sync_engi
 
 Next precise step: inspect exact new-commit CI; fix every failure. Then continue phase B durable partitioned event retention, phase C measured adaptive transport / provider media / bounded Sheets external-edit audits, and phase D mobile/web and physical acceptance. The current 64-event feed intentionally retains broad fallback; durable partitioned replay is **not implemented** by this milestone. No production merge/release/deploy or private school changes are authorized.
 
+### CI correction after c1cfa1b4
+Exact-commit Linux jobs on run 40259335853 reported 36 PASS / 11 FAIL, all in newly added assertions/fixtures: six queue comparisons used object identity for reconstructed Timestamp values; five media fixtures mixed package and file import URIs, creating distinct exception class identities. Corrected tests to compare full durable queue values including timestamp milliseconds and to import the typed exception through the same package URI as the media source. No queue fields or security assertions were removed; runtime validation remains unchanged. Re-run exact-commit CI before calling this milestone verified.
+
 ## Preserve the original rules
 - School/profile identity isolation and signed authorization; never infer/migrate a school ID.
 - Initial sync + hourly idle reconciliation, immediate changed-record dispatch, no-op Save, any-date same-record edits, first committed same-key Add.
