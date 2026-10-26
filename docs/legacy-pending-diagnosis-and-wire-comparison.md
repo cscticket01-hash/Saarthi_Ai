@@ -1,7 +1,0 @@
-# Legacy pending diagnosis and wire comparison
-
-Authenticated conflict review now binds a missing payload school ID to the verified queue school, while retaining explicit foreign identities. Exact timestamp wire/storage envelopes normalize to epoch milliseconds; ordinary strings/maps and actual date changes remain significant. Directory conflict review lists changed business fields instead of misleading raw local/cloud hashes. Conflicted rows are compared again even when their revision equals their old baseline.
-
-Only explicit Sync Now can re-diagnose a legacy needsAttention record with no saved category. It replays the exact existing operation ID, school and expected revision through the existing versioned sender. It never clears the row, rebases onto a cloud revision, overwrites an unrelated person or fabricates an ACK. Normal background sync and known permission/configuration states keep their existing admission rules. A verified real server ACK clears only the exact operation. Failures persist bounded diagnostic code, HTTP status and stage under the original writer CAS; later local edits cannot be overwritten by late failures. Existing failure metadata survives subsequent blocked edits.
-
-Apps Script code is unchanged. Tests use synthetic records on JSON/SQLite and the real Apps Script code in a Node VM, including an already committed request whose ACK was lost. Original school records and the deployed Script version cannot be verified from GitHub or screenshots alone; real differing versions still need an operator choice.

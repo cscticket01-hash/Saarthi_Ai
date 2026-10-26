@@ -1,0 +1,45 @@
+name: Sync 3 isolated TEST native upload acceptance
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/workflows/sync3-native-upload-acceptance.yml'
+      - '.github/scripts/sync3_native_upload_acceptance.cjs'
+      - '.github/scripts/sync3_native_upload_acceptance.test.cjs'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-isolated-native-upload-20261026
+  cancel-in-progress: false
+jobs:
+  isolated-native-upload:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact deployed and reviewed TEST source
+        uses: actions/checkout@v4
+        with:
+          ref: b68bf194a49899232544ea9ea16f5e64410aad15
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify native acceptance harness safeguards
+        run: node --test .github/scripts/sync3_native_upload_acceptance.test.cjs
+      - name: Verify one retained synthetic native upload in the isolated TEST school
+        env:
+          VS_EXPECTED_TEST_RUNTIME: b68bf194a49899232544ea9ea16f5e64410aad15
+          VS_TEST_NATIVE_UPLOAD_ACCEPTANCE: '1'
+          VS_TEST_NATIVE_UPLOAD_RUN_ID: sync3-native-20261026-b68bf194
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/sync3_native_upload_acceptance.cjs
+      - name: Upload sanitized TEST-only acceptance report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-isolated-native-upload-20261026
+          path: build/cloud-prerequisites/native-upload-acceptance.json
+          if-no-files-found: warn
+          retention-days: 7
