@@ -83,7 +83,9 @@ void main() {
    bool isBinaryDownload(Map<String,dynamic> body)=>
      body['action']=='managed/file/download'||body['action']=='managed/file/download/part';
    Future<Map<String,dynamic>> binaryRequest(Map<String,dynamic> body) async {
-    if(binaryFault&&isBinaryDownload(body)){
+    if(binaryFault&&body['action']!='managed/file/inventory'){
+     // A real-cloud retry test must fail closed if the download transport
+     // changes names: never silently bypass the injected offline boundary.
      binaryFaultResponses++;
      throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
     }
@@ -100,6 +102,9 @@ void main() {
    await binaries.refreshInventory();
    expect(binaries.entries,isNotEmpty);
    final targets=binaries.entries.where((item)=>item['verification']=='bytes_hashed').toList();
+   // A successful repair with the fault switch on would mean our interception
+   // did not exercise the real binary transport. Preserve that as a failure.
+   expect(binaries.summary['pending'],greaterThan(0));
    expect(targets.length,inInclusiveRange(2,5));
    final binaryId=targets.first['fileId'] as String;
    final binaryHash=targets.first['sha256'] as String;

@@ -1,0 +1,41 @@
+name: Sync 3 isolated TEST hosted client acceptance
+on:
+  push:
+    branches: [feature/sync3-unified-repair-20261026]
+    paths:
+      - '.github/tests/isolated_engine_live_test.dart'
+      - '.github/workflows/sync3-hosted-client-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync3-test-hosted-client-acceptance
+  cancel-in-progress: false
+jobs:
+  hosted-test-client:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/sync3-unified-repair-20261026'
+    runs-on: windows-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Hosted Windows outbox to existing isolated TEST cloud and mobile Dart session
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/isolated_engine_live_test.dart --concurrency=1 --timeout 720s --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - name: Publish TEST-only sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync3-hosted-test-client-evidence
+          path: build/cloud-prerequisites/actual-engines.json
+          if-no-files-found: warn
+          retention-days: 7
