@@ -19,6 +19,7 @@ on:
       - functions/**
       - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
+      - .github/scripts/test_run_android_live_test.py
       - .github/tests/isolated_engine_live_test.dart
       - .github/tests/native_android_windows_readback_test.dart
       - integration_test/sync_v2_android_live_test.dart
@@ -223,6 +224,8 @@ jobs:
         p=pathlib.Path(os.environ['RUNNER_TEMP'])/'vs-android-test.json'
         p.write_text(json.dumps({'VS_TEST_LOGIN_EMAIL':os.environ['VS_TEST_LOGIN_EMAIL'],'VS_TEST_LOGIN_PASSWORD':os.environ['VS_TEST_LOGIN_PASSWORD'],'VS_TEST_CONNECT_CONFIRM':'vs-db8afb01a3be46a983c8284714d06e5d','VS_TEST_RUN_ID':os.environ['GITHUB_RUN_ID']}));p.chmod(0o600)
         PYCODE
+    - name: Validate native runner failure and evidence gates
+      run: python .github/scripts/test_run_android_live_test.py
     - name: Actual Android OS / production dashboard / real TEST cloud
       uses: reactivecircus/android-emulator-runner@v2
       with:

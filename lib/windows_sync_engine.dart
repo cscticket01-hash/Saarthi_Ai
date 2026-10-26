@@ -1,4 +1,5 @@
 import 'windows_sync_inbox.dart';
+import 'sync_latency_statistics.dart';
 import 'windows_remote_change_feed.dart';
 import 'windows_sync_dependencies.dart';
 import 'student_lifecycle_policy.dart';
@@ -530,15 +531,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   Map<String, dynamic> get performanceSummary => {
     for (final entry in _samples.entries)
-      entry.key: (() {
-        final sorted = entry.value.toList()..sort();
-        int percentile(double p) => sorted[((sorted.length - 1) * p).ceil()];
-        return {
-          'samples': sorted.length,
-          'p50': percentile(0.5),
-          'p95': percentile(0.95),
-        };
-      })(),
+      entry.key: syncLatencyQuantiles(entry.value),
   };
   void recordLocalSave(String entity, int micros) {
     metrics['${entity}SaveMicros'] = micros;

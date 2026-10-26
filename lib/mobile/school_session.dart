@@ -1367,13 +1367,14 @@ class SchoolSession {
           throw StateError('Invalid mobile record delta.');
         }
         final ids = (meta['ids'] as List);
+        final idSet = ids.toSet();
         if (ids.any((id) => id is! String || id.isEmpty) ||
-            ids.toSet().length != ids.length) {
+            idSet.length != ids.length) {
           throw StateError('Invalid mobile record identities.');
         }
         final rows = <String, Map>{};
         for (final row in (dashboard[key] as List? ?? []).whereType<Map>()) {
-          if (ids.contains(row['_mobileRecordId']))
+          if (idSet.contains(row['_mobileRecordId']))
             rows[row['_mobileRecordId'] as String] = row;
         }
         final changedIds = <String>{};
@@ -1381,7 +1382,7 @@ class SchoolSession {
           if (row is! Map ||
               row['_mobileRecordId'] is! String ||
               row['_mobileRecordRevision'] is! String ||
-              !ids.contains(row['_mobileRecordId']) ||
+              !idSet.contains(row['_mobileRecordId']) ||
               !changedIds.add(row['_mobileRecordId'] as String)) {
             throw StateError('Invalid changed mobile record.');
           }
@@ -1395,14 +1396,15 @@ class SchoolSession {
     if (result['unchanged'] != true) {
       if (result['noticesDelta'] == true && result['noticeIds'] is List) {
         final ids = (result['noticeIds'] as List).whereType<String>().toList();
+        final idSet = ids.toSet();
         final rows = <String, Map>{};
         for (final row
             in (dashboard['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && ids.contains(row['id']))
+          if (row['id'] is String && idSet.contains(row['id']))
             rows[row['id']] = row;
         }
         for (final row in (result['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && ids.contains(row['id']))
+          if (row['id'] is String && idSet.contains(row['id']))
             rows[row['id']] = row;
         }
         merged['notices'] = [

@@ -473,7 +473,7 @@ void main(){
    final engine=WindowsSyncEngine.instance;
    for(var n=0;n<300;n++)engine.recordLocalSave('boundedFixture',n);
    final summary=engine.performanceSummary['boundedFixtureSaveMicros'] as Map;
-   expect(summary['samples'],256);expect(summary['p50'],172);expect(summary['p95'],287);
+   expect(summary['samples'],256);expect(summary['p50'],172);expect(summary['p95'],287);expect(summary['p99'],297);
  });
  test('safe queue diagnostics preserve rows and exclude payloads, credentials, paths and record identifiers', () async {
    final records=db.collection('_windows_firebase_outbox');
