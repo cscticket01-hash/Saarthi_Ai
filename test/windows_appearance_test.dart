@@ -31,6 +31,7 @@ Widget app(Widget home, {GlobalKey<NavigatorState>? navigatorKey}) =>
     );
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final db=local.FirebaseFirestore.instance;
   tearDown(() {
     WindowsAppearance.mode.value = ThemeMode.dark;
   });
@@ -72,7 +73,6 @@ void main() {
   );
   testWidgets('Windows route atlas retains visible content in both modes', (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
-    final db=local.FirebaseFirestore.instance;
     await tester.runAsync(() async {
       await (FontLoader('Segoe UI')..addFont(Platform.isWindows
         ? Future.value(ByteData.sublistView(await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes()))
