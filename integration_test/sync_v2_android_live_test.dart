@@ -195,6 +195,8 @@ void main() {
           }
           expect(restored.attendancePending, 0);
           expect(restored.lastAttendanceAck, isNotNull);
+          metrics['androidQueueToDurableAckMs'] = ack.elapsedMilliseconds;
+          final verificationRead = Stopwatch()..start();
           final cloud = await ManagedSchoolSession.callForSchool(
               school, 'managed/records', {
             'operation': 'read',
@@ -207,6 +209,8 @@ void main() {
               true);
           metrics['androidQueueToVerifiedCloudReadMs'] =
               ack.elapsedMilliseconds;
+          metrics['androidFinalCloudVerificationReadMs'] =
+              verificationRead.elapsedMilliseconds;
           print('VS_ANDROID_TEST_STAGE attendance_verified');
           // A verified check-in must lock out same-day duplicate captures,
           // even if the retry uses the original timestamp and coordinates.
