@@ -148,6 +148,7 @@ class ManagedSchoolSession {
     unawaited(reportAppearanceLock(true));
   }
   static Future<void> reportAppearanceLock(bool locked, {bool applyAtUnlock=false}) {
+    if(kIsWeb || (!enabled && appearanceRequestForTesting==null))return Future<void>.value();
     if(_appearanceLocked!=locked)_appearanceNeedsReport=true;
     _appearanceLocked=locked;
     final deadline=Stopwatch()..start();
