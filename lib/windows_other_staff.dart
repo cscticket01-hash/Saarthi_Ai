@@ -1,3 +1,4 @@
+import 'india_address_fields.dart';
 import 'windows_document_templates.dart';
 
 import 'dart:async';
@@ -165,6 +166,10 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
         joining = TextEditingController(
           text: existing?['joiningDate']?.toString() ?? '',
         );
+    final address = TextEditingController(text: existing?['address']?.toString() ?? '');
+    final country = TextEditingController(text: existing?['country']?.toString().trim().isNotEmpty == true ? existing!['country'].toString() : 'India');
+    final state = TextEditingController(text: existing?['state']?.toString() ?? '');
+    final district = TextEditingController(text: existing?['district']?.toString() ?? '');
     var role = existing?['role']?.toString() ?? category,
         active = existing?['active'] != false;
     if (!OtherStaffDirectory.roles.contains(role))
@@ -223,6 +228,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                         labelText: 'Joining date / details',
                       ),
                     ),
+                    TextField(controller: address, decoration: const InputDecoration(labelText: 'Address')),
+                    const SizedBox(height: 10),
+                    IndiaAddressFields(country: country, state: state, district: district, enabled: !saving),
                     SwitchListTile(
                       value: active,
                       onChanged: saving ? null : (v) => setD(() => active = v),
@@ -292,6 +300,10 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                             'designation': department.text,
                             'mobile': mobile.text,
                             'joiningDate': joining.text,
+                            'address': address.text.trim(),
+                            'country': country.text.trim(),
+                            'state': state.text.trim(),
+                            'district': district.text.trim(),
                             'active': active,
                             'photoUrl': photo,
                           });
@@ -312,7 +324,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
       ),
     );
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    for (final c in [name, employee, department, mobile, joining]) c.dispose();
+    for (final c in [name, employee, department, mobile, joining, address, country, state, district]) c.dispose();
     if (changed == true && mounted) await _load();
   }
 

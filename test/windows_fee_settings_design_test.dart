@@ -8,6 +8,31 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_fee_settings_design.dart';
 
 void main() {
+  testWidgets('fees uses explicit Back at desktop and compact widths; brand does not navigate', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final width in [1440.0, 420.0]) {
+      await tester.binding.setSurfaceSize(Size(width, 900));
+      await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(
+        body: TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(
+          builder: (_) => WindowsFeeSettingsLayout(classes: const ['Class 1'], selectedClass: 'Class 1',
+            session: '2026-2027', sessions: const ['2026-2027'], loading: false, failed: false,
+            saving: false, editing: false, rows: const [], onClass: (_) {}, onSession: (_) {},
+            onAdd: () {}, onChanged: () {}, onSave: () {}, onEdit: () {}, onCancel: () {}, onRetry: () {}))),
+          child: const Text('Open fees'))))));
+      await tester.tap(find.text('Open fees'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fees-back')), findsOneWidget);
+      await tester.tap(find.text('Vidya Saarthi'));
+      await tester.pumpAndSettle();
+      expect(find.text('Payment Collection Settings'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fees-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('Open fees'), findsOneWidget);
+      expect(find.text('Payment Collection Settings'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
   testWidgets('fee actions stay reachable at desktop and compact high DPI; render approved design', (tester) async {
     if (Platform.isWindows) {
       await tester.runAsync(() async {
