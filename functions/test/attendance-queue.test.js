@@ -8,11 +8,22 @@ test('isolated attendance store filters reads and refuses foreign create, claim 
  const db={collection:name=>{assert.equal(name,'attendance_test_outbox');return query;},doc:path=>{assert(path.startsWith('attendance_test_outbox/'));return {create:async()=>{writes++;}};},
    runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>({schoolId:foreign,claim:'lease',state:'pending',nextAttemptAt:0})}),set:()=>{writes++;}})};
  const s=firestoreAttendanceStore(db,{schoolId:own,collectionName:'attendance_test_outbox'});
- assert.deepEqual((await s.pending(25)).map(r=>r.operationId),['own']);assert.deepEqual(calls[0],['schoolId','==',own]);
+ assert.deepEqual((await s.pending(25)).map(r=>r.operationId),['own']);
+ assert.equal(calls[0][0],'nextAttemptAt');assert.equal(calls[0][1],'<=');
+ assert.equal(Number.isFinite(calls[0][2]),true);
+ assert.equal(calls.some(c=>c[0]==='schoolId'),false,'TEST-only queue must not depend on a composite index');
  await assert.rejects(s.create('foreign',{schoolId:foreign}));
  assert.equal(await s.claim('foreign','lease',1,2),false);await s.finish('foreign','lease',{state:'completed'});
  assert.equal(writes,0);assert.throws(()=>firestoreAttendanceStore(db,{schoolId:'invalid'}));
  assert.throws(()=>firestoreAttendanceStore(db,{collectionName:'school_records'}));
+});
+test('non-TEST scoped Firestore queue retains schoolId filtering',async()=>{
+ const school='vs-'+'a'.repeat(32),calls=[];
+ const query={where:(...args)=>{calls.push(args);return query;},orderBy:()=>query,limit:()=>query,get:async()=>({docs:[]})};
+ const db={collection:name=>{assert.equal(name,'attendance_outbox');return query;},doc:()=>({})};
+ await firestoreAttendanceStore(db,{schoolId:school,collectionName:'attendance_outbox'}).pending(25);
+ assert.deepEqual(calls[0],['schoolId','==',school]);
+ assert.equal(calls[1][0],'nextAttemptAt');
 });
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}

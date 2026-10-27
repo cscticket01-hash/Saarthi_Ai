@@ -80,7 +80,13 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  for(let i=0;i<30;i++){
   r=await admin({action:'managed/attendance/status',operationIds:[op]});
   if(r.http!==200)throw Error('Attendance status unavailable');
-  const row=r.data.operations[0];
+  const row=r.data.operations?.[0];
+  // Only sanitized state/age, never payloads. An acceptance is not a final ACK.
+  if(!row||!['pending','processing','retry','completed','needsAttention'].includes(row.state))
+   throw Error('Invalid authoritative attendance status; capture retained');
+  report.attendanceStatusPolls=i+1;
+  report.attendanceLastObservedState=row.state;
+  report.attendanceObservedAgeMs=Number.isSafeInteger(row.createdAt)?Math.max(0,Date.now()-row.createdAt):null;
   if(row.state==='completed'){
    report.realAttendanceQueueToAckMs=row.completedAt-row.createdAt;
    report.realAttendanceCompletedAt=row.completedAt;

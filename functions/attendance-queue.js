@@ -80,11 +80,15 @@ function firestoreAttendanceStore(db,{schoolId=null,collectionName='attendance_o
  if(schoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(schoolId))throw Error('Invalid attendance school scope');
  if(!['attendance_outbox','attendance_test_outbox'].includes(collectionName))throw Error('Invalid attendance collection');
  const collection=db.collection(collectionName);
+ // The isolated TEST outbox is dedicated to TEST traffic. Query by due time
+ // without a composite (schoolId,nextAttemptAt) index; filter results again.
+ // Production keeps its existing scoped query and transactional school fences.
+ const isolatedTestQuery=schoolId!==null&&collectionName==='attendance_test_outbox';
  const ref=id=>db.doc(collectionName+'/'+id);
  return {
   create:async(id,row)=>{if(schoolId&&row.schoolId!==schoolId)throw Error('Foreign attendance school');try{await ref(id).create(row);return true;}catch(e){if(e.code===6||e.code==='already-exists')return false;throw e;}},
   pending:async(limit)=>{
-   const scope=schoolId?collection.where('schoolId','==',schoolId):collection;
+   const scope=schoolId&&!isolatedTestQuery?collection.where('schoolId','==',schoolId):collection;
    const result=await scope.where('nextAttemptAt','<=',Date.now()).orderBy('nextAttemptAt').limit(limit).get();
    return result.docs.map(d=>({...d.data(),operationId:d.id})).filter(row=>!schoolId||row.schoolId===schoolId);
   },

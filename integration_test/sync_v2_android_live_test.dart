@@ -14,10 +14,39 @@ import '../lib/windows_connect/managed_school_session.dart';
 class _NetworkBoundary extends http.BaseClient {
   final inner = http.Client();
   bool offline = false;
+  final _timings = <Map<String, Object?>>[];
+  List<Map<String, Object?>> get requestTimings => List.unmodifiable(_timings);
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest r) {
+  Future<http.StreamedResponse> send(http.BaseRequest r) async {
     if (offline) throw const SocketException('TEST offline boundary');
-    return inner.send(r);
+    String? action;
+    if (r is http.Request) {
+      try {
+        final envelope = jsonDecode(r.body);
+        if (envelope is Map) {
+          final mobile = envelope['request'];
+          final value = mobile is Map ? mobile['action'] : envelope['action'];
+          if (value is String &&
+              const {'mobile_refresh', 'mobile_mark_attendance',
+                     'mobile_attendance_status'}.contains(value)) action = value;
+        }
+      } catch (_) { /* Never log a raw request or credential. */ }
+    }
+    final clock = Stopwatch()..start();
+    try {
+      final response = await inner.send(r);
+      if (action != null && _timings.length < 100) {
+        _timings.add({'action': action, 'headerLatencyMs': clock.elapsedMilliseconds,
+                      'http': response.statusCode});
+      }
+      return response;
+    } catch (_) {
+      if (action != null && _timings.length < 100) {
+        _timings.add({'action': action, 'headerLatencyMs': clock.elapsedMilliseconds,
+                      'transportError': true});
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -211,6 +240,8 @@ void main() {
               ack.elapsedMilliseconds;
           metrics['androidFinalCloudVerificationReadMs'] =
               verificationRead.elapsedMilliseconds;
+          // TEST-only request header timings: not Script duration or full body.
+          metrics['androidQueueRequestTimings'] = transport.requestTimings;
           print('VS_ANDROID_TEST_STAGE attendance_verified');
           // A verified check-in must lock out same-day duplicate captures,
           // even if the retry uses the original timestamp and coordinates.
