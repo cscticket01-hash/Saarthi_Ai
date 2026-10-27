@@ -589,6 +589,7 @@ class _WindowsAdminSessionDashboardState
   void initState() {
     super.initState();
     final storage = windows_html.window.localStorage;
+    unawaited(ManagedSchoolSession.reportAppearanceLock(false));
     storage['saarthi_portal_role_v1'] = 'admin';
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
         .add(windowsIdleTimeout)
@@ -621,6 +622,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(ManagedSchoolSession.reportAppearanceLock(true));
     _adminId.text = WindowsLocalSecurity.adminId;
   }
 

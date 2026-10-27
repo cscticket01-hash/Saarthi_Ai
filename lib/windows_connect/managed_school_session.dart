@@ -133,6 +133,8 @@ class ManagedSchoolSession {
       changed.value++;return session;
     }finally{cloud.close();}
   }
+  @visibleForTesting
+  static Future<Map<String,dynamic>> Function(String schoolId, bool locked)? appearanceRequestForTesting;
   static Timer? _appearanceTimer;
   static bool _appearanceLocked = true;
   static bool _appearanceNeedsReport = true;
@@ -155,7 +157,7 @@ class ManagedSchoolSession {
       try {
         final before=await CentralSchoolCloud.saved();
         if(before['managed']!=true)return;
-        final result=await callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked});
+        final result=await (appearanceRequestForTesting?.call(before['schoolId'].toString(),locked) ?? callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked}));
         if(locked==_appearanceLocked)_appearanceNeedsReport=false;
         final after=await CentralSchoolCloud.saved();
         // New colour is visible only on a verified unlock, never mid-session.

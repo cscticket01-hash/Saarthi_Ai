@@ -33,7 +33,7 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
  return {async themeDevices(req,identity){
   const registry=createManagedDeviceRegistry({store,schoolId:identity.schoolId,now});
   const device=await registry.verify({deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential')});
-  return {deviceId:device.deviceIdentity,devices:(await registry.list({...identity,role:'school_admin'})).filter(d=>d.status==='active').map(d=>d.deviceIdentity)};
+  return {deviceId:device.deviceIdentity,devices:(await registry.list({...identity,role:'school_admin'})).filter(d=>d.status==='active'&&d.os==='Windows').map(d=>d.deviceIdentity)};
  },observeSession:enrollSession,async observePresence(req,presence){
   // Optional display metadata only. Never change the legacy presence result.
   if(!enrollmentEnabled||enforced||managementEnabled)return;

@@ -56,3 +56,14 @@ test('theme lock API requires registered PC proof and isolates schools',async()=
  assert.equal((await call({action:'managed/theme/state',locked:false})).windowsTheme.revision,saved.theme.revision);
  assert.equal(f.sent.length,0);
 });
+test('upgrade preserves existing published colour and subsequent saves stay pending',async()=>{
+ const f=fixture(), t=createWindowsTheme({db:f.db});
+ const baseline={schemaVersion:1,red:60,green:90,blue:120,revision:'existing'};
+ f.docs.set('platform_configuration/windows_theme',baseline);
+ assert.deepEqual(await t.readSchool('school'),baseline);
+ const next=await t.save({...baseline,red:200,expectedRevision:'existing'},'dev');
+ assert.deepEqual(await t.readSchool('school'),baseline);
+ assert.deepEqual(await t.schoolState('school','a',false,['a','b']),baseline);
+ await t.schoolState('school','a',true,['a','b']);
+ assert.equal((await t.schoolState('school','b',true,['a','b'])).revision,next.revision);
+});

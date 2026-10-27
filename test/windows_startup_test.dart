@@ -19,6 +19,8 @@ import '../lib/windows_inactivity_timer.dart';
 import '../lib/main_windows.dart';
 import '../lib/windows_admin_setup.dart';
 import '../lib/windows_local_settings.dart';
+import '../lib/windows_connect/managed_school_session.dart';
+import '../lib/windows_appearance.dart';
 import '../lib/windows_managed_school_gate.dart';
 import '../lib/main_dashboard_screen_windows.dart' show WindowsSectionLocks;
 
@@ -388,6 +390,40 @@ void main() {
     expect(find.text('Retry school profile restore'),findsOneWidget);
     expect(find.byType(CircularProgressIndicator),findsNothing);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test('theme applies at unlock; reconnect heartbeat and relocked late response preserve open-session colour', () async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    final original=WindowsAppearance.brandData;
+    var revision='first';
+    Map<String,dynamic> response() => {'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'windowsTheme':{'schemaVersion':1,'red':20,'green':100,'blue':180,'revision':revision}};
+    ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async => response();
+    try {
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      await ManagedSchoolSession.refreshAppearanceAtUnlock();
+      expect(WindowsAppearance.brandRevision,'first');
+      revision='second';
+      await ManagedSchoolSession.reportAppearanceLock(false);
+      expect(WindowsAppearance.brandRevision,'first');
+      final entered=Completer<void>(), reply=Completer<Map<String,dynamic>>();
+      ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async {
+        if(!locked){entered.complete();return reply.future;}
+        return response();
+      };
+      final unlock=ManagedSchoolSession.refreshAppearanceAtUnlock();
+      await entered.future;
+      final lock=ManagedSchoolSession.reportAppearanceLock(true);
+      reply.complete(response());
+      await Future.wait([unlock,lock]);
+      expect(WindowsAppearance.brandRevision,'first');
+      ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async => response();
+      await ManagedSchoolSession.refreshAppearanceAtUnlock();
+      expect(WindowsAppearance.brandRevision,'second');
+    } finally {
+      ManagedSchoolSession.appearanceRequestForTesting=null;
+      WindowsAppearance.applyBrand(original,persist:false);
+    }
   });
 
 }
