@@ -1,3 +1,4 @@
+import 'india_address_fields.dart';
 import 'windows_inactivity_timer.dart';
 import 'windows_student_excel.dart';
 import 'package:file_selector/file_selector.dart' as excel_file;
@@ -13169,6 +13170,10 @@ errorBuilder: (
       text: data['address']?.toString() ?? '',
     );
 
+    final countryCtrl = TextEditingController(text: data['country']?.toString().trim().isNotEmpty == true ? data['country'].toString() : 'India');
+    final stateCtrl = TextEditingController(text: data['state']?.toString() ?? '');
+    final districtCtrl = TextEditingController(text: data['district']?.toString() ?? '');
+
     final oldPhone =
         data['phone']?.toString().trim() ?? '';
 
@@ -13568,6 +13573,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         ),
                       ),
                       const SizedBox(height: 10),
+                      IndiaAddressFields(country: countryCtrl, state: stateCtrl, district: districtCtrl, enabled: !saving),
+                      const SizedBox(height: 10),
                       Row(
                         children: [
                           Expanded(
@@ -13828,6 +13835,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               'address':
                                   addressCtrl.text
                                       .trim(),
+                              'country': countryCtrl.text.trim(),
+                              'state': stateCtrl.text.trim(),
+                              'district': districtCtrl.text.trim(),
                               'assignedClasses':
                                   classesCtrl.text
                                       .trim(),
@@ -13881,6 +13891,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 'address':
                                     addressCtrl.text
                                         .trim(),
+                              'country': countryCtrl.text.trim(),
+                              'state': stateCtrl.text.trim(),
+                              'district': districtCtrl.text.trim(),
                                 'assignedClasses':
                                     classesCtrl.text
                                         .trim(),
@@ -13936,6 +13949,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               'address':
                                   addressCtrl.text
                                       .trim(),
+                              'country': countryCtrl.text.trim(),
+                              'state': stateCtrl.text.trim(),
+                              'district': districtCtrl.text.trim(),
                               'assignedClasses':
                                   classesCtrl.text
                                       .trim(),
@@ -14061,6 +14077,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     joiningCtrl.dispose();
     classesCtrl.dispose();
     addressCtrl.dispose();
+    countryCtrl.dispose();
+    stateCtrl.dispose();
+    districtCtrl.dispose();
   }
 
   // ============================================================
@@ -15189,6 +15208,10 @@ class _AddTeacherScreenState
   final _joiningCtrl =
       TextEditingController();
 
+  final _countryCtrl = TextEditingController(text: 'India');
+  final _stateCtrl = TextEditingController();
+  final _districtCtrl = TextEditingController();
+
   final _addressCtrl =
       TextEditingController();
 
@@ -15229,6 +15252,9 @@ class _AddTeacherScreenState
     _dobCtrl.dispose();
     _joiningCtrl.dispose();
     _addressCtrl.dispose();
+    _countryCtrl.dispose();
+    _stateCtrl.dispose();
+    _districtCtrl.dispose();
     _classesCtrl.dispose();
     super.dispose();
   }
@@ -15489,6 +15515,9 @@ class _AddTeacherScreenState
             _addressCtrl
                 .text
                 .trim(),
+        'country': _countryCtrl.text.trim(),
+        'state': _stateCtrl.text.trim(),
+        'district': _districtCtrl.text.trim(),
         'assignedClasses':
             _classesCtrl
                 .text
@@ -15568,6 +15597,9 @@ class _AddTeacherScreenState
             _addressCtrl
                 .text
                 .trim(),
+        'country': _countryCtrl.text.trim(),
+        'state': _stateCtrl.text.trim(),
+        'district': _districtCtrl.text.trim(),
         'assignedClasses':
             _classesCtrl
                 .text
@@ -15993,6 +16025,8 @@ class _AddTeacherScreenState
                           .location_on_outlined,
                     ),
                   ),
+                  const SizedBox(height: 11),
+                  IndiaAddressFields(country: _countryCtrl, state: _stateCtrl, district: _districtCtrl, enabled: !_saving),
 
                   const SizedBox(
                     height: 11,
@@ -16221,6 +16255,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final contactCtrl = TextEditingController();
     final addressCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
+    final countryCtrl = TextEditingController(text: 'India');
     final stateCtrl = TextEditingController();
     final districtCtrl = TextEditingController();
     final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}');
@@ -16309,13 +16344,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                       const SizedBox(height: 10),
                       TextField(controller: addressCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Address')),
                       const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(child: TextField(controller: districtCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('District'))),
-                          const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: stateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('State'))),
-                        ],
-                      ),
+                      IndiaAddressFields(country: countryCtrl, state: stateCtrl, district: districtCtrl, enabled: !isSaving),
                       const SizedBox(height: 10),
                       Row(
                         children: [
@@ -16464,6 +16493,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                   'photoBase64': base64Image,
                                   'hostelFacility': hostelFacility,
                                   'address': addressCtrl.text.trim(),
+                                  'country': countryCtrl.text.trim(),
                                   'district': districtCtrl.text.trim(),
                                   'state': stateCtrl.text.trim(),
                                   'pinCode': pinCtrl.text.trim(),
@@ -16515,7 +16545,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               'hostelFacility': hostelFacility,
                               'address': addressCtrl.text.trim(),
                               'pinCode': pinCtrl.text.trim(),
-                              'district': districtCtrl.text.trim(),
+                              'country': countryCtrl.text.trim(),
+                                  'district': districtCtrl.text.trim(),
                               'state': stateCtrl.text.trim(),
                               'joiningDate':
                                   admissionDateCtrl.text.trim(),
@@ -17114,6 +17145,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final admissionCtrl = TextEditingController(text: data['joiningDate']?.toString() ?? '');
     final dobCtrl = TextEditingController(text: data['dateOfBirth']?.toString() ?? '');
 
+    final countryCtrl = TextEditingController(text: data['country']?.toString().trim().isNotEmpty == true ? data['country'].toString() : 'India');
+
     final existingPhotoUrl = data['photoUrl']?.toString().trim() ?? '';
     Uint8List? selectedPhotoBytes;
     String selectedPhotoMimeType = 'image/jpeg';
@@ -17319,25 +17352,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                         decoration: _dialogInput('Address'),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: districtCtrl,
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                              decoration: _dialogInput('District'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: stateCtrl,
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
-                              decoration: _dialogInput('State'),
-                            ),
-                          ),
-                        ],
-                      ),
+                      IndiaAddressFields(country: countryCtrl, state: stateCtrl, district: districtCtrl, enabled: !saving),
                       const SizedBox(height: 8),
                       TextField(
                         controller: pinCtrl,
@@ -17428,7 +17443,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     'photoMimeType': selectedPhotoMimeType,
                                     'hostelFacility': hostelFacility,
                                     'address': addressCtrl.text.trim(),
-                                    'district': districtCtrl.text.trim(),
+                                    'country': countryCtrl.text.trim(),
+                                  'district': districtCtrl.text.trim(),
                                     'state': stateCtrl.text.trim(),
                                     'pinCode': pinCtrl.text.trim(),
                                     'joiningDate': admissionCtrl.text.trim(),
@@ -17463,6 +17479,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   'parentContact': contactCtrl.text.trim(),
                                   'hostelFacility': hostelFacility,
                                   'address': addressCtrl.text.trim(),
+                                  'country': countryCtrl.text.trim(),
                                   'district': districtCtrl.text.trim(),
                                   'state': stateCtrl.text.trim(),
                                   'pinCode': pinCtrl.text.trim(),

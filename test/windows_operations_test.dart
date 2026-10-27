@@ -344,8 +344,15 @@ void main() {
       'name': 'School Guard',
       'employeeId': 'G-1',
       'role': 'Guard',
+      'country': 'India',
+      'state': 'Assam',
+      'district': 'Sribhumi',
       'active': true,
     });
+    final savedGuard = (await OtherStaffDirectory.load(profile)).single;
+    expect(savedGuard['country'], 'India');
+    expect(savedGuard['state'], 'Assam');
+    expect(savedGuard['district'], 'Sribhumi');
     final people = await StaffPayroll.staff(profile);
     expect(people.length, 2);
     final guard = people.singleWhere((p) => p['role'] == 'Guard');

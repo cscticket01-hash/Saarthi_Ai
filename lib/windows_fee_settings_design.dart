@@ -84,22 +84,17 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
     ),
   ); }
 
-  Widget _backBrand(BuildContext context, EdgeInsetsGeometry padding) => Tooltip(
-    message: 'Back',
-    child: TextButton(
-      onPressed: saving ? null : () => Navigator.maybePop(context),
-      style: TextButton.styleFrom(
-        alignment: Alignment.centerLeft,
-        padding: padding,
-        foregroundColor: WindowsAppearance.resolve(Colors.white),
-        textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-      ),
-      child: const Text('Vidya Saarthi'),
-    ),
+  Widget _backBrand(BuildContext context, EdgeInsetsGeometry padding) => Padding(
+    padding: padding,
+    child: Text('Vidya Saarthi', style: TextStyle(
+      color: WindowsAppearance.resolve(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
   );
 
   Widget _content(BuildContext context, bool wide) => Column(children: [
     Padding(padding: EdgeInsets.fromLTRB(wide ? 22 : 16, 16, 16, 12), child: Row(children: [
+      Padding(padding: const EdgeInsets.only(right: 12), child: TextButton.icon(
+        key: const ValueKey('fees-back'), onPressed: saving ? null : () => Navigator.maybePop(context),
+        icon: const Icon(Icons.arrow_back), label: const Text('Back'))),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (!wide) _backBrand(context, const EdgeInsets.symmetric(vertical: 8)),
         Text('Payment Collection Settings',
