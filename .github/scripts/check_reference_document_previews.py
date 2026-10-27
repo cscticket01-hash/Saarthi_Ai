@@ -44,3 +44,7 @@ for kind, prefix in [('reportCard', 'subject'), ('receipt', 'fee')]:
     for index in range(1, 26):
         assert f'{prefix}{index}' in text, f'Missing {prefix} {index} on continuation pages'
 print('Reference PDF fields, installment amounts and continuation pages verified.')
+
+reader,text=document('payslip.pdf')
+for value in ['syntheticstaff','syntheticschool','10150.00','5000.00','5150.00','staffsalarypayslip']:
+    assert value in text, f'Missing payslip field: {value}'

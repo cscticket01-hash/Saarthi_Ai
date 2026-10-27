@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:pdf/widgets.dart' as pw;
+import 'windows_payslip_template.dart';
 import 'package:printing/printing.dart';
 import 'windows_document_templates.dart';
 import 'windows_salary_history.dart';
@@ -170,7 +170,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       canPop: !saving, child: AlertDialog(title: Text(title), content: SizedBox(width: 470,
         child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [...fields(setD).expand((w) => [w, const SizedBox(height: 14)]),
-            if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent))]))),
+            if (error != null) Text(error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent)))]))),
         actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(onPressed: saving ? null : () async {
             setD(() { saving = true; error = null; });
@@ -248,23 +248,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r)),r['status']].map(cell).join(',')].join('\r\n');
         await WindowsSavePdf.save(Uint8List.fromList(utf8.encode(content)), 'staff-salary-${StaffPayroll.monthKey(_month)}.csv', csv:true);
       } else {
-        final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
-        final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
-        final doc = pw.Document(theme:pw.ThemeData.withFont(base:regular,bold:bold));
-        for (final r in rows) {
-          doc.addPage(pw.Page(build: (_) => pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start, children:[
-            pw.Text('VIDYA SAARTHI - PAYSLIP',style:pw.TextStyle(fontSize:22,fontWeight:pw.FontWeight.bold)),
-            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['employeeId']??r['teacherId']??r['staffId']}'),
-            pw.Text('${r['role']} | ${r['month']}'),pw.SizedBox(height:20),
-            for (final key in {'Basic pay':'basicPaise','Allowances':'allowancePaise','Bonus':'bonusPaise','Overtime':'overtimePaise','Deductions':'deductionPaise'}.entries)
-              pw.Padding(padding:const pw.EdgeInsets.only(bottom:10),child:pw.Text('${key.key}: Rs ${StaffPayroll.format((r[key.value] as num?)?.toInt() ?? 0)}')),
-            pw.Divider(),pw.Text('Net salary: Rs ${StaffPayroll.format(StaffPayroll.total(r))}'),
-            pw.Text('Paid: Rs ${StaffPayroll.format(StaffPayroll.paid(r))}'),
-            pw.Text('Balance: Rs ${StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r))}'),
-            pw.Text('Status: ${r['status'] ?? 'Pending'}'),
-          ])));
-        }
-        final bytes = await doc.save();
+        final r=rows.single;
+        final bytes=await renderWindowsPayslip({...r,'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r)},schoolName:_schoolName);
         StaffPayroll._sameSchool(_profile);
         if (mounted) await WindowsDocumentTemplates.preview(context, bytes, title: 'Payslip • ${rows.single['name']}', printLabel: 'Print Payslip',
           onPrint: () async {

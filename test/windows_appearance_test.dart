@@ -29,6 +29,21 @@ void main() {
   tearDown(() {
     WindowsAppearance.mode.value = ThemeMode.dark;
   });
+  test('extreme developer RGB values keep text and controls readable in both modes', () {
+    for(final rgb in [Colors.black,Colors.white,Colors.yellow,Colors.blue,Colors.red,Colors.green]) {
+      WindowsAppearance.applyBrand({'schemaVersion':1,'red':(rgb.r*255).round(),'green':(rgb.g*255).round(),'blue':(rgb.b*255).round(),'revision':'test'},persist:false);
+      for(final mode in [ThemeMode.dark,ThemeMode.light]) {
+        WindowsAppearance.mode.value=mode;
+        final scheme=WindowsAppearance.theme(mode==ThemeMode.dark?Brightness.dark:Brightness.light).colorScheme;
+        expect(WindowsAppearance.contrast(scheme.primary,scheme.onPrimary),greaterThanOrEqualTo(4.5));
+        expect(WindowsAppearance.contrast(scheme.onSurface,scheme.surface),greaterThanOrEqualTo(4.5));
+        for(final old in [Colors.white38,Colors.purpleAccent,Colors.blueAccent,Colors.redAccent,Colors.orangeAccent,Colors.greenAccent]) {
+          expect(WindowsAppearance.contrast(WindowsAppearance.foreground(old),WindowsAppearance.surface),greaterThanOrEqualTo(4.5));
+        }
+      }
+    }
+    WindowsAppearance.applyBrand({'schemaVersion':1,'red':0,'green':140,'blue':120,'revision':'default'},persist:false);
+  });
   test(
     'device preference survives restart, rapid toggles and corrupt file',
     () async {
@@ -87,9 +102,7 @@ void main() {
           final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
           expect(
             scaffold.backgroundColor,
-            mode == ThemeMode.light
-                ? WindowsAppearance.resolve(const Color(0xFF0B141A))
-                : const Color(0xFF0B141A),
+            WindowsAppearance.background(const Color(0xFF0B141A)),
           );
           expect(tester.takeException(), isNull);
           if (Platform.isWindows) {

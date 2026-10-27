@@ -3,9 +3,16 @@ import '../lib/school_qr_link.dart';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_reference_documents.dart';
+import '../lib/windows_payslip_template.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('shared payslip template renders exact paise values and payment summary', () async {
+    final bytes=await renderWindowsPayslip({'name':'Synthetic Staff','employeeId':'E-01','role':'Teacher','month':'2026-10',
+      'basicPaise':1000000,'allowancePaise':20000,'deductionPaise':5000,'netPaise':1015000,'paidPaise':500000,'status':'Part paid'},schoolName:'Synthetic School');
+    expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+    final file=File('build/reference-document-previews/payslip.pdf');await file.parent.create(recursive:true);await file.writeAsBytes(bytes);
+  });
   test(
       'single marksheet and retained staff/receipt designs render real data',
       () async {

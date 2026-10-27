@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'windows_school_map.dart';
@@ -88,7 +89,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) { WindowsAppearance.watch(context);
     return AlertDialog(
       title: const Text('Select school location on Google Maps'),
       content: SizedBox(width: 590, child: SingleChildScrollView(child: Column(

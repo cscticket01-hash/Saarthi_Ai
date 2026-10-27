@@ -31,12 +31,12 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
 
   InputDecoration _input(String hint, {String? prefix}) => InputDecoration(
     hintText: hint,
-    prefixIcon: prefix == null ? null : Center(child: Text(prefix.trim(), style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)))),
+    prefixIcon: prefix == null ? null : Center(child: Text(prefix.trim(), style:  TextStyle(color: WindowsAppearance.foreground(Colors.white)))),
     prefixIconConstraints: prefix == null ? null : const BoxConstraints(minWidth: 38, maxWidth: 38),
     hintStyle:  TextStyle(color: WindowsAppearance.resolve(_muted)),
-    prefixStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), isDense: true,
+    prefixStyle:  TextStyle(color: WindowsAppearance.foreground(Colors.white)), isDense: true,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    filled: true, fillColor: WindowsAppearance.resolve(const Color(0xFF0D2035)),
+    filled: true, fillColor: WindowsAppearance.background(const Color(0xFF0D2035)),
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide:  BorderSide(color: WindowsAppearance.resolve(_border))),
     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide:  BorderSide(color: WindowsAppearance.resolve(_border))),
     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide: const BorderSide(color: _teal, width: 1.5)),
@@ -47,7 +47,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
       decoration: _input(label).copyWith(labelText: label, labelStyle:  TextStyle(color: WindowsAppearance.resolve(_muted))),
       child: DropdownButtonHideUnderline(child: DropdownButton<String>(
         value: options.contains(value) ? value : null, isExpanded: true, isDense: true,
-        dropdownColor: WindowsAppearance.resolve(_navy), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: WindowsAppearance.resolve(Colors.white)),
+        dropdownColor: WindowsAppearance.resolve(_navy), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: WindowsAppearance.foreground(Colors.white)),
         items: options.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
         onChanged: saving || loading ? null : (value) { if (value != null) onChanged(value); },
       )),
@@ -87,7 +87,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
   Widget _backBrand(BuildContext context, EdgeInsetsGeometry padding) => Padding(
     padding: padding,
     child: Text('Vidya Saarthi', style: TextStyle(
-      color: WindowsAppearance.resolve(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
+      color: WindowsAppearance.foreground(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
   );
 
   Widget _content(BuildContext context, bool wide) => Column(children: [
@@ -98,7 +98,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (!wide) _backBrand(context, const EdgeInsets.symmetric(vertical: 8)),
         Text('Payment Collection Settings',
-          style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 23, fontWeight: FontWeight.w700)),
+          style: TextStyle(color: WindowsAppearance.foreground(Colors.white), fontSize: 23, fontWeight: FontWeight.w700)),
       ])),
     ])),
     Expanded(child: loading ? const Center(child: CircularProgressIndicator(color: _teal))
@@ -118,11 +118,11 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
             ]),
             const SizedBox(height: 24),
             Container(padding: EdgeInsets.all(wide ? 24 : 14),
-              decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF102338)), borderRadius: BorderRadius.circular(15),
+              decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF102338)), borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: WindowsAppearance.resolve(_border))),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 12, runSpacing: 12,
-                  children: [ Text('Fee details', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
+                  children: [ Text('Fee details', style: TextStyle(color: WindowsAppearance.foreground(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
                     if (editing) OutlinedButton.icon(key: const ValueKey('add-fee'), onPressed: saving ? null : onAdd,
                       style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: _teal, side: const BorderSide(color: _teal)),
                       icon: const Icon(Icons.add), label: const Text('Add fee')),
@@ -142,7 +142,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 Wrap(alignment: WrapAlignment.end, spacing: 16, runSpacing: 12, children: [
                   if (editing) TextButton(onPressed: saving ? null : onCancel, child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(_muted)))),
                   FilledButton.icon(onPressed: saving ? null : editing ? onSave : onEdit,
-                    style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), backgroundColor: _teal, foregroundColor: WindowsAppearance.resolve(const Color(0xFF05202A)),
+                    style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), backgroundColor: _teal, foregroundColor: WindowsAppearance.onPrimary,
                       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18)),
                     icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : Icon(editing ? Icons.save_outlined : Icons.lock_open),
@@ -156,7 +156,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
   ]);
 
   Widget _heading() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text('$selectedClass Fee Structure', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 28, fontWeight: FontWeight.w700)),
+    Text('$selectedClass Fee Structure', style:  TextStyle(color: WindowsAppearance.foreground(Colors.white), fontSize: 28, fontWeight: FontWeight.w700)),
     const SizedBox(height: 8),
     Text(editing ? 'Add, edit or remove fees for your school.' : 'Saved and locked. Use Edit Fee Structure to make changes.',
       style:  TextStyle(color: WindowsAppearance.resolve(_muted), fontSize: 15)),
@@ -164,16 +164,16 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
 
   Widget _row(WindowsFeeEditorRow row, int index, bool wide) {
     final name = editing ? TextField(key: ValueKey('fee-name-${row.id}'), controller: row.name,
-      enabled: !saving, maxLength: 100, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+      enabled: !saving, maxLength: 100, style:  TextStyle(color: WindowsAppearance.foreground(Colors.white)),
       onChanged: (_) => onChanged(), decoration: _input('Enter fee name').copyWith(counterText: ''))
-      : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(row.name.text, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white))));
+      : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text(row.name.text, style:  TextStyle(color: WindowsAppearance.foreground(Colors.white))));
     final amount = editing ? TextField(key: ValueKey('fee-amount-${row.id}'), controller: row.amount,
       enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), onChanged: (_) => onChanged(), decoration: _input('Amount', prefix: '₹ '))
-      : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text('₹ ${row.amount.text.isEmpty ? '0' : row.amount.text}', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white))));
+      style:  TextStyle(color: WindowsAppearance.foreground(Colors.white)), onChanged: (_) => onChanged(), decoration: _input('Amount', prefix: '₹ '))
+      : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text('₹ ${row.amount.text.isEmpty ? '0' : row.amount.text}', style:  TextStyle(color: WindowsAppearance.foreground(Colors.white))));
     final action = SizedBox(width: 48, child: editing ? IconButton.outlined(key: ValueKey('delete-fee-${row.id}'),
       tooltip: 'Delete fee row ${index + 1}', onPressed: saving ? null : row.onDelete,
-      style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: const Color(0xFFFF5B6C), side: const BorderSide(color: Color(0xFFAF4054))),
+      style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: WindowsAppearance.onPrimary, side: BorderSide(color: WindowsAppearance.foreground(Color(0xFFAF4054)))),
       icon: const Icon(Icons.delete_outline)) : const SizedBox());
     if (!wide) return Container(padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(border: Border.all(color: WindowsAppearance.resolve(_border)), borderRadius: BorderRadius.circular(10)),

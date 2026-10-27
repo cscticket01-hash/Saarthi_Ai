@@ -1,3 +1,4 @@
+import 'windows_payslip_template.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
 import 'dart:convert';
@@ -560,6 +561,7 @@ class WindowsDocumentTemplates {
       'schoolAddress': profile['address'] ?? '',
       'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
     };
+    if (kind == 'payslip') return renderWindowsPayslip({...data, ...{'netPaise':2850000,'paidPaise':2000000,'basicPaise':2500000,'allowancePaise':400000,'deductionPaise':50000,'role':'Teacher','month':'2026-10','status':'Part paid'}},schoolName:branding['schoolName']?.toString()??'');
     final images = await Future.wait<Uint8List?>([
       _image(profile['logoUrl']),
       _image(profile['principalSignatureUrl']),
@@ -690,6 +692,7 @@ class _SchoolDocumentTemplatesScreenState
       WindowsDocumentTemplates.manifestName,
     ],
     'otherStaffId': [WindowsDocumentTemplates.manifestName],
+    'payslip': ['Classic • Staff payslip'],
   };
   List<IdCardCatalogEntry> _catalog = [];
   String? _catalogError;
@@ -874,6 +877,7 @@ class _SchoolDocumentTemplatesScreenState
                         'otherStaffId': 'Other Staff ID',
                         'reportCard': 'Report card',
                         'receipt': 'Fee receipt',
+                        'payslip': 'Staff payslip',
                       }[k]!,
                     ),
                     selected: _kind == k,
@@ -885,7 +889,7 @@ class _SchoolDocumentTemplatesScreenState
           const SizedBox(height: 14),
            Text(
             'Preview first, then select one layout for the whole school. Student and teacher ID layouts are stored separately.',
-            style: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+            style: TextStyle(color: WindowsAppearance.foreground(Colors.white54)),
           ),
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
@@ -938,13 +942,13 @@ class _SchoolDocumentTemplatesScreenState
                                   : _kind == 'studentId'
                                   ? Icons.badge_outlined
                                   : Icons.description_outlined,
-                              color: Colors.tealAccent,
+                              color: WindowsAppearance.foreground(Colors.tealAccent),
                             ),
                             const Spacer(),
                             if (active)
-                              const Icon(
+                              Icon(
                                 Icons.check_circle,
-                                color: Colors.tealAccent,
+                                color: WindowsAppearance.foreground(Colors.tealAccent),
                               ),
                           ],
                         ),
@@ -983,7 +987,7 @@ class _SchoolDocumentTemplatesScreenState
                               ? 'Front | Back • each 85.6 × 54 mm'
                               : 'Printable school document',
                           style:  TextStyle(
-                            color: WindowsAppearance.resolve(Colors.white54),
+                            color: WindowsAppearance.foreground(Colors.white54),
                             fontSize: 12,
                           ),
                         ),

@@ -620,7 +620,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF21475D))),
+      border: Border.all(color: WindowsAppearance.foreground(const Color(0xFF21475D))),
     ),
     child: child,
   );
@@ -629,14 +629,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     width: 248,
     child: Card(
       margin: EdgeInsets.zero,
-      color: Colors.transparent,
+      color: WindowsAppearance.background(Colors.transparent),
       child: _panelBox(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               name,
-              style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
+              style:  TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
             ),
             const SizedBox(height: 6),
             Text(
@@ -819,7 +819,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 value: syncing ? null : 0,
                                 strokeWidth: 6,
                                 color: phaseColor,
-                                backgroundColor: WindowsAppearance.resolve(const Color(0xFF24445D)),
+                                backgroundColor: WindowsAppearance.background(const Color(0xFF24445D)),
                               ),
                             ),
                             Column(
@@ -842,7 +842,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 Text(
                                   '${details['pending'] ?? 'Unknown'} pending',
                                   style:  TextStyle(
-                                    color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
+                                    color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                   ),
                                 ),
                               ],
@@ -870,7 +870,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                           localDataPath!,
                                           style:  TextStyle(
                                             fontSize: 12,
-                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
+                                            color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -882,7 +882,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                           localFilesPath ?? 'Unknown',
                                           style:  TextStyle(
                                             fontSize: 12,
-                                            color: WindowsAppearance.resolve(Color(0xFF9AB4C9)),
+                                            color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                           ),
                                         ),
                                         const SizedBox(height: 8),
@@ -933,7 +933,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   const SizedBox(height: 12),
                    Text(
                     'Live state from the durable queue • No estimated percentages',
-                    style: TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
+                    style: TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
                   ),
                 ],
               ),
@@ -981,7 +981,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ),
                         trailing: Text(
                           '${raw['syncState'] ?? raw['state'] ?? 'pending'}',
-                          style: const TextStyle(color: Color(0xFFFFC153)),
+                          style: TextStyle(color: WindowsAppearance.foreground(Color(0xFFFFC153))),
                         ),
                       ),
                   const SizedBox(height: 10),
@@ -1195,7 +1195,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     decoration: BoxDecoration(
       color: WindowsAppearance.resolve(_panel),
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF21475D))),
+      border: Border.all(color: WindowsAppearance.foreground(const Color(0xFF21475D))),
     ),
     child: Row(
       children: [
@@ -1209,7 +1209,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               const SizedBox(height: 4),
               Text(
                 status,
-                style:  TextStyle(color: WindowsAppearance.resolve(Color(0xFF9AB4C9)), fontSize: 12),
+                style:  TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
               ),
               if (details != null) details,
             ],
@@ -1229,10 +1229,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     ),
     child: Scaffold(
       key: _scaffoldKey,
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF071626)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF071626)),
 
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF0A1D30)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
         title: const Text('Sync Engine 3.0'),
@@ -1312,9 +1312,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         'Your school records, cloud transfers and recovery — together in one live workspace.',
                       ),
                       if (!ownSchool)
-                        const Text(
+                        Text(
                           'School changed. Close and reopen this page.',
-                          style: TextStyle(color: Colors.orange),
+                          style: TextStyle(color: WindowsAppearance.foreground(Colors.orange)),
                         ),
                       if (ownSchool) ...[
                         _navigation(active),
@@ -1378,8 +1378,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           if (engine.recoveryDecision != null)
                             Text(
                               engine.recoveryDecision!.message,
-                              style: const TextStyle(
-                                color: Colors.orangeAccent,
+                              style: TextStyle(
+                                color: WindowsAppearance.foreground(Colors.orangeAccent),
                               ),
                             ),
                         ],
@@ -1685,8 +1685,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             if (engine.recoveryDecision != null)
                               Text(
                                 engine.recoveryDecision!.message,
-                                style: const TextStyle(
-                                  color: Colors.orangeAccent,
+                                style: TextStyle(
+                                  color: WindowsAppearance.foreground(Colors.orangeAccent),
                                 ),
                               ),
                             if (notice.isNotEmpty) SelectableText(notice),

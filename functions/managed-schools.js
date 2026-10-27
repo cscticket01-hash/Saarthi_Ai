@@ -1,3 +1,4 @@
+const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createManagedSupport}=require('./managed-support');
@@ -18,6 +19,7 @@ function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed 
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
 function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+ const windowsTheme=createWindowsTheme({db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
@@ -295,7 +297,7 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   ticket.used=true;return {success:true,schoolId:m.schoolId};
  }
  if(action?.startsWith('developer/managed/')){
-  const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/create'){
+  const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
@@ -431,7 +433,7 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   const p=verifiedPresence(b.presenceToken);if(p.schoolId!==m.schoolId||p.uid!==m.uid)fail(403,'Another school is not accessible');
   await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:now()},{merge:true});return {success:true,schoolId:m.schoolId};
  }
- if(action==='managed/session'){const access=lease(m);const registration=await db.doc('school_registration_profiles/'+m.schoolId).get();const account=await db.doc('platform_schools/'+m.schoolId).get();access.registrationState=registration.exists?'complete':account.data()?.registrationState==='new'?'new':'unknown';await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,deviceEnforced:deviceDecision.deviceEnforced===true,...(deviceDecision.deviceManaged===true?{deviceManaged:true,device:deviceDecision.device}:{}),...(deviceDecision.deviceEnforced===true?{device:deviceDecision.device,offlineLease:deviceDecision.offlineLease,offlineExpiresAt:deviceDecision.offlineExpiresAt}:{}),presenceToken:presence(m,access),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
+ if(action==='managed/session'){const access=lease(m);let appearance={...DEFAULT_THEME};try{appearance=await windowsTheme.read();}catch(_){/* Presentation failure must not deny school access. */}const registration=await db.doc('school_registration_profiles/'+m.schoolId).get();const account=await db.doc('platform_schools/'+m.schoolId).get();access.registrationState=registration.exists?'complete':account.data()?.registrationState==='new'?'new':'unknown';await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:access.allowed?now():0},{merge:true});const storage=await db.doc('school_storage_private/'+m.schoolId).get();return {...access,windowsTheme:appearance,deviceEnforced:deviceDecision.deviceEnforced===true,...(deviceDecision.deviceManaged===true?{deviceManaged:true,device:deviceDecision.device}:{}),...(deviceDecision.deviceEnforced===true?{device:deviceDecision.device,offlineLease:deviceDecision.offlineLease,offlineExpiresAt:deviceDecision.offlineExpiresAt}:{}),presenceToken:presence(m,access),storageReady:storage.exists&&storage.data().ready===true,scriptUrl:storage.exists?storage.data().url:''};}
  if(action==='managed/disconnect'){invalidate(m.schoolId);await db.doc('platform_schools/'+m.schoolId).set({lastSeenAt:0},{merge:true});return {success:true};}
  if(action==='managed/summary'){
   if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');

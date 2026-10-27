@@ -1,3 +1,4 @@
+import '../windows_appearance.dart';
 import '../windows_profile_image_policy.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -125,8 +126,18 @@ class ManagedSchoolSession {
       if(old.isNotEmpty&&old['managed']!=true)await const WindowsSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
       await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId']),'verifiedAccess':session}));
       await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
+      WindowsAppearance.applyBrand(session['windowsTheme']);
       changed.value++;return session;
     }finally{cloud.close();}
+  }
+  static Future<void> refreshAppearanceAtUnlock() async {
+    try {
+      final before=await CentralSchoolCloud.saved();
+      if(before['managed']!=true)return;
+      final result=await call('managed/session',{}).timeout(const Duration(seconds:4));
+      final after=await CentralSchoolCloud.saved();
+      if(before['uid']==after['uid'] && before['schoolId']==after['schoolId'] && result['schoolId']==before['schoolId']) WindowsAppearance.applyBrand(result['windowsTheme']);
+    } catch (_) {/* Offline unlock retains the last verified brand and local mode. */}
   }
   static void verifyDeviceRegistration(Map<String,dynamic> result, String deviceIdentity) {
     final device=result['device'];

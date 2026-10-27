@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 
 /// Device-only presentation preference; never enters a school database/outbox.
 class WindowsAppearance {
+  static final brand = ValueNotifier<Color>(const Color(0xFF008C78));
+  static String brandRevision = 'default';
   static final mode = ValueNotifier<ThemeMode>(ThemeMode.dark);
   static File get preferenceFile => File(
     '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}'
@@ -14,6 +16,7 @@ class WindowsAppearance {
   static Future<void> restore({File? file}) async {
     try {
       final data = jsonDecode(await (file ?? preferenceFile).readAsString());
+      applyBrand(data['brand'], persist: false);
       mode.value = data['mode'] == 'light' ? ThemeMode.light : ThemeMode.dark;
     } catch (_) {
       /* First run or damaged preference uses the dark default. */
@@ -30,7 +33,7 @@ class WindowsAppearance {
     final operation = _writes.catchError((Object _) {}).then((_) async {
       await destination.parent.create(recursive: true);
       await destination.writeAsString(
-        jsonEncode({'mode': value.name}),
+        jsonEncode({'mode': mode.value.name, 'brand': brandData}),
         flush: true,
       );
     });
@@ -38,22 +41,76 @@ class WindowsAppearance {
     return operation;
   }
 
+  static Map<String, dynamic> get brandData => {'schemaVersion':1,
+    'red': (brand.value.r * 255).round(), 'green': (brand.value.g * 255).round(),
+    'blue': (brand.value.b * 255).round(), 'revision':brandRevision};
+  static void applyBrand(dynamic value, {bool persist = true}) {
+    if (value is! Map || value['schemaVersion'] != 1 ||
+        !['red','green','blue'].every((k) => value[k] is int && value[k] >= 0 && value[k] <= 255) ||
+        value['revision'] is! String) return;
+    brandRevision = value['revision'];
+    brand.value = Color.fromARGB(255, value['red'], value['green'], value['blue']);
+    if (persist) select(mode.value).catchError((Object _) {});
+  }
+  static Color get primary => theme(mode.value == ThemeMode.light ? Brightness.light : Brightness.dark).colorScheme.primary;
+  static Color get onPrimary => theme(mode.value == ThemeMode.light ? Brightness.light : Brightness.dark).colorScheme.onPrimary;
+  static Color get surface => mode.value == ThemeMode.light ? Colors.white : const Color(0xFF172229);
+  static double contrast(Color a, Color b) {
+    final x = Color.alphaBlend(a,b).computeLuminance(), y = b.computeLuminance();
+    return (x>y ? x+.05 : y+.05)/(x>y ? y+.05 : x+.05);
+  }
+  static Color foreground(Color source) {
+    if (source.a == 0) return source;
+    var color=resolve(source).withValues(alpha:1);
+    if (contrast(color,surface)>=4.5) return color;
+    final target=mode.value==ThemeMode.light ? Colors.black : Colors.white;
+    for(var i=1;i<=20;i++) {
+      final adjusted=Color.lerp(color,target,i/20)!;
+      if(contrast(adjusted,surface)>=4.5) return adjusted;
+    }
+    return target;
+  }
+  static Color background(Color source) {
+    if(source.a==0) return source;
+    final high=[source.r,source.g,source.b].reduce((a,b)=>a>b?a:b);
+    final low=[source.r,source.g,source.b].reduce((a,b)=>a<b?a:b);
+    if(high-low<.42 && high<=.46) return resolve(source);
+    final scheme=theme(mode.value==ThemeMode.light?Brightness.light:Brightness.dark).colorScheme;
+    if(low>=.55 && high-low<.31) return surface.withValues(alpha:source.a);
+    return scheme.primaryContainer.withValues(alpha:source.a);
+  }
   static void watch(BuildContext context) {
     Theme.of(context);
   }
 
   static ThemeData theme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
+    final scheme = ColorScheme.fromSeed(seedColor: brand.value, brightness: brightness,
+      surface: dark ? const Color(0xFF172229) : Colors.white);
     return ThemeData(
       brightness: brightness,
       useMaterial3: true,
       fontFamily: 'Segoe UI',
       fontFamilyFallback: const ['Nirmala UI', 'Arial'],
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF008C78),
-        brightness: brightness,
-        surface: dark ? const Color(0xFF172229) : const Color(0xFFFFFFFF),
-      ),
+      colorScheme: scheme,
+      textTheme: Typography.material2021(platform: TargetPlatform.windows).black.apply(
+        bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
+      iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
+      dividerColor: scheme.outlineVariant,
+      cardTheme: CardThemeData(color: scheme.surface, surfaceTintColor: Colors.transparent),
+      dialogTheme: DialogThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
+      snackBarTheme: SnackBarThemeData(backgroundColor: scheme.inverseSurface,
+        contentTextStyle: TextStyle(color: scheme.onInverseSurface), actionTextColor: scheme.inversePrimary),
+      dataTableTheme: DataTableThemeData(headingRowColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest),
+        headingTextStyle: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w700),
+        dataTextStyle: TextStyle(color: scheme.onSurface)),
+      tooltipTheme: TooltipThemeData(decoration: BoxDecoration(color: scheme.inverseSurface,
+        borderRadius: BorderRadius.circular(6)), textStyle: TextStyle(color: scheme.onInverseSurface)),
+      popupMenuTheme: PopupMenuThemeData(color: scheme.surface, textStyle: TextStyle(color: scheme.onSurface)),
+      dropdownMenuTheme: DropdownMenuThemeData(textStyle: TextStyle(color: scheme.onSurface)),
+      chipTheme: ChipThemeData(backgroundColor: scheme.surfaceContainerHighest,
+        selectedColor: scheme.primaryContainer, labelStyle: TextStyle(color: scheme.onSurface)),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
       scaffoldBackgroundColor: dark
           ? const Color(0xFF0B141A)
           : const Color(0xFFF3F5F7),
@@ -73,24 +130,26 @@ class WindowsAppearance {
   /// Legacy UI neutral tones only. Semantic accents and alpha are retained.
   /// Used by native widgets, never by photos, painters or document exports.
   static Color resolve(Color source) {
-    if (mode.value != ThemeMode.light) return source;
+    if (source.a == 0) return source;
+    final dark = mode.value != ThemeMode.light;
     final r = source.r, g = source.g, b = source.b;
-    final high = [r, g, b].reduce((a, b) => a > b ? a : b);
-    final low = [r, g, b].reduce((a, b) => a < b ? a : b);
-    if (high <= .46 && high - low < .42) {
-      final light = .97 - high * .24;
-      return Color.from(alpha: source.a, red: light, green: light, blue: light);
+    final high = [r,g,b].reduce((a,b)=>a>b?a:b), low=[r,g,b].reduce((a,b)=>a<b?a:b);
+    if (high-low < .42 && high <= .46) {
+      // Uniform neutral surfaces retain hierarchy without per-page colour casts.
+      final level = dark ? (.035 + high * .22) : (.99 - high * .15);
+      return Color.from(alpha:source.a,red:level,green:level,blue:level);
     }
-    if (low >= .55 && high - low < .31) {
-      final dark = .10 + (1 - low) * .5;
-      return Color.from(
-        alpha: source.a,
-        red: dark,
-        green: dark + .025,
-        blue: dark + .04,
-      );
+    if (low >= .55 && high-low < .31) {
+      return (dark ? const Color(0xFFE8EDF2) : const Color(0xFF172229)).withValues(alpha:source.a);
     }
-    return source;
+    if (high-low < .12) return (dark ? const Color(0xFFB7C3CD) : const Color(0xFF465561)).withValues(alpha:source.a);
+    // Preserve success/warning/destructive meaning. Other legacy feature accents
+    // converge to the developer brand instead of purple/blue page themes.
+    if (r > g * 1.35 && r > b * 1.15) return (dark ? const Color(0xFFFF8A80) : const Color(0xFFB3261E)).withValues(alpha:source.a);
+    if (r > .6 && g > .32 && b < .4) return (dark ? const Color(0xFFFFD180) : const Color(0xFF805000)).withValues(alpha:source.a);
+    if (g > r * 1.4 && g > b * 1.3) return (dark ? const Color(0xFF7BE0A7) : const Color(0xFF166534)).withValues(alpha:source.a);
+    return primary.withValues(alpha:source.a);
+
   }
 }
 

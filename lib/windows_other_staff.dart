@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'india_address_fields.dart';
 import 'windows_document_templates.dart';
 
@@ -275,7 +276,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                     if (problem != null)
                       Text(
                         problem!,
-                        style: const TextStyle(color: Colors.orangeAccent),
+                        style: TextStyle(color: WindowsAppearance.foreground(Colors.orangeAccent)),
                       ),
                   ],
                 ),

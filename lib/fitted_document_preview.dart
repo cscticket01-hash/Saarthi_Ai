@@ -49,12 +49,12 @@ class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
         return Padding(
           padding: const EdgeInsets.all(12),
           child: SizedBox.expand(
-            child: Image.memory(
+            child: ColoredBox(color: Colors.white, child: Image.memory(
               snapshot.data!.first,
               fit: BoxFit.contain,
               semanticLabel: 'Complete document preview',
               gaplessPlayback: true,
-            ),
+            )),
           ),
         );
       }

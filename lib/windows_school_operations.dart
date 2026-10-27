@@ -114,8 +114,8 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
                     if (t != null && ctx.mounted) update(() => end = t);
                   }),
                 if (enabled && minute(start) >= minute(end))
-                  const Text('Lock time must be after opening time on the same day.',
-                    style: TextStyle(color: Colors.redAccent)),
+                  Text('Lock time must be after opening time on the same day.',
+                    style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
                 const Text('Pending captures stay locked and continue syncing after the window closes.'),
               ],
             )),
@@ -312,12 +312,12 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
             const SizedBox(height: 18),
             Text(
               '${_records.length} check-ins • ${_records.where((r) => r['checkOut'] != null).length} check-outs',
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+              style:  TextStyle(color: WindowsAppearance.foreground(Colors.white54)),
             ),
             const SizedBox(height: 16),
             if (_loading) const LinearProgressIndicator(),
             if (_error != null)
-              Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+              Text(_error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
             if (!_loading && _records.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 35),
@@ -464,7 +464,7 @@ class _WindowsSupportScreenState extends State<WindowsSupportScreen> {
                 ),
               ),
               if (_error != null)
-                Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                Text(_error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
               const SizedBox(height: 18),
               FilledButton.icon(
                 onPressed: _busy ? null : _send,
