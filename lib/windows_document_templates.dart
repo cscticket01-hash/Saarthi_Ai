@@ -25,12 +25,10 @@ import 'package:printing/printing.dart';
 import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
 import 'windows_student_id_cards.dart';
+import 'windows_sync_recovery.dart';
 
-/// Prepared packages remain uploadable while individual owners await repair.
-class IdCardPreparationFailure extends StateError {
-  IdCardPreparationFailure(Object cause)
-      : super('ID card preparation incomplete: $cause');
-}
+// Preserve the existing import surface for document owners and callers.
+export 'windows_sync_recovery.dart' show IdCardPreparationFailure;
 
 class WindowsDocumentTemplates {
   static const manifestName = 'School ID • Manifest Front + Back';
