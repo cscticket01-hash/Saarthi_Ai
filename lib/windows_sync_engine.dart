@@ -554,7 +554,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final legacy = await db.collection('_windows_google_outbox').get();
-    final idCardReviews = await WindowsIdCardReviews.pending(db.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db
         .collection('_windows_sync_status')
@@ -648,7 +647,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         },
     ];
     details.value = {
-      'idCardReviewCount': idCardReviews.length,
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
       'lastRecordCheckMillis': downloadCheckpoint?['verifiedAt'],
       'lastRecordAckMillis': receipts.docs
@@ -679,7 +677,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             state.value == SchoolCloudState.offline ||
             recoveryDecision?.kind == SyncFailureKind.networkPath,
         failed: lastError != null,
-        reviewRequired: recoveryDecision?.review == true || idCardReviews.isNotEmpty,
+        reviewRequired: recoveryDecision?.review == true,
       ),
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
       'remotePollIntervalMillis': reconciliationInterval.inMilliseconds,
@@ -2085,6 +2083,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
+        await WindowsIdCardReviews.repairPending(_activeSchoolSyncId, onRepair: _recordActivity);
         final bootstrapRef = FirebaseFirestore.instance
             .collection('_windows_sync_status')
             .doc('id-card-publication-bootstrap-v2');
@@ -2102,6 +2101,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                     : 'teachers_directory',
                 id,
               );
+            }
+          }
+        }
+        // A one-time renderer upgrade only schedules teacher cards; it does
+        // not request a full school download or reset any existing operation.
+        final teacherLayoutRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('teacher-personal-card-layout-v2');
+        final teacherLayout = (await teacherLayoutRef.get()).data();
+        final needsTeacherLayout = teacherLayout?['schoolId'] != _activeSchoolSyncId;
+        if (needsTeacherLayout) {
+          final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin) throw StateError('School changed during teacher card upgrade.');
+          for (final teacher in teachers.docs) {
+            if (teacher.data()['_syncDeleted'] != true && teacher.data()['deleted'] != true &&
+                (teacher.data()['schoolId'] == null || teacher.data()['schoolId'] == _activeSchoolSyncId)) {
+              _noteIdInput('teachers_directory', teacher.id);
             }
           }
         }
@@ -2132,6 +2146,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             try {
               await WindowsDocumentTemplates.publishChangedIdCards(
                 affectedPeople: targets,
+                onCardRepair: _recordActivity,
               );
             } catch (error, stack) {
               if (FirebaseFirestore.instance.activeProfileId != syncOrigin ||
@@ -2180,6 +2195,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _activeSchoolSyncId,
             dependencyRows,
           );
+          if (needsTeacherLayout) {
+            if (FirebaseFirestore.instance.activeProfileId != syncOrigin) throw StateError('School changed during teacher card upgrade.');
+            await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => teacherLayoutRef.set({
+              'schoolId': _activeSchoolSyncId, 'completedAt': DateTime.now().millisecondsSinceEpoch,
+            }));
+          }
           if (needsIdBootstrap) {
             if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
               throw StateError(

@@ -360,15 +360,12 @@ Future<Uint8List> renderWindowsReferenceDocument({
     final back = <pw.Widget>[
       pw.SvgImage(svg: _teacherArt(i, true), width: w, height: h),
     ];
-    final id = first(['teacherId', 'id']);
     final details = [
       ['Name:', name],
-      ['Qualification:', v('qualification')],
-      ['ID Number:', id],
-      [
-        'Working Since:',
-        first(['joiningDate', 'workingSince', 'dateOfJoining']),
-      ],
+      ['Father Name:', first(['fatherName', 'parentName'])],
+      ['Date of Birth:', first(['dateOfBirth', 'dob'])],
+      ['Subject:', first(['subject', 'department'])],
+      ['Address:', v('address')],
     ];
     if (i == 0 || i == 1) {
       if (i == 0) {
@@ -393,7 +390,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
             ),
           ),
-          at(23, 296, 264, 88, table(details, firstHeader: false, font: 11)),
+          at(23, 296, 264, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
           at(234, 76, 45, 45, asset(logo, 'LOGO')),
           at(
             12,
@@ -424,7 +421,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             58,
             label('TEACHER', size: 48, color: white, heavy: true),
           ),
-          at(31, 335, 244, 88, table(details, firstHeader: false, font: 11)),
+          at(31, 335, 244, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
           at(35, 432, 45, 40, asset(logo, 'LOGO')),
           at(
             86,
@@ -552,11 +549,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             413,
             245,
             48,
-            pw.BarcodeWidget(
-              barcode: pw.Barcode.code128(),
-              data: id == '-' ? 'TEACHER' : id,
-              drawText: true,
-            ),
+            label('School teaching staff', size: 12, color: ink),
           ),
         );
     } else if (i == 2) {
@@ -579,19 +572,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
           216,
           72,
           table(
-            [
-              ['ID No.', id],
-              [
-                'Issue Date',
-                v('issueDate', first(['joiningDate'])),
-              ],
-              [
-                'Expiration',
-                first(['validUntil', 'expiryDate']),
-              ],
-            ],
+            details.skip(1).toList(),
             firstHeader: false,
-            font: 10,
+            font: 9,
+            rowHeight: 18,
           ),
         ),
         at(
@@ -647,11 +631,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
           124,
           264,
           48,
-          pw.BarcodeWidget(
-            barcode: pw.Barcode.code128(),
-            data: id == '-' ? 'TEACHER' : id,
-            drawText: true,
-          ),
+          label('School teaching staff', size: 12, color: ink),
         ),
         at(35, 172, 397, 24, label('Terms & Conditions', size: 14)),
         at(
@@ -757,19 +737,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
           252,
           66,
           table(
-            [
-              ['ID NO', id],
-              [
-                'DEPARTMENT',
-                first(['department', 'subject']),
-              ],
-              [
-                'VALID UNTIL',
-                first(['validUntil', 'expiryDate']),
-              ],
-            ],
+            details.skip(1).toList(),
             firstHeader: false,
-            font: 11,
+            font: 9,
+            rowHeight: 16.5,
           ),
         ),
         at(
@@ -871,11 +842,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
           406,
           174,
           44,
-          pw.BarcodeWidget(
-            barcode: pw.Barcode.code128(),
-            data: id == '-' ? 'TEACHER' : id,
-            drawText: true,
-          ),
+          label('School teaching staff', size: 12, color: ink),
         ),
         at(
           30,
