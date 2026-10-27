@@ -2104,6 +2104,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }
           }
         }
+        // A one-time renderer upgrade only schedules teacher cards; it does
+        // not request a full school download or reset any existing operation.
+        final teacherLayoutRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('teacher-personal-card-layout-v2');
+        final teacherLayout = (await teacherLayoutRef.get()).data();
+        final needsTeacherLayout = teacherLayout?['schoolId'] != _activeSchoolSyncId;
+        if (needsTeacherLayout) {
+          final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin) throw StateError('School changed during teacher card upgrade.');
+          for (final teacher in teachers.docs) {
+            if (teacher.data()['_syncDeleted'] != true && teacher.data()['deleted'] != true &&
+                (teacher.data()['schoolId'] == null || teacher.data()['schoolId'] == _activeSchoolSyncId)) {
+              _noteIdInput('teachers_directory', teacher.id);
+            }
+          }
+        }
         final dependencyRows = await WindowsSyncDependencies.read(
           _activeSchoolSyncId,
         );
@@ -2180,6 +2195,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _activeSchoolSyncId,
             dependencyRows,
           );
+          if (needsTeacherLayout) {
+            if (FirebaseFirestore.instance.activeProfileId != syncOrigin) throw StateError('School changed during teacher card upgrade.');
+            await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => teacherLayoutRef.set({
+              'schoolId': _activeSchoolSyncId, 'completedAt': DateTime.now().millisecondsSinceEpoch,
+            }));
+          }
           if (needsIdBootstrap) {
             if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
               throw StateError(
