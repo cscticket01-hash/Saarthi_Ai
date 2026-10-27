@@ -53,6 +53,7 @@ class WindowsAppearance {
     if (persist) select(mode.value).catchError((Object _) {});
   }
   static Color get primary => theme(mode.value == ThemeMode.light ? Brightness.light : Brightness.dark).colorScheme.primary;
+  static Color get onContainer => theme(mode.value == ThemeMode.light ? Brightness.light : Brightness.dark).colorScheme.onPrimaryContainer;
   static Color get onPrimary => theme(mode.value == ThemeMode.light ? Brightness.light : Brightness.dark).colorScheme.onPrimary;
   static Color get surface => mode.value == ThemeMode.light ? Colors.white : const Color(0xFF172229);
   static double contrast(Color a, Color b) {
@@ -107,8 +108,8 @@ class WindowsAppearance {
       dividerColor: scheme.outlineVariant,
       cardTheme: CardThemeData(color: scheme.surface, surfaceTintColor: Colors.transparent),
       dialogTheme: DialogThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
-      snackBarTheme: SnackBarThemeData(backgroundColor: scheme.inverseSurface,
-        contentTextStyle: TextStyle(color: scheme.onInverseSurface), actionTextColor: scheme.inversePrimary),
+      snackBarTheme: SnackBarThemeData(backgroundColor: scheme.surfaceContainerHighest,
+        contentTextStyle: TextStyle(color: scheme.onSurface), actionTextColor: scheme.primary),
       dataTableTheme: DataTableThemeData(headingRowColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest),
         headingTextStyle: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w700),
         dataTextStyle: TextStyle(color: scheme.onSurface)),

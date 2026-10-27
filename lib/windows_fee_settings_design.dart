@@ -142,7 +142,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 Wrap(alignment: WrapAlignment.end, spacing: 16, runSpacing: 12, children: [
                   if (editing) TextButton(onPressed: saving ? null : onCancel, child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(_muted)))),
                   FilledButton.icon(onPressed: saving ? null : editing ? onSave : onEdit,
-                    style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), backgroundColor: _teal, foregroundColor: WindowsAppearance.onPrimary,
+                    style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary,
                       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18)),
                     icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : Icon(editing ? Icons.save_outlined : Icons.lock_open),
@@ -173,7 +173,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
       : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text('₹ ${row.amount.text.isEmpty ? '0' : row.amount.text}', style:  TextStyle(color: WindowsAppearance.foreground(Colors.white))));
     final action = SizedBox(width: 48, child: editing ? IconButton.outlined(key: ValueKey('delete-fee-${row.id}'),
       tooltip: 'Delete fee row ${index + 1}', onPressed: saving ? null : row.onDelete,
-      style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: WindowsAppearance.onPrimary, side: BorderSide(color: WindowsAppearance.foreground(Color(0xFFAF4054)))),
+      style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: WindowsAppearance.primary, side: BorderSide(color: WindowsAppearance.foreground(Color(0xFFAF4054)))),
       icon: const Icon(Icons.delete_outline)) : const SizedBox());
     if (!wide) return Container(padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(border: Border.all(color: WindowsAppearance.resolve(_border)), borderRadius: BorderRadius.circular(10)),

@@ -603,7 +603,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                     key: const ValueKey('setup-submit'),
                     onPressed: _busy ? null : _save,
                     style: FilledButton.styleFrom(
-                      backgroundColor: WindowsAppearance.background(_accent), foregroundColor: WindowsAppearance.onPrimary,
+                      backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary,
                       minimumSize: const Size.fromHeight(48),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
                     ),

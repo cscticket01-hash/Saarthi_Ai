@@ -74,6 +74,10 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     final db=local.FirebaseFirestore.instance;
     await tester.runAsync(() async {
+      await (FontLoader('Segoe UI')..addFont(Platform.isWindows
+        ? Future.value(ByteData.sublistView(await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes()))
+        : rootBundle.load('assets/id_card_regular.ttf'))).load();
+      await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
       await WindowsRuntimeFlags.setLocalStorageEnabled(true);
       await db.switchProfile('theme-atlas');
       await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic Theme School','principalName':'Principal'});

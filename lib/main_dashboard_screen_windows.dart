@@ -602,12 +602,12 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Color _statusColor() {
-    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?const Color(0xFF00D9A5):Colors.redAccent;
+    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?WindowsAppearance.foreground(const Color(0xFF00D9A5)):WindowsAppearance.foreground(Colors.redAccent);
     final state = WindowsPlatformClient.instance.state.value;
-    if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
+    if (state.allowed && state.status == 'licensed') return WindowsAppearance.foreground(const Color(0xFF00D9A5));
     if (_savedKey.isEmpty) return WindowsAppearance.resolve(Colors.white54);
-    if (!state.allowed) return Colors.redAccent;
-    return Colors.orangeAccent;
+    if (!state.allowed) return WindowsAppearance.foreground(Colors.redAccent);
+    return WindowsAppearance.foreground(Colors.orangeAccent);
   }
 
   Future<void> _save() async {
@@ -3890,11 +3890,11 @@ void _handleLoginBack(bool didPop) {
 
   Color _categoryColor(String category) {
     switch (category.toLowerCase()) {
-      case 'holiday': return Colors.orangeAccent;
-      case 'exam': return Colors.redAccent;
-      case 'event': return Colors.blueAccent;
+      case 'holiday': return WindowsAppearance.foreground(Colors.orangeAccent);
+      case 'exam': return WindowsAppearance.foreground(Colors.redAccent);
+      case 'event': return WindowsAppearance.foreground(Colors.blueAccent);
       case 'general':
-      default: return const Color(0xFF00A884);
+      default: return WindowsAppearance.foreground(const Color(0xFF00A884));
     }
   }
 
@@ -4514,12 +4514,13 @@ body: PopScope(
 // Decorative only. No existing dashboard logic depends on this painter.
 // ============================================================
 class _VidyaSaarthiWavePainter extends CustomPainter {
-  const _VidyaSaarthiWavePainter();
+  _VidyaSaarthiWavePainter() : paletteKey=(WindowsAppearance.mode.value, WindowsAppearance.brand.value.toARGB32());
+  final (ThemeMode,int) paletteKey;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final teal = const Color(0xFF00E6C0);
-    final cyan = const Color(0xFF39D7FF);
+    final teal = WindowsAppearance.primary;
+    final cyan = WindowsAppearance.primary;
 
     final softGlow = Paint()
       ..style = PaintingStyle.stroke
@@ -4660,7 +4661,7 @@ class _VidyaSaarthiWavePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _VidyaSaarthiWavePainter oldDelegate) => false;
+  bool shouldRepaint(covariant _VidyaSaarthiWavePainter oldDelegate) => oldDelegate.paletteKey != paletteKey;
 }
 
 // ============================================================
@@ -5720,7 +5721,7 @@ Future<void> _printIdCard() async {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              const CustomPaint(
+              CustomPaint(
                 painter: _VidyaSaarthiWavePainter(),
               ),
 
@@ -7044,14 +7045,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
   Color _adminCategoryColor(String category) {
     switch (category.toLowerCase()) {
       case 'holiday':
-        return Colors.orangeAccent;
+        return WindowsAppearance.foreground(Colors.orangeAccent);
       case 'exam':
-        return Colors.redAccent;
+        return WindowsAppearance.foreground(Colors.redAccent);
       case 'event':
-        return Colors.blueAccent;
+        return WindowsAppearance.foreground(Colors.blueAccent);
       case 'general':
       default:
-        return const Color(0xFF00A884);
+        return WindowsAppearance.foreground(const Color(0xFF00A884));
     }
   }
 
@@ -7755,9 +7756,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '$prefix${change.abs().toStringAsFixed(1)}%';
   }
 
-  Color _trendColor(String value) => value.startsWith('▼')
+  Color _trendColor(String value) => WindowsAppearance.foreground(value.startsWith('▼')
       ? Colors.redAccent
-      : const Color(0xFF00D9A5);
+      : const Color(0xFF00D9A5));
 
   Widget _metricCard({
     required double width,
@@ -10575,9 +10576,9 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 
   Color _statusColor(String status) {
-    if (status == 'PAID') return const Color(0xFF00A884);
-    if (status == 'PARTIAL') return Colors.orangeAccent;
-    return Colors.redAccent;
+    if (status == 'PAID') return WindowsAppearance.foreground(const Color(0xFF00A884));
+    if (status == 'PARTIAL') return WindowsAppearance.foreground(Colors.orangeAccent);
+    return WindowsAppearance.foreground(Colors.redAccent);
   }
 
   InputDecoration _inputDecoration(String label, IconData icon) {
@@ -20141,7 +20142,7 @@ class _StudentDocumentsScreenState
         key: const ValueKey('student-document-upload'),
         onPressed: _uploading ? null : () => _upload(),
         backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
-        foregroundColor: WindowsAppearance.onPrimary,
+        foregroundColor: WindowsAppearance.onContainer,
         icon: _uploading
             ?  SizedBox(
                 width: 17,
