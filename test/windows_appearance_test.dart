@@ -10,7 +10,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_appearance.dart';
-import '../lib/main_dashboard_screen_windows.dart' show SettingsScreen;
+import '../lib/windows_local_firestore.dart' as local;
+import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_staff_payroll.dart';
+import '../lib/windows_document_templates.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../lib/main_dashboard_screen_windows.dart' show AdminDashboardScreen, AdminAnalyticsScreen, SettingsScreen, SchoolSettingsScreen, AdminSettingsScreen, FeesCollectionScreen, FeeCollectionSettingsScreen, TeachersDirectoryScreen, AddTeacherScreen, AllStudentsListScreen, WindowsSchoolExpensesScreen, ExamCenterScreen, AdvancedSettingsScreen, WindowsAttendanceScreen;
 import '../lib/windows_settings_panel.dart';
 
 Widget app(Widget home, {GlobalKey<NavigatorState>? navigatorKey}) =>
@@ -65,6 +70,46 @@ void main() {
       expect(WindowsAppearance.mode.value, ThemeMode.dark);
     },
   );
+  testWidgets('Windows route atlas retains visible content in both modes', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db=local.FirebaseFirestore.instance;
+    await tester.runAsync(() async {
+      await WindowsRuntimeFlags.setLocalStorageEnabled(true);
+      await db.switchProfile('theme-atlas');
+      await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic Theme School','principalName':'Principal'});
+      await db.collection('teachers_directory').doc('theme-teacher').set({'name':'Synthetic Teacher','teacherId':'T-1','subject':'Mathematics','status':'Active','phone':'0000000000','fatherName':'Synthetic Father'});
+      await db.collection('students_directory').doc('theme-student').set({'name':'Synthetic Student','class':'1','rollNo':1,'parentName':'Synthetic Parent'});
+    });
+    final screens=<String,Widget>{
+      'dashboard':const AdminDashboardScreen(),'analytics':const AdminAnalyticsScreen(),'settings':const SettingsScreen(),'school':const SchoolSettingsScreen(),'admin':const AdminSettingsScreen(),
+      'fees':const FeesCollectionScreen(),'fee-settings':const FeeCollectionSettingsScreen(),
+      'teachers':const TeachersDirectoryScreen(),'add-teacher':const AddTeacherScreen(),
+      'students':const AllStudentsListScreen(),'expenses':const WindowsSchoolExpensesScreen(),
+      'exams':const ExamCenterScreen(),'advanced':const AdvancedSettingsScreen(),
+      'attendance':const WindowsAttendanceScreen(),'salary':const StaffSalaryScreen(),'templates':const SchoolDocumentTemplatesScreen(),
+    };
+    for(final size in [const Size(1440,1000),const Size(1024,768)]) {
+      tester.view.physicalSize=size;tester.view.devicePixelRatio=1;
+      for(final mode in [ThemeMode.dark,ThemeMode.light]) {
+        WindowsAppearance.mode.value=mode;
+        for(final entry in screens.entries) {
+          final key=GlobalKey();
+          await tester.pumpWidget(app(RepaintBoundary(key:key,child:entry.value)));
+          for(var i=0;i<8;i++) {await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:40)));await tester.pump(const Duration(milliseconds:40));}
+          expect(tester.takeException(),isNull,reason:'${entry.key} ${mode.name} $size');
+          if(Platform.isWindows) await tester.runAsync(() async {
+            final image=await (key.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage();
+            final bytes=await image.toByteData(format:ui.ImageByteFormat.png);
+            final file=File('build/appearance-preview/atlas-${entry.key}-${mode.name}-${size.width.toInt()}.png');
+            await file.parent.create(recursive:true);await file.writeAsBytes(bytes!.buffer.asUint8List());image.dispose();
+          });
+          await tester.pumpWidget(const SizedBox());await tester.pump();
+        }
+      }
+    }
+    tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();
+    await tester.runAsync(()=>WindowsRuntimeFlags.setLocalStorageEnabled(false));
+  });
   testWidgets(
     'Settings has Appearance above Update in both modes without overflow',
     (tester) async {

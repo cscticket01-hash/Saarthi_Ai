@@ -62,11 +62,15 @@ class WindowsAppearance {
   static Color foreground(Color source) {
     if (source.a == 0) return source;
     var color=resolve(source).withValues(alpha:1);
-    if (contrast(color,surface)>=4.5) return color;
+    final scheme=theme(mode.value==ThemeMode.light?Brightness.light:Brightness.dark).colorScheme;
+    final surfaces=[surface,scheme.primaryContainer,scheme.surfaceContainerHighest,
+      mode.value==ThemeMode.light?const Color(0xFFE0E0E0):const Color(0xFF252525)];
+    bool readable(Color c)=>surfaces.every((bg)=>contrast(c,bg)>=4.5);
+    if (readable(color)) return color;
     final target=mode.value==ThemeMode.light ? Colors.black : Colors.white;
     for(var i=1;i<=20;i++) {
       final adjusted=Color.lerp(color,target,i/20)!;
-      if(contrast(adjusted,surface)>=4.5) return adjusted;
+      if(readable(adjusted)) return adjusted;
     }
     return target;
   }
@@ -83,11 +87,15 @@ class WindowsAppearance {
     Theme.of(context);
   }
 
+  static final _themes=<(int,Brightness),ThemeData>{};
   static ThemeData theme(Brightness brightness) {
+    final key=(brand.value.toARGB32(),brightness);
+    final cached=_themes[key];
+    if(cached!=null)return cached;
     final dark = brightness == Brightness.dark;
     final scheme = ColorScheme.fromSeed(seedColor: brand.value, brightness: brightness,
       surface: dark ? const Color(0xFF172229) : Colors.white);
-    return ThemeData(
+    final result=ThemeData(
       brightness: brightness,
       useMaterial3: true,
       fontFamily: 'Segoe UI',
@@ -125,6 +133,9 @@ class WindowsAppearance {
         border: const OutlineInputBorder(),
       ),
     );
+    if(_themes.length>12)_themes.clear();
+    _themes[key]=result;
+    return result;
   }
 
   /// Legacy UI neutral tones only. Semantic accents and alpha are retained.
