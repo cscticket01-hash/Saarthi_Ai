@@ -1,3 +1,4 @@
+import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
 import 'sync_recovery_policy.dart' as failure_policy;
 
@@ -1311,6 +1312,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       const Text(
                         'Your school records, cloud transfers and recovery — together in one live workspace.',
                       ),
+                      if (ownSchool && (details['idCardReviewCount'] as num? ?? 0) > 0)
+                        TextButton.icon(icon: const Icon(Icons.badge_outlined), label: Text('${details['idCardReviewCount']} ID-card review(s)'),
+                          onPressed: () async {
+                            await Navigator.push<void>(context, MaterialPageRoute(builder: (_) => WindowsIdCardReviewScreen(
+                              school: engine.activeSchoolSyncId, profile: engine.activeProfileId)));
+                            await engine.refreshDetails();
+                          }),
                       if (!ownSchool)
                         const Text(
                           'School changed. Close and reopen this page.',

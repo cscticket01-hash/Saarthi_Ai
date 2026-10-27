@@ -10,9 +10,11 @@ import 'windows_connect/central_school_cloud.dart';
 /// This verified publication conflict belongs to one card, not school access.
 /// The existing published PDF must remain protected while other records sync.
 class PublishedIdInputConflict extends StateError {
-  PublishedIdInputConflict()
+  PublishedIdInputConflict({this.schoolId, this.documentId, this.ownerRole,
+    this.personId, this.personDocId, this.inputRevision, this.cloudRevision})
       : super('Published ID already exists with different inputs. '
             'Review the school-published card before replacing it; no new PDF was saved.');
+  final String? schoolId, documentId, ownerRole, personId, personDocId, inputRevision, cloudRevision;
 }
 
 /// Preserve the original failure category across the document preparation stage.

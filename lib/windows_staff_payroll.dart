@@ -5,7 +5,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/widgets.dart' as pw;
-import 'windows_browser_print.dart';
+import 'package:printing/printing.dart';
+import 'windows_document_templates.dart';
+import 'windows_salary_history.dart';
 import 'windows_save_pdf.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
@@ -122,7 +124,7 @@ class StaffPayroll {
     }
     final next = paid(row) + amount;
     if (next > total(row)) throw StateError('Payment exceeds the remaining salary balance.');
-    payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim()});
+    payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim(), 'timeRecorded': true, 'recordedAt': DateTime.now().millisecondsSinceEpoch});
     await ref.update({'payments': payments, 'paidPaise': next, 'balancePaise': total(row) - next,
       'status': next == total(row) ? 'Paid' : 'Part paid', 'updatedAt': DateTime.now().millisecondsSinceEpoch});
   });
@@ -207,7 +209,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       DropdownButtonFormField<String>(isExpanded: true, initialValue: mode, items: ['Cash', 'Bank transfer', 'UPI', 'Cheque'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(), onChanged: (v) => setD(() => mode = v!)),
       TextButton.icon(icon: const Icon(Icons.event), label: Text('${date.day}/${date.month}/${date.year}'), onPressed: () async {
         final selected = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2000), lastDate: DateTime.now());
-        if (selected != null) setD(() => date = selected);
+        if (selected != null) setD(() => date = DateTime(selected.year, selected.month, selected.day, date.hour, date.minute, date.second));
+      }),
+      TextButton.icon(icon: const Icon(Icons.schedule), label: Text('Payment time: ${salaryPaymentTime(date)}'), onPressed: () async {
+        final selected = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(date));
+        if (selected != null) setD(() => date = DateTime(date.year, date.month, date.day, selected.hour, selected.minute));
       }),
       TextField(controller: reference, decoration: const InputDecoration(labelText: 'Payment reference / note')),
       const Text('This records a payment already made. It does not transfer money.'),
@@ -215,16 +221,10 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     amount.dispose(); reference.dispose();
   }
-  void _history(Map<String, dynamic> row) {
-    final payments = row['payments'] as List? ?? [];
-    showDialog<void>(context: context, builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(title: Text('Payment history • ${row['name']}'),
-      content: SizedBox(width: 480, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text('${row['month']} • Net ₹${StaffPayroll.format(StaffPayroll.total(row))} • Paid ₹${StaffPayroll.format(StaffPayroll.paid(row))}'),
-        if (payments.isEmpty) const Padding(padding: EdgeInsets.all(20), child: Text('No payments recorded.')),
-        for (final p in payments) ListTile(title: Text('₹${StaffPayroll.format((p['amountPaise'] as num).toInt())} • ${p['mode']}'),
-          subtitle: Text('${p['date'].toString().split('T').first}\n${p['reference'] ?? ''}')),
-      ]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))]); });
-  }
+  Future<void> _history([Map<String, dynamic>? row]) => Navigator.push<void>(context,
+    MaterialPageRoute(builder: (_) => StaffSalaryHistoryScreen(profile: _profile,
+      staffId: row?['staffId']?.toString(), teacherId: row?['teacherId']?.toString(),
+      staffName: row?['name']?.toString())));
   List<Map<String,dynamic>> get _monthRows => _rows.where((r) => r['month'] == StaffPayroll.monthKey(_month)).toList();
   Future<void> _output({bool csv = false, Map<String,dynamic>? row}) async {
     if (_working) return;
@@ -264,7 +264,15 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             pw.Text('Status: ${r['status'] ?? 'Pending'}'),
           ])));
         }
-        await WindowsBrowserPrint.open(await doc.save());
+        final bytes = await doc.save();
+        StaffPayroll._sameSchool(_profile);
+        if (mounted) await WindowsDocumentTemplates.preview(context, bytes, title: 'Payslip • ${rows.single['name']}', printLabel: 'Print Payslip',
+          onPrint: () async {
+            try {
+              StaffPayroll._sameSchool(_profile);
+              await Printing.layoutPdf(onLayout: (_) async => bytes, name: 'Staff Payslip');
+            } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Print failed: $e'))); }
+          });
       }
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }
@@ -306,7 +314,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             IconButton(tooltip:'Next month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month+1);_selected.clear();}),icon:const Icon(Icons.chevron_right)),
             FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:const Icon(Icons.calculate_outlined),label:const Text('Calculate Payroll')),
             FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xff12b975)),onPressed:_selected.isEmpty?null:_paySelected,icon:const Icon(Icons.done_all),label:const Text('Mark Selected as Paid')),
-            OutlinedButton.icon(onPressed:_working?null:()=>_output(),icon:const Icon(Icons.print_outlined),label:const Text('Generate Payslips')),
+            OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:const Icon(Icons.history),label:const Text('Payment History')),
             OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:const Icon(Icons.download_outlined),label:const Text('Export CSV')),
 
           ]),const SizedBox(height:18),
