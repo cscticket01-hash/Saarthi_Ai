@@ -52,8 +52,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: isolated-sync-v2-real-cloud
-  cancel-in-progress: true
+  # Share the same school-writer gate as hosted/latency acceptance. Concurrent
+  # fixtures contend on its Script lock and distort confirmation measurements.
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
 jobs:
   windows-live-prerequisites:
     if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
