@@ -74,7 +74,7 @@ class WindowsSettingsCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: WindowsAppearance.foreground(const Color(0xFF34434C)),
+          color: WindowsAppearance.outline(const Color(0xFF34434C)),
         ),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -87,7 +87,7 @@ class WindowsSettingsCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: WindowsAppearance.foreground(Color(0x30000000)),
+            color: WindowsAppearance.shadow(Color(0x30000000)),
             blurRadius: 20,
             offset: Offset(0, 8),
           ),
@@ -101,7 +101,7 @@ class WindowsSettingsCard extends StatelessWidget {
           final accent = scheme.primary;
           final heading = Text(
             title,
-            style: TextStyle(
+            style: TextStyle(fontFamily: 'Segoe UI', 
               color: WindowsAppearance.foreground(Colors.white),
               fontSize: compact ? 18 : 20,
               fontWeight: FontWeight.w700,
@@ -109,7 +109,7 @@ class WindowsSettingsCard extends StatelessWidget {
           );
           final description = Text(
             subtitle,
-            style: TextStyle(
+            style: TextStyle(fontFamily: 'Segoe UI', 
               color: WindowsAppearance.foreground(Color(0xFFB7C3DA)),
               fontSize: 15,
               height: 1.4,
@@ -212,7 +212,7 @@ class WindowsSettingsButton extends StatelessWidget {
             child: Text(
               label,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontFamily: 'Segoe UI', fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ),
         ],

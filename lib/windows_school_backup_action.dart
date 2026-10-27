@@ -71,7 +71,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
                       ),
                     ),
                     if (error != null)
-                      Text(error!, style: const TextStyle(color: Colors.red)),
+                      Text(error!, style: const TextStyle(fontFamily: 'Segoe UI', color: Colors.red)),
                   ],
                 ),
               ),

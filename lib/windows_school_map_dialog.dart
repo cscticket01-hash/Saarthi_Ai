@@ -117,7 +117,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBi
           ]),
           if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
           if (_error != null) Padding(padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+              child: Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: Theme.of(context).colorScheme.error))),
           if (_pin != null) ...[
             const SizedBox(height: 12),
             Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(

@@ -676,7 +676,9 @@ class WindowsDocumentTemplates {
 }
 
 class SchoolDocumentTemplatesScreen extends StatefulWidget {
-  const SchoolDocumentTemplatesScreen({super.key});
+  const SchoolDocumentTemplatesScreen({super.key, this.thumbnail});
+  /// Optional native-raster boundary for UI tests; production renders the PDF.
+  final Future<Uint8List> Function(String kind, int index)? thumbnail;
   @override
   State<SchoolDocumentTemplatesScreen> createState() =>
       _SchoolDocumentTemplatesScreenState();
@@ -726,6 +728,7 @@ class _SchoolDocumentTemplatesScreenState
     final kind = _kind;
     final sample = _sample;
     return _thumbnails.putIfAbsent('$kind:$index', () async {
+      if(widget.thumbnail!=null)return widget.thumbnail!(kind,index);
       final bytes = (await WindowsDocumentTemplates.renderTemplate(
         kind,
         index,
@@ -889,7 +892,7 @@ class _SchoolDocumentTemplatesScreenState
           const SizedBox(height: 14),
            Text(
             'Preview first, then select one layout for the whole school. Student and teacher ID layouts are stored separately.',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white54)),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
           ),
           const SizedBox(height: 20),
           if (_kind == 'studentId') ...[
@@ -925,7 +928,7 @@ class _SchoolDocumentTemplatesScreenState
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                     side: BorderSide(
-                      color: active ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white12),
+                      color: active ? const Color(0xFF00D9A5) : WindowsAppearance.outline(Colors.white12),
                       width: active ? 2 : 1,
                     ),
                   ),
@@ -975,7 +978,7 @@ class _SchoolDocumentTemplatesScreenState
                         ],
                         Text(
                           i < 0 ? 'Default' : _names[_kind]![i],
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: const TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 8),
                         Text(
@@ -986,7 +989,7 @@ class _SchoolDocumentTemplatesScreenState
                               : _kind.endsWith('Id')
                               ? 'Front | Back • each 85.6 × 54 mm'
                               : 'Printable school document',
-                          style:  TextStyle(
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Colors.white54),
                             fontSize: 12,
                           ),

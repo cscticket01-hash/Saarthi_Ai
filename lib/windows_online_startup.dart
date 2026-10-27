@@ -84,7 +84,7 @@ class _WindowsOnlineStartupGateState extends State<WindowsOnlineStartupGate> {
                 const SizedBox(height: 18),
                 const Text('Opening Vidya Saarthi',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    style: TextStyle(fontFamily: 'Segoe UI', fontSize: 24, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 Text(
                   _message ??
@@ -111,7 +111,7 @@ class _WindowsOnlineStartupGateState extends State<WindowsOnlineStartupGate> {
                 const SizedBox(height: 12),
                  Text('Your saved password and licence still apply.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: WindowsAppearance.foreground(Colors.white54), fontSize: 12)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 12)),
               ],
             ),
           ),

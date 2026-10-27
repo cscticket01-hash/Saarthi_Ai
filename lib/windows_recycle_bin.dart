@@ -151,7 +151,7 @@ class _WindowsRecycleBinState extends State<WindowsRecycleBin> {
       DropdownButton<String>(value:collection,items:[for(final c in categories)DropdownMenuItem(value:c,child:Text(c))],onChanged:busy?null:(value){if(value!=null){setState(() {collection=value;entries=[];});unawaited(_load());}}),
       Wrap(spacing:12,children:[OutlinedButton(onPressed:busy?null:()=>_load(),child:const Text('Refresh verified inventory')),if(partial)OutlinedButton(onPressed:busy?null:()=>_load(more:true),child:const Text('Load more'))]),
       if(busy)const LinearProgressIndicator(),if(message.isNotEmpty)SelectableText(message),
-      const Text('Retained offline deletion snapshots',style:TextStyle(fontSize:20)),
+      const Text('Retained offline deletion snapshots',style:TextStyle(fontFamily: 'Segoe UI', fontSize:20)),
       Text(localVerified && db.activeProfileId==origin ? '${localEntries.length} retained snapshots in this school/category.' : 'Local snapshot inventory unverified.'),
       const Text('These are retained local evidence, not a verified restore or proof of a current server restore window. Offline administrator requests preserve deletion ordering; pending views are not cloud success. Original deletion intents, financial evidence and file bytes are retained.'),
       if(db.activeProfileId==origin)for(final row in localEntries)Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[

@@ -191,7 +191,7 @@ class WindowsStatusLed extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     label,
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: color,
                       fontSize:
                           compact ? 9 : 10,

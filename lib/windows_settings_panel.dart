@@ -129,7 +129,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
           title:  Text(
             'App Lock',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white)),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
           ),
           content: SizedBox(
             width: 420,
@@ -197,7 +197,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
           title:  Text(
             'Set / Change App Lock',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white)),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
           ),
           content: SizedBox(
             width: 470,
@@ -236,7 +236,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
                 ),
                 if (error != null) ...[
                   const SizedBox(height: 10),
-                  Text(error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
+                  Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
                 ],
               ],
             ),
@@ -408,10 +408,10 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
         backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
-        title:  Text('Disconnect Firebase?', style: TextStyle(color: WindowsAppearance.foreground(Colors.white))),
+        title:  Text('Disconnect Firebase?', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
         content:  Text(
           'Sirf Firebase connection remove hoga. Local school data delete nahi hoga.',
-          style: TextStyle(color: WindowsAppearance.foreground(Colors.white70)),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70)),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -476,7 +476,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               SizedBox(width: 9),
               Text(
                 'App Lock',
-                style: TextStyle(
+                style: TextStyle(fontFamily: 'Segoe UI', 
                   color: WindowsAppearance.foreground(Colors.white),
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
@@ -487,12 +487,12 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           const SizedBox(height: 10),
           Text(
             'Admin ID: ${WindowsLocalSecurity.adminId}',
-            style:  TextStyle(color: WindowsAppearance.foreground(Colors.white70), fontSize: 12),
+            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 12),
           ),
           const SizedBox(height: 4),
            Text(
             'App kholne ka local password. School Login se alag hai.',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5, height: 1.4),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5, height: 1.4),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -521,7 +521,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
               Expanded(
                 child: Text(
                   'Firebase Connection',
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -535,7 +535,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
             const SizedBox(height: 8),
             Text(
               'Project: $_projectId',
-              style: TextStyle(
+              style: TextStyle(fontFamily: 'Segoe UI', 
                 color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                 fontSize: 10.5,
                 fontWeight: FontWeight.w700,
@@ -632,7 +632,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
           const SizedBox(height: 8),
            Text(
             'LED GREEN tabhi hoga jab Firebase Auth + Firestore actual request successful ho. Password save nahi hota.',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10, height: 1.4),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10, height: 1.4),
           ),
         ],
       ),
@@ -646,7 +646,7 @@ class _WindowsSettingsPanelState extends State<WindowsSettingsPanel> {
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF111B21)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.foreground(Colors.white).withOpacity(.06)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(.06)),
       ),
       child: child,
     );
@@ -745,14 +745,14 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             value: _localStorageEnabled,
-            title:  Text('Local Data', style: TextStyle(color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w800)),
+            title:  Text('Local Data', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w800)),
             subtitle: Text(
               _managedLocalFirst
                   ? 'School Local-First storage is required. Saves remain available offline.'
                   : _localStorageEnabled
                   ? 'ON: device local data show/save hoga; active school profile se isolated rahega.'
                   : 'OFF: local school data disk par read/save nahi hoga; remote Firebase + Google mode chalega.',
-              style:  TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
             ),
             onChanged: _busy || _managedLocalFirst
                 ? null
@@ -798,7 +798,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
             ),
             child: SelectableText(
               _path.isEmpty ? 'Loading...' : _path,
-              style:  TextStyle(color: WindowsAppearance.foreground(Colors.white70), fontSize: 11.5),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 11.5),
             ),
           ),
           const SizedBox(height: 11),
@@ -822,7 +822,7 @@ class _WindowsLocalStorageCardState extends State<WindowsLocalStorageCard> {
           const SizedBox(height: 8),
            Text(
             'LED RED hua to folder/disk/permission/database me problem hai. HDD change karne par existing local data new location me copy karke hi switch hoga.',
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10, height: 1.4),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10, height: 1.4),
           ),
         ],
       ),
@@ -875,10 +875,10 @@ class WindowsAppUpdateCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   Expanded(child: Text(
                   state.message,
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: state.phase == WindowsUpdatePhase.error
                         ? Colors.redAccent
-                        : WindowsAppearance.resolve(Colors.white70),
+                        : WindowsAppearance.foreground(Colors.white70),
                     fontSize: 15, height: 1.4,
                   ),
                 )),
@@ -895,7 +895,7 @@ class WindowsAppUpdateCard extends StatelessWidget {
                   state.launching
                       ? 'Download complete. Installer open ho raha hai...'
                       : 'Downloading$progressText • Page change karne par bhi download continue rahega.',
-                  style:  TextStyle(
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Colors.white54),
                     fontSize: 10,
                   ),
@@ -943,7 +943,7 @@ Widget _settingsStyleCard({
     decoration: BoxDecoration(
       color: WindowsAppearance.background(const Color(0xFF172229)),
       borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: WindowsAppearance.foreground(Colors.white).withOpacity(.06)),
+      border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(.06)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -958,7 +958,7 @@ Widget _settingsStyleCard({
                 children: [
                   Text(
                     title,
-                    style:  TextStyle(
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 15,
                       fontWeight: FontWeight.w900,
@@ -967,7 +967,7 @@ Widget _settingsStyleCard({
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style:  TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                   ),
                 ],
               ),
@@ -999,17 +999,17 @@ class WindowsSyncStatusCard extends StatelessWidget {
           title:'Sync',subtitle:'Sync Status • $label',
           content:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             Text('Last successful sync: ${engine.lastSuccessfulSync?.toLocal().toString()??'Not yet completed'}',
-              style: TextStyle(color:WindowsAppearance.foreground(Color(0xFFB7C3DA)),fontSize:14,height:1.5)),
+              style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Color(0xFFB7C3DA)),fontSize:14,height:1.5)),
             const SizedBox(height:8),
             ValueListenableBuilder<String>(valueListenable:WindowsUiLanguage.changed,
               builder:(context,language,_){ WindowsAppearance.watch(context); return material.Text.rich(TextSpan(
                 text:WindowsUiLanguage.translate('Pending: '),
-                style: TextStyle(color:WindowsAppearance.foreground(Color(0xFFB7C3DA)),fontSize:15),
-                children:[TextSpan(text:'$pending',style:TextStyle(
+                style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Color(0xFFB7C3DA)),fontSize:15),
+                children:[TextSpan(text:'$pending',style:TextStyle(fontFamily: 'Segoe UI', 
                   color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
               )); }),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
-              child:Text(engine.lastError!,style:TextStyle(color:WindowsAppearance.foreground(Colors.orangeAccent),fontSize:14))),
+              child:Text(engine.lastError!,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.orangeAccent),fontSize:14))),
           ]),
           actions:WindowsSettingsButton(purple:true,
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)); })),

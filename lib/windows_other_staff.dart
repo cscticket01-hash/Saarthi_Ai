@@ -276,7 +276,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                     if (problem != null)
                       Text(
                         problem!,
-                        style: TextStyle(color: WindowsAppearance.foreground(Colors.orangeAccent)),
+                        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent)),
                       ),
                   ],
                 ),

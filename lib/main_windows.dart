@@ -476,7 +476,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                 SizedBox(height: 18),
                 Text(
                   'Login Successful',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontFamily: 'Segoe UI', fontSize: 26, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -506,7 +506,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   Text(
                     _schoolName.isEmpty ? 'Vidya Saarthi' : _schoolName,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 21,
                       fontWeight: FontWeight.w800,
@@ -516,7 +516,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   Text(
                     'App Lock • Enter your saved local password.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white60),
                     ),
                   ),
@@ -526,7 +526,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     autofocus: true,
                     obscureText: true,
                     onSubmitted: (_) => _unlock(),
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration: InputDecoration(
@@ -698,7 +698,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
+          Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
         ],
         const SizedBox(height: 18),
         SizedBox(
@@ -816,7 +816,7 @@ class _WindowsFirstRunSecuritySetupState
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
+          Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
         ],
         const SizedBox(height: 18),
         SizedBox(
@@ -870,7 +870,7 @@ class _LocalAuthShell extends StatelessWidget {
               color: WindowsAppearance.background(const Color(0xFF0A1E26)),
               borderRadius: BorderRadius.circular(26),
               border: Border.all(
-                color: WindowsAppearance.foreground(const Color(0xFF00E8D0).withOpacity(0.35)),
+                color: WindowsAppearance.outline(const Color(0xFF00E8D0).withOpacity(0.35)),
               ),
             ),
             child: Column(
@@ -880,8 +880,8 @@ class _LocalAuthShell extends StatelessWidget {
                   width: 72,
                   height: 72,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF33E9D0), Color(0xFF00A8FF)],
+                    gradient: LinearGradient(
+                      colors: WindowsAppearance.gradientColors([Color(0xFF33E9D0), Color(0xFF00A8FF)]),
                     ),
                     borderRadius: BorderRadius.circular(22),
                   ),
@@ -894,7 +894,7 @@ class _LocalAuthShell extends StatelessWidget {
                 const SizedBox(height: 16),
                 Text(
                   title,
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
@@ -903,7 +903,7 @@ class _LocalAuthShell extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   subtitle,
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
@@ -914,7 +914,7 @@ class _LocalAuthShell extends StatelessWidget {
                 Text(
                   description,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Colors.white54),
                     fontSize: 11,
                     height: 1.4,

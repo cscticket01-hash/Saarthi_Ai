@@ -620,7 +620,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: WindowsAppearance.foreground(const Color(0xFF21475D))),
+      border: Border.all(color: WindowsAppearance.outline(const Color(0xFF21475D))),
     ),
     child: child,
   );
@@ -636,12 +636,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Text(
               name,
-              style:  TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
             ),
             const SizedBox(height: 6),
             Text(
               value,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontFamily: 'Segoe UI', fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -797,7 +797,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 children: [
                   const Text(
                     'Sync Progress',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
                   LayoutBuilder(builder: (context, space) {WindowsAppearance.watch(context);
@@ -833,7 +833,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 const SizedBox(height: 6),
                                 Text(
                                   phaseLabel,
-                                  style: const TextStyle(
+                                  style: const TextStyle(fontFamily: 'Segoe UI', 
                                     fontSize: 15,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -841,7 +841,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 const SizedBox(height: 6),
                                 Text(
                                   '${details['pending'] ?? 'Unknown'} pending',
-                                  style:  TextStyle(
+                                  style:  TextStyle(fontFamily: 'Segoe UI', 
                                     color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                   ),
                                 ),
@@ -864,11 +864,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         const SizedBox(height: 10),
                                         const Text(
                                           'Data folder',
-                                          style: TextStyle(fontSize: 12),
+                                          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
                                         ),
                                         SelectableText(
                                           localDataPath!,
-                                          style:  TextStyle(
+                                          style:  TextStyle(fontFamily: 'Segoe UI', 
                                             fontSize: 12,
                                             color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                           ),
@@ -876,11 +876,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         const SizedBox(height: 8),
                                         const Text(
                                           'Files folder',
-                                          style: TextStyle(fontSize: 12),
+                                          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
                                         ),
                                         SelectableText(
                                           localFilesPath ?? 'Unknown',
-                                          style:  TextStyle(
+                                          style:  TextStyle(fontFamily: 'Segoe UI', 
                                             fontSize: 12,
                                             color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
                                           ),
@@ -933,7 +933,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   const SizedBox(height: 12),
                    Text(
                     'Live state from the durable queue • No estimated percentages',
-                    style: TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
                   ),
                 ],
               ),
@@ -949,7 +949,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       Expanded(
                         child: Text(
                           'Live Queue Activity',
-                          style: TextStyle(
+                          style: TextStyle(fontFamily: 'Segoe UI', 
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),
@@ -981,7 +981,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ),
                         trailing: Text(
                           '${raw['syncState'] ?? raw['state'] ?? 'pending'}',
-                          style: TextStyle(color: WindowsAppearance.foreground(Color(0xFFFFC153))),
+                          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFFC153))),
                         ),
                       ),
                   const SizedBox(height: 10),
@@ -1195,7 +1195,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     decoration: BoxDecoration(
       color: WindowsAppearance.resolve(_panel),
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: WindowsAppearance.foreground(const Color(0xFF21475D))),
+      border: Border.all(color: WindowsAppearance.outline(const Color(0xFF21475D))),
     ),
     child: Row(
       children: [
@@ -1205,11 +1205,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(title, style: const TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text(
                 status,
-                style:  TextStyle(color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF9AB4C9)), fontSize: 12),
               ),
               if (details != null) details,
             ],
@@ -1302,7 +1302,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     children: [
                       const Text(
                         'Sync & Backup Control Center',
-                        style: TextStyle(
+                        style: TextStyle(fontFamily: 'Segoe UI', 
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1314,7 +1314,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       if (!ownSchool)
                         Text(
                           'School changed. Close and reopen this page.',
-                          style: TextStyle(color: WindowsAppearance.foreground(Colors.orange)),
+                          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orange)),
                         ),
                       if (ownSchool) ...[
                         _navigation(active),
@@ -1322,7 +1322,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         if (showHistory) ...[
                           const Text(
                             'Smart Repair History',
-                            style: TextStyle(
+                            style: TextStyle(fontFamily: 'Segoe UI', 
                               fontSize: 22,
                               fontWeight: FontWeight.w600,
                             ),
@@ -1378,7 +1378,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           if (engine.recoveryDecision != null)
                             Text(
                               engine.recoveryDecision!.message,
-                              style: TextStyle(
+                              style: TextStyle(fontFamily: 'Segoe UI', 
                                 color: WindowsAppearance.foreground(Colors.orangeAccent),
                               ),
                             ),
@@ -1388,7 +1388,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             SizedBox(key: _queueKey),
                             const Text(
                               'Pending Queue & Conflict Review',
-                              style: TextStyle(fontSize: 20),
+                              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                             ),
                             if (items.isEmpty)
                               const Padding(
@@ -1468,7 +1468,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             SizedBox(key: _statusKey),
                             const Text(
                               'Measured status & recovery',
-                              style: TextStyle(fontSize: 22),
+                              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 22),
                             ),
                             Wrap(
                               spacing: 12,
@@ -1685,7 +1685,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             if (engine.recoveryDecision != null)
                               Text(
                                 engine.recoveryDecision!.message,
-                                style: TextStyle(
+                                style: TextStyle(fontFamily: 'Segoe UI', 
                                   color: WindowsAppearance.foreground(Colors.orangeAccent),
                                 ),
                               ),
@@ -1717,7 +1717,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             if (studentAudit != null) ...[
                               const Text(
                                 'Student cloud snapshot — current school',
-                                style: TextStyle(fontSize: 20),
+                                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                               ),
                               Text(
                                 'Local: ${studentAudit!['localCount']} • Cloud: ${studentAudit!['cloudCount']} • Matching: ${(studentAudit!['matched'] as List).length}',
@@ -1739,7 +1739,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             if (categoryCounts != null) ...[
                               const Text(
                                 'Local records by category — current school',
-                                style: TextStyle(fontSize: 20),
+                                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                               ),
                               for (final entry in categoryCounts!.entries)
                                 ListTile(
@@ -1754,7 +1754,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             if (ownSchool && binaryDownloads != null) ...[
                               const Text(
                                 'Verified cloud file copies — current school',
-                                style: TextStyle(fontSize: 20),
+                                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                               ),
                               const Text(
                                 'Showing up to 50 known application files. Export requires actual hash-verified bytes; metadata alone is never an available file.',
@@ -1779,7 +1779,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ],
                             const Text(
                               'Observed downloads — current school',
-                              style: TextStyle(fontSize: 20),
+                              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                             ),
                             const Text(
                               'Local readback verifies stored record content, not a server upload ACK. File bytes and cloud-wide completeness remain Unknown. In-progress observations retained after a stopped sync require retry.',
@@ -1812,7 +1812,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             const Divider(height: 32),
                             const Text(
                               'Recovery History — this school',
-                              style: TextStyle(fontSize: 20),
+                              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20),
                             ),
                             if (engine.recoveryHistory.isEmpty)
                               const Text(

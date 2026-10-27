@@ -75,6 +75,23 @@ class WindowsAppearance {
     }
     return target;
   }
+  static Color onColor(Color color) {
+    final bg=Color.alphaBlend(color,surface);
+    return contrast(Colors.white,bg)>=contrast(Colors.black,bg)?Colors.white:Colors.black;
+  }
+  static Color get disabledSurface => theme(mode.value==ThemeMode.light?Brightness.light:Brightness.dark).colorScheme.surfaceContainerHighest;
+  static List<Color> gradientColors(List<Color> source) {
+    final scheme=theme(mode.value==ThemeMode.light?Brightness.light:Brightness.dark).colorScheme;
+    return List.generate(source.length,(i)=>Color.lerp(scheme.surface,scheme.primaryContainer,
+      source.length<2?1:i/(source.length-1))!);
+  }
+  static Color shadow(Color source) => Colors.black.withValues(alpha: source.a.clamp(0.0,mode.value == ThemeMode.light ? .12 : .4));
+  static Color outline(Color source) {
+    if(source.a==0)return source;
+    final high=[source.r,source.g,source.b].reduce((a,b)=>a>b?a:b),low=[source.r,source.g,source.b].reduce((a,b)=>a<b?a:b);
+    if(high-low>.35 && high>.55)return foreground(source);
+    return theme(mode.value==ThemeMode.light?Brightness.light:Brightness.dark).colorScheme.outline;
+  }
   static Color background(Color source) {
     if(source.a==0) return source;
     final high=[source.r,source.g,source.b].reduce((a,b)=>a>b?a:b);
@@ -103,23 +120,27 @@ class WindowsAppearance {
       fontFamilyFallback: const ['Nirmala UI', 'Arial'],
       colorScheme: scheme,
       textTheme: Typography.material2021(platform: TargetPlatform.windows).black.apply(
-        bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
+        fontFamily: 'Segoe UI', bodyColor: scheme.onSurface, displayColor: scheme.onSurface),
       iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
       dividerColor: scheme.outlineVariant,
       cardTheme: CardThemeData(color: scheme.surface, surfaceTintColor: Colors.transparent),
       dialogTheme: DialogThemeData(backgroundColor: scheme.surface, surfaceTintColor: Colors.transparent),
       snackBarTheme: SnackBarThemeData(backgroundColor: scheme.surfaceContainerHighest,
-        contentTextStyle: TextStyle(color: scheme.onSurface), actionTextColor: scheme.primary),
+        contentTextStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface), actionTextColor: scheme.primary),
       dataTableTheme: DataTableThemeData(headingRowColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest),
-        headingTextStyle: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w700),
-        dataTextStyle: TextStyle(color: scheme.onSurface)),
+        headingTextStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface, fontWeight: FontWeight.w700),
+        dataTextStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface)),
       tooltipTheme: TooltipThemeData(decoration: BoxDecoration(color: scheme.inverseSurface,
-        borderRadius: BorderRadius.circular(6)), textStyle: TextStyle(color: scheme.onInverseSurface)),
-      popupMenuTheme: PopupMenuThemeData(color: scheme.surface, textStyle: TextStyle(color: scheme.onSurface)),
-      dropdownMenuTheme: DropdownMenuThemeData(textStyle: TextStyle(color: scheme.onSurface)),
+        borderRadius: BorderRadius.circular(6)), textStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onInverseSurface)),
+      popupMenuTheme: PopupMenuThemeData(color: scheme.surface, textStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface)),
+      dropdownMenuTheme: DropdownMenuThemeData(textStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface)),
       chipTheme: ChipThemeData(backgroundColor: scheme.surfaceContainerHighest,
-        selectedColor: scheme.primaryContainer, labelStyle: TextStyle(color: scheme.onSurface)),
+        selectedColor: scheme.primaryContainer, labelStyle: TextStyle(fontFamily: 'Segoe UI', color: scheme.onSurface)),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
+      elevatedButtonTheme: ElevatedButtonThemeData(style: ElevatedButton.styleFrom(backgroundColor:scheme.primary,foregroundColor:scheme.onPrimary,
+        disabledBackgroundColor:scheme.surfaceContainerHighest,disabledForegroundColor:scheme.onSurfaceVariant)),
+      filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor:scheme.primary,foregroundColor:scheme.onPrimary,
+        disabledBackgroundColor:scheme.surfaceContainerHighest,disabledForegroundColor:scheme.onSurfaceVariant)),
       scaffoldBackgroundColor: dark
           ? const Color(0xFF0B141A)
           : const Color(0xFFF3F5F7),
@@ -208,7 +229,7 @@ class _WindowsAppearanceCardState extends State<WindowsAppearanceCard> {
                 const Flexible(
                   child: Text(
                     'Appearance',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    style: TextStyle(fontFamily: 'Segoe UI', fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ),
               ],

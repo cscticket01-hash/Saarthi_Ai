@@ -400,7 +400,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                     Expanded(
                       child: Text(
                         'Windows Update Available',
-                        style: TextStyle(
+                        style: TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 17,
                           fontWeight: FontWeight.w900,
@@ -418,7 +418,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                       Text(
                         'Installed: $windowsAppVersion   •   '
                         'New: ${update.latestVersion}',
-                        style:  TextStyle(
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white70),
                           fontWeight: FontWeight.w700,
                         ),
@@ -427,7 +427,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                         const SizedBox(height: 13),
                         const Text(
                           'What’s New',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold),
                         ),
                         Container(
                           width: double.infinity,
@@ -436,12 +436,12 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                             color: WindowsAppearance.background(const Color(0xFF0D171D)),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: WindowsAppearance.foreground(Colors.white).withOpacity(0.06),
+                              color: WindowsAppearance.outline(Colors.white).withOpacity(0.06),
                             ),
                           ),
                           child: Text(
                             update.releaseNotes,
-                            style:  TextStyle(
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
                               color: WindowsAppearance.foreground(Colors.white60),
                               height: 1.45,
                             ),
@@ -462,7 +462,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                               ? 'Downloading update...'
                               : 'Downloading '
                                     '${(progress! * 100).toStringAsFixed(0)}%',
-                          style:  TextStyle(
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Colors.white54),
                             fontSize: 11,
                           ),
@@ -472,7 +472,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                         const SizedBox(height: 12),
                         Text(
                           error!,
-                          style: TextStyle(
+                          style: TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Colors.redAccent),
                             fontSize: 11,
                           ),
@@ -585,7 +585,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.foreground(const Color(0xFF38A8FF).withOpacity(0.18))),
+        border: Border.all(color: WindowsAppearance.outline(const Color(0xFF38A8FF).withOpacity(0.18))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,7 +612,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                   children: [
                     Text(
                       'Windows App Update',
-                      style: TextStyle(
+                      style: TextStyle(fontFamily: 'Segoe UI', 
                         color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 14.5,
                         fontWeight: FontWeight.w900,
@@ -621,7 +621,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                     SizedBox(height: 3),
                     Text(
                       'Check, download aur install new Admin software version.',
-                      style: TextStyle(color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                   ],
                 ),
@@ -634,7 +634,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                 ),
                 child: Text(
                   'v$windowsAppVersion',
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
                     fontSize: 10,
                     fontWeight: FontWeight.w900,
@@ -650,7 +650,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
             decoration: BoxDecoration(
               color: WindowsAppearance.background(const Color(0xFF0F191F)),
               borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: WindowsAppearance.foreground(Colors.white).withOpacity(0.05)),
+              border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.05)),
             ),
             child: Row(
               children: [
@@ -675,7 +675,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                         : _error != null
                         ? 'Update check failed: $_error'
                         : _result?.message ?? 'Update status check karein.',
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: _error != null ? Colors.redAccent : WindowsAppearance.resolve(Colors.white60),
                       fontSize: 11,
                       height: 1.4,
@@ -689,7 +689,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
             const SizedBox(height: 11),
             Text(
               'Latest version: ${info.latestVersion}',
-              style:  TextStyle(
+              style:  TextStyle(fontFamily: 'Segoe UI', 
                 color: WindowsAppearance.foreground(Colors.white),
                 fontSize: 11.5,
                 fontWeight: FontWeight.w800,
@@ -699,14 +699,14 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
               const SizedBox(height: 4),
                Text(
                 'What’s New',
-                style: TextStyle(
+                style: TextStyle(fontFamily: 'Segoe UI', 
                   color: WindowsAppearance.foreground(Colors.white70),
                   fontWeight: FontWeight.bold,
                 ),
               ),
               Text(
                 info.releaseNotes,
-                style:  TextStyle(
+                style:  TextStyle(fontFamily: 'Segoe UI', 
                   color: WindowsAppearance.foreground(Colors.white38),
                   fontSize: 10.5,
                   height: 1.35,

@@ -38,7 +38,7 @@ class MobileScanner extends StatelessWidget {
           Text(
             'Student scanner Windows Admin app me disabled hai.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: WindowsAppearance.foreground(Colors.white54), fontSize: 11),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 11),
           ),
         ],
       ),

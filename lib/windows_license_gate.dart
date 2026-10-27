@@ -56,14 +56,14 @@ class WindowsTrialBanner extends StatelessWidget {
                       children: [
                          Text(
                           'License not activated — Activate now',
-                          style: TextStyle(
+                          style: TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Colors.white),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                         Text(
                           dateLabel,
-                          style:  TextStyle(
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Color(0xFFFFC4C4)),
                             fontWeight: FontWeight.w600,
                           ),
@@ -103,7 +103,7 @@ class WindowsTrialBanner extends StatelessWidget {
                         : state.allowed
                         ? 'Free trial: ${state.daysLeft} days remaining. Ends $date. Add a licence key to continue.'
                         : 'Free trial or licence ended. Add a valid school licence key to continue.',
-                    style:  TextStyle(
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Color(0xFFFFB4B4)),
                       fontWeight: FontWeight.w700,
                     ),
@@ -251,7 +251,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
               const Text(
                 'Activate Vidya Saarthi',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 25, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
               Text(
@@ -271,7 +271,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
                 ),
               ),
               if (_error != null)
-                Text(_error!, style: TextStyle(color: WindowsAppearance.foreground(Colors.redAccent))),
+                Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: _busy ? null : _activate,

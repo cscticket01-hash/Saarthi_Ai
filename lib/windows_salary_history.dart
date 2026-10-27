@@ -48,7 +48,7 @@ class StaffSalaryHistoryScreen extends StatelessWidget {
         final entries = salaryPaymentHistory(snapshot.data!.docs.map((d) => {...d.data(), 'id': d.id}).where((r) => r['schoolId'] == null || r['schoolId'] == db.activeProfileIdentity['schoolSyncId']), staffId: staffId, teacherId: teacherId, salaryRowId: salaryRowId);
         if (entries.isEmpty) return const Center(child: Text('No payments recorded.'));
         return SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('All salary months • Existing recorded payments', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('All salary months • Existing recorded payments', style: TextStyle(fontFamily: 'Segoe UI', fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(
             columns: [for (final label in ['Name', 'Employee ID', 'Role', 'Salary month', 'Payment date', 'Payment time', 'Amount', 'Method', 'Reference']) DataColumn(label: Text(label))],

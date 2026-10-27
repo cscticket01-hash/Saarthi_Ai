@@ -52,7 +52,7 @@ class _RestoreState extends State<WindowsCleanInstallRestoreScreen> {
   @override
   Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('Restore Existing School')),
     body:Padding(padding:const EdgeInsets.all(24),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      const Text('Clean-install local disaster recovery',style:TextStyle(fontSize:22,fontWeight:FontWeight.bold)),
+      const Text('Clean-install local disaster recovery',style:TextStyle(fontFamily: 'Segoe UI', fontSize:22,fontWeight:FontWeight.bold)),
       const SizedBox(height:16),Text(message),const SizedBox(height:24),
       FilledButton(onPressed:busy?null:_prepare,child:const Text('Select and verify local backup')),
       const SizedBox(height:12),OutlinedButton(onPressed:busy || prepared==null?null:_activate,child:const Text('Review and activate verified copy')),
