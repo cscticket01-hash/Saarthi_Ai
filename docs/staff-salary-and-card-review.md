@@ -1,0 +1,9 @@
+# Salary and ID-card review changes
+
+Payslips use the existing PDF generator and in-app fitted PDF preview. Printing is an explicit native printing action. Viewing a payslip does not launch the browser or record a payment. The former bulk Generate Payslips action is removed.
+
+Payment History is a read-only school-scoped page across all salary months. The row menu opens the same page filtered to the selected staff member. It displays separate payment-date and payment-time columns in local 12-hour time. New payment intents preserve the selected time when changing the date and store recording time without changing idempotency comparisons. Legacy unitemized paid balances are explicitly labelled; missing dates/times are not invented.
+
+A signed, school- and owner-verified published ID with different local generation inputs becomes a persistent local review item. It is not an upload operation, cloud ACK or permission to overwrite. Repeating the same inputs holds the review without repeatedly rendering a PDF. Changed inputs or a changed cloud revision require fresh verification. Settings and the Sync Control Center expose the review count and the review page. Keep published ID rechecks the exact school, owner, document and captured cloud revision before recording a local preference. Shared authentication, storage and unknown preparation failures still fail normally. Existing originals, pending document operations and receipts remain unchanged.
+
+This resolves a document-preparation review being presented as a whole-school sync failure when all record uploads have already completed. Bootstrap/dependency processing can finish after the review is durably recorded; it does not certify a new card upload. Review evidence stays local to the school profile and is never placed in the school record outbox.

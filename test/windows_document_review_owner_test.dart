@@ -17,6 +17,7 @@ import '../lib/windows_sync_conflict_review.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../lib/windows_document_templates.dart';
+import '../lib/windows_id_card_reviews.dart';
 import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_backend_bridge.dart';
@@ -426,8 +427,20 @@ void main() {
       final changed=Uint8List.fromList(img.encodePng(img.Image(width:20,height:30)));
       await WindowsSchoolImageCache.store(school,'changed-photo',WindowsSchoolImageCache.dataUrl(changed));
       await db.collection('students_directory').doc('S1').update({'photoUrl':'https://drive.google.com/file/d/changed-photo/view'});
-      await expectLater(WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
-        {'schoolId':school,'syncProtocol':2,'records':{cardId:published}}),throwsStateError);
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
+        {'schoolId':school,'syncProtocol':2,'records':{cardId:published}});
+      final reviews = await WindowsIdCardReviews.pending(school);
+      expect(reviews, hasLength(1));
+      expect(reviews.single['documentId'], cardId);
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:() async => throw StateError('Held review must not regenerate or read cloud'));
+      await expectLater(WindowsIdCardReviews.keepPublished(db.activeProfileId, reviews.single,
+        read: () async => {'schoolId': 'foreign', 'syncProtocol': 2, 'records': {cardId: published}}), throwsStateError);
+      expect(await WindowsIdCardReviews.pending(school), hasLength(1));
+      final receiptsBefore = (await db.collection('_windows_sync_receipts').get()).docs.length;
+      await WindowsIdCardReviews.keepPublished(db.activeProfileId, reviews.single,
+        read: () async => {'schoolId': school, 'syncProtocol': 2, 'records': {cardId: published}});
+      expect(await WindowsIdCardReviews.pending(school), isEmpty);
+      expect((await db.collection('_windows_sync_receipts').get()).docs.length, receiptsBefore);
       expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
       expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
       await db.switchProfile(origin,identity:{'schoolId':school,'schoolSyncId':school});

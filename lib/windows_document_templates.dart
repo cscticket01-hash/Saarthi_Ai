@@ -1,3 +1,4 @@
+import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
 import 'dart:convert';
 import 'windows_sync_projection.dart';
@@ -347,6 +348,7 @@ class WindowsDocumentTemplates {
         final cached=(await db.collection('documents').doc(id).get()).data();
         if(db.activeProfileId!=origin)throw StateError('School changed during ID publication.');
         if(holdAutomaticIdCard(existing,pending,cached,identity['schoolId'] as String))continue;
+        if (await WindowsIdCardReviews.held(identity['schoolId'] as String, id, revision, cached?['_syncRevision'])) continue;
         if ((existing?['inputRevision'] == revision ||
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
             existing?['deleted'] != true) {
@@ -393,7 +395,12 @@ class WindowsDocumentTemplates {
           readPublished: readPublished,
           automatic:true,
         );
+        await WindowsIdCardReviews.supersede(identity['schoolId'] as String, id);
         } catch (error, stack) {
+          if (error is PublishedIdInputConflict && db.activeProfileId == origin) {
+            await WindowsIdCardReviews.retain(error, doc.data()?['name']?.toString() ?? doc.id);
+            continue;
+          }
           // One unavailable photo, renderer or owner conflict must not starve
           // every later student/teacher. The caller retains dependencies and
           // retries failures after uploading the packages already prepared.
@@ -601,6 +608,7 @@ class WindowsDocumentTemplates {
     String? notice,
     VoidCallback? onDownload,
     VoidCallback? onPrint,
+    String printLabel = 'Print ID Card',
   }) => showDialog<void>(
     context: context,
     builder: (ctx) { WindowsAppearance.watch(ctx); return  Dialog(
@@ -635,7 +643,7 @@ class WindowsDocumentTemplates {
                       OutlinedButton.icon(
                         onPressed: onPrint,
                         icon: const Icon(Icons.print),
-                        label: const Text('Print ID Card'),
+                        label: Text(printLabel),
                       ),
                     if (onDownload != null)
                       FilledButton.icon(

@@ -2388,7 +2388,10 @@ class WindowsBackendBridge {
             // A new device has no local generation proving that these inputs
             // supersede the published card. Do not manufacture a conflicting
             // PDF just because its first local fingerprint differs.
-            throw PublishedIdInputConflict();
+            throw PublishedIdInputConflict(schoolId: link.schoolId, documentId: id,
+              ownerRole: link.role, personDocId: link.personId,
+              personId: (person['mobileStableId'] ?? link.personId).toString(),
+              inputRevision: inputRevision, cloudRevision: existingCloud['_syncRevision'] as String);
           }
 
         }

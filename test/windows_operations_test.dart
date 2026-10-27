@@ -8,6 +8,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_staff_payroll.dart';
+import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen;
+import '../lib/windows_salary_history.dart';
+import '../lib/fitted_document_preview.dart';
+import 'package:printing/src/interface.dart';
+import 'windows_document_review_owner_test.dart' show OwnerReviewPrinting;
 import '../lib/windows_other_staff.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
@@ -31,6 +36,75 @@ void main() {
     ui.WindowsUiLanguage.change('en');
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile('payroll-${DateTime.now().microsecondsSinceEpoch}');
+  });
+  testWidgets('embedded Teachers Directory keeps only the outer header Back', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(body:
+      TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
+        const SchoolStaffDirectory(teachers: TeachersDirectoryScreen(embedded: true)))), child: const Text('Open teachers'))))));
+    await tester.tap(find.text('Open teachers'));
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.text('Open teachers'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+  test('payment history keeps separate staff/month events and never invents missing times', () {
+    final rows = [
+      {'staffId': 'a', 'name': 'A', 'month': '2026-10', 'payments': [
+        {'id': 'p1', 'amountPaise': 5000, 'date': '2026-10-05T18:08:00', 'mode': 'Cash', 'timeRecorded': true},
+        {'id': 'p2', 'amountPaise': 5000, 'date': '2026-10-06T00:00:00', 'mode': 'UPI'},
+      ]},
+      {'staffId': 'a', 'name': 'A', 'month': '2026-09', 'paidPaise': 10000, 'status': 'Paid'},
+      {'staffId': 'b', 'name': 'B', 'month': '2026-10', 'payments': [
+        {'id': 'p3', 'amountPaise': 7000, 'date': '2026-10-07T12:00:00', 'mode': 'Cash'},
+      ]},
+    ];
+    final all = salaryPaymentHistory(rows);
+    expect(all, hasLength(4));
+    final person = salaryPaymentHistory(rows, staffId: 'a');
+    expect(person, hasLength(3));
+    expect(person.where((p) => p['name'] == 'B'), isEmpty);
+    expect(person.last['date'], isNull);
+    expect(person.last['reference'], contains('Legacy paid total'));
+    expect(salaryPaymentTime(DateTime(2026, 10, 5, 18, 8)), '06:08 PM');
+    expect(salaryPaymentTime(DateTime(2026, 10, 5)), '12:00 AM');
+    final legacy = salaryPaymentHistory([
+      {'id': 'old-a', 'name': 'A', 'status': 'Paid', 'amount': 100},
+      {'id': 'old-b', 'name': 'B', 'status': 'Paid', 'amount': 200},
+    ], staffId: 'legacy:old-a', salaryRowId: 'old-a');
+    expect(legacy, hasLength(1));
+    expect(legacy.single['name'], 'A');
+  });
+  testWidgets('salary history opens as a page with date/time columns and is school fenced', (tester) async {
+    final profile = db.activeProfileId;
+    await tester.runAsync(() async {
+      await db.collection('teacher_salary').doc('history-fixture').set({
+        'staffId': 'a', 'name': 'History staff', 'employeeId': 'E-1', 'role': 'Guard', 'month': '2026-10',
+        'payments': [{'id': 'p1', 'amountPaise': 200000, 'date': '2026-10-05T18:08:00', 'mode': 'Cash', 'timeRecorded': true}],
+      });
+    });
+    await tester.pumpWidget(MaterialApp(home: StaffSalaryHistoryScreen(profile: profile)));
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+      if (find.byType(DataTable).evaluate().isNotEmpty) break;
+    }
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(DataTable), findsOneWidget);
+    expect(find.text('Payment date'), findsOneWidget);
+    expect(find.text('Payment time'), findsOneWidget);
+    expect(find.text('05/10/2026'), findsOneWidget);
+    expect(find.text('06:08 PM'), findsOneWidget);
+    await tester.runAsync(() => db.switchProfile('foreign-history-profile'));
+    await tester.pumpWidget(MaterialApp(home: StaffSalaryHistoryScreen(key: const ValueKey('changed-school'), profile: profile)));
+    await tester.pump();
+    expect(find.text('School changed. Reopen salary history.'), findsOneWidget);
+    expect(find.text('History staff'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
   });
   Future<Map<String, dynamic>> teacher() async {
     await db.collection('teachers_directory').doc('teacher-doc').set({
@@ -183,6 +257,8 @@ void main() {
             .data()!;
     expect(saved['paidPaise'], 30000);
     expect(saved['payments'], hasLength(1));
+    expect((saved['payments'] as List).single['recordedAt'], isA<int>());
+    expect((saved['payments'] as List).single['timeRecorded'], true);
     expect(saved['status'], 'Part paid');
     await expectLater(pay('over', 80000), throwsStateError);
     await expectLater(
@@ -610,8 +686,23 @@ void main() {
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Net payroll'), findsOneWidget);
-    expect(find.text('Generate Payslips'), findsOneWidget);
+    expect(find.text('Generate Payslips'), findsNothing);
+    expect(find.text('Payment History'), findsOneWidget);
     expect(find.text('Export CSV'), findsOneWidget);
+    final nativePrinting = PrintingPlatform.instance;
+    PrintingPlatform.instance = OwnerReviewPrinting('synthetic-payslip');
+    try {
+      await tester.tap(find.text('View Payslip'));
+      for (var i = 0; i < 100 && find.byType(FittedDocumentPreview).evaluate().isEmpty; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+        await tester.pump();
+      }
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(FittedDocumentPreview), findsOneWidget);
+      expect(find.text('Print Payslip'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+    } finally { PrintingPlatform.instance = nativePrinting; }
     expect(find.text('Total Deductions'), findsOneWidget);
     expect(find.byType(DataTable), findsOneWidget);
     expect(tester.takeException(), isNull);

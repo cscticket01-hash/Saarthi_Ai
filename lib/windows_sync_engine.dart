@@ -1,3 +1,4 @@
+import 'windows_id_card_reviews.dart';
 import 'windows_sync_inbox.dart';
 import 'sync_latency_statistics.dart';
 import 'windows_remote_change_feed.dart';
@@ -553,6 +554,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final legacy = await db.collection('_windows_google_outbox').get();
+    final idCardReviews = await WindowsIdCardReviews.pending(db.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
     final receipts = await db.collection('_windows_sync_receipts').get();
     final backup = await db
         .collection('_windows_sync_status')
@@ -646,6 +648,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         },
     ];
     details.value = {
+      'idCardReviewCount': idCardReviews.length,
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
       'lastRecordCheckMillis': downloadCheckpoint?['verifiedAt'],
       'lastRecordAckMillis': receipts.docs
@@ -676,7 +679,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             state.value == SchoolCloudState.offline ||
             recoveryDecision?.kind == SyncFailureKind.networkPath,
         failed: lastError != null,
-        reviewRequired: recoveryDecision?.review == true,
+        reviewRequired: recoveryDecision?.review == true || idCardReviews.isNotEmpty,
       ),
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
       'remotePollIntervalMillis': reconciliationInterval.inMilliseconds,

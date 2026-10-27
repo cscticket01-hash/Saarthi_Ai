@@ -1578,7 +1578,7 @@ Widget _windowsAdminModule(WindowsAdminPage page) => switch (page) {
   WindowsAdminPage.students => const AllStudentsListScreen(),
   WindowsAdminPage.fees => const FeesCollectionScreen(),
   WindowsAdminPage.exams => const ExamCenterScreen(),
-  WindowsAdminPage.teachers => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()),
+  WindowsAdminPage.teachers => const SchoolStaffDirectory(teachers:TeachersDirectoryScreen(embedded: true)),
   WindowsAdminPage.salary => const StaffSalaryScreen(),
   WindowsAdminPage.support => const WindowsSupportScreen(),
   WindowsAdminPage.expenses => const WindowsSchoolExpensesScreen(),
@@ -6138,7 +6138,7 @@ Widget _buildOverviewCards() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) { WindowsAppearance.watch(context); return  const SchoolStaffDirectory(teachers:TeachersDirectoryScreen()); },
+                  builder: (context) { WindowsAppearance.watch(context); return  const SchoolStaffDirectory(teachers:TeachersDirectoryScreen(embedded: true)); },
                 ),
               );
             },
@@ -12589,7 +12589,8 @@ class _EditableSchoolFee {
 // TEACHERS DIRECTORY
 // ============================================================
 class TeachersDirectoryScreen extends StatefulWidget {
-  const TeachersDirectoryScreen({super.key});
+  const TeachersDirectoryScreen({super.key, this.embedded = false});
+  final bool embedded;
 
   @override
   State<TeachersDirectoryScreen> createState() =>
@@ -14454,6 +14455,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       backgroundColor:
           WindowsAppearance.resolve(const Color(0xFF0B141A)),
       appBar: AppBar(
+        automaticallyImplyLeading: !widget.embedded,
         backgroundColor:
             WindowsAppearance.resolve(const Color(0xFF111B21)),
         elevation: 0,
