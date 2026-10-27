@@ -114,7 +114,17 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
   if(!permitted.length)return rejected;
   const result=await signed(m,{action:'managed_attendance_batch',lease:{schoolId,expiresAt:lease(m).expiresAt},operations:permitted});
   if(!Array.isArray(result.acknowledgements))throw Error('Attendance acknowledgement missing');
-  if(result.acknowledgements.some(ack=>ack.success===true)){await changeHint(schoolId,['attendance_records','attendance_logs','teacher_attendance']);invalidate(schoolId);await notifyChanged(schoolId,'attendance-ack',false).catch(()=>{});}
+  if(result.acknowledgements.some(ack=>ack.success===true)){
+   invalidate(schoolId);
+   // Signed Script receipts have already passed provider verification.
+   // FCM and delta hints are optional discovery, not durable queue ACK:
+   // a slow push must never retain claimed attendance in processing.
+   // Preserve hint-before-push order; hourly delta checks repair gaps.
+   void (async()=>{
+    await changeHint(schoolId,['attendance_records','attendance_logs','teacher_attendance']);
+    await notifyChanged(schoolId,'attendance-ack',false);
+   })().catch(()=>{});
+  }
   return [...result.acknowledgements,...rejected];
  }});
  const pushDevices=new Map();
