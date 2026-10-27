@@ -67,3 +67,13 @@ test('upgrade preserves existing published colour and subsequent saves stay pend
  await t.schoolState('school','a',true,['a','b']);
  assert.equal((await t.schoolState('school','b',true,['a','b'])).revision,next.revision);
 });
+test('activation re-reads PC admission inside its transaction',async()=>{
+ const f=fixture(),t=createWindowsTheme({db:f.db}),school='school';
+ await t.schoolState(school,'a',false,['a']);
+ await t.save({schemaVersion:1,red:10,green:20,blue:30,expectedRevision:'default'},'dev');
+ f.docs.set('managed_pc_registries/'+school,{devices:{a:{deviceIdentity:'a',status:'active',os:'Windows'},b:{deviceIdentity:'b',status:'active',os:'Windows'}}});
+ assert.equal((await t.schoolState(school,'a',true,['a'])).revision,'default');
+ assert.notEqual((await t.schoolState(school,'b',true,['a','b'])).revision,'default');
+ f.docs.get('managed_pc_registries/'+school).devices.a.status='revoked';
+ await assert.rejects(t.schoolState(school,'a',true,['a','b']),e=>e.status===403);
+});
