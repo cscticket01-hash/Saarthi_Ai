@@ -3,6 +3,7 @@ import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
+import 'attendance_confirmation_schedule.dart';
 import '../attendance_schedule.dart';
 
 import 'package:flutter/foundation.dart';
@@ -653,7 +654,9 @@ class SchoolSession {
             'state': 'accepted',
             'operationId': expectedId,
             'attempts': attempts,
-            'nextAt': at + 10000,
+            // Acceptance is not completion. Check the same operation sooner,
+            // without resubmitting it or shortening server-error backoff.
+            'nextAt': DateTime.now().millisecondsSinceEpoch + 5000,
             'error': '',
           });
         } else {
@@ -676,12 +679,21 @@ class SchoolSession {
             throw StateError(
               'Attendance needs school review; capture retained.',
             );
+          final confirmedAt = DateTime.now().millisecondsSinceEpoch;
+          final confirmationDelay = attendanceConfirmationDelay(
+            state: operation['state'] is String
+                ? operation['state'] as String
+                : null,
+            createdAt: operation['createdAt'],
+            attempts: attempts,
+            now: confirmedAt,
+          );
           await _attendanceStore.finish(owner, id, lease, {
             'state': completed ? 'completed' : 'accepted',
             'attempts': attempts,
-            'nextAt':
-                at +
-                min(30000, 5000 * pow(2, min(max(0, attempts - 2), 3)).toInt()),
+            // Start the wait after the response, so a slow status request
+            // cannot leave a past deadline and spin through the drain loop.
+            'nextAt': confirmedAt + confirmationDelay.inMilliseconds,
             'error': '',
             if (completed) 'completedAt': operation['completedAt'],
           });

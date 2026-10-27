@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../lib/mobile/attendance_store.dart';
+import '../lib/mobile/attendance_confirmation_schedule.dart';
 import '../lib/attendance_schedule.dart';
 import '../lib/mobile/school_session.dart';
 
@@ -22,6 +23,32 @@ void main() {
   setUp(() async { FlutterSecureStorage.setMockInitialValues({}); directory = await Directory.systemTemp.createTemp('vs-attendance-fixture'); store = AttendanceStore(openDatabaseOverride: open); });
   tearDown(() async { await store.close(); await directory.delete(recursive: true); });
   const gps = {'latitude': 24, 'longitude': 92, 'accuracy': 3};
+  test('fresh processing confirmations stay short only within a bounded server-created window', () {
+    const created = 100000;
+    for (final state in ['pending', 'processing']) {
+      for (final attempts in [2, 3, 4, 20]) {
+        expect(attendanceConfirmationDelay(state: state, createdAt: created,
+          attempts: attempts, now: created + 29999), const Duration(seconds: 5));
+      }
+      expect(attendanceConfirmationDelay(state: state, createdAt: created,
+        attempts: 4, now: created + 30000), const Duration(seconds: 20));
+      expect(attendanceConfirmationDelay(state: state, createdAt: created,
+        attempts: 20, now: created + 60000), const Duration(seconds: 30));
+    }
+  });
+  test('retry, unknown and untrusted timestamps retain existing confirmation backoff', () {
+    for (final state in ['retry', 'unknown', null]) {
+      for (var attempts = 2; attempts <= 6; attempts++) {
+        expect(attendanceConfirmationDelay(state: state, createdAt: 100000,
+          attempts: attempts, now: 100001).inSeconds,
+          [5, 10, 20, 30, 30][attempts - 2]);
+      }
+    }
+    for (final created in <Object?>[null, '100000', 100000.0, 0, -1, 100002]) {
+      expect(attendanceConfirmationDelay(state: 'processing', createdAt: created,
+        attempts: 5, now: 100001), const Duration(seconds: 30));
+    }
+  });
   test('daily lock survives pending, needs-review, ACK and restart; schools, roles and days stay separate', () async {
     final a = AttendanceStore.owner('https://example.test', 'school-A', 'student', 'same-id');
     final b = AttendanceStore.owner('https://example.test', 'school-B', 'student', 'same-id');
@@ -363,6 +390,7 @@ void main() {
             utf8.encode(jsonEncode([school, role, 'stable', day, 'entry'])))
         .toString();
     var refreshes = 0, marks = 0, statuses = 0;
+    var completed = false, statusResponseAt = 0, acceptedResponseAt = 0;
     final client = MockClient((request) async {
       final b = jsonDecode(request.body)['request'] as Map;
       Map<String, dynamic> data = {
@@ -385,6 +413,7 @@ void main() {
       if (b['action'] == 'mobile_mark_attendance') {
         marks++;
         expect(b['clientCapturedAt'], now);
+        acceptedResponseAt = DateTime.now().millisecondsSinceEpoch;
         data.addAll({
           'syncProtocol': 2,
           'accepted': true,
@@ -396,12 +425,16 @@ void main() {
       }
       if (b['action'] == 'mobile_attendance_status') {
         statuses++;
+        // A response received later must get a fresh future deadline, rather
+        // than reusing the timestamp from before the network request.
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        statusResponseAt = DateTime.now().millisecondsSinceEpoch;
         data.addAll({
           'syncProtocol': 2,
           'operations': [
             {
               'operationId': operation,
-              'state': 'completed',
+              'state': completed ? 'completed' : 'processing',
               'createdAt': now,
               'completedAt': now + 1
             }
@@ -414,11 +447,30 @@ void main() {
     await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
     await session.saveAttendance(gps, now, 'entry');
     await session.flushAttendance();
+    final accepted = (await (await store.database).query('attendance')).single;
+    expect(accepted['state'], 'accepted');
+    expect(accepted['nextAt'] as int,
+        greaterThanOrEqualTo(acceptedResponseAt + 5000));
+    expect(accepted['nextAt'] as int,
+        lessThanOrEqualTo(DateTime.now().millisecondsSinceEpoch + 5000));
     await (await store.database).update('attendance', {'nextAt': 0});
     await session.flushAttendance();
     expect(refreshes, 0);
     expect(marks, 1);
     expect(statuses, 1);
+    expect(session.attendancePending, 1);
+    expect(session.lastAttendanceAck, isNull);
+    final processing = (await (await store.database).query('attendance')).single;
+    expect(processing['state'], 'accepted');
+    expect(processing['operationId'], operation);
+    expect(processing['nextAt'] as int, greaterThanOrEqualTo(statusResponseAt + 5000));
+    await session.flushAttendance();
+    expect(statuses, 1, reason: 'No eager loop before the confirmation deadline');
+    completed = true;
+    await (await store.database).update('attendance', {'nextAt': 0});
+    await session.flushAttendance();
+    expect(statuses, 2);
+    expect(marks, 1, reason: 'Status confirmation never resubmits the capture');
     expect(session.attendancePending, 0);
     expect(
         (await (await store.database).query('attendance')).single['capturedAt'],

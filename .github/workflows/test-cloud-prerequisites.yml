@@ -28,6 +28,7 @@ on:
       - school-backend/managed/**
       - lib/mobile/school_session.dart
       - lib/mobile/attendance_store.dart
+      - lib/mobile/attendance_confirmation_schedule.dart
       - lib/windows_connect/managed_record_media.dart
       - lib/windows_school_image_cache.dart
       - lib/document_processing_engine.dart
