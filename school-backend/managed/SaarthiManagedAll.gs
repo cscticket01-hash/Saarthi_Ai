@@ -6681,7 +6681,10 @@ function VS_legacySheet(collection,readContext) {
   // ancestry/marker-verified workbook, never a persistent cross-request cache.
   const verified=readContext&&readContext.legacyBook;
   const reuse=verified&&verified.school===school&&verified.id===id;
-  const legacy=reuse&&p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1'?null:VS_managedCollection(collection);
+  // A completed migration no longer consumes the old JSON folder. Do not
+  // list/create it on every Sheet request; workbook/root verification below
+  // still runs, and incomplete migrations retain the original import path.
+  const legacy=p.getProperty('VS_SHEET_MIGRATED_'+collection)==='1'?null:VS_managedCollection(collection);
   const pending=p.getProperty('VS_MANAGED_SHEET_PENDING');
   if(!id&&pending){const file=DriveApp.getFileById(pending);if(file.getDescription()!=='VIDYA_SCHOOL_DATA:'+school)throw new Error('Pending workbook identity mismatch');file.moveTo(VS_managedFolder(VS_managedRoot(),'School Data'));p.setProperty('VS_MANAGED_SHEET_ID',pending);p.deleteProperty('VS_MANAGED_SHEET_PENDING');id=pending;}
   if(reuse)book=verified.book;
