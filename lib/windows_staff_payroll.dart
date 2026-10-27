@@ -223,7 +223,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
   }
   Future<void> _history([Map<String, dynamic>? row]) => Navigator.push<void>(context,
     MaterialPageRoute(builder: (_) => StaffSalaryHistoryScreen(profile: _profile,
-      staffId: row?['staffId']?.toString(), teacherId: row?['teacherId']?.toString(),
+      staffId: row == null ? null : row['staffId']?.toString() ?? 'legacy:${row['id']}', salaryRowId: row?['id']?.toString(), teacherId: row?['teacherId']?.toString(),
       staffName: row?['name']?.toString())));
   List<Map<String,dynamic>> get _monthRows => _rows.where((r) => r['month'] == StaffPayroll.monthKey(_month)).toList();
   Future<void> _output({bool csv = false, Map<String,dynamic>? row}) async {

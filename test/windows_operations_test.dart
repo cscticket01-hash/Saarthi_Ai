@@ -63,6 +63,12 @@ void main() {
     expect(person.last['reference'], contains('Legacy paid total'));
     expect(salaryPaymentTime(DateTime(2026, 10, 5, 18, 8)), '06:08 PM');
     expect(salaryPaymentTime(DateTime(2026, 10, 5)), '12:00 AM');
+    final legacy = salaryPaymentHistory([
+      {'id': 'old-a', 'name': 'A', 'status': 'Paid', 'amount': 100},
+      {'id': 'old-b', 'name': 'B', 'status': 'Paid', 'amount': 200},
+    ], staffId: 'legacy:old-a', salaryRowId: 'old-a');
+    expect(legacy, hasLength(1));
+    expect(legacy.single['name'], 'A');
   });
   testWidgets('salary history opens as a page with date/time columns and is school fenced', (tester) async {
     final profile = db.activeProfileId;

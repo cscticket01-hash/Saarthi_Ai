@@ -7,10 +7,10 @@ String salaryPaymentDate(DateTime date) => '${date.day.toString().padLeft(2, '0'
 
 /// Read-only projection. Never reconstruct missing financial events or times.
 List<Map<String, dynamic>> salaryPaymentHistory(Iterable<Map<String, dynamic>> rows,
-    {String? staffId, String? teacherId}) {
+    {String? staffId, String? teacherId, String? salaryRowId}) {
   final entries = <Map<String, dynamic>>[];
   for (final row in rows) {
-    if (staffId != null && row['staffId'] != staffId &&
+    if (staffId != null && row['staffId'] != staffId && (salaryRowId == null || row['id'] != salaryRowId) &&
         !(row['staffId'] == null && teacherId != null && teacherId.isNotEmpty && row['teacherId'] == teacherId)) continue;
     final payments = (row['payments'] as List? ?? []).whereType<Map>();
     for (final payment in payments) {
@@ -33,9 +33,9 @@ List<Map<String, dynamic>> salaryPaymentHistory(Iterable<Map<String, dynamic>> r
 }
 
 class StaffSalaryHistoryScreen extends StatelessWidget {
-  const StaffSalaryHistoryScreen({super.key, required this.profile, this.staffId, this.teacherId, this.staffName});
+  const StaffSalaryHistoryScreen({super.key, required this.profile, this.staffId, this.teacherId, this.staffName, this.salaryRowId});
   final String profile;
-  final String? staffId, teacherId, staffName;
+  final String? staffId, teacherId, staffName, salaryRowId;
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
@@ -45,7 +45,7 @@ class StaffSalaryHistoryScreen extends StatelessWidget {
         if (db.activeProfileId != profile) return const Center(child: Text('School changed. Reopen salary history.'));
         if (snapshot.hasError) return const Center(child: Text('Payment history could not be loaded. Reopen this page.'));
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final entries = salaryPaymentHistory(snapshot.data!.docs.map((d) => d.data()).where((r) => r['schoolId'] == null || r['schoolId'] == db.activeProfileIdentity['schoolSyncId']), staffId: staffId, teacherId: teacherId);
+        final entries = salaryPaymentHistory(snapshot.data!.docs.map((d) => {...d.data(), 'id': d.id}).where((r) => r['schoolId'] == null || r['schoolId'] == db.activeProfileIdentity['schoolSyncId']), staffId: staffId, teacherId: teacherId, salaryRowId: salaryRowId);
         if (entries.isEmpty) return const Center(child: Text('No payments recorded.'));
         return SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('All salary months • Existing recorded payments', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
