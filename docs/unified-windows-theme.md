@@ -13,3 +13,5 @@ Validation covers developer authorisation and revision conflicts, delayed login 
 Hosted builds and automated screenshots do not certify every physical device, printer or unvisited dialog. Physical-school acceptance remains distinct from these automated regressions.
 
 Compact desktop fee collection uses full-width stacked panels with bounded heights and expanded selectors; wider desktops retain the two-column workbench.
+
+School theme regression checks cover 1/2/5 PCs, device admission during activation, stale confirmations, pending-save migration and the Windows unlock/relock response lifecycle.
