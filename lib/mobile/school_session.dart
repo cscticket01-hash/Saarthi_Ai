@@ -221,6 +221,7 @@ class SchoolSession {
           p['schoolId'] != current.schoolId ||
           p['role'] != current.role ||
           p['documentId'] != current.personId ||
+          p['day'] != attendanceDay(DateTime.now()) ||
           p['expiresAt'] is! int ||
           p['expiresAt'] <= DateTime.now().millisecondsSinceEpoch + 2000 ||
           p['expiresAt'] > _expiresAt ||
@@ -711,7 +712,14 @@ class SchoolSession {
             );
         }
       } catch (error) {
-        _cachedAttendancePermit = null;
+        // A transport outage does not revoke an unexpired signed approval.
+        // Authoritative denials and malformed receipts still invalidate it;
+        // every online use remains checked by the broker.
+        if (!(error is SocketException ||
+            error is TimeoutException ||
+            error is SchoolApiFailure && error.retryable)) {
+          _cachedAttendancePermit = null;
+        }
         final review =
             error is AttendanceRejected ||
             error is SchoolAccessDenied ||
@@ -817,6 +825,12 @@ class SchoolSession {
       schoolName = d['schoolName'] ?? link!.projectId;
       _expiresAt = (d['expiresAt'] as num).toInt();
       _policyExpiresAt = (d['policyExpiresAt'] as num? ?? 0).toInt();
+      _cachedAttendancePermit = d['attendancePermit'] is String
+          ? d['attendancePermit'] as String
+          : null;
+      // Reuse only the same unexpired school/person/session/QR/day approval.
+      // Old snapshots or rejected cache values fall back to server refresh.
+      if (_currentAttendancePermit == null) _cachedAttendancePermit = null;
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
@@ -1111,6 +1125,7 @@ class SchoolSession {
   Future<void> _persist() async {
     if (!loggedIn) return;
     final generation = _generation;
+    final attendancePermit = _currentAttendancePermit;
     final value = jsonEncode({
       'qr': link!.rawQr,
       'schoolToken': schoolToken,
@@ -1119,6 +1134,7 @@ class SchoolSession {
       'schoolName': schoolName,
       'expiresAt': _expiresAt,
       'policyExpiresAt': _policyExpiresAt,
+      if (attendancePermit != null) 'attendancePermit': attendancePermit,
       'cardReaderEnforced': _cardReaderEnforced,
       'cardIssueId': link!.cardIssueId.isEmpty ? null : link!.cardIssueId,
       if (_cardAuthorizationToken != null)

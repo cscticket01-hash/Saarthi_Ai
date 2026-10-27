@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import '../lib/mobile/school_session.dart';
+import '../lib/mobile/school_request_deadlines.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,7 +23,8 @@ void main() {
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  test('a verified school read arriving after 25 seconds is accepted instead of timing out early', () async {
+  for (final readAction in ['mobile_dashboard', 'mobile_refresh']) {
+  test('$readAction arriving after 25 seconds is accepted instead of timing out early', () async {
     late Completer<http.Response> reply;
     var slow = false;
     final session = SchoolSession(persistSession: (_) async {}, client: MockClient((request) async {
@@ -38,7 +40,7 @@ void main() {
       reply = Completer<http.Response>();
       Map<String, dynamic>? verified;
       Object? failure;
-      session.schoolCall('mobile_dashboard', {}).then((result) => verified = result, onError: (Object e) { failure = e; });
+      session.schoolCall(readAction, {}).then((result) => verified = result, onError: (Object e) { failure = e; });
       clock.flushMicrotasks();
       clock.elapse(const Duration(seconds: 35));
       expect(failure, isNull);
@@ -52,6 +54,13 @@ void main() {
       expect(session.connectionState, SchoolConnectionState.connected);
     });
     await session.clear();
+  });
+  }
+
+  test('attendance submission and status deadlines stay short while permit refresh allows its Script read', () {
+    expect(managedSchoolRequestTimeout('mobile_refresh'), const Duration(seconds: 105));
+    expect(managedSchoolRequestTimeout('mobile_mark_attendance'), const Duration(seconds: 25));
+    expect(managedSchoolRequestTimeout('mobile_attendance_status'), const Duration(seconds: 25));
   });
 
   test('an actual read deadline retains verified cache and rejects a late response', () async {
