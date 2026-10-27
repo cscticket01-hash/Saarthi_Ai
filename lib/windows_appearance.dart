@@ -164,6 +164,8 @@ class WindowsAppearance {
   /// Used by native widgets, never by photos, painters or document exports.
   static Color resolve(Color source) {
     if (source.a == 0) return source;
+    // Already-generated brand shades must not be reclassified as status colours.
+    if ((source.toARGB32() & 0xFFFFFF) == (primary.toARGB32() & 0xFFFFFF)) return source;
     final dark = mode.value != ThemeMode.light;
     final r = source.r, g = source.g, b = source.b;
     final high = [r,g,b].reduce((a,b)=>a>b?a:b), low=[r,g,b].reduce((a,b)=>a<b?a:b);
