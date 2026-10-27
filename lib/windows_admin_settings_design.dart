@@ -91,7 +91,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
         displayName.toLowerCase() != email.trim().toLowerCase();
     final info = Row(children: [
       Container(width: 68, height: 68, clipBehavior: Clip.antiAlias,
-        decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(
+        decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(
           colors: WindowsAppearance.gradientColors([Color(0xFF00A990), Color(0xFF008C7A)]))), child: Center(child: avatar)),
       const SizedBox(width: 18),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
