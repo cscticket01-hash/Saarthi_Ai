@@ -108,16 +108,21 @@ void main() {
         for(final entry in screens.entries) {
           debugPrint('THEME_ATLAS ${entry.key} ${mode.name} ${size.width.toInt()}');
           final key=GlobalKey();
-          await tester.runAsync(() async {await tester.pumpWidget(app(RepaintBoundary(key:key,child:entry.value)));await Future<void>.delayed(const Duration(milliseconds:100));});
+          await tester.runAsync(() async {
+            await tester.pumpWidget(app(RepaintBoundary(key:key,child:entry.value)));
+            await Future<void>.delayed(const Duration(milliseconds:100));
+            // Fees mounts two nested disk-backed streams after its UID lookup.
+            // Subscribe those streams in the real event loop, not the fake clock.
+            if(entry.key=='fees')for(var i=0;i<8;i++) {
+              await tester.pump();
+              await Future<void>.delayed(const Duration(milliseconds:80));
+            }
+          });
           for(var i=0;i<24;i++) {
             await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:30)));await tester.pump(const Duration(milliseconds:30));
             if(entry.key=='salary' && find.byKey(const ValueKey('salary-history')).evaluate().isNotEmpty)break;
           }
           if(entry.key=='fees') {
-            for(var i=0;i<8 && find.byType(CircularProgressIndicator).evaluate().isNotEmpty;i++) {
-              await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:80)));
-              await tester.pump(const Duration(seconds:1));
-            }
             expect(find.text('Payment Details'),findsOneWidget,reason:'Review the loaded fee form, not a loading spinner');
           }
           if(entry.key=='students') {
