@@ -1140,12 +1140,12 @@ Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.timer_outlined, size: 12, color: color),
+              Icon(Icons.timer_outlined, size: 12, color: WindowsAppearance.foreground(color)),
               const SizedBox(width: 4),
               Text(
                 _formatPortalTimer(seconds),
                 style: TextStyle(fontFamily: 'Segoe UI', 
-                  color: color,
+                  color: WindowsAppearance.foreground(color),
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0.2,
@@ -4326,7 +4326,7 @@ errorBuilder: (context, error, stackTrace) {
             width: 42,
             height: 42,
             decoration: BoxDecoration(color: accent.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-            child: Icon(categoryIcon, color: accent, size: 20),
+            child: Icon(categoryIcon, color: WindowsAppearance.foreground(accent), size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -4341,7 +4341,7 @@ errorBuilder: (context, error, stackTrace) {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(color: accent.withOpacity(0.11), borderRadius: BorderRadius.circular(20)),
-                      child: Text(category, style: TextStyle(fontFamily: 'Segoe UI', color: accent, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                      child: Text(category, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(accent), fontSize: 9.5, fontWeight: FontWeight.w800)),
                     ),
                     if (date.isNotEmpty)
                       Row(
@@ -6180,7 +6180,7 @@ Widget _buildOverviewCards() {
               borderRadius: BorderRadius.circular(13),
               border: Border.all(color: accent.withOpacity(0.18)),
             ),
-            child: Icon(icon, color: accent, size: 21),
+            child: Icon(icon, color: WindowsAppearance.foreground(accent), size: 21),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -6697,7 +6697,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 ),
                                 child: Icon(
                                   _adminCategoryIcon(category),
-                                  color: accent,
+                                  color: WindowsAppearance.foreground(accent),
                                   size: 19,
                                 ),
                               ),
@@ -6723,7 +6723,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                           child: Text(
                                             category,
                                             style: TextStyle(fontFamily: 'Segoe UI', 
-                                              color: accent,
+                                              color: WindowsAppearance.foreground(accent),
                                               fontSize: 9,
                                               fontWeight: FontWeight.w800,
                                             ),
@@ -6865,7 +6865,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: accent.withOpacity(0.15)),
                 ),
-                child: Icon(icon, color: accent, size: 20),
+                child: Icon(icon, color: WindowsAppearance.foreground(accent), size: 20),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -7097,7 +7097,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               ),
               child: Icon(
                 _adminCategoryIcon(category),
-                color: accent,
+                color: WindowsAppearance.foreground(accent),
                 size: 20,
               ),
             ),
@@ -7115,7 +7115,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                     child: Text(
                       category,
                       style: TextStyle(fontFamily: 'Segoe UI', 
-                        color: accent,
+                        color: WindowsAppearance.foreground(accent),
                         fontSize: 9.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -7794,7 +7794,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               color: color.withOpacity(.13),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: WindowsAppearance.foreground(color), size: 22),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -7882,7 +7882,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   color: color.withOpacity(.13),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: 18),
+                child: Icon(icon, color: WindowsAppearance.foreground(color), size: 18),
               ),
               const SizedBox(width: 9),
               Expanded(
@@ -7987,7 +7987,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         Container(
           width: 8,
           height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          decoration: BoxDecoration(color: WindowsAppearance.foreground(color), shape: BoxShape.circle),
         ),
         const SizedBox(width: 5),
         Text(
@@ -8486,7 +8486,7 @@ class _AnalyticsLineChart extends StatelessWidget {
       painter: _AnalyticsLinePainter(
         values: values,
         labels: labels,
-        color: color,
+        color: WindowsAppearance.foreground(color),
         percent: percent,
       ),
       child: const SizedBox.expand(),
@@ -8513,7 +8513,7 @@ class _AnalyticsBarChart extends StatelessWidget {
       painter: _AnalyticsBarPainter(
         values: values,
         labels: labels,
-        color: color,
+        color: WindowsAppearance.foreground(color),
         money: money,
       ),
       child: const SizedBox.expand(),
@@ -10307,13 +10307,13 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           Container(
             width: 6,
             height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: WindowsAppearance.foreground(color), shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
           Text(
             text,
             style: TextStyle(fontFamily: 'Segoe UI', 
-              color: color,
+              color: WindowsAppearance.foreground(color),
               fontSize: 9,
               fontWeight: FontWeight.w800,
             ),
@@ -10618,7 +10618,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
               color: color.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color),
+            child: Icon(icon, color: WindowsAppearance.foreground(color)),
           ),
           const SizedBox(width: 11),
           Expanded(child: Column(
@@ -11199,7 +11199,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             Text(
               _money(amount),
               style: TextStyle(fontFamily: 'Segoe UI', 
-                color: color,
+                color: WindowsAppearance.foreground(color),
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
               ),
@@ -11869,7 +11869,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ),
               child: Text(
                 status == 'PARTIAL' ? 'PARTIAL' : status,
-                style: TextStyle(fontFamily: 'Segoe UI', color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(color), fontSize: 10, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -18852,7 +18852,7 @@ class _WindowsSectionPasswordLocksPanelState
       child: Text(
         enabled ? 'ON' : 'OFF',
         style: TextStyle(fontFamily: 'Segoe UI', 
-          color: color,
+          color: WindowsAppearance.foreground(color),
           fontSize: 9,
           fontWeight: FontWeight.w900,
         ),
@@ -20456,7 +20456,7 @@ class _FeeTransactionHistoryScreenState
       ),
       child: Row(
         children: [
-          Icon(icon, color: color),
+          Icon(icon, color: WindowsAppearance.foreground(color)),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
@@ -21454,7 +21454,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               color: color.withOpacity(0.11),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: WindowsAppearance.foreground(color), size: 22),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -21502,7 +21502,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         child: Text(
           text,
           style: TextStyle(fontFamily: 'Segoe UI', 
-            color: color,
+            color: WindowsAppearance.foreground(color),
             fontSize: 9,
             fontWeight: FontWeight.w800,
           ),
@@ -22765,7 +22765,7 @@ class _ExamMarksEntryScreenState
         child: Text(
           '$label: $value',
           style: TextStyle(fontFamily: 'Segoe UI', 
-              color: color, fontSize: 10, fontWeight: FontWeight.w800),
+              color: WindowsAppearance.foreground(color), fontSize: 10, fontWeight: FontWeight.w800),
         ),
       );
 
@@ -23452,5 +23452,5 @@ class _WindowsMetricCard extends StatelessWidget{
   const _WindowsMetricCard({required this.icon,required this.label,required this.value,required this.color});
   final IconData icon; final String label; final String value; final Color color;
   @override
-  Widget build(BuildContext context){ WindowsAppearance.watch(context); return Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(fontFamily: 'Segoe UI', color:color,fontSize:18,fontWeight:FontWeight.w900))])]))); }
+  Widget build(BuildContext context){ WindowsAppearance.watch(context); return Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color: WindowsAppearance.foreground(color),size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(color),fontSize:18,fontWeight:FontWeight.w900))])]))); }
 }
