@@ -168,7 +168,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.runAsync(() async {
-      final font = FontLoader(Platform.isWindows ? 'Segoe UI' : 'Preview');
+      final font = FontLoader('Segoe UI');
       font.addFont(
         File(Platform.isWindows ? 'C:/Windows/Fonts/segoeui.ttf' : 'assets/id_card_regular.ttf')
             .readAsBytes()
@@ -186,7 +186,7 @@ void main() {
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: ThemeData(brightness: Brightness.dark,
-            fontFamily: Platform.isWindows ? 'Segoe UI' : 'Preview'),
+            fontFamily: 'Segoe UI'),
           home: page(),
         ),
       ),
