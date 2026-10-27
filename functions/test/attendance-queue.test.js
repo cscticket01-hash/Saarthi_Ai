@@ -128,6 +128,54 @@ test('active worker respects retry deadline and retains a wake arriving during u
  const active=scheduled();worker.wake();release();await active;assert.equal(delay,0);await scheduled();assert.equal(delay,2000);worker.stop();
 });
 
+
+test('batch Firestore claim and finalize work is bounded to four and preserves Script order',async()=>{
+ const s=store(),originalClaim=s.claim,originalFinish=s.finish;
+ let activeClaims=0,maxClaims=0,activeFinishes=0,maxFinishes=0,deliveries=0;
+ s.claim=async(...args)=>{
+  activeClaims++;maxClaims=Math.max(maxClaims,activeClaims);
+  try{await new Promise(resolve=>setImmediate(resolve));return await originalClaim(...args);}
+  finally{activeClaims--;}
+ };
+ s.finish=async(...args)=>{
+  activeFinishes++;maxFinishes=Math.max(maxFinishes,activeFinishes);
+  try{await new Promise(resolve=>setImmediate(resolve));return await originalFinish(...args);}
+  finally{activeFinishes--;}
+ };
+ const expected=[];
+ const q=createAttendanceQueue({store:s,now:()=>1000,batchSize:25,minBatchSize:25,maxBatchSize:25,deliver:async(_,items)=>{
+  deliveries++;assert.deepEqual(items.map(item=>item.operationId),expected);
+  assert.equal(items.length,25);assert(items.every(x=>x.claim));
+  return items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let i=0;i<25;i++)expected.push((await q.enqueue(event(A,'concurrent-'+i))).operationId);
+ await q.drain();
+ assert.equal(deliveries,1);assert(maxClaims>1&&maxClaims<=4);
+ assert(maxFinishes>1&&maxFinishes<=4);assert.equal(q.metrics.completed,25);
+ assert([...s.rows.values()].every(x=>x.state==='completed'));
+ const timings=q.metrics.lastPhaseTiming;
+ for(const key of ['queueReadMs','claimMs','scriptMs','finishMs','totalMs','scriptBatches'])
+  assert(Number.isFinite(timings[key])&&timings[key]>=0,key);
+ assert.equal(timings.processed,25);assert.equal(timings.scriptBatches,1);
+});
+test('failed final transaction cannot ACK that record but successful peers finish and drain guard waits for all',async()=>{
+ const s=store(),normalFinish=s.finish;let failedId,failOnce=true,time=1000,settled=0;
+ const q=createAttendanceQueue({store:s,now:()=>time,batchSize:25,minBatchSize:25,maxBatchSize:25,deliver:async(_,items)=>items.map(i=>({operationId:i.operationId,success:true}))});
+ for(let i=0;i<8;i++){const op=(await q.enqueue(event(A,'failure-'+i))).operationId;if(i===0)failedId=op;}
+ s.finish=async(...args)=>{
+  await new Promise(resolve=>setImmediate(resolve));
+  if(args[0]===failedId&&failOnce){failOnce=false;settled++;throw Error('durable store failed');}
+  await normalFinish(...args);settled++;
+ };
+ await assert.rejects(q.drain(),/durable store failed/);
+ assert.equal(settled,8);assert.equal(s.rows.get(failedId).state,'processing');
+ assert.equal([...s.rows.values()].filter(x=>x.state==='completed').length,7);
+ assert.equal(q.metrics.completed,7);
+ time+=120001;await q.drain();
+ assert.equal(s.rows.get(failedId).state,'completed');
+ assert.equal(s.rows.size,8);
+});
+
 test('adaptive concurrency caps independent schools at two and serializes each school',async()=>{
  const s=store();let active=0,peak=0,fail=false;const schools=new Set();
  const q=createAttendanceQueue({store:s,batchSize:25,maxBatchSize:25,minBatchSize:25,now:()=>1000,deliver:async(school,items)=>{
