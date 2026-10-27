@@ -4865,7 +4865,7 @@ void _handleLoginBack(bool didPop) {
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
+        backgroundColor: WindowsAppearance.background(result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange),
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
           : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. Background sync queued. ${result.error}')));
@@ -11507,7 +11507,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               _amountSummaryBox(
                 label: 'Remaining Due',
                 amount: studentSelected ? remaining : 0,
-                color: remaining > 0 ? Colors.redAccent : const Color(0xFF00D9A5),
+                color: WindowsAppearance.foreground(remaining > 0 ? Colors.redAccent : const Color(0xFF00D9A5)),
               ),
             ],
           ),
@@ -11620,7 +11620,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(
         foregroundColor: selected ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white60),
-        backgroundColor: selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent,
+        backgroundColor: WindowsAppearance.background(selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent),
         side: BorderSide(
           color: selected ? const Color(0xFF00D9A5) : WindowsAppearance.outline(Colors.white12),
         ),
@@ -14560,10 +14560,10 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           WindowsAppearance.foreground(Colors.white30),
                     ),
                     prefixIcon:
-                        const Icon(
+                              Icon(
                       Icons.search_rounded,
-                      color: Colors
-                          .purpleAccent,
+                      color: WindowsAppearance.foreground(Colors
+                          .purpleAccent),
                     ),
                     filled: true,
                     fillColor:
@@ -14596,8 +14596,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             _statusFilter ==
                                 filter,
                         selectedColor:
-                            Colors
-                                .purpleAccent,
+                            WindowsAppearance.background(Colors
+                                .purpleAccent),
                         backgroundColor:
                             WindowsAppearance.background(const Color(0xFF172229)),
                         labelStyle:
@@ -14639,11 +14639,11 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         .connectionState ==
                     ConnectionState
                         .waiting) {
-                  return const Center(
+                  return       Center(
                     child:
                         CircularProgressIndicator(
-                      color: Colors
-                          .purpleAccent,
+                      color: WindowsAppearance.foreground(Colors
+                          .purpleAccent),
                     ),
                   );
                 }
@@ -14869,8 +14869,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   BoxShape.circle,
                               border:
                                   Border.all(
-                                color: Colors
-                                    .purpleAccent,
+                                color: WindowsAppearance.foreground(Colors
+                                    .purpleAccent),
                                 width: 2,
                               ),
                             ),
@@ -15036,15 +15036,15 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                     OutlinedButton
                                         .styleFrom(
                                   foregroundColor:
-                                      Colors
-                                          .purpleAccent,
+                                      WindowsAppearance.foreground(Colors
+                                          .purpleAccent),
                                   side:
                                       BorderSide(
-                                    color: Colors
+                                    color: WindowsAppearance.foreground(Colors
                                         .purpleAccent
                                         .withOpacity(
                                       0.45,
-                                    ),
+                                    )),
                                   ),
                                   shape:
                                       RoundedRectangleBorder(
@@ -15104,14 +15104,14 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                           IconButton
                                               .styleFrom(
                                         backgroundColor:
-                                            Colors
+                                            WindowsAppearance.background(Colors
                                                 .blueAccent
                                                 .withOpacity(
                                           0.12,
-                                        ),
+                                        )),
                                         foregroundColor:
-                                            Colors
-                                                .blueAccent,
+                                            WindowsAppearance.foreground(Colors
+                                                .blueAccent),
                                       ),
                                       onPressed: () =>
                                           _editTeacher(
@@ -15138,14 +15138,14 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                           IconButton
                                               .styleFrom(
                                         backgroundColor:
-                                            Colors
+                                            WindowsAppearance.background(Colors
                                                 .redAccent
                                                 .withOpacity(
                                           0.12,
-                                        ),
+                                        )),
                                         foregroundColor:
-                                            Colors
-                                                .redAccent,
+                                            WindowsAppearance.foreground(Colors
+                                                .redAccent),
                                       ),
                                       onPressed: () =>
                                           _deleteTeacher(
@@ -15757,8 +15757,8 @@ class _AddTeacherScreenState
                             BoxShape.circle,
                         border:
                             Border.all(
-                          color: Colors
-                              .purpleAccent,
+                          color: WindowsAppearance.foreground(Colors
+                              .purpleAccent),
                           width: 2,
                         ),
                       ),
@@ -15780,11 +15780,11 @@ class _AddTeacherScreenState
                                     color:
                                         WindowsAppearance.background(const Color(0xFF10191F)),
                                     child:
-                                        const Icon(
+                                              Icon(
                                       Icons
                                           .add_a_photo_rounded,
-                                      color: Colors
-                                          .purpleAccent,
+                                      color: WindowsAppearance.foreground(Colors
+                                          .purpleAccent),
                                       size:
                                           35,
                                     ),
@@ -16187,8 +16187,8 @@ class _AddTeacherScreenState
                           ElevatedButton
                               .styleFrom(
                         backgroundColor:
-                            Colors
-                                .purpleAccent,
+                            WindowsAppearance.background(Colors
+                                .purpleAccent),
                         shape:
                             RoundedRectangleBorder(
                           borderRadius:
@@ -23428,7 +23428,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
                     width:double.infinity,
                     padding:const EdgeInsets.all(12),
                     decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF0F191F)),borderRadius:BorderRadius.circular(12)),
-                    child:Text(_status,style:TextStyle(fontFamily: 'Segoe UI', color:_status.toLowerCase().contains('blocked')||_status.toLowerCase().contains('invalid')?Colors.redAccent:const Color(0xFF00D9A5))),
+                    child:Text(_status,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(_status.toLowerCase().contains('blocked')||_status.toLowerCase().contains('invalid')?Colors.redAccent:const Color(0xFF00D9A5)))),
                   ),
                 ]),
               ),

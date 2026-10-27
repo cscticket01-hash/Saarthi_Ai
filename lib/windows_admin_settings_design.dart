@@ -15,8 +15,10 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
   final int month;
   final ValueChanged<int> onMonthChanged;
   final VoidCallback onDevices, onSchool, onPasswords, onAdvanced;
-  static const blue = Color(0xFF73ADFF), teal = Color(0xFF00DBC0);
-  static const amber = Color(0xFFFFB536), muted = Color(0xFFAABDD7);
+  static Color get blue => WindowsAppearance.primary;
+  static Color get teal => WindowsAppearance.primary;
+  static Color get amber => WindowsAppearance.primary;
+  static const muted = Color(0xFFAABDD7);
 
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
@@ -80,7 +82,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
           Text('Device Management', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 18, fontWeight: FontWeight.w700)),
           SizedBox(height: 5), Text('Manage your devices and access', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(muted), fontSize: 14)),
         ])),
-        const SizedBox(width: 8), const Icon(Icons.chevron_right_rounded, color: blue),
+        const SizedBox(width: 8),  Icon(Icons.chevron_right_rounded, color: blue),
       ])),
     ),
   ));
@@ -104,7 +106,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
         if (authenticated) Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(color: teal.withValues(alpha: .08),
             border: Border.all(color: teal.withValues(alpha: .35)), borderRadius: BorderRadius.circular(12)),
-          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          child:  Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.verified_user_rounded, color: teal, size: 15), SizedBox(width: 6),
             Flexible(child: Text('Authenticated', style: TextStyle(fontFamily: 'Segoe UI', color: teal, fontSize: 12, fontWeight: FontWeight.w600))),
           ])),
@@ -114,7 +116,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
       icon: const Icon(Icons.school_rounded, size: 20), label: const Text('School Settings'),
       style: OutlinedButton.styleFrom(foregroundColor: teal,
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 17),
-        side: const BorderSide(color: teal), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
+        side:  BorderSide(color: teal), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
     if (size.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 620) {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [info, const SizedBox(height: 18), button]);
     }
@@ -123,7 +125,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
 
   Widget _academic(BuildContext context) {
     final label = Row(children: [
-      const Icon(Icons.event_repeat_rounded, color: blue, size: 26), const SizedBox(width: 14),
+       Icon(Icons.event_repeat_rounded, color: blue, size: 26), const SizedBox(width: 14),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
          Text('Session Change Month', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 15, fontWeight: FontWeight.w600)),
         const SizedBox(height: 5), Text('Current: $year', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(muted), fontSize: 13)),
@@ -167,12 +169,12 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
   );
   Widget _action(String text, IconData icon, VoidCallback onTap) => OutlinedButton(
     onPressed: onTap, style: OutlinedButton.styleFrom(
-      foregroundColor: amber, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+      foregroundColor: WindowsAppearance.onPrimary, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       side: BorderSide(color: amber.withValues(alpha: .35)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       backgroundColor: WindowsAppearance.primary),
     child: Row(children: [Icon(icon, size: 22), const SizedBox(width: 14),
-      Expanded(child: Text(text, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 14, fontWeight: FontWeight.w600))),
+      Expanded(child: Text(text, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.onPrimary, fontSize: 14, fontWeight: FontWeight.w600))),
       const SizedBox(width: 8), const Icon(Icons.arrow_forward_rounded, size: 22),
     ]));
   Widget _icon(IconData icon, Color color, {bool small = false}) => Container(

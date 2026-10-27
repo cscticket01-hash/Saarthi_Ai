@@ -115,7 +115,7 @@ void main() {
           if(entry.key=='salary') {
             expect(find.byKey(const ValueKey('salary-history')),findsOneWidget);
             // Exercise the enabled bulk action as well as the initial disabled state.
-            await tester.tap(find.byType(Checkbox).last);await tester.pump();
+            await tester.tap(find.byType(Checkbox).last);await tester.pumpAndSettle();
             final actionFinder=find.ancestor(of:find.text('Mark Selected as Paid'),matching:find.byWidgetPredicate((w)=>w is FilledButton));
             final action=tester.widget<FilledButton>(actionFinder);
             expect(action.onPressed,isNotNull);

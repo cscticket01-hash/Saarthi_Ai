@@ -25,7 +25,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
   final ValueChanged<String> onClass, onSession;
   final VoidCallback onAdd, onChanged, onSave, onEdit, onCancel, onRetry;
   static const _navy = Color(0xFF0B1B2E);
-  static const _teal = Color(0xFF20E3D0);
+  static Color get _teal => WindowsAppearance.primary;
   static const _muted = Color(0xFFA5BCD4);
   static const _border = Color(0xFF334D68);
 
@@ -39,7 +39,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
     filled: true, fillColor: WindowsAppearance.background(const Color(0xFF0D2035)),
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide:  BorderSide(color: WindowsAppearance.outline(_border))),
     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide:  BorderSide(color: WindowsAppearance.outline(_border))),
-    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide: const BorderSide(color: _teal, width: 1.5)),
+    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(9), borderSide:  BorderSide(color: _teal, width: 1.5)),
   );
 
   Widget _selector(BuildContext context, {required String label, required String value,
@@ -101,7 +101,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
           style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 23, fontWeight: FontWeight.w700)),
       ])),
     ])),
-    Expanded(child: loading ? const Center(child: CircularProgressIndicator(color: _teal))
+    Expanded(child: loading ?  Center(child: CircularProgressIndicator(color: _teal))
       : failed ? Center(child: FilledButton(onPressed: onRetry, child: const Text('Retry loading fees')))
       : SingleChildScrollView(controller: scrollController, padding: EdgeInsets.fromLTRB(wide ? 40 : 16, 12, wide ? 40 : 16, 24),
         child: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1150),
@@ -124,7 +124,7 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 12, runSpacing: 12,
                   children: [ Text('Fee details', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 22, fontWeight: FontWeight.w700)),
                     if (editing) OutlinedButton.icon(key: const ValueKey('add-fee'), onPressed: saving ? null : onAdd,
-                      style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: _teal, side: const BorderSide(color: _teal)),
+                      style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: _teal, side:  BorderSide(color: _teal)),
                       icon: const Icon(Icons.add), label: const Text('Add fee')),
                   ]),
                  Divider(height: 28, color: WindowsAppearance.resolve(_border)),
