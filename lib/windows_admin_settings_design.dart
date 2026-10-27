@@ -73,7 +73,7 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
     ),
   ); }
 
-  Widget _deviceTile() => Material(color: WindowsAppearance.foreground(Colors.transparent), child: Ink(
+  Widget _deviceTile() => Material(color: WindowsAppearance.background(Colors.transparent), child: Ink(
     decoration: _decoration(),
     child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onDevices,
       child: Padding(padding: const EdgeInsets.all(22), child: Row(children: [

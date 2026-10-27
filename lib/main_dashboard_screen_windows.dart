@@ -1602,7 +1602,7 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
         final profile = _mergeSchoolProfile(snapshot.data?.data());
         final logo = profile['logoUrl']?.toString() ?? '';
         return Padding(padding: const EdgeInsets.all(12), child: Material(
-          color: WindowsAppearance.foreground(const Color(0xFF123D38)), borderRadius: BorderRadius.circular(18),
+          color: WindowsAppearance.background(const Color(0xFF123D38)), borderRadius: BorderRadius.circular(18),
           child: ListTile(onTap: onAnalytics,
             leading: SizedBox(width: 50, height: 50, child: logo.isEmpty
               ? Icon(Icons.school_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 34)
@@ -4041,7 +4041,7 @@ void _handleLoginBack(bool didPop) {
                 child: ClipOval(
                   child: isLoadingProfile
                       ?  ColoredBox(
-                          color: WindowsAppearance.foreground(Color(0xFF0F171D)),
+                          color: WindowsAppearance.background(Color(0xFF0F171D)),
                           child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: WindowsAppearance.foreground(Color(0xFF00A884))))),
                         )
                       : photoUrl.isNotEmpty
@@ -4050,13 +4050,13 @@ void _handleLoginBack(bool didPop) {
                               fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
                                 return ColoredBox(
-                                  color: WindowsAppearance.foreground(const Color(0xFF0F171D)),
+                                  color: WindowsAppearance.background(const Color(0xFF0F171D)),
                                   child: Center(child: Text(studentInitial, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884)), fontSize: 38, fontWeight: FontWeight.bold))),
                                 );
                               },
                             )
                           : ColoredBox(
-                              color: WindowsAppearance.foreground(const Color(0xFF0F171D)),
+                              color: WindowsAppearance.background(const Color(0xFF0F171D)),
                               child: Center(child: Text(studentInitial, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884)), fontSize: 38, fontWeight: FontWeight.bold))),
                             ),
                 ),
@@ -5471,7 +5471,7 @@ Future<void> _printIdCard() async {
         title: Row(
           children: [
             Material(
-              color: WindowsAppearance.foreground(Colors.transparent),
+              color: WindowsAppearance.background(Colors.transparent),
               child: InkWell(
                 borderRadius: BorderRadius.circular(13),
                 onTap: () {
@@ -6225,7 +6225,7 @@ Widget _buildOverviewCards() {
     if (onTap == null) return card;
 
     return Material(
-      color: WindowsAppearance.foreground(Colors.transparent),
+      color: WindowsAppearance.background(Colors.transparent),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(17),
@@ -6422,7 +6422,7 @@ Widget _buildOverviewCards() {
                             _studentPhotoUrl!,
                             fit: BoxFit.cover,
 errorBuilder: (_, __, ___) =>  ColoredBox(
-                              color: WindowsAppearance.foreground(Color(0xFF162229)),
+                              color: WindowsAppearance.background(Color(0xFF162229)),
                               child: Icon(
                                 Icons.person_rounded,
                                 color: WindowsAppearance.foreground(Color(0xFF00A884)),
@@ -6672,7 +6672,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                     final accent = _adminCategoryColor(category);
 
                     return Material(
-                      color: WindowsAppearance.foreground(Colors.transparent),
+                      color: WindowsAppearance.background(Colors.transparent),
                       child: InkWell(
                         onTap: () => _showNoticeDetailDialog(data),
                         borderRadius: BorderRadius.circular(14),
@@ -7987,7 +7987,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         Container(
           width: 8,
           height: 8,
-          decoration: BoxDecoration(color: WindowsAppearance.foreground(color), shape: BoxShape.circle),
+          decoration: BoxDecoration(color: WindowsAppearance.background(color), shape: BoxShape.circle),
         ),
         const SizedBox(width: 5),
         Text(
@@ -10307,7 +10307,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           Container(
             width: 6,
             height: 6,
-            decoration: BoxDecoration(color: WindowsAppearance.foreground(color), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: WindowsAppearance.background(color), shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
           Text(
@@ -12057,7 +12057,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           color: WindowsAppearance.foreground(Colors.redAccent),
                         ),
                         Material(
-                          color: WindowsAppearance.foreground(Colors.transparent),
+                          color: WindowsAppearance.background(Colors.transparent),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
                             onTap: () {
@@ -14869,7 +14869,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   BoxShape.circle,
                               border:
                                   Border.all(
-                                color: WindowsAppearance.foreground(Colors
+                                color: WindowsAppearance.outline(Colors
                                     .purpleAccent),
                                 width: 2,
                               ),
@@ -15040,7 +15040,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                           .purpleAccent),
                                   side:
                                       BorderSide(
-                                    color: WindowsAppearance.foreground(Colors
+                                    color: WindowsAppearance.outline(Colors
                                         .purpleAccent
                                         .withOpacity(
                                       0.45,
@@ -15757,7 +15757,7 @@ class _AddTeacherScreenState
                             BoxShape.circle,
                         border:
                             Border.all(
-                          color: WindowsAppearance.foreground(Colors
+                          color: WindowsAppearance.outline(Colors
                               .purpleAccent),
                           width: 2,
                         ),
@@ -17195,7 +17195,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                   height: double.infinity,
                   fit: BoxFit.cover,
 errorBuilder: (_, __, ___) =>  ColoredBox(
-                    color: WindowsAppearance.foreground(Color(0xFF121B22)),
+                    color: WindowsAppearance.background(Color(0xFF121B22)),
                     child: Icon(
                       Icons.person_rounded,
                       size: 38,
@@ -17206,7 +17206,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               }
 
               return  ColoredBox(
-                color: WindowsAppearance.foreground(Color(0xFF121B22)),
+                color: WindowsAppearance.background(Color(0xFF121B22)),
                 child: Icon(
                   Icons.person_rounded,
                   size: 38,
@@ -17575,7 +17575,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         actions: [TextButton.icon(
             onPressed: _openAddStudentDialog,
             style: TextButton.styleFrom(
-              foregroundColor: WindowsAppearance.primary,
+              foregroundColor: WindowsAppearance.onPrimary,
               backgroundColor: WindowsAppearance.primary,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               shape: RoundedRectangleBorder(

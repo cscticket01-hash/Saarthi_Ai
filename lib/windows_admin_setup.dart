@@ -553,7 +553,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                   Text('Vidya Saarthi', textAlign: TextAlign.center,
                     style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 28, fontWeight: FontWeight.w800)),
                   SizedBox(height: 10),
-                  Center(child: Container(width: 32, height: 3, decoration: BoxDecoration(color: WindowsAppearance.foreground(_accent), borderRadius: BorderRadius.circular(2)))),
+                  Center(child: Container(width: 32, height: 3, decoration: BoxDecoration(color: WindowsAppearance.background(_accent), borderRadius: BorderRadius.circular(2)))),
                   SizedBox(height: 12),
                   Text('School Setup', textAlign: TextAlign.center,
                     style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFD7E0EA)), fontSize: 19, fontWeight: FontWeight.w600)),

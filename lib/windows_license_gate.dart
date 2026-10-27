@@ -34,7 +34,7 @@ class WindowsTrialBanner extends StatelessWidget {
     if (licenseSkipped) {
       return Material(
         key: const ValueKey('license-not-activated-banner'),
-        color: WindowsAppearance.foreground(const Color(0xFF661B24)),
+        color: WindowsAppearance.background(const Color(0xFF661B24)),
         child: InkWell(
           onTap: onActivate,
           child: SafeArea(
@@ -81,7 +81,7 @@ class WindowsTrialBanner extends StatelessWidget {
       );
     }
     return Material(
-      color: WindowsAppearance.foreground(const Color(0xFF661B24)),
+      color: WindowsAppearance.background(const Color(0xFF661B24)),
       child: InkWell(
         onTap: onActivate,
         child: SafeArea(

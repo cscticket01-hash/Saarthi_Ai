@@ -113,6 +113,19 @@ void main() {
             await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:30)));await tester.pump(const Duration(milliseconds:30));
             if(entry.key=='salary' && find.byKey(const ValueKey('salary-history')).evaluate().isNotEmpty)break;
           }
+          if(entry.key=='fees') {
+            for(var i=0;i<8 && find.byType(CircularProgressIndicator).evaluate().isNotEmpty;i++) {
+              await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:80)));
+              await tester.pump(const Duration(seconds:1));
+            }
+            expect(find.text('Payment Details'),findsOneWidget,reason:'Review the loaded fee form, not a loading spinner');
+          }
+          if(entry.key=='students') {
+            final add=find.ancestor(of:find.text('Add Student'),matching:find.byWidgetPredicate((w)=>w is TextButton));
+            final button=tester.widget<TextButton>(add);
+            expect(button.onPressed,isNotNull);
+            expect(WindowsAppearance.contrast(button.style!.foregroundColor!.resolve({})!,button.style!.backgroundColor!.resolve({})!),greaterThanOrEqualTo(4.5));
+          }
           if(entry.key=='salary') {
             expect(find.byKey(const ValueKey('salary-history')),findsOneWidget);
             // Exercise the enabled bulk action as well as the initial disabled state.
