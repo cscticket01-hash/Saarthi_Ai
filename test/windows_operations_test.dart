@@ -28,6 +28,15 @@ import '../lib/windows_school_operations.dart';
 import '../lib/promotion_session_policy.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final db = local.FirebaseFirestore.instance;
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    WindowsPlatformClient.skippedOverride = null;
+    ui.WindowsUiLanguage.change('en');
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    await db.switchProfile('payroll-${DateTime.now().microsecondsSinceEpoch}');
+  });
   testWidgets('embedded Teachers Directory keeps only the outer header Back', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(body:
       TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) =>
@@ -96,15 +105,6 @@ void main() {
     expect(find.text('School changed. Reopen salary history.'), findsOneWidget);
     expect(find.text('History staff'), findsNothing);
     await tester.pumpWidget(const SizedBox());
-  });
-  TestWidgetsFlutterBinding.ensureInitialized();
-  final db = local.FirebaseFirestore.instance;
-  setUp(() async {
-    FlutterSecureStorage.setMockInitialValues({});
-    WindowsPlatformClient.skippedOverride = null;
-    ui.WindowsUiLanguage.change('en');
-    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
-    await db.switchProfile('payroll-${DateTime.now().microsecondsSinceEpoch}');
   });
   Future<Map<String, dynamic>> teacher() async {
     await db.collection('teachers_directory').doc('teacher-doc').set({
