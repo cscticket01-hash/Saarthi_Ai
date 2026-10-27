@@ -25,7 +25,7 @@ void main() {
   const gps = {'latitude': 24, 'longitude': 92, 'accuracy': 3};
   test('fresh processing confirmations stay short only within a bounded server-created window', () {
     const created = 100000;
-    for (final state in ['pending', 'processing']) {
+    for (final state in ['processing']) {
       expect(attendanceUsesFastConfirmation(state: state, createdAt: created,
         now: created + 29999), true);
       for (final attempts in [2, 3, 4, 20]) {
@@ -41,7 +41,7 @@ void main() {
     }
   });
   test('retry, unknown and untrusted timestamps retain existing confirmation backoff', () {
-    for (final state in ['retry', 'unknown', null]) {
+    for (final state in ['pending', 'retry', 'unknown', null]) {
       expect(attendanceUsesFastConfirmation(state: state, createdAt: 100000,
         now: 100001), false);
       for (var attempts = 2; attempts <= 6; attempts++) {

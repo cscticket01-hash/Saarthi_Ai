@@ -25,7 +25,7 @@ bool attendanceUsesFastConfirmation({
   required Object? createdAt,
   required int now,
 }) =>
-    (state == 'pending' || state == 'processing') &&
+    state == 'processing' &&
     createdAt is int &&
     createdAt > 0 &&
     createdAt <= now &&
