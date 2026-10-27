@@ -2388,8 +2388,7 @@ class WindowsBackendBridge {
             // A new device has no local generation proving that these inputs
             // supersede the published card. Do not manufacture a conflicting
             // PDF just because its first local fingerprint differs.
-            throw StateError('Published ID already exists with different inputs. '
-                'Review the school-published card before replacing it; no new PDF was saved.');
+            throw PublishedIdInputConflict();
           }
 
         }

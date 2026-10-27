@@ -17,6 +17,7 @@ import '../lib/windows_sync_conflict_review.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../lib/windows_document_templates.dart';
+import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_school_image_cache.dart';
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_local_firestore.dart';
@@ -442,7 +443,8 @@ void main() {
     final queues=(await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList();
     await expectLater(WindowsBackendBridge.publishIdCard(bytes:Uint8List(0),qr:qr,kind:'studentId',person:person,
       inputRevision:'different-device-input',automatic:true,
-      readPublished:()async=>{'schoolId':school,'syncProtocol':2,'records':{cardId:{...cloud,'id':cardId}}}),throwsStateError);
+      readPublished:()async=>{'schoolId':school,'syncProtocol':2,'records':{cardId:{...cloud,'id':cardId}}}),
+      throwsA(isA<PublishedIdInputConflict>()));
     expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
     expect((await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList(),queues);
     expect(await File(local['localPath']).readAsBytes(),[1,2,3]);

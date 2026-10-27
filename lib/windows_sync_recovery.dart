@@ -7,6 +7,21 @@ import 'school_backend_transport.dart';
 import 'sync_recovery_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 
+/// This verified publication conflict belongs to one card, not school access.
+/// The existing published PDF must remain protected while other records sync.
+class PublishedIdInputConflict extends StateError {
+  PublishedIdInputConflict()
+      : super('Published ID already exists with different inputs. '
+            'Review the school-published card before replacing it; no new PDF was saved.');
+}
+
+/// Preserve the original failure category across the document preparation stage.
+class IdCardPreparationFailure extends StateError {
+  IdCardPreparationFailure(this.cause)
+      : super('ID card preparation incomplete: $cause');
+  final Object cause;
+}
+
 /// A successful transport response without a verified revision is not an ACK.
 /// Retry retains the same operation ID so the server can return its prior receipt.
 class MissingSyncAcknowledgement implements Exception {
@@ -26,6 +41,16 @@ class PendingSyncAttention implements Exception {
 }
 
 const automaticRecordRetryLimit = 5;
+
+/// Fresh independent work can wake the owner after a record-local review.
+/// Shared access/configuration failures still block all automatic admission.
+bool canScheduleAfterSyncFailure({
+  required SyncRecoveryDecision? recovery,
+  required bool localMutation,
+  required bool remoteWork,
+  required bool integrityDue,
+}) => recovery == null || recovery.retry ||
+    recovery.independentRecords && (localMutation || remoteWork || integrityDue);
 
 class PendingDocumentFileFailure extends FileSystemException {
   const PendingDocumentFileFailure() : super('Pending document file could not be read.');
@@ -100,6 +125,12 @@ bool networkRecoveryCandidate(Map item) =>
     {'networkPath','timeout'}.contains(item['failureCategory']);
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is IdCardPreparationFailure) {
+    return windowsSyncRecovery(error.cause);
+  }
+  if (error is PublishedIdInputConflict) {
+    return SyncRecoveryDecision.classify(recordConflict: true);
+  }
   if (error is PendingSyncAttention) {
     return SyncRecoveryDecision(
       error.conflicts > 0 ? SyncFailureKind.conflict : SyncFailureKind.unknown,

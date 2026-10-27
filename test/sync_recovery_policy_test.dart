@@ -3,8 +3,68 @@ import '../lib/sync_recovery_policy.dart';
 import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import 'dart:async';
+import 'package:fake_async/fake_async.dart';
+import '../lib/windows_sync_schedule.dart';
 
 void main() {
+  test('notice delete after wrapped card conflict dispatches automatically; idle and shared failures do not', () {
+    fakeAsync((clock) {
+      var runs = 0;
+      final dispatch = WindowsSyncDispatch(() => runs++);
+      final conflict = windowsSyncRecovery(IdCardPreparationFailure(PublishedIdInputConflict()));
+      void deletedNotice(SyncRecoveryDecision decision) {
+        if (canScheduleAfterSyncFailure(recovery: decision, localMutation: true,
+            remoteWork: false, integrityDue: false)) {
+          dispatch.request(const Duration(milliseconds: 250), localMutation: true);
+        }
+      }
+      expect(canScheduleAfterSyncFailure(recovery: conflict, localMutation: false,
+          remoteWork: false, integrityDue: false), false);
+      // Three durable deletes coalesce into one automatic owner run, with no
+      // manual Sync Now, hourly tick or retry of the conflicting card.
+      for (var i = 0; i < 3; i++) deletedNotice(conflict);
+      clock.elapse(const Duration(milliseconds: 249));
+      expect(runs, 0);
+      clock.elapse(const Duration(milliseconds: 1));
+      expect(runs, 1);
+      clock.elapse(const Duration(minutes: 1));
+      expect(runs, 1);
+      for (final decision in [
+        windowsSyncRecovery(IdCardPreparationFailure(CentralCloudException(403, 'school_cloud', 'denied'))),
+        SyncRecoveryDecision.classify(code: 'SCRIPT_WORKBOOK_IDENTITY_MISMATCH'),
+        windowsSyncRecovery(IdCardPreparationFailure(StateError('Unknown failure'))),
+      ]) deletedNotice(decision);
+      clock.elapse(const Duration(seconds: 1));
+      expect(runs, 1);
+      dispatch.cancel();
+    });
+  });
+  test('card input conflict survives preparation wrapping without blocking independent notice mutations', () {
+    final conflict = PublishedIdInputConflict();
+    final wrapped = IdCardPreparationFailure(conflict);
+    final decision = windowsSyncRecovery(wrapped);
+    expect(identical(wrapped.cause, conflict), true);
+    expect(decision.kind, SyncFailureKind.conflict);
+    expect(decision.review, true);
+    expect(decision.retry, false, reason: 'Never repeatedly regenerate or overwrite the published card');
+    expect(decision.independentRecords, true, reason: 'Fresh notice deletes must remain automatically admissible');
+    expect(independentDocumentFailure(wrapped), true);
+    expect(wrapped.toString(), contains('no new PDF was saved'));
+  });
+  test('preparation wrapper preserves shared access, quota and unknown failure guards', () {
+    for (final error in <Object>[
+      CentralCloudException(403, 'school_cloud', 'denied'),
+      CentralCloudException(429, 'school_cloud', 'quota'),
+      StateError('Unknown preparation failure'),
+      StateError('Published ID already exists with different inputs'),
+    ]) {
+      final before = windowsSyncRecovery(error);
+      final after = windowsSyncRecovery(IdCardPreparationFailure(error));
+      expect(after.kind, before.kind);
+      expect(after.retry, before.retry);
+      expect(after.independentRecords, false);
+    }
+  });
   test('fixed timeout stages survive owner diagnosis without changing retry authority', () {
     for (final stage in CentralTimeoutStage.values) {
       final decision = windowsSyncRecovery(CentralRequestTimeout(stage));
