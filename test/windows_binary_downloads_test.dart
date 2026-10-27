@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/windows_binary_downloads.dart';
+import 'package:saarthi_ai/windows_connect/central_school_cloud.dart';
 
 void main() {
   const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -227,4 +228,167 @@ void main() {
       .writeAsString(jsonEncode({'schemaVersion':1, 'schoolId':other, 'items':{}}));
     await expectLater(manager().load(), throwsStateError);
   });
+  for (final status in [401, 403, 409, 422]) {
+    test('HTTP $status media failure requires review across restart and refresh', () async {
+      final cache = manager();await cache.refreshInventory();
+      var reads = 0;
+      remote = (_) async {
+        reads++;
+        throw CentralCloudException(status, 'school_cloud', 'synthetic protected failure');
+      };
+      await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+      expect(cache.summary['reviewRequired'], 1);
+      clock += 400000;
+      final restarted = manager();await restarted.load();
+      expect(await restarted.repairNext(), false);
+      expect(reads, 1);
+      remote = (_) async => inventory([{...expected, 'version': 'newer-version'}]);
+      await restarted.refreshInventory(restart: true);
+      expect(await restarted.repairNext(), false);
+      expect(restarted.summary['reviewRequired'], 1);
+      expect(await restarted.verifiedPath('school_file_1'), isNull);
+    });
+  }
+
+  test('quota cooldown covers other files and survives cache restart', () async {
+    final cache = manager(), second = {...expected, 'fileId': 'school_file_2'};
+    remote = (_) async => inventory([expected, second]);
+    await cache.refreshInventory();
+    var reads = 0;
+    remote = (_) async {
+      reads++;
+      throw CentralCloudException(429, 'school_cloud', 'synthetic quota');
+    };
+    await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+    final restarted = manager();await restarted.load();
+    expect(await restarted.repairNext(), false);
+    expect(await restarted.repairNext(administratorRetry: true), false);
+    expect(reads, 1);
+    expect(restarted.summary['retryAt'], greaterThan(clock + 59000));
+    clock += 70000;
+    remote = (body) async => download(body['fileId'] == 'school_file_1' ? expected : second, original);
+    expect(await restarted.repairNext(), true);
+  });
+
+  for (final status in [502, 503]) {
+    test('HTTP $status media recovery waits for durable cooldown then verifies exact bytes', () async {
+      final cache = manager();await cache.refreshInventory();
+      remote = (_) async => throw CentralCloudException(status, 'school_cloud', 'synthetic temporary failure');
+      await expectLater(cache.repairNext(), throwsA(isA<CentralCloudException>()));
+      final restarted = manager();await restarted.load();
+      expect(await restarted.repairNext(), false);clock += 6000;
+      remote = (_) async => download(expected, original);
+      expect(await restarted.repairNext(), true);
+      expect(restarted.summary['verifiedFiles'], 1);
+      expect(await File((await restarted.verifiedPath('school_file_1'))!).readAsBytes(), original);
+    });
+  }
+
+  for (final corruptPrefix in [false, true]) test('interrupted range transfer resumes safely after restart (corrupt prefix: $corruptPrefix)', () async {
+    original = List<int>.generate(700000, (i) => i % 251);
+    expected = {...expected, 'sha256': sha256.convert(original).toString(), 'sizeBytes': original.length};
+    var interrupt = true;
+    final offsets = <int>[];
+    remote = (body) async {
+      if (body['action'] == 'managed/file/inventory') return {...inventory([expected]), 'binaryRangeVersion': 1};
+      expect(body['action'], 'managed/file/download/part');
+      final offset = body['offset'] as int;offsets.add(offset);
+      if (interrupt && offset > 0) throw TimeoutException('interrupted synthetic range');
+      final end = (offset + 256 * 1024).clamp(0, original.length).toInt();
+      final part = original.sublist(offset, end);
+      return {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+        'fileId': expected['fileId'], 'sha256': expected['sha256'], 'version': expected['version'],
+        'sizeBytes': original.length, 'offset': offset, 'nextOffset': end,
+        'chunkSha256': sha256.convert(part).toString(), 'base64': base64Encode(part)};
+    };
+    final first = manager();await first.refreshInventory();
+    await expectLater(first.repairNext(), throwsA(isA<TimeoutException>()));
+    expect(first.entries.single['transferOffset'], 256 * 1024);
+    expect(await first.verifiedPath('school_file_1'), isNull);
+    if (corruptPrefix) {
+      final partial = (await first.schoolDirectory.list().toList()).whereType<File>()
+          .singleWhere((file) => file.path.endsWith('.transfer.part'));
+      await partial.writeAsString('corrupt partial cache', flush: true);
+    }
+    clock += 6000;interrupt = false;
+    final restarted = manager();await restarted.load();expect(await restarted.repairNext(), true);
+    expect(offsets, corruptPrefix ? [0, 262144, 0, 262144, 524288] : [0, 262144, 262144, 524288]);
+    expect(await File((await restarted.verifiedPath('school_file_1'))!).readAsBytes(), original);
+    expect(restarted.entries.single.containsKey('transferOffset'), false);
+  });
+
+  test('large media attempt deadline persists verified prefix for a later owner retry', () async {
+    original = List<int>.generate(700000, (i) => i % 251);
+    expected = {...expected, 'sha256': sha256.convert(original).toString(),
+      'sizeBytes': original.length};
+    var pauseAfterFirstChunk = true;
+    final offsets = <int>[];
+    remote = (body) async {
+      if (body['action'] == 'managed/file/inventory') {
+        return {...inventory([expected]), 'binaryRangeVersion': 1};
+      }
+      expect(body['action'], 'managed/file/download/part');
+      final offset = body['offset'] as int;
+      offsets.add(offset);
+      final end = (offset + 256 * 1024).clamp(0, original.length).toInt();
+      final chunk = original.sublist(offset, end);
+      if (pauseAfterFirstChunk && offset == 0) {
+        // Advance the injected clock after the first verified range ACK,
+        // modelling elapsed slow-provider time without an actual 3-minute CI wait.
+        clock += WindowsBinaryDownloads.transferAttemptBudget.inMilliseconds + 1000;
+        pauseAfterFirstChunk = false;
+      }
+      return {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+        'fileId': expected['fileId'], 'sha256': expected['sha256'],
+        'version': expected['version'], 'sizeBytes': original.length,
+        'offset': offset, 'nextOffset': end,
+        'chunkSha256': sha256.convert(chunk).toString(),
+        'base64': base64Encode(chunk)};
+    };
+    final first = manager();
+    await first.refreshInventory();
+    await expectLater(first.repairNext(), throwsA(isA<TimeoutException>()));
+    expect(first.entries.single['transferOffset'], 256 * 1024);
+    expect(first.summary['verifiedFiles'], 0);
+    expect(await first.verifiedPath('school_file_1'), isNull);
+    final restored = manager();
+    await restored.load();
+    expect(restored.entries.single['transferOffset'], 256 * 1024);
+    // Verified progress relinquishes the time slice WITHOUT exhausting the
+    // three-attempt outage retry budget, but enforces a new five-second
+    // cooldown before resuming on the SAME durable file identity.
+    expect(restored.entries.single['retryAttempts'], 0);
+    expect(await restored.repairNext(), false);
+    clock += 6000;
+    expect(await restored.repairNext(), true);
+    expect(offsets, [0, 262144, 524288]);
+    expect(await File((await restored.verifiedPath('school_file_1'))!).readAsBytes(), original);
+  });
+
+  test('corrupt chunk is never appended or marked verified', () async {
+    remote = (body) async => body['action'] == 'managed/file/inventory'
+      ? {...inventory([expected]), 'binaryRangeVersion': 1}
+      : {'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+          'fileId': expected['fileId'], 'sha256': expected['sha256'], 'version': expected['version'],
+          'sizeBytes': original.length, 'offset': 0, 'nextOffset': original.length,
+          'chunkSha256': '0' * 64, 'base64': base64Encode(original)};
+    final cache = manager();await cache.refreshInventory();
+    await expectLater(cache.repairNext(), throwsStateError);
+    expect(cache.summary['verifiedFiles'], 0);expect(await cache.verifiedPath('school_file_1'), isNull);
+  });
+
+  test('broker rollback requires authenticated capability read before complete-file fallback', () async {
+    var calls = 0;
+    remote = (_) async => {...inventory([expected]), 'binaryRangeVersion': 1};
+    final cache = manager();await cache.refreshInventory();
+    remote = (body) async {
+      calls++;
+      if (body['action'] == 'managed/file/download/part') throw CentralCloudException(400, 'school_cloud', 'Old broker');
+      if (body['action'] == 'managed/file/inventory') return inventory([expected]);
+      return download(expected, original);
+    };
+    expect(await cache.repairNext(), true);expect(calls, 3);
+    expect(cache.summary['verifiedFiles'], 1);
+  });
+
 }

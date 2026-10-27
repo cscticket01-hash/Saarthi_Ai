@@ -79,10 +79,19 @@ void main() {
    report['portraitCloudRetryIdempotent']=true;report['portraitOriginalRetainedAfterRestart']=true;
    // Bounded real Drive acceptance: at most five first-page files. No provider load.
    var binaryFault=true,corruptBinary=false;
+   var binaryFaultResponses=0,corruptBinaryResponses=0;
+   bool isBinaryDownload(Map<String,dynamic> body)=>
+     body['action']=='managed/file/download'||body['action']=='managed/file/download/part';
    Future<Map<String,dynamic>> binaryRequest(Map<String,dynamic> body) async {
-    if(binaryFault&&body['action']=='managed/file/download')throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
+    if(binaryFault&&body['action']!='managed/file/inventory'){
+     // A real-cloud retry test must fail closed if the download transport
+     // changes names: never silently bypass the injected offline boundary.
+     binaryFaultResponses++;
+     throw SchoolApiFailure(503,code:'TEST_CONTROLLED_UNAVAILABLE');
+    }
     final response=await ManagedSchoolSession.callForSchool(school,body['action'] as String,{...body}..remove('action'));
-    if(corruptBinary&&body['action']=='managed/file/download'){
+    if(corruptBinary&&isBinaryDownload(body)){
+     corruptBinaryResponses++;
      final bytes=base64Decode(response['base64'] as String);bytes[0]^=1;
      return {...response,'base64':base64Encode(bytes)};
     }
@@ -93,12 +102,17 @@ void main() {
    await binaries.refreshInventory();
    expect(binaries.entries,isNotEmpty);
    final targets=binaries.entries.where((item)=>item['verification']=='bytes_hashed').toList();
+   // A successful repair with the fault switch on would mean our interception
+   // did not exercise the real binary transport. Preserve that as a failure.
+   expect(binaries.summary['pending'],greaterThan(0));
    expect(targets.length,inInclusiveRange(2,5));
    final binaryId=targets.first['fileId'] as String;
    final binaryHash=targets.first['sha256'] as String;
    final queueBeforeBinary=(await db.collection('_windows_firebase_outbox').get()).docs.length;
    await expectLater(binaries.repairNext(),throwsA(isA<SchoolApiFailure>().having((failure)=>failure.status,'HTTP status',503)));
+   expect(binaryFaultResponses,1);
    expect(await binaries.verifiedPath(binaryId),isNull);
+   expect((await db.collection('_windows_firebase_outbox').get()).docs.length,queueBeforeBinary);
    binaryFault=false;
    await Future<void>.delayed(const Duration(seconds:6)); // Real capped retry deadline, no fake clock.
    expect(await binaries.repairNext(),true);
@@ -127,6 +141,7 @@ void main() {
    await downloaded.delete();
    corruptBinary=true;
    await expectLater(reopenedBinaries.repairNext(),throwsA(isA<StateError>()));
+   expect(corruptBinaryResponses,1);
    expect(await reopenedBinaries.verifiedPath(binaryId),isNull);
    corruptBinary=false;
    await Future<void>.delayed(const Duration(seconds:6));
@@ -138,6 +153,8 @@ void main() {
    expect(await WindowsSchoolImageCache.read(school,preparedPortrait['photoFileId']),originalPortrait);
    expect((await db.collection('_windows_firebase_outbox').get()).docs.length,queueBeforeBinary);
    report['actualBinary503RecoveryVerified']=true;
+   report['actualBinaryInjected503Responses']=binaryFaultResponses;
+   report['actualBinaryInjectedCorruptResponses']=corruptBinaryResponses;
    report['actualBinaryBytesHashVerified']=true;
    report['actualBinaryCacheRestartVerified']=true;
    report['actualBinaryMissingCacheRecoveryVerified']=true;

@@ -1,0 +1,51 @@
+name: Sync 3 bounded real TEST latency distribution
+on:
+  push:
+    branches: [feature/sync3-unified-repair-20261026]
+    paths:
+      - '.github/tests/sync3_latency_live_test.dart'
+      - '.github/workflows/sync3-latency-acceptance.yml'
+      - 'lib/sync_latency_statistics.dart'
+permissions:
+  contents: read
+concurrency:
+  # Only one mutating isolated TEST suite may run at a time. Otherwise the
+  # shared Script lock makes measurements uninterpretable and can time out.
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+jobs:
+  real-windows-mobile-website-protocol-latency:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wait for the exact reviewed isolated TEST runtime
+        run: node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+        env:
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Verify p99 and large applied-cache merge invariants
+        run: flutter test test/sync_latency_statistics_test.dart test/mobile_delta_membership_test.dart
+      - name: Measure 100 retained TEST records in20serialcohorts without clearing queues
+        env:
+          VS_TEST_LATENCY_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LATENCY_RECORDS: '100'
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/sync3_latency_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-real-latency-${{ github.sha }}
+          path: build/cloud-prerequisites/sync3-latency.json
+          if-no-files-found: warn
+          retention-days: 14

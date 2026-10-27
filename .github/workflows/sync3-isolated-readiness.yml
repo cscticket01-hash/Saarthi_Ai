@@ -1,0 +1,39 @@
+name: Sync 3 isolated TEST readiness
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - 'school-backend/**'
+      - 'staging-school-cloud/**'
+      - '.github/workflows/sync3-isolated-readiness.yml'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-isolated-readiness-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  read-only-test-cloud:
+    if: github.head_ref == 'feature/sync3-unified-repair-20261026' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read expected provider version from this exact source
+        run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
+      - name: Check existing isolated TEST identity and read-only storage protocol
+        env:
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_cloud_readiness.cjs
+      - name: Require actual readiness rather than successful script execution alone
+        run: node -e "const r=require('./build/cloud-prerequisites/report.json'); if(r.status!=='PASS') {console.error('Isolated TEST readiness '+r.status+'; inspect sanitized artifact.');process.exit(1);}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-isolated-read-only-readiness
+          path: build/cloud-prerequisites/report.json

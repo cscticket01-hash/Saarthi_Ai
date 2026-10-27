@@ -1,4 +1,5 @@
 import 'windows_sync_recovery.dart';
+import 'sync_recovery_policy.dart';
 import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'school_profile_policy.dart';
@@ -17,6 +18,32 @@ import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/managed_record_media.dart';
+
+/// Omit whole optional checkpoint groups to fit the broker's 256KB envelope.
+/// Never truncate IDs or invent a smaller baseline; omitted groups retain the
+/// existing verified full-collection read fallback and collection revision.
+Map<String, dynamic> boundedManagedDeltaRequest(
+  Map<String, String> revisions,
+  Map<String, Map<String, String>> checkpoints,
+) {
+  const budget = 200000;
+  final body = <String, dynamic>{
+    'collections': revisions.keys.toList(), 'knownRevisions': revisions,
+  };
+  final selected = <String, Map<String, String>>{};
+  for (final entry in checkpoints.entries) {
+    if (!revisions.containsKey(entry.key)) throw ArgumentError('Foreign checkpoint collection');
+    final candidate = {...body, 'knownRecordRevisions': {...selected, entry.key: entry.value}};
+    if (utf8.encode(jsonEncode(candidate)).length <= budget) {
+      selected[entry.key] = entry.value;
+    }
+  }
+  if (selected.isNotEmpty) body['knownRecordRevisions'] = selected;
+  if (utf8.encode(jsonEncode(body)).length > budget) {
+    throw StateError('School delta metadata exceeds request budget.');
+  }
+  return body;
+}
 
 class WindowsFirebaseRemoteStatus {
   const WindowsFirebaseRemoteStatus({
@@ -443,10 +470,37 @@ class WindowsFirebaseRemote {
           {'pending', 'retry'}.contains(r.data()['syncState']),
     ))
       return {};
-    final ready = <Map<String, dynamic>>[],
-        operations = <Map<String, dynamic>>[];
+    final healthRef = db.collection('_windows_sync_status').doc('managed-batch-window');
+    final health = (await healthRef.get()).data();
+    void requireBatchScope() {
+      if (db.activeProfileId != profile ||
+          db.activeProfileIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed during batch admission.');
+      }
+    }
+    requireBatchScope();
+    if (health != null && health['schoolId'] != school) {
+      throw StateError('Foreign batch health journal.');
+    }
+    final limit = (health?['nextLimit'] as int? ?? 10).clamp(2, 10).toInt();
+    final ready = <Map<String, dynamic>>[], operations = <Map<String, dynamic>>[];
+    Future<void> recordHealth(int micros, int successful, bool complete, {String? category}) async {
+      requireBatchScope();
+      await healthRef.set({
+        'schoolId': school,
+        'measurementScope': 'broker_request_only',
+        'requestMicros': micros,
+        'submitted': operations.length,
+        'successfulReceipts': successful,
+        'complete': complete,
+        'nextLimit': managedBatchWindow(current: limit, requestMicros: micros, complete: complete),
+        'observedAt': DateTime.now().millisecondsSinceEpoch,
+        if (category != null) 'failureCategory': category,
+      });
+      requireBatchScope();
+    }
     for (final row in rows) {
-      if (ready.length >= 10 || !canAdmit()) break;
+      if (ready.length >= limit || !canAdmit()) break;
       if (db.activeProfileId != profile)
         throw StateError('School changed before batch preparation.');
       final item = row.data();
@@ -487,11 +541,19 @@ class WindowsFirebaseRemote {
     }
     if (ready.length < 2 || !canAdmit()) return {};
     final requestWatch = Stopwatch()..start();
-    final reply = await (send != null
-        ? send(school, operations)
-        : ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {
-            'operations': operations,
-          }));
+    Map<String, dynamic> reply;
+    try {
+      reply = await (send != null
+          ? send(school, operations)
+          : ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {
+              'operations': operations,
+            }));
+    } catch (error) {
+      requestWatch.stop();
+      await recordHealth(requestWatch.elapsedMicroseconds, 0, false,
+          category: windowsSyncRecovery(error).kind.name);
+      rethrow;
+    }
     requestWatch.stop();
     if (db.activeProfileId != profile)
       throw StateError('School changed during batch.');
@@ -544,6 +606,9 @@ class WindowsFirebaseRemote {
         );
       }
     }
+    final successful = results.values.whereType<Map<String, dynamic>>().length;
+    await recordHealth(requestWatch.elapsedMicroseconds, successful,
+        results.length == operations.length && successful == operations.length);
     return results;
   }
 
@@ -678,15 +743,10 @@ class WindowsFirebaseRemote {
     Map<String, String> revisions, {
     Map<String, Map<String, String>> knownRecordRevisions = const {},
   }) async {
+    final body = boundedManagedDeltaRequest(revisions, knownRecordRevisions);
+    final sentCheckpoints = body['knownRecordRevisions'] as Map? ?? const {};
     final result = await ManagedSchoolSession.callForSchool(
-      school,
-      'managed/changes',
-      {
-        'collections': revisions.keys.toList(),
-        'knownRevisions': revisions,
-        if (knownRecordRevisions.isNotEmpty)
-          'knownRecordRevisions': knownRecordRevisions,
-      },
+      school, 'managed/changes', body,
     );
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
@@ -699,7 +759,7 @@ class WindowsFirebaseRemote {
       final group = Map<String, dynamic>.from(changes[collection] as Map);
       if (group['partialRecords'] != null && group['partialRecords'] is! bool ||
           group['partialRecords'] == true &&
-              !knownRecordRevisions.containsKey(collection) ||
+              !sentCheckpoints.containsKey(collection) ||
           group['syncProtocol'] != 2 ||
           group['collectionRevision'] is! String ||
           group['records'] is! Map)

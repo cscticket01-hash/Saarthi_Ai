@@ -1,7 +1,9 @@
+import 'session_cache_store.dart';
 import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
 import '../qr_card_authorization.dart';
 import 'attendance_store.dart';
+import 'attendance_confirmation_schedule.dart';
 import '../attendance_schedule.dart';
 
 import 'package:flutter/foundation.dart';
@@ -98,13 +100,18 @@ class SchoolSession {
   SchoolSession({
     http.Client? client,
     this.cacheDirectory,
+    MobileSessionCacheStore? sharedSessionStore,
     AttendanceStore? attendanceStore,
     Future<void> Function(String value)? persistSession,
     this.cardPublicKey = QrCardAuthorization.configuredPublicKey,
   }) : _client = client ?? http.Client(),
        _attendanceStore = attendanceStore ?? AttendanceStore(),
-       _persistSession = persistSession;
+       _persistSession = persistSession,
+       _sharedSessionStore = sharedSessionStore ?? (persistSession == null && !kIsWeb && Platform.isAndroid ? MobileSessionCacheStore() : null);
   final Future<void> Function(String value)? _persistSession;
+  final MobileSessionCacheStore? _sharedSessionStore;
+  String? _sharedSnapshot;
+  int? _sharedSnapshotVersion;
   final http.Client _client;
   final String cardPublicKey;
   final AttendanceStore _attendanceStore;
@@ -118,7 +125,8 @@ class SchoolSession {
     if (!paused) await refreshDashboard(afterSignal: true);
   }
 
-  Future<Map<String, dynamic>> refreshIfIdleDue({DateTime? now}) {
+  Future<Map<String, dynamic>> refreshIfIdleDue({DateTime? now}) async {
+    await _adoptSharedSnapshot();
     final at = now ?? DateTime.now();
     if (syncPaused ||
         lastDashboardVerifiedAt != null &&
@@ -213,6 +221,7 @@ class SchoolSession {
           p['schoolId'] != current.schoolId ||
           p['role'] != current.role ||
           p['documentId'] != current.personId ||
+          p['day'] != attendanceDay(DateTime.now()) ||
           p['expiresAt'] is! int ||
           p['expiresAt'] <= DateTime.now().millisecondsSinceEpoch + 2000 ||
           p['expiresAt'] > _expiresAt ||
@@ -646,7 +655,9 @@ class SchoolSession {
             'state': 'accepted',
             'operationId': expectedId,
             'attempts': attempts,
-            'nextAt': at + 10000,
+            // Acceptance is not completion. Check the same operation sooner,
+            // without resubmitting it or shortening server-error backoff.
+            'nextAt': DateTime.now().millisecondsSinceEpoch + 5000,
             'error': '',
           });
         } else {
@@ -669,12 +680,29 @@ class SchoolSession {
             throw StateError(
               'Attendance needs school review; capture retained.',
             );
+          final confirmedAt = DateTime.now().millisecondsSinceEpoch;
+          final confirmationState = operation['state'] is String
+              ? operation['state'] as String
+              : null;
+          final fastConfirmation = attendanceUsesFastConfirmation(
+            state: confirmationState,
+            createdAt: operation['createdAt'],
+            now: confirmedAt,
+          );
+          final confirmationDelay = attendanceConfirmationDelay(
+            state: confirmationState,
+            createdAt: operation['createdAt'],
+            attempts: attempts,
+            now: confirmedAt,
+          );
           await _attendanceStore.finish(owner, id, lease, {
             'state': completed ? 'completed' : 'accepted',
-            'attempts': attempts,
-            'nextAt':
-                at +
-                min(30000, 5000 * pow(2, min(max(0, attempts - 2), 3)).toInt()),
+            // Extra healthy processing checks must not inflate the retained
+            // failure/retry history. Never reset attempts from prior failures.
+            'attempts': fastConfirmation ? row['attempts'] : attempts,
+            // Start the wait after the response, so a slow status request
+            // cannot leave a past deadline and spin through the drain loop.
+            'nextAt': confirmedAt + confirmationDelay.inMilliseconds,
             'error': '',
             if (completed) 'completedAt': operation['completedAt'],
           });
@@ -684,7 +712,14 @@ class SchoolSession {
             );
         }
       } catch (error) {
-        _cachedAttendancePermit = null;
+        // A transport outage does not revoke an unexpired signed approval.
+        // Authoritative denials and malformed receipts still invalidate it;
+        // every online use remains checked by the broker.
+        if (!(error is SocketException ||
+            error is TimeoutException ||
+            error is SchoolApiFailure && error.retryable)) {
+          _cachedAttendancePermit = null;
+        }
         final review =
             error is AttendanceRejected ||
             error is SchoolAccessDenied ||
@@ -714,6 +749,9 @@ class SchoolSession {
   String connectionMessage =
       'Cached school data; cloud verification has not completed.';
   int _refreshFailures = 0;
+  int _dashboardQuotaAttempts = 0, _dashboardQuotaRetryAt = 0;
+  DateTime? get dashboardQuotaRetryAt => _dashboardQuotaRetryAt > 0
+      ? DateTime.fromMillisecondsSinceEpoch(_dashboardQuotaRetryAt) : null;
   Timer? _recoveryTimer;
   final connectionChanges = ValueNotifier<int>(0);
   DateTime? lastDashboardVerifiedAt;
@@ -754,8 +792,15 @@ class SchoolSession {
         await _secure.read(key: 'vs_mobile_device') ??
         base64UrlEncode(List.generate(32, (_) => Random.secure().nextInt(256)));
     await _secure.write(key: 'vs_mobile_device', value: deviceId);
-    final raw = await _secure.read(key: 'vs_mobile_session');
-    if (raw == null) return;
+    final shared = _sharedSessionStore == null ? null
+        : await _sharedSessionStore!.readSnapshot();
+    final raw = shared == null
+        ? await _secure.read(key: 'vs_mobile_session') : shared.value;
+    if (raw == null) {
+      if (loggedIn) await clear(preserveSharedSession:true);
+      _sharedSnapshot = null; _sharedSnapshotVersion = shared?.version;
+      return;
+    }
     try {
       final d = jsonDecode(raw);
       final restoredLink = QrAuthenticationEngine.decode(d['qr']);
@@ -780,9 +825,17 @@ class SchoolSession {
       schoolName = d['schoolName'] ?? link!.projectId;
       _expiresAt = (d['expiresAt'] as num).toInt();
       _policyExpiresAt = (d['policyExpiresAt'] as num? ?? 0).toInt();
+      _cachedAttendancePermit = d['attendancePermit'] is String
+          ? d['attendancePermit'] as String
+          : null;
+      // Reuse only the same unexpired school/person/session/QR/day approval.
+      // Old snapshots or rejected cache values fall back to server refresh.
+      if (_currentAttendancePermit == null) _cachedAttendancePermit = null;
       if (d['cacheSchool'] == link!.projectId &&
           d['cachePerson'] == link!.personId) {
         dashboard = Map<String, dynamic>.from(d['dashboard'] as Map? ?? {});
+        _dashboardQuotaAttempts = (d['dashboardQuotaAttempts'] as int? ?? 0).clamp(0, 5).toInt();
+        _dashboardQuotaRetryAt = d['dashboardQuotaRetryAt'] as int? ?? 0;
         if (d['cacheRole'] == link!.role)
           _attendanceHistoryCache = Map<String, dynamic>.from(
             d['attendanceHistory'] as Map? ?? {},
@@ -793,6 +846,7 @@ class SchoolSession {
           );
         _pdfCache = Map<String, dynamic>.from(d['pdfCache'] as Map? ?? {});
       }
+      _sharedSnapshot = raw; _sharedSnapshotVersion = shared?.version;
     } catch (_) {
       await clear();
     }
@@ -1071,6 +1125,7 @@ class SchoolSession {
   Future<void> _persist() async {
     if (!loggedIn) return;
     final generation = _generation;
+    final attendancePermit = _currentAttendancePermit;
     final value = jsonEncode({
       'qr': link!.rawQr,
       'schoolToken': schoolToken,
@@ -1079,6 +1134,7 @@ class SchoolSession {
       'schoolName': schoolName,
       'expiresAt': _expiresAt,
       'policyExpiresAt': _policyExpiresAt,
+      if (attendancePermit != null) 'attendancePermit': attendancePermit,
       'cardReaderEnforced': _cardReaderEnforced,
       'cardIssueId': link!.cardIssueId.isEmpty ? null : link!.cardIssueId,
       if (_cardAuthorizationToken != null)
@@ -1090,6 +1146,8 @@ class SchoolSession {
       'attendanceHistory': _attendanceHistoryCache,
       'dashboard': dashboard,
       'syncPaused': syncPaused,
+      'dashboardQuotaAttempts': _dashboardQuotaAttempts,
+      'dashboardQuotaRetryAt': _dashboardQuotaRetryAt,
       'lastDashboardVerifiedAt':
           lastDashboardVerifiedAt?.millisecondsSinceEpoch,
       'pdfCache': _pdfCache,
@@ -1098,7 +1156,14 @@ class SchoolSession {
       if (generation == _generation) {
         if (_persistSession != null)
           await _persistSession!(value);
-        else
+        else if (_sharedSessionStore != null) {
+          // Capture the CAS at EXECUTION time inside this session's serialized
+          // storage tail. Earlier queued writes may have advanced our own
+          // snapshot; an independent background owner still fails CAS.
+          final expectedCacheVersion = _sharedSnapshotVersion;
+          _sharedSnapshotVersion = await _sharedSessionStore!.write(value, expectedVersion:expectedCacheVersion);
+          _sharedSnapshot = value;
+        } else
           await _secure.write(key: 'vs_mobile_session', value: value);
       }
     });
@@ -1113,6 +1178,9 @@ class SchoolSession {
   /// Failed refreshes preserve the last durable verified generation.
   Future<Map<String, dynamic>> refreshDashboard({bool afterSignal = false}) {
     if (syncPaused) return Future.value(dashboard);
+    if (_dashboardQuotaRetryAt > DateTime.now().millisecondsSinceEpoch) {
+      return Future.error(SchoolApiFailure(429, code: 'SCRIPT_QUOTA_EXCEEDED'));
+    }
     final running = _refresh;
     if (running != null) {
       if (!afterSignal) return running;
@@ -1180,13 +1248,17 @@ class SchoolSession {
             : 'School connection needs review. Cached data is retained.';
         final temporary =
             error is TimeoutException ||
+            (_sharedSessionStore != null && error is SchoolCacheFailure) ||
             error is SocketException ||
             error is http.ClientException ||
             (error is SchoolApiFailure && error.retryable);
         _refreshFailures++;
         _recoveryTimer?.cancel();
         if (temporary && _refreshFailures <= 5 && cachedAccessAllowed) {
-          _recoveryTimer = Timer(schoolRetryDelay(_refreshFailures), () {
+          final quotaWait = _dashboardQuotaRetryAt - DateTime.now().millisecondsSinceEpoch;
+          _recoveryTimer = Timer(quotaWait > 0
+              ? Duration(milliseconds: quotaWait)
+              : schoolRetryDelay(_refreshFailures), () {
             if (origin == _generation && cachedAccessAllowed) {
               unawaited(refreshDashboard().catchError((Object _) => dashboard));
             }
@@ -1199,9 +1271,47 @@ class SchoolSession {
     return pending;
   }
 
+  Future<Map<String, dynamic>> _dashboardRequest(Map<String, dynamic> body) async {
+    final generation = _generation;
+    try {
+      return await schoolCall('mobile_dashboard', body);
+    } catch (error) {
+      if (generation == _generation && error is SchoolApiFailure &&
+          (error.status == 429 || error.code == 'SCRIPT_QUOTA_EXCEEDED')) {
+        _dashboardQuotaAttempts = (_dashboardQuotaAttempts + 1).clamp(1, 5).toInt();
+        _dashboardQuotaRetryAt = DateTime.now().add(
+          schoolRetryDelay(_dashboardQuotaAttempts, quota: true),
+        ).millisecondsSinceEpoch;
+        // Same durable identity-bound cache commit; no document or attendance
+        // acknowledgement is created by a dashboard quota refusal.
+        try { await _persist(); } catch (_) {
+          // The in-memory gate remains closed even if local storage is full.
+          connectionMessage = 'School quota cooldown could not be saved locally. Cached data retained.';
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _adoptSharedSnapshot() async {
+    if (_sharedSessionStore != null) {
+      final current = await _sharedSessionStore!.read();
+      if (current != _sharedSnapshot) {
+        final same = current != null && jsonDecode(current)['qr'] == link?.rawQr;
+        if (!same) {
+          await clear(preserveSharedSession: true);
+          throw SchoolAccessDenied('School session changed in another app worker.');
+        }
+        await restore();
+        if (!loggedIn) throw SchoolAccessDenied('School session is unavailable.');
+      }
+    }
+  }
+
   Future<Map<String, dynamic>> _refreshDashboard({
     bool afterSignal = false,
   }) async {
+    await _adoptSharedSnapshot();
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
     // Legacy responses can leave list metadata (notably noticeIds: []) in
@@ -1232,20 +1342,29 @@ class SchoolSession {
             r['_mobileRecordRevision'] is! String,
       ))
         continue;
-      groupCheckpoints[entry.key] = {
-        for (final row in rows)
-          row['_mobileRecordId'] as String:
-              row['_mobileRecordRevision'] as String,
+      // Whole-group fallback: large caches must not make refresh permanently
+      // fail, and an arbitrary truncated ID list could acknowledge removals.
+      if (rows.length > 1000) continue;
+      final checkpoint = <String, String>{
+        for (final row in rows) row['_mobileRecordId'] as String:
+          row['_mobileRecordRevision'] as String,
       };
+      final candidate = {...groupCheckpoints, entry.key: checkpoint};
+      if (candidate.values.fold<int>(0, (n, values) => n + values.length) > 1000 ||
+          utf8.encode(jsonEncode(candidate)).length > 120000) continue;
+      groupCheckpoints[entry.key] = checkpoint;
     }
-    if (groupCheckpoints.values.fold<int>(0, (n, rows) => n + rows.length) >
-            1000 ||
-        jsonEncode(groupCheckpoints).length > 200000) {
-      throw StateError(
-        'Mobile record checkpoints exceed the supported limit; cached data retained.',
-      );
+    final legacyNotices = <String, String>{};
+    if (dashboard['mobileRecordDeltaVersion'] != 1 && dashboard['notices'] is List &&
+        (dashboard['notices'] as List).length <= 1000) {
+      for (final notice in (dashboard['notices'] as List).whereType<Map>()) {
+        if (notice['id'] is String && notice['_noticeRevision'] is String) {
+          legacyNotices[notice['id'] as String] = notice['_noticeRevision'] as String;
+        }
+      }
+      if (utf8.encode(jsonEncode(legacyNotices)).length > 40000) legacyNotices.clear();
     }
-    final result = await schoolCall('mobile_dashboard', {
+    final result = await _dashboardRequest({
       'mobileRecordDeltaVersion': 1,
       'knownGroupRecordRevisions': groupCheckpoints,
       if (afterSignal) 'afterSignal': true,
@@ -1260,12 +1379,7 @@ class SchoolSession {
                     groupCheckpoints.containsKey(entry.key)))
               entry.key: entry.value,
         },
-      if (dashboard['notices'] is List)
-        'knownNoticeRevisions': {
-          for (final notice in (dashboard['notices'] as List).whereType<Map>())
-            if (notice['id'] is String && notice['_noticeRevision'] is String)
-              notice['id']: notice['_noticeRevision'],
-        },
+      if (legacyNotices.isNotEmpty) 'knownNoticeRevisions': legacyNotices,
     });
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
@@ -1289,13 +1403,14 @@ class SchoolSession {
           throw StateError('Invalid mobile record delta.');
         }
         final ids = (meta['ids'] as List);
+        final idSet = ids.toSet();
         if (ids.any((id) => id is! String || id.isEmpty) ||
-            ids.toSet().length != ids.length) {
+            idSet.length != ids.length) {
           throw StateError('Invalid mobile record identities.');
         }
         final rows = <String, Map>{};
         for (final row in (dashboard[key] as List? ?? []).whereType<Map>()) {
-          if (ids.contains(row['_mobileRecordId']))
+          if (idSet.contains(row['_mobileRecordId']))
             rows[row['_mobileRecordId'] as String] = row;
         }
         final changedIds = <String>{};
@@ -1303,7 +1418,7 @@ class SchoolSession {
           if (row is! Map ||
               row['_mobileRecordId'] is! String ||
               row['_mobileRecordRevision'] is! String ||
-              !ids.contains(row['_mobileRecordId']) ||
+              !idSet.contains(row['_mobileRecordId']) ||
               !changedIds.add(row['_mobileRecordId'] as String)) {
             throw StateError('Invalid changed mobile record.');
           }
@@ -1317,14 +1432,15 @@ class SchoolSession {
     if (result['unchanged'] != true) {
       if (result['noticesDelta'] == true && result['noticeIds'] is List) {
         final ids = (result['noticeIds'] as List).whereType<String>().toList();
+        final idSet = ids.toSet();
         final rows = <String, Map>{};
         for (final row
             in (dashboard['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && ids.contains(row['id']))
+          if (row['id'] is String && idSet.contains(row['id']))
             rows[row['id']] = row;
         }
         for (final row in (result['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && ids.contains(row['id']))
+          if (row['id'] is String && idSet.contains(row['id']))
             rows[row['id']] = row;
         }
         merged['notices'] = [
@@ -1358,6 +1474,8 @@ class SchoolSession {
     person = Map<String, dynamic>.from(dashboard['person'] as Map? ?? person);
     for (final key in removedPdfs.keys) _pdfCache.remove(key);
     lastDashboardVerifiedAt = DateTime.now();
+    final previousQuotaAt = _dashboardQuotaRetryAt, previousQuotaAttempts = _dashboardQuotaAttempts;
+    _dashboardQuotaRetryAt = 0;_dashboardQuotaAttempts = 0;
     try {
       // One cache commit binds content and its verified timestamp. No second
       // write can fail after the new dashboard has already been accepted.
@@ -1368,6 +1486,7 @@ class SchoolSession {
       dashboard = old;
       person = oldPerson;
       lastDashboardVerifiedAt = previousVerified;
+      _dashboardQuotaRetryAt = previousQuotaAt;_dashboardQuotaAttempts = previousQuotaAttempts;
       _pdfCache = oldPdfs;
       throw SchoolCacheFailure();
     }
@@ -1542,10 +1661,12 @@ class SchoolSession {
     await clear();
   }
 
-  Future<void> clear() async {
+  Future<void> clear({bool preserveSharedSession = false}) async {
+    final previousQr = link?.rawQr;
     _generation++;
     _recoveryTimer?.cancel();
     _refreshFailures = 0;
+    _dashboardQuotaRetryAt = 0;_dashboardQuotaAttempts = 0;
     syncPaused = false;
     _cachedAttendancePermit = null;
     _attendanceStatusDay = '';
@@ -1587,7 +1708,13 @@ class SchoolSession {
     _expiresAt = 0;
     _policyExpiresAt = 0;
     final deletion = _storageTail.then(
-      (_) => _secure.delete(key: 'vs_mobile_session'),
+      (_) async {
+        if (preserveSharedSession) return;
+        if (_sharedSessionStore != null) {
+          await _sharedSessionStore!.clear(previousQr);
+          _sharedSnapshot = null;
+        } else { await _secure.delete(key: 'vs_mobile_session'); }
+      },
     );
     _storageTail = deletion.then<void>(
       (_) {},
@@ -1595,4 +1722,14 @@ class SchoolSession {
     );
     await deletion;
   }
+  /// End an existing WorkManager invocation without clearing durable identity,
+  /// pending attendance or its verified dashboard cache.
+  Future<void> closeBackgroundInvocation() async {
+    _recoveryTimer?.cancel();
+    await _storageTail;
+    try { await _attendanceFlush; } catch (_) { /* Durable owner retains retry state. */ }
+    _client.close();
+    await _sharedSessionStore?.close();
+  }
+
 }

@@ -1,0 +1,41 @@
+name: Sync 3 400-school record capacity
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'school-backend/**'
+      - 'functions/**'
+      - '.github/workflows/sync3-record-capacity.yml'
+      - '.github/scripts/*reuse_sync3_capacity.py'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-record-capacity-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-script-records:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify reuse guard fails closed on changed or missing inputs
+        run: python .github/scripts/test_reuse_sync3_capacity.py
+      - name: Reuse the verified fixture only when all Script/backend/test inputs match
+        id: proof
+        env:
+          CAPACITY_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python .github/scripts/reuse_sync3_capacity.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Actual Script CAS and record readback across 400 synthetic school VMs
+        if: steps.proof.outputs.reuse != 'true'
+        working-directory: functions
+        run: node --test test/sync-record-capacity.load.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-400-school-record-capacity
+          path: build/sync3-capacity/*.json

@@ -8,11 +8,22 @@ test('isolated attendance store filters reads and refuses foreign create, claim 
  const db={collection:name=>{assert.equal(name,'attendance_test_outbox');return query;},doc:path=>{assert(path.startsWith('attendance_test_outbox/'));return {create:async()=>{writes++;}};},
    runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>({schoolId:foreign,claim:'lease',state:'pending',nextAttemptAt:0})}),set:()=>{writes++;}})};
  const s=firestoreAttendanceStore(db,{schoolId:own,collectionName:'attendance_test_outbox'});
- assert.deepEqual((await s.pending(25)).map(r=>r.operationId),['own']);assert.deepEqual(calls[0],['schoolId','==',own]);
+ assert.deepEqual((await s.pending(25)).map(r=>r.operationId),['own']);
+ assert.equal(calls[0][0],'nextAttemptAt');assert.equal(calls[0][1],'<=');
+ assert.equal(Number.isFinite(calls[0][2]),true);
+ assert.equal(calls.some(c=>c[0]==='schoolId'),false,'TEST-only queue must not depend on a composite index');
  await assert.rejects(s.create('foreign',{schoolId:foreign}));
  assert.equal(await s.claim('foreign','lease',1,2),false);await s.finish('foreign','lease',{state:'completed'});
  assert.equal(writes,0);assert.throws(()=>firestoreAttendanceStore(db,{schoolId:'invalid'}));
  assert.throws(()=>firestoreAttendanceStore(db,{collectionName:'school_records'}));
+});
+test('non-TEST scoped Firestore queue retains schoolId filtering',async()=>{
+ const school='vs-'+'a'.repeat(32),calls=[];
+ const query={where:(...args)=>{calls.push(args);return query;},orderBy:()=>query,limit:()=>query,get:async()=>({docs:[]})};
+ const db={collection:name=>{assert.equal(name,'attendance_outbox');return query;},doc:()=>({})};
+ await firestoreAttendanceStore(db,{schoolId:school,collectionName:'attendance_outbox'}).pending(25);
+ assert.deepEqual(calls[0],['schoolId','==',school]);
+ assert.equal(calls[1][0],'nextAttemptAt');
 });
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
 function store(rows=new Map()) {return {rows,create:async(id,r)=>{if(rows.has(id))return false;rows.set(id,{...r});return true;},pending:async n=>[...rows.values()].filter(r=>r.state!=='completed'&&r.state!=='needsAttention').slice(0,n),claim:async(id,claim,now,expires)=>{const r=rows.get(id);if(!r||r.state==='processing'&&r.claimExpiresAt>now)return false;Object.assign(r,{state:'processing',claim,claimExpiresAt:expires});return true;},finish:async(id,claim,v)=>{if(rows.get(id).claim===claim)Object.assign(rows.get(id),v,{claim:'',claimExpiresAt:0});}};}
@@ -89,10 +100,80 @@ test('idle attendance worker backs off; committed submissions wake it without du
  assert.equal(delay,0);await scheduled();assert.equal(calls,1);assert.equal(delay,240000);
  worker.wake();worker.wake();assert.equal(delay,0);await scheduled();assert.equal(calls,2);assert.equal(delay,240000);assert(clears>0);worker.stop();
 });
+test('early empty scan preserves known retry deadline instead of deferring four minutes',async()=>{
+ let time=1000,scheduled,delay,calls=0;
+ const worker=createAttendanceWorker({now:()=>time,drain:async()=>{
+  calls++;return calls===1?{processed:1,nextRetryAt:11000}:{processed:0,nextRetryAt:null};
+ },setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
+ await scheduled();assert.equal(delay,2000);
+ time=3000;await scheduled();assert.equal(delay,8000,'keep 10s retry after early empty scan');
+ time=11000;await scheduled();assert.equal(delay,240000,'resume idle only after due deadline was scanned');
+ assert.equal(calls,3);worker.stop();
+});
+
+test('unrelated wake and later retry cannot erase an earlier deadline',async()=>{
+ let time=1000,scheduled,delay,calls=0;
+ const worker=createAttendanceWorker({now:()=>time,drain:async()=>{
+  calls++;return calls===1?{processed:1,nextRetryAt:15000}:calls===2?{processed:1,nextRetryAt:30000}:{processed:0,nextRetryAt:null};
+ },setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
+ await scheduled();assert.equal(delay,2000);
+ time=3000;worker.wake();await scheduled();assert.equal(delay,2000);
+ time=5000;await scheduled();assert.equal(delay,10000,'keep original earlier deadline');
+ worker.stop();
+});
+
 test('active worker respects retry deadline and retains a wake arriving during upload',async()=>{
  let scheduled,delay,release,calls=0;const wait=new Promise(r=>release=r);
  const worker=createAttendanceWorker({now:()=>1000,drain:async()=>{calls++;if(calls===1)await wait;return {processed:1,nextRetryAt:9000};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
  const active=scheduled();worker.wake();release();await active;assert.equal(delay,0);await scheduled();assert.equal(delay,2000);worker.stop();
+});
+
+
+test('batch Firestore claim and finalize work is bounded to four and preserves Script order',async()=>{
+ const s=store(),originalClaim=s.claim,originalFinish=s.finish;
+ let activeClaims=0,maxClaims=0,activeFinishes=0,maxFinishes=0,deliveries=0;
+ s.claim=async(...args)=>{
+  activeClaims++;maxClaims=Math.max(maxClaims,activeClaims);
+  try{await new Promise(resolve=>setImmediate(resolve));return await originalClaim(...args);}
+  finally{activeClaims--;}
+ };
+ s.finish=async(...args)=>{
+  activeFinishes++;maxFinishes=Math.max(maxFinishes,activeFinishes);
+  try{await new Promise(resolve=>setImmediate(resolve));return await originalFinish(...args);}
+  finally{activeFinishes--;}
+ };
+ const expected=[];
+ const q=createAttendanceQueue({store:s,now:()=>1000,batchSize:25,minBatchSize:25,maxBatchSize:25,deliver:async(_,items)=>{
+  deliveries++;assert.deepEqual(items.map(item=>item.operationId),expected);
+  assert.equal(items.length,25);assert(items.every(x=>x.claim));
+  return items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let i=0;i<25;i++)expected.push((await q.enqueue(event(A,'concurrent-'+i))).operationId);
+ await q.drain();
+ assert.equal(deliveries,1);assert(maxClaims>1&&maxClaims<=4);
+ assert(maxFinishes>1&&maxFinishes<=4);assert.equal(q.metrics.completed,25);
+ assert([...s.rows.values()].every(x=>x.state==='completed'));
+ const timings=q.metrics.lastPhaseTiming;
+ for(const key of ['queueReadMs','claimMs','scriptMs','finishMs','totalMs','scriptBatches'])
+  assert(Number.isFinite(timings[key])&&timings[key]>=0,key);
+ assert.equal(timings.processed,25);assert.equal(timings.scriptBatches,1);
+});
+test('failed final transaction cannot ACK that record but successful peers finish and drain guard waits for all',async()=>{
+ const s=store(),normalFinish=s.finish;let failedId,failOnce=true,time=1000,settled=0;
+ const q=createAttendanceQueue({store:s,now:()=>time,batchSize:25,minBatchSize:25,maxBatchSize:25,deliver:async(_,items)=>items.map(i=>({operationId:i.operationId,success:true}))});
+ for(let i=0;i<8;i++){const op=(await q.enqueue(event(A,'failure-'+i))).operationId;if(i===0)failedId=op;}
+ s.finish=async(...args)=>{
+  await new Promise(resolve=>setImmediate(resolve));
+  if(args[0]===failedId&&failOnce){failOnce=false;settled++;throw Error('durable store failed');}
+  await normalFinish(...args);settled++;
+ };
+ await assert.rejects(q.drain(),/durable store failed/);
+ assert.equal(settled,8);assert.equal(s.rows.get(failedId).state,'processing');
+ assert.equal([...s.rows.values()].filter(x=>x.state==='completed').length,7);
+ assert.equal(q.metrics.completed,7);
+ time+=120001;await q.drain();
+ assert.equal(s.rows.get(failedId).state,'completed');
+ assert.equal(s.rows.size,8);
 });
 
 test('adaptive concurrency caps independent schools at two and serializes each school',async()=>{

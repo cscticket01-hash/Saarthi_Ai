@@ -11,6 +11,7 @@ Duration managedSchoolRequestTimeout(String action) =>
       'mobile_complaint',
       'mobile_complaints',
       'mobile_login',
+      'mobile_refresh',
       'mobile_dashboard',
       'mobile_document',
       'mobile_attendance_list',

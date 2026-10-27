@@ -329,6 +329,49 @@ void main() {
     expect(await rig.queue(),isEmpty);
   });
 
+  for (final clients in [1, 2, 5]) {
+    test('$clients independent SQLite PCs retain offline queues and merge disjoint same-row edits', () async {
+      rig.fieldPatchMode = true;
+      rig.measurements['environment'] = 'synthetic-$clients-SQLite-PCs-and-Apps-Script-VM';
+      rig.measurements['clients'] = clients;
+      await rig.db.collection('teachers_directory').doc('shared').set({
+        'schoolId': school, 'teacherId': 'capacity-person', 'name': 'Original',
+      });
+      await rig.flush();
+      for (var pc = 2; pc <= clients; pc++) {
+        await rig.open('pc$pc');await rig.pull({'teachers_directory'});
+      }
+      final originalIds = <int, String>{};
+      for (var pc = 1; pc <= clients; pc++) {
+        await rig.open('pc$pc');
+        await rig.db.collection('teachers_directory').doc('shared').update({'custom_pc$pc': 'value-$pc'});
+        final item = (await rig.queue()).single.data();
+        originalIds[pc] = item['operationId'] as String;
+      }
+      // Every PC queues against the same cloud baseline before any reconnects.
+      // Reconnect in reverse order; independent field edits must all survive.
+      for (var pc = clients; pc >= 1; pc--) {
+        await rig.open('pc$pc');
+        expect((await rig.queue()).single.data()['operationId'], originalIds[pc]);
+        await rig.flush(sender: (item) async {
+          expect((item['wireData']['_syncFieldPatch']['set'] as Map).keys, ['custom_pc$pc']);
+          return rig.send(item);
+        });
+        expect(await rig.queue(), isEmpty);
+      }
+      for (var pc = 1; pc <= clients; pc++) {
+        await rig.open('pc$pc');await rig.pull({'teachers_directory'});
+        final row = (await rig.db.collection('teachers_directory').doc('shared').get()).data()!;
+        expect(row['name'], 'Original');
+        for (var source = 1; source <= clients; source++) {
+          expect(row['custom_pc$source'], 'value-$source');
+        }
+        await rig.db.collection('teachers_directory').doc('shared').update({'name': 'Original'});
+        expect(await rig.queue(), isEmpty, reason: 'Unchanged Save cannot enqueue after catch-up');
+      }
+    });
+  }
+
   test('dependent work survives SQLite restart without requiring a full idle scan', () async {
     await WindowsSyncDependencies.retain(school, 'notices', 'N1', 'notice-1');
     expect(await WindowsSyncDependencies.read(school), isEmpty);

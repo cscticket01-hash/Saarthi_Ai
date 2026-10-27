@@ -27,10 +27,15 @@ void main() {
       }
     });
     try {
-      // Reconciliation cannot fire during this hour and cannot be confused with
-      // the independently fixed one-hour production timer.
+      // The real owner anchors its one-shot deadline to its last verified
+      // checkpoint. Reconciliation cannot fire during this elapsed-hour test.
       schedule.start(const Duration(hours: 2));
-      expect(schedule.hourly?.isActive, true);
+      final verifiedAt = DateTime.now();
+      schedule.armCheckpoint(verifiedAt);
+      expect(schedule.hourly, null);
+      expect(schedule.checkpointExpected, true);
+      expect(schedule.checkpointRunning, true);
+      final elapsedCheckpointTimer = schedule.checkpoint!;
       expect(schedule.reconciliation?.isActive, true);
       await firstHourly.future.timeout(const Duration(minutes: 64));
       final hourlyEvents = events.where((e) => e['source'] == 'hourly_wait').toList();
@@ -44,6 +49,11 @@ void main() {
           greaterThanOrEqualTo(const Duration(hours: 1).inMicroseconds));
       expect(hourlyEvents.single['requestedDelayMilliseconds'], 250);
 
+      expect(elapsedCheckpointTimer.isActive, false);
+      expect(schedule.checkpoint, null);
+      expect(schedule.checkpointExpected, false);
+      expect(schedule.checkpointRunning, false);
+
       phase = 'wake_signal';
       schedule.wake();
       expect(events.last['source'], 'wake_signal');
@@ -52,11 +62,18 @@ void main() {
       schedule.reconnected();
       expect(events.last['source'], 'reconnect_signal');
       expect(events.last['requestedDelayMilliseconds'], 2000);
-      final hourlyTimer = schedule.hourly!;
+      // Also prove stop cancels an actively armed production checkpoint.
+      schedule.armCheckpoint(DateTime.now());
+      final checkpointTimer = schedule.checkpoint!;
+      expect(schedule.checkpointExpected, true);
+      expect(checkpointTimer.isActive, true);
       final reconciliationTimer = schedule.reconciliation!;
       phase = 'stopped';
       schedule.stop();
-      expect(hourlyTimer.isActive, false);
+      expect(checkpointTimer.isActive, false);
+      expect(schedule.checkpoint, null);
+      expect(schedule.checkpointExpected, false);
+      expect(schedule.checkpointRunning, false);
       expect(reconciliationTimer.isActive, false);
       expect(schedule.hourly, null);
       expect(schedule.reconciliation, null);
@@ -75,7 +92,8 @@ void main() {
       schedule.stop();
       stopwatch.stop();
       final report = <String, dynamic>{
-        'version': 2,
+        'version': 3,
+        'schedulerMode': 'verified-checkpoint-anchored one-shot',
         'sourceSha': Platform.environment['GITHUB_SHA'] ?? 'local-uncommitted',
         'sourceRef': Platform.environment['GITHUB_REF'] ?? 'local',
         'startedAtUtc': started.toIso8601String(),

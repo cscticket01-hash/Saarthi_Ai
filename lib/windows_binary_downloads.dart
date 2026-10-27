@@ -5,6 +5,16 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import 'sync_recovery_policy.dart';
+import 'windows_sync_recovery.dart';
+import 'windows_connect/central_school_cloud.dart';
+
+// Yielding an already-verified prefix is healthy, bounded progress rather than
+// an outage. It must not consume the three automatic network-error attempts.
+class _VerifiedPrefixDeadline extends TimeoutException {
+  _VerifiedPrefixDeadline() : super('Media attempt deadline reached; verified prefix retained.');
+}
+
 /// School-bound, content-addressed copies. Never modifies original files,
 /// record references, queues or receipts. Metadata alone is never available.
 class WindowsBinaryDownloads {
@@ -29,6 +39,9 @@ class WindowsBinaryDownloads {
   final DateTime Function() now;
   final double Function() jitter;
   static const retryLimit = 3;
+  // Bound the lifetime of a single foreground repair attempt. Its verified
+  // chunks remain resumable under the same durable school/file journal.
+  static const transferAttemptBudget = Duration(minutes: 3);
   static const maxBytes = 20 * 1024 * 1024;
   static const maxItems = 1000;
   final Map<String, Map<String, dynamic>> _items = {};
@@ -45,6 +58,10 @@ class WindowsBinaryDownloads {
   int _observedAt = 0;
   int _lastDownload = 0;
   int _generation = 0;
+  int _quotaRetryAt = 0;
+  bool _rangeSupported = false;
+  static final Set<String> _activeRanges = {};
+  String? _repairBlockedCategory;
 
   Directory get schoolDirectory => Directory(
     '${storageDirectory.path}${Platform.pathSeparator}$schoolId',
@@ -158,6 +175,9 @@ class WindowsBinaryDownloads {
       _cursor = decoded['cursor'] as String?;
       _fingerprint = decoded['inventoryFingerprint'] as String?;
       _cycleUnverified = decoded['cycleUnverified'] == true;
+      _quotaRetryAt = decoded['quotaRetryAt'] as int? ?? 0;
+      _rangeSupported = decoded['binaryRangeVersion'] == 1;
+      _repairBlockedCategory = decoded['repairBlockedCategory'] as String?;
       // Previous inventory is historical until an authenticated refresh succeeds.
       _available = false;
       _partial = true;
@@ -213,6 +233,9 @@ class WindowsBinaryDownloads {
       'cursor': _cursor, 'cycleUnverified': _cycleUnverified,
       'seenInventory': _seenInventory.toList(), 'items': _items,
       'inventoryFingerprint': _fingerprint,
+      'quotaRetryAt': _quotaRetryAt,
+      'binaryRangeVersion': _rangeSupported ? 1 : 0,
+      'repairBlockedCategory': _repairBlockedCategory,
     }), flush: true);
     _guard();
     await temporary.rename(target.path); // Unique target: atomic on Windows too.
@@ -243,6 +266,7 @@ class WindowsBinaryDownloads {
       if (_cursor != null && _fingerprint != response['inventoryFingerprint']) {
         throw StateError('Cloud file inventory changed; restart verification.');
       }
+      _rangeSupported = response['binaryRangeVersion'] == 1;
       _fingerprint = response['inventoryFingerprint'] as String;
       final page = <Map<String, dynamic>>[];
       final seen = <String>{};
@@ -274,6 +298,15 @@ class WindowsBinaryDownloads {
           'state': same ? (old == null ? null : old['state']) ?? 'pending' : 'pending',
           if (same && old != null) 'retryAttempts': old['retryAttempts'] ?? 0,
           if (same && old != null) 'retryAt': old['retryAt'] ?? 0,
+          if (same && old != null && old['transferOffset'] != null)
+            'transferOffset': old['transferOffset'],
+          if (same && old != null && old['transferHash'] != null)
+            'transferHash': old['transferHash'],
+          // Inventory metadata cannot grant download authorization.
+          if (old?['automaticRetryBlocked'] == true) ...{
+            'automaticRetryBlocked': true,
+            'failureCategory': old!['failureCategory'],
+          },
           if (previous != null) 'previousSha256': previous,
           if (previousSize != null) 'previousSizeBytes': previousSize,
         };
@@ -321,30 +354,27 @@ class WindowsBinaryDownloads {
     await _save();
   });
 
-  /// Complete restart-safe retry of one item. Partial files never count as ACKs.
-  /// Original usable version is retained until the new hash has been verified.
-  Future<bool> repairNext({bool administratorRetry = false}) => _exclusive(() async {
-    await _inspect();
-    final candidates = _items.values.where((item) =>
-      item['expected'] != false && item['verification'] == 'bytes_hashed' && item['state'] != 'verified').toList();
-    if (candidates.isEmpty) return false;
-    final eligible = candidates.where((item) =>
-      (item['retryAttempts'] as int? ?? 0) < retryLimit &&
-      (item['retryAt'] as int? ?? 0) <= now().millisecondsSinceEpoch);
-    if (eligible.isEmpty && !administratorRetry) return false;
-    final item = eligible.isNotEmpty ? eligible.first : candidates.first;
-    if (eligible.isEmpty) item['retryAttempts'] = 0;
-    final attempt = (item['retryAttempts'] as int? ?? 0) + 1;
-    final delaySeconds = min(300, 5 * pow(2, attempt - 1)).toDouble();
-    final random = jitter().clamp(0.0, 1.0);
-    item['retryAttempts'] = attempt;
-    item['retryAt'] = now().millisecondsSinceEpoch +
-        (delaySeconds * (0.75 + random * 0.5) * 1000).round();
-    item['state'] = 'downloading';
-    await _save(); // Persist intent before any network operation.
-    File? part;
-    try {
-      final response = await request({
+  File _rangeFile(Map<String, dynamic> item) {
+    final key = sha256.convert(utf8.encode('${item['fileId']}/${item['version']}/${item['sha256']}'));
+    return File('${schoolDirectory.path}${Platform.pathSeparator}$key.transfer.part');
+  }
+
+  Future<List<int>> _downloadBytes(Map<String, dynamic> item) async {
+    if (_rangeSupported) {
+      try { return await _downloadRange(item); }
+      on CentralCloudException catch (error) {
+        if (error.status != 400 && error.status != 404) rethrow;
+        // A broker rollback must prove that the negotiated capability is gone.
+        // Access/quota failures never enter this backward-compatible fallback.
+        final capability = await request({'action': 'managed/file/inventory', 'schoolId': schoolId})
+            .timeout(const Duration(seconds: 40));
+        _guard();
+        if (capability['success'] != true || capability['schoolId'] != schoolId ||
+            capability['binaryInventoryVersion'] != 1 || capability['binaryRangeVersion'] == 1) rethrow;
+        _rangeSupported = false;
+      }
+    }
+    final response = await request({
         'action': 'managed/file/download', 'schoolId': schoolId,
         'fileId': item['fileId'], 'expectedSha256': item['sha256'],
         'expectedVersion': item['version'],
@@ -358,7 +388,106 @@ class WindowsBinaryDownloads {
           (response['base64'] as String).length > 28 * 1024 * 1024) {
         throw StateError('Unverified binary download');
       }
-      final bytes = base64Decode(response['base64'] as String);
+      return base64Decode(response['base64'] as String);
+  }
+
+  Future<List<int>> _downloadRange(Map<String, dynamic> item) async {
+    final file = _rangeFile(item);
+    final deadline = now().add(transferAttemptBudget);
+    if (!_activeRanges.add(file.path)) throw StateError('Binary transfer already active.');
+    try {
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type != FileSystemEntityType.file && type != FileSystemEntityType.notFound) {
+        throw StateError('Unsafe partial binary transfer.');
+      }
+      var offset = item['transferOffset'] as int? ?? 0;
+      final size = item['sizeBytes'] as int;
+      var reusable = type == FileSystemEntityType.file && offset > 0 && offset <= size;
+      if (reusable) {
+        reusable = await file.length() == offset &&
+            (await sha256.bind(file.openRead()).first).toString() == item['transferHash'];
+      }
+      if (!reusable) {
+        if (type == FileSystemEntityType.file) {
+          final quarantine = '${file.path}.unverified-$_generation';
+          if (await FileSystemEntity.type(quarantine, followLinks: false) != FileSystemEntityType.notFound) {
+            throw StateError('Partial binary evidence collision.');
+          }
+          await file.rename(quarantine);
+        }
+        offset = 0;
+        await file.writeAsBytes(const [], flush: true);
+      }
+      for (var chunks = 0; offset < size && chunks < 80; chunks++) {
+        _guard();
+        final remaining = deadline.difference(now());
+        if (remaining <= Duration.zero) {
+          throw _VerifiedPrefixDeadline();
+        }
+        final response = await request({
+          'action': 'managed/file/download/part', 'schoolId': schoolId,
+          'fileId': item['fileId'], 'expectedSha256': item['sha256'],
+          'expectedVersion': item['version'], 'offset': offset, 'length': 256 * 1024,
+        }).timeout(remaining < const Duration(seconds: 40) ? remaining : const Duration(seconds: 40));
+        _guard();
+        if (response['success'] != true || response['schoolId'] != schoolId ||
+            response['binaryRangeVersion'] != 1 || response['fileId'] != item['fileId'] ||
+            response['version'] != item['version'] || response['sha256'] != item['sha256'] ||
+            response['sizeBytes'] != size || response['offset'] != offset ||
+            response['base64'] is! String || (response['base64'] as String).length > 350000) {
+          throw StateError('Unverified binary transfer range.');
+        }
+        final chunk = base64Decode(response['base64'] as String);
+        if (chunk.isEmpty || chunk.length > 256 * 1024 || offset + chunk.length > size ||
+            response['nextOffset'] != offset + chunk.length ||
+            sha256.convert(chunk).toString() != response['chunkSha256']) {
+          throw StateError('Partial binary integrity check failed.');
+        }
+        await file.writeAsBytes(chunk, mode: FileMode.append, flush: true);
+        _guard();
+        offset += chunk.length;
+        item['transferOffset'] = offset;
+        item['transferHash'] = (await sha256.bind(file.openRead()).first).toString();
+        await _save(); // Verified prefix is durable before requesting more bytes.
+      }
+      if (offset != size) throw StateError('Binary range budget exceeded.');
+      return await file.readAsBytes(); // Final whole-file hash is checked by owner.
+    } finally { _activeRanges.remove(file.path); }
+  }
+
+  /// Complete restart-safe retry of one item. Partial files never count as ACKs.
+  /// Original usable version is retained until the new hash has been verified.
+  Future<bool> repairNext({bool administratorRetry = false}) => _exclusive(() async {
+    // A local retry button cannot override a provider quota cooldown. Shared
+    // access/configuration denial blocks the entire lane, including new files.
+    if (_quotaRetryAt > now().millisecondsSinceEpoch ||
+        (_repairBlockedCategory != null && !administratorRetry)) return false;
+    await _inspect();
+    final candidates = _items.values.where((item) =>
+      item['expected'] != false && item['verification'] == 'bytes_hashed' && item['state'] != 'verified').toList();
+    if (candidates.isEmpty) return false;
+    final eligible = candidates.where((item) =>
+      item['automaticRetryBlocked'] != true &&
+      (item['retryAttempts'] as int? ?? 0) < retryLimit &&
+      (item['retryAt'] as int? ?? 0) <= now().millisecondsSinceEpoch);
+    if (eligible.isEmpty && !administratorRetry) return false;
+    final item = eligible.isNotEmpty ? eligible.first : candidates.first;
+    if (eligible.isEmpty) {
+      item['retryAttempts'] = 0;
+      item.remove('automaticRetryBlocked');
+    }
+    final previousVerifiedOffset = item['transferOffset'] as int? ?? 0;
+    final attempt = (item['retryAttempts'] as int? ?? 0) + 1;
+    final delaySeconds = min(300, 5 * pow(2, attempt - 1)).toDouble();
+    final random = jitter().clamp(0.0, 1.0);
+    item['retryAttempts'] = attempt;
+    item['retryAt'] = now().millisecondsSinceEpoch +
+        (delaySeconds * (0.75 + random * 0.5) * 1000).round();
+    item['state'] = 'downloading';
+    await _save(); // Persist intent before any network operation.
+    File? part;
+    try {
+      final bytes = await _downloadBytes(item);
       if (bytes.length != item['sizeBytes'] || bytes.length > maxBytes ||
           sha256.convert(bytes).toString() != item['sha256']) {
         throw StateError('Downloaded bytes failed integrity verification');
@@ -394,15 +523,56 @@ class WindowsBinaryDownloads {
       }
       item['state'] = 'verified';
       item.remove('failure');
+      item.remove('failureCategory');
+      item.remove('automaticRetryBlocked');
       item['retryAttempts'] = 0;
       item['retryAt'] = 0;
       _lastDownload = now().millisecondsSinceEpoch;
+      _repairBlockedCategory = null;
       _failure = null;
+      item.remove('transferOffset');item.remove('transferHash');
       await _save();
+      final transfer = _rangeFile(item);
+      if (await FileSystemEntity.type(transfer.path, followLinks: false) == FileSystemEntityType.file) {
+        try { await transfer.delete(); } catch (_) { /* verified bytes remain usable */ }
+      }
       return true;
     } catch (error) {
       item['state'] = error is TimeoutException ? 'interrupted' : 'failed';
       item['failure'] = error is TimeoutException ? 'timeout' : 'download_unverified';
+      final decision = windowsSyncRecovery(error);
+      item['failureCategory'] = decision.kind.name;
+      if (error is _VerifiedPrefixDeadline &&
+          (item['transferOffset'] as int? ?? 0) > previousVerifiedOffset) {
+        // A hash-verified, fsynced prefix advanced this school/file/version.
+        // Release only the time-slice budget; actual transport failures still
+        // consume the original bounded automatic retry allowance.
+        item['retryAttempts'] = 0;
+        item['retryAt'] = now().add(const Duration(seconds: 5)).millisecondsSinceEpoch;
+      }
+      if ({
+        SyncFailureKind.authorization,
+        SyncFailureKind.configuration,
+        SyncFailureKind.conflict,
+        SyncFailureKind.validation,
+      }.contains(decision.kind)) {
+        item['automaticRetryBlocked'] = true;
+        if ({SyncFailureKind.authorization, SyncFailureKind.configuration}
+            .contains(decision.kind)) {
+          _repairBlockedCategory = decision.kind.name;
+        }
+      } else if (decision.kind == SyncFailureKind.quota) {
+        // Stop the shared media lane for the existing quota-policy cooldown.
+        final deadline = now().add(decision.delay(attempt, jitter: random))
+            .millisecondsSinceEpoch;
+        _quotaRetryAt = max(_quotaRetryAt, deadline);
+        for (final pending in _items.values) {
+          if (pending['state'] != 'verified' &&
+              (pending['retryAt'] as int? ?? 0) < deadline) {
+            pending['retryAt'] = deadline;
+          }
+        }
+      }
       _failure = item['failure'] as String;
       if (currentSchool() == schoolId) await _save();
       rethrow;
@@ -437,7 +607,7 @@ class WindowsBinaryDownloads {
     int count(String state) => expected.where((item) => item['state'] == state).length;
     final verified = expected.where((item) => item['state'] == 'verified');
     final awaiting = expected.where((item) => item['verification'] == 'bytes_hashed' && item['state'] != 'verified');
-    final deadlines = awaiting.where((item) => (item['retryAttempts'] as int? ?? 0) < retryLimit)
+    final deadlines = awaiting.where((item) => item['automaticRetryBlocked'] != true && (item['retryAttempts'] as int? ?? 0) < retryLimit)
       .map((item) => item['retryAt'] as int? ?? 0).where((value) => value > now().millisecondsSinceEpoch).toList();
     deadlines.sort();
     return {
@@ -453,7 +623,12 @@ class WindowsBinaryDownloads {
       'knownBytes': expected.fold<int>(0, (sum, item) => sum + (item['sizeBytes'] as int)),
       'lastVerifiedDownloadAt': _lastDownload, 'observedAt': _observedAt,
       'retryAt': deadlines.isEmpty ? 0 : deadlines.first,
-      'retryBlocked': awaiting.where((item) => (item['retryAttempts'] as int? ?? 0) >= retryLimit).length,
+      'retryBlocked': awaiting.where((item) =>
+        item['automaticRetryBlocked'] == true ||
+        (item['retryAttempts'] as int? ?? 0) >= retryLimit).length,
+      'reviewRequired': awaiting.where((item) => item['automaticRetryBlocked'] == true).length,
+      'repairBlockedCategory': _repairBlockedCategory,
+      'quotaRetryAt': _quotaRetryAt,
       'hasMore': _cursor != null, 'busy': _busy, 'failure': _failure,
     };
   }

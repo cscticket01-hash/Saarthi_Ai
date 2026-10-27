@@ -365,6 +365,40 @@ test('verified attendance permit and final ACK use '+attendanceCollection+'; tam
 });
 }
 
+
+test('verified attendance ACK completes while optional school-scoped FCM delivery stalls',async()=>{
+ const op='a'.repeat(64),rows=new Map();
+ rows.set(op,{operationId:op,schoolId:A,state:'pending',attempts:0,nextAttemptAt:0,createdAt:time,
+  payload:protect(JSON.stringify({role:'student',personId:'pupil',mode:'entry',latitude:24,longitude:92}),key)});
+ const store={
+  pending:async()=>[...rows.values()].filter(x=>x.state==='pending'),
+  claim:async(id,claim)=>{rows.get(id).claim=claim;return true;},
+  finish:async(id,claim,values)=>{assert.equal(rows.get(id).claim,claim);Object.assign(rows.get(id),values);}
+ };
+ let releasePush;const blockedPush=new Promise(resolve=>releasePush=resolve);
+ let pushed=false;
+ const f=fixture(async(_,opt)=>{
+  const envelope=JSON.parse(opt.body),payload=JSON.parse(envelope.payload);
+  assert.equal(payload.action,'managed_attendance_batch');
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,
+   acknowledgements:payload.operations.map(x=>({operationId:x.operationId,success:true}))})};
+ },{attendanceStore:store,messaging:{sendEachForMulticast:async()=>{
+  pushed=true;await blockedPush;return {responses:[]};
+ }}});
+ f.docs.set('managed_notification_devices/safe-fixture',{schoolId:A,personId:'pupil',role:'student',
+  deviceHash:'safe-fixture',token:protect('f'.repeat(40),key),expiresAt:time+60000});
+ let draining;
+ try{
+  draining=f.handle.drainAttendance();
+  const finished=await Promise.race([draining.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),500))]);
+  assert.equal(finished,true,'FCM network must not gate final durable queue ACK');
+  assert.equal(rows.get(op).state,'completed');
+  assert.equal(f.handle.attendanceMetrics.completed,1);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(pushed,true,'a verified provider write still notifies the same school');
+ }finally{releasePush();if(draining)await draining;}
+});
+
 test('broker forwards only allowlisted Script diagnostic codes and never raw failure details',async()=>{
  for(const [code,expected] of [['SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH'],['SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT'],['SCRIPT_PERMISSION_DENIED','SCRIPT_PERMISSION_DENIED'],['SCRIPT_TYPE_ERROR','SCRIPT_TYPE_ERROR'],['secret-root-token','SCRIPT_OPERATION_FAILED']]) {
   const f=fixture(async(_,opt)=>({ok:true,status:200,text:async()=>JSON.stringify({schoolId:JSON.parse(opt.body).schoolId,success:false,message:'private exception secret-root-token',code})}));

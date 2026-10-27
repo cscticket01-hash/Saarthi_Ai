@@ -12,6 +12,7 @@ class WindowsRemoteChangeFeed {
     this.onRecords,
     this.loadCursor,
     this.persistEvent,
+    this.readTimeout = const Duration(seconds: 45),
   });
   final Future<Map<String, dynamic>> Function(String school, String? cursor)
   read;
@@ -24,13 +25,16 @@ class WindowsRemoteChangeFeed {
   final Future<String?> Function(String school)? loadCursor;
   final Future<void> Function(String school, Map<String, dynamic> event)?
   persistEvent;
+  /// Transport liveness only. This timeout never advances a received cursor,
+  /// applies records, changes the original outbox, or grants a cloud ACK.
+  final Duration readTimeout;
   Timer? _timer;
   String? _scope, _school, _cursor;
   int _generation = 0, _failures = 0;
   bool _healthy = false;
   bool get isHealthy => _scope != null && _healthy;
   void start(String scope, String school) {
-    if (_scope == scope) return;
+    if (_scope == scope && _school == school) return;
     stop();
     _scope = scope;
     _school = school;
@@ -68,7 +72,9 @@ class WindowsRemoteChangeFeed {
     if (generation != _generation || _school == null) return;
     var delay = const Duration(milliseconds: 250);
     try {
-      final out = await read(_school!, _cursor);
+      // A stalled listener must not suppress hourly fallback indefinitely.
+      // A late response after timeout is discarded by Future.timeout.
+      final out = await read(_school!, _cursor).timeout(readTimeout);
       if (generation != _generation) return;
       final names = out['collections'], cursor = out['cursor'];
       if (out['success'] != true ||
@@ -83,6 +89,14 @@ class WindowsRemoteChangeFeed {
           names.any((c) => c is! String || !allowedCollections.contains(c)) ||
           names.toSet().length != names.length) {
         throw StateError('Unverified school change notification.');
+      }
+      if (_cursor != null && out['reset'] != true) {
+        final prior = _cursor!.split(':'), next = cursor.split(':');
+        if (prior.first != next.first ||
+            int.parse(next.last) < int.parse(prior.last) ||
+            (cursor != _cursor && names.isEmpty)) {
+          throw StateError('Change notification gap requires reconciliation.');
+        }
       }
       final targets = <String, Set<String>>{};
       final raw = out['records'];
