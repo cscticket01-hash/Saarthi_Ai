@@ -366,7 +366,7 @@ class DeveloperInboxScreen extends StatelessWidget {
                                 ),
                                 title: Text(
                                   m['title'] as String,
-                                  style: TextStyle(
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
                                     fontWeight: read
                                         ? FontWeight.normal
                                         : FontWeight.bold,

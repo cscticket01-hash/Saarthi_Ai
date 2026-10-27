@@ -34,7 +34,7 @@ class WindowsTrialBanner extends StatelessWidget {
     if (licenseSkipped) {
       return Material(
         key: const ValueKey('license-not-activated-banner'),
-        color: WindowsAppearance.resolve(const Color(0xFF661B24)),
+        color: WindowsAppearance.background(const Color(0xFF661B24)),
         child: InkWell(
           onTap: onActivate,
           child: SafeArea(
@@ -43,9 +43,9 @@ class WindowsTrialBanner extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.warning_amber_rounded,
-                    color: Color(0xFFFF8A8A),
+                    color: WindowsAppearance.foreground(Color(0xFFFF8A8A)),
                     size: 22,
                   ),
                   const SizedBox(width: 10),
@@ -56,15 +56,15 @@ class WindowsTrialBanner extends StatelessWidget {
                       children: [
                          Text(
                           'License not activated — Activate now',
-                          style: TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.white),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                         Text(
                           dateLabel,
-                          style:  TextStyle(
-                            color: WindowsAppearance.resolve(Color(0xFFFFC4C4)),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Color(0xFFFFC4C4)),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -72,7 +72,7 @@ class WindowsTrialBanner extends StatelessWidget {
                     ),
                   ),
                   if (onActivate != null)
-                     Icon(Icons.chevron_right, color: Colors.white),
+                     Icon(Icons.chevron_right, color: WindowsAppearance.foreground(Colors.white)),
                 ],
               ),
             ),
@@ -81,7 +81,7 @@ class WindowsTrialBanner extends StatelessWidget {
       );
     }
     return Material(
-      color: WindowsAppearance.resolve(const Color(0xFF661B24)),
+      color: WindowsAppearance.background(const Color(0xFF661B24)),
       child: InkWell(
         onTap: onActivate,
         child: SafeArea(
@@ -90,9 +90,9 @@ class WindowsTrialBanner extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.warning_amber_rounded,
-                  color: Color(0xFFFF8A8A),
+                  color: WindowsAppearance.foreground(Color(0xFFFF8A8A)),
                   size: 22,
                 ),
                 const SizedBox(width: 10),
@@ -103,14 +103,14 @@ class WindowsTrialBanner extends StatelessWidget {
                         : state.allowed
                         ? 'Free trial: ${state.daysLeft} days remaining. Ends $date. Add a licence key to continue.'
                         : 'Free trial or licence ended. Add a valid school licence key to continue.',
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Color(0xFFFFB4B4)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Color(0xFFFFB4B4)),
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
                 if (onActivate != null)
-                   Icon(Icons.chevron_right, color: WindowsAppearance.resolve(Color(0xFFFFB4B4))),
+                   Icon(Icons.chevron_right, color: WindowsAppearance.foreground(Color(0xFFFFB4B4))),
               ],
             ),
           ),
@@ -242,16 +242,16 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(
+              Icon(
                 Icons.vpn_key_rounded,
                 size: 52,
-                color: Colors.orangeAccent,
+                color: WindowsAppearance.foreground(Colors.orangeAccent),
               ),
               const SizedBox(height: 18),
               const Text(
                 'Activate Vidya Saarthi',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+                style: TextStyle(fontFamily: 'Segoe UI', fontSize: 25, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
               Text(
@@ -271,7 +271,7 @@ class _WindowsLicenseGateState extends State<WindowsLicenseGate> {
                 ),
               ),
               if (_error != null)
-                Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
               const SizedBox(height: 12),
               FilledButton(
                 onPressed: _busy ? null : _activate,

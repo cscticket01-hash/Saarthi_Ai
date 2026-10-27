@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:async';
 
 import 'school_cloud_engine.dart';
@@ -80,7 +81,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) { WindowsAppearance.watch(context);
     if (engine.restoring)
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (!engine.hasIdentity) {
@@ -226,7 +227,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
       children: [
         if (s['status'] == 'trial')
           Material(
-            color: Colors.red.shade900,
+            color: WindowsAppearance.background(Colors.red.shade900),
             child: ListTile(
               title: Text(
                 'Five-day trial • Ends ${DateTime.fromMillisecondsSinceEpoch((s['expiresAt'] as num).toInt()).toLocal()}',

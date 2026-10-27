@@ -386,7 +386,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
             return PopScope(
               canPop: !update.forceUpdate && !downloading,
               child: AlertDialog(
-                backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+                backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
                 ),
@@ -394,14 +394,14 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                   children: [
                     Icon(
                       Icons.system_update_alt_rounded,
-                      color: Color(0xFF00D9A5),
+                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     ),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         'Windows Update Available',
-                        style: TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 17,
                           fontWeight: FontWeight.w900,
                         ),
@@ -418,8 +418,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                       Text(
                         'Installed: $windowsAppVersion   •   '
                         'New: ${update.latestVersion}',
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white70),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white70),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -427,22 +427,22 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                         const SizedBox(height: 13),
                         const Text(
                           'What’s New',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold),
                         ),
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(13),
                           decoration: BoxDecoration(
-                            color: WindowsAppearance.resolve(const Color(0xFF0D171D)),
+                            color: WindowsAppearance.background(const Color(0xFF0D171D)),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: WindowsAppearance.resolve(Colors.white).withOpacity(0.06),
+                              color: WindowsAppearance.outline(Colors.white).withOpacity(0.06),
                             ),
                           ),
                           child: Text(
                             update.releaseNotes,
-                            style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white60),
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white60),
                               height: 1.45,
                             ),
                           ),
@@ -453,8 +453,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                         LinearProgressIndicator(
                           value: progress,
                           minHeight: 8,
-                          color: const Color(0xFF00D9A5),
-                          backgroundColor: WindowsAppearance.resolve(Colors.white10),
+                          color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
+                          backgroundColor: WindowsAppearance.background(Colors.white10),
                         ),
                         const SizedBox(height: 7),
                         Text(
@@ -462,8 +462,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                               ? 'Downloading update...'
                               : 'Downloading '
                                     '${(progress! * 100).toStringAsFixed(0)}%',
-                          style:  TextStyle(
-                            color: WindowsAppearance.resolve(Colors.white54),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.white54),
                             fontSize: 11,
                           ),
                         ),
@@ -472,8 +472,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                         const SizedBox(height: 12),
                         Text(
                           error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.redAccent),
                             fontSize: 11,
                           ),
                         ),
@@ -491,8 +491,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
                     ),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00A884),
-                      foregroundColor: WindowsAppearance.resolve(Colors.white),
+                      backgroundColor: WindowsAppearance.primary,
+                      foregroundColor: WindowsAppearance.onPrimary,
                     ),
                     onPressed: downloading ? null : startInstall,
                     icon: const Icon(Icons.download_rounded, size: 18),
@@ -551,7 +551,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
       if (showSnackBar && result.info == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+            backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
             content: Text(result.message),
           ),
         );
@@ -567,7 +567,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
       if (showSnackBar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: Colors.redAccent,
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text('Windows update check error: $e'),
           ),
         );
@@ -583,9 +583,9 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF38A8FF).withOpacity(0.18)),
+        border: Border.all(color: WindowsAppearance.outline(const Color(0xFF38A8FF).withOpacity(0.18))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -596,12 +596,12 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF38A8FF).withOpacity(0.11),
+                  color: WindowsAppearance.background(const Color(0xFF38A8FF).withOpacity(0.11)),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.system_update_alt_rounded,
-                  color: Color(0xFF69C2FF),
+                  color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
                   size: 22,
                 ),
               ),
@@ -612,8 +612,8 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                   children: [
                     Text(
                       'Windows App Update',
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 14.5,
                         fontWeight: FontWeight.w900,
                       ),
@@ -621,7 +621,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                     SizedBox(height: 3),
                     Text(
                       'Check, download aur install new Admin software version.',
-                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                   ],
                 ),
@@ -629,13 +629,13 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF38A8FF).withOpacity(0.09),
+                  color: WindowsAppearance.background(const Color(0xFF38A8FF).withOpacity(0.09)),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   'v$windowsAppVersion',
-                  style: const TextStyle(
-                    color: Color(0xFF69C2FF),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
                     fontSize: 10,
                     fontWeight: FontWeight.w900,
                   ),
@@ -648,9 +648,9 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
             width: double.infinity,
             padding: const EdgeInsets.all(13),
             decoration: BoxDecoration(
-              color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+              color: WindowsAppearance.background(const Color(0xFF0F191F)),
               borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.05)),
+              border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.05)),
             ),
             child: Row(
               children: [
@@ -675,7 +675,7 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
                         : _error != null
                         ? 'Update check failed: $_error'
                         : _result?.message ?? 'Update status check karein.',
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: _error != null ? Colors.redAccent : WindowsAppearance.resolve(Colors.white60),
                       fontSize: 11,
                       height: 1.4,
@@ -689,8 +689,8 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
             const SizedBox(height: 11),
             Text(
               'Latest version: ${info.latestVersion}',
-              style:  TextStyle(
-                color: WindowsAppearance.resolve(Colors.white),
+              style:  TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white),
                 fontSize: 11.5,
                 fontWeight: FontWeight.w800,
               ),
@@ -699,15 +699,15 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
               const SizedBox(height: 4),
                Text(
                 'What’s New',
-                style: TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white70),
+                style: TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white70),
                   fontWeight: FontWeight.bold,
                 ),
               ),
               Text(
                 info.releaseNotes,
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white38),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white38),
                   fontSize: 10.5,
                   height: 1.35,
                 ),
@@ -733,8 +733,8 @@ class _WindowsUpdateSettingsCardState extends State<WindowsUpdateSettingsCard> {
               if (info != null)
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: WindowsAppearance.resolve(Colors.white),
+                    backgroundColor: WindowsAppearance.primary,
+                    foregroundColor: WindowsAppearance.onPrimary,
                   ),
                   onPressed: () async {
                     await WindowsUpdateManager.showUpdateDialog(context, info);

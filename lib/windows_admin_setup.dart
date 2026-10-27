@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'windows_school_profile_restore.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -456,8 +457,8 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 7),
+        Text(label, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 13, fontWeight: FontWeight.w600)),
+        SizedBox(height: 7),
         TextField(
           key: ValueKey(fieldKey),
           controller: controller,
@@ -466,22 +467,22 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
           obscureText: obscureText,
           enableSuggestions: !obscureText && toggleVisibility == null,
           autocorrect: toggleVisibility == null,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 14),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(color: _muted, fontSize: 13),
+            hintStyle: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(_muted), fontSize: 13),
             filled: true,
-            fillColor: enabled ? _surface : const Color(0xFF101922),
+            fillColor: WindowsAppearance.background(enabled ? _surface : const Color(0xFF101922)),
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF405264))),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF405264))),
-            disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: Color(0xFF2B3947))),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: const BorderSide(color: _accent, width: 1.5)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF405264)))),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF405264)))),
+            disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF2B3947)))),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(7), borderSide: BorderSide(color: WindowsAppearance.outline(_accent), width: 1.5)),
             suffixIcon: toggleVisibility == null ? null : IconButton(
               onPressed: _busy ? null : toggleVisibility,
               tooltip: obscureText ? 'Show password' : 'Hide password',
-              icon: Icon(obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: _muted, size: 20),
+              icon: Icon(obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: WindowsAppearance.foreground(_muted), size: 20),
             ),
           ),
         ),
@@ -494,37 +495,37 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
+        Text(label, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 13, fontWeight: FontWeight.w600)),
+        SizedBox(height: 8),
         Row(
           children: [
             Container(
               width: 66, height: 60,
-              decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(7), border: Border.all(color: const Color(0xFF405264))),
+              decoration: BoxDecoration(color: WindowsAppearance.background(_surface), borderRadius: BorderRadius.circular(7), border: Border.all(color: WindowsAppearance.outline(const Color(0xFF405264)))),
               clipBehavior: Clip.antiAlias,
               child: path == null
-                ? const Icon(Icons.image_outlined, color: _muted, size: 27)
+                ? Icon(Icons.image_outlined, color: WindowsAppearance.foreground(_muted), size: 27)
                 : Image.file(File(path), fit: slot == 0 ? BoxFit.cover : BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined, color: _muted)),
+                    errorBuilder: (_, __, ___) => Icon(Icons.image_not_supported_outlined, color: WindowsAppearance.foreground(_muted))),
             ),
-            const SizedBox(width: 15),
+            SizedBox(width: 15),
             OutlinedButton(
               key: ValueKey('setup-upload-$slot'),
               onPressed: _busy ? null : () => _pick(slot),
               style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                backgroundColor: _surface,
-                side: const BorderSide(color: Color(0xFF405264)),
+                foregroundColor: WindowsAppearance.primary,
+                backgroundColor: WindowsAppearance.background(_surface),
+                side: BorderSide(color: WindowsAppearance.outline(Color(0xFF405264))),
                 padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 15),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
               ),
-              child: const Text('Choose file'),
+              child: Text('Choose file'),
             ),
             if (path != null) ...[
-              const SizedBox(width: 12),
+              SizedBox(width: 12),
               Expanded(child: Text(path.split(Platform.pathSeparator).last,
                 maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _muted, fontSize: 11))),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(_muted), fontSize: 11))),
             ],
           ],
         ),
@@ -533,20 +534,10 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   );
 
   @override
-  Widget build(BuildContext context) => Theme(
-    data: ThemeData.dark(useMaterial3: true).copyWith(
-      textTheme: ThemeData.dark(useMaterial3: true).textTheme.apply(fontFamily: 'Segoe UI'),
-      colorScheme: const ColorScheme.dark(primary: _accent, surface: _surface),
-      scaffoldBackgroundColor: _background,
-      checkboxTheme: CheckboxThemeData(
-        fillColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? _accent : Colors.transparent),
-        checkColor: const WidgetStatePropertyAll(_background),
-        side: const BorderSide(color: _muted),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      ),
-    ),
+  Widget build(BuildContext context) {WindowsAppearance.watch(context); return Theme(
+    data: Theme.of(context),
     child: Scaffold(
-      backgroundColor: _background,
+      backgroundColor: WindowsAppearance.background(_background),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -557,16 +548,16 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.menu_book_rounded, color: _accent, size: 44),
-                  const SizedBox(height: 8),
-                  const Text('Vidya Saarthi', textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 10),
-                  Center(child: Container(width: 32, height: 3, decoration: BoxDecoration(color: _accent, borderRadius: BorderRadius.circular(2)))),
-                  const SizedBox(height: 12),
-                  const Text('School Setup', textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFFD7E0EA), fontSize: 19, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 24),
+                  Icon(Icons.menu_book_rounded, color: WindowsAppearance.foreground(_accent), size: 44),
+                  SizedBox(height: 8),
+                  Text('Vidya Saarthi', textAlign: TextAlign.center,
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 28, fontWeight: FontWeight.w800)),
+                  SizedBox(height: 10),
+                  Center(child: Container(width: 32, height: 3, decoration: BoxDecoration(color: WindowsAppearance.background(_accent), borderRadius: BorderRadius.circular(2)))),
+                  SizedBox(height: 12),
+                  Text('School Setup', textAlign: TextAlign.center,
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFD7E0EA)), fontSize: 19, fontWeight: FontWeight.w600)),
+                  SizedBox(height: 24),
                   _field(label: 'School name *', hint: 'Enter school name', controller: _school, fieldKey: 'setup-school-name'),
                   _field(label: 'Principal name *', hint: 'Enter principal name', controller: _principal, fieldKey: 'setup-principal-name'),
                   _field(label: 'Contact no', hint: 'Enter contact number', controller: _contact, fieldKey: 'setup-contact', keyboardType: TextInputType.phone),
@@ -584,45 +575,45 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                           value: _skipLicence,
                           onChanged: _busy ? null : (value) => setState(() { _skipLicence = value ?? false; _error = null; }),
                         )),
-                        const SizedBox(width: 10),
+                        SizedBox(width: 10),
                         Expanded(child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Skip for now — use free trial', style: TextStyle(color: Colors.white, fontSize: 13)),
-                            const SizedBox(height: 4),
-                            const Text('Available during the 5-day trial. Add your licence later in Settings.',
-                              style: TextStyle(color: _muted, fontSize: 11, height: 1.5)),
+                            Text('Skip for now — use free trial', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 13)),
+                            SizedBox(height: 4),
+                            Text('Available during the 5-day trial. Add your licence later in Settings.',
+                              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(_muted), fontSize: 11, height: 1.5)),
                           ],
                         )),
                       ],
                     ),
-                    const SizedBox(height: 24),
-                  ] else const SizedBox(height: 8),
+                    SizedBox(height: 24),
+                  ] else SizedBox(height: 8),
                   _imageTile('School logo', _logoPath, 0),
                   _imageTile('School signature', _signaturePath, 2),
                   _imageTile('School seal', _sealPath, 1),
                   if (_error != null) ...[
-                    const SizedBox(height: 4),
+                    SizedBox(height: 4),
                     Text(_error!, key: const ValueKey('admin-setup-error'),
-                      style: const TextStyle(color: Color(0xFFFF8C8C), fontSize: 13)),
-                    const SizedBox(height: 10),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFF8C8C)), fontSize: 13)),
+                    SizedBox(height: 10),
                   ],
-                  const SizedBox(height: 4),
+                  SizedBox(height: 4),
                   FilledButton(
                     key: const ValueKey('setup-submit'),
                     onPressed: _busy ? null : _save,
                     style: FilledButton.styleFrom(
-                      backgroundColor: _accent, foregroundColor: Colors.white,
+                      backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary,
                       minimumSize: const Size.fromHeight(48),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
                     ),
                     child: _busy
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: _background))
-                      : const Text('Submit', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                      ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: WindowsAppearance.foreground(_background)))
+                      : Text('Submit', style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.w700)),
                   ),
-                  const SizedBox(height: 19),
-                  const Text('After 1 hour without a mouse click in this app, App Lock will appear.', textAlign: TextAlign.center,
-                    style: TextStyle(color: _muted, fontSize: 11)),
+                  SizedBox(height: 19),
+                  Text('After 1 hour without a mouse click in this app, App Lock will appear.', textAlign: TextAlign.center,
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(_muted), fontSize: 11)),
                 ],
               ),
             ),
@@ -630,5 +621,5 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         ),
       ),
     ),
-  );
+  ); }
 }

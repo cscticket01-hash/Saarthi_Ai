@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_comparison.dart';
 import 'school_profile_policy.dart';
@@ -398,7 +399,7 @@ class _ConflictReviewState extends State<_ConflictReview> {
                 : 'Cloud verification: $comparison. Authenticated read; checked again before resolution',
           ),
           if (error.isNotEmpty)
-            SelectableText(error, style: const TextStyle(color: Colors.orange)),
+            SelectableText(error, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orange))),
           if (differences.isNotEmpty) Text('Differing fields: ${differences.join(', ')}'),
           const SizedBox(height: 12),
           Expanded(

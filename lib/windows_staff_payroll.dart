@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:pdf/widgets.dart' as pw;
+import 'windows_payslip_template.dart';
 import 'package:printing/printing.dart';
 import 'windows_document_templates.dart';
 import 'windows_salary_history.dart';
@@ -169,9 +169,9 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final changed = await showDialog<bool>(context: context, barrierDismissible: false, builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  PopScope(
       canPop: !saving, child: AlertDialog(title: Text(title), content: SizedBox(width: 470,
         child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [...fields(setD).expand((w) => [w, const SizedBox(height: 14)]),
-            if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent))]))),
-        actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          children: [...fields(setD).expand((w) => [w, SizedBox(height: 14)]),
+            if (error != null) Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)))]))),
+        actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(ctx, false), child: Text('Cancel')),
           FilledButton(onPressed: saving ? null : () async {
             setD(() { saving = true; error = null; });
             try { await save(); if (ctx.mounted) Navigator.pop(ctx, true); }
@@ -190,8 +190,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       return [for (var i = 0; i < controllers.length; i++) TextField(controller: controllers[i],
         keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setD(() {}),
         decoration: InputDecoration(labelText: labels[i], prefixText: '₹ ')),
-        Text('Net salary: ₹$net', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        const Text('Salary changes preserve all recorded payments.')];
+        Text('Net salary: ₹$net', style: TextStyle(fontFamily: 'Segoe UI', fontSize: 20, fontWeight: FontWeight.bold)),
+        Text('Salary changes preserve all recorded payments.')];
     }, () async {
       final v = controllers.map((c) => StaffPayroll.money(c.text)).toList();
       await StaffPayroll.save(_profile, person, month, basic:v[0],allowance:v[1],bonus:v[2],overtime:v[3],deduction:v[4]);
@@ -207,16 +207,16 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     await _editor('Record payment • ${row['name']}', (setD) => [
       TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount', prefixText: '₹ ')),
       DropdownButtonFormField<String>(isExpanded: true, initialValue: mode, items: ['Cash', 'Bank transfer', 'UPI', 'Cheque'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(), onChanged: (v) => setD(() => mode = v!)),
-      TextButton.icon(icon: const Icon(Icons.event), label: Text('${date.day}/${date.month}/${date.year}'), onPressed: () async {
+      TextButton.icon(icon: Icon(Icons.event), label: Text('${date.day}/${date.month}/${date.year}'), onPressed: () async {
         final selected = await showDatePicker(context: context, initialDate: date, firstDate: DateTime(2000), lastDate: DateTime.now());
         if (selected != null) setD(() => date = DateTime(selected.year, selected.month, selected.day, date.hour, date.minute, date.second));
       }),
-      TextButton.icon(icon: const Icon(Icons.schedule), label: Text('Payment time: ${salaryPaymentTime(date)}'), onPressed: () async {
+      TextButton.icon(icon: Icon(Icons.schedule), label: Text('Payment time: ${salaryPaymentTime(date)}'), onPressed: () async {
         final selected = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(date));
         if (selected != null) setD(() => date = DateTime(date.year, date.month, date.day, selected.hour, selected.minute));
       }),
       TextField(controller: reference, decoration: const InputDecoration(labelText: 'Payment reference / note')),
-      const Text('This records a payment already made. It does not transfer money.'),
+      Text('This records a payment already made. It does not transfer money.'),
     ], () => StaffPayroll.recordPayment(_profile, row['id'].toString(), StaffPayroll.money(amount.text), paymentId: paymentId, date: date, mode: mode, reference: reference.text));
     await Future<void>.delayed(const Duration(milliseconds: 250));
     amount.dispose(); reference.dispose();
@@ -248,23 +248,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r)),r['status']].map(cell).join(',')].join('\r\n');
         await WindowsSavePdf.save(Uint8List.fromList(utf8.encode(content)), 'staff-salary-${StaffPayroll.monthKey(_month)}.csv', csv:true);
       } else {
-        final regular=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
-        final bold=pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
-        final doc = pw.Document(theme:pw.ThemeData.withFont(base:regular,bold:bold));
-        for (final r in rows) {
-          doc.addPage(pw.Page(build: (_) => pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start, children:[
-            pw.Text('VIDYA SAARTHI - PAYSLIP',style:pw.TextStyle(fontSize:22,fontWeight:pw.FontWeight.bold)),
-            pw.SizedBox(height:20),if(_schoolName.isNotEmpty)pw.Text(_schoolName),pw.Text('${r['name']} | ${r['employeeId']??r['teacherId']??r['staffId']}'),
-            pw.Text('${r['role']} | ${r['month']}'),pw.SizedBox(height:20),
-            for (final key in {'Basic pay':'basicPaise','Allowances':'allowancePaise','Bonus':'bonusPaise','Overtime':'overtimePaise','Deductions':'deductionPaise'}.entries)
-              pw.Padding(padding:const pw.EdgeInsets.only(bottom:10),child:pw.Text('${key.key}: Rs ${StaffPayroll.format((r[key.value] as num?)?.toInt() ?? 0)}')),
-            pw.Divider(),pw.Text('Net salary: Rs ${StaffPayroll.format(StaffPayroll.total(r))}'),
-            pw.Text('Paid: Rs ${StaffPayroll.format(StaffPayroll.paid(r))}'),
-            pw.Text('Balance: Rs ${StaffPayroll.format(StaffPayroll.total(r)-StaffPayroll.paid(r))}'),
-            pw.Text('Status: ${r['status'] ?? 'Pending'}'),
-          ])));
-        }
-        final bytes = await doc.save();
+        final r=rows.single;
+        final bytes=await renderWindowsPayslip({...r,'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r)},schoolName:_schoolName);
         StaffPayroll._sameSchool(_profile);
         if (mounted) await WindowsDocumentTemplates.preview(context, bytes, title: 'Payslip • ${rows.single['name']}', printLabel: 'Print Payslip',
           onPrint: () async {
@@ -278,7 +263,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     finally { if(mounted) setState(() => _working=false); }
   }
   Future<void> _calculatePayroll() async {
-    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:const Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
+    final person = await showDialog<Map<String,dynamic>>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return SimpleDialog(title:Text('Select staff to calculate salary'),children:[for(final person in _staff) SimpleDialogOption(onPressed:()=>Navigator.pop(ctx,person),child:Text('${person['name']} • ${person['employeeId']??person['teacherId']??person['id']} • ${person['role']}'))]); });
     if(person != null && mounted) await _salary(person,_monthRows.where((r)=>r['staffId']==person['id']).firstOrNull);
   }
   Future<void> _paySelected() async {
@@ -299,65 +284,65 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
     final dark=Theme.of(context);
     return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:WindowsAppearance.resolve(const Color(0xff0c233e)),
-      title: Row(children:[Icon(Icons.account_balance_wallet,color:Colors.lightBlueAccent),SizedBox(width:16),
-        Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Staff Salary',style:TextStyle(fontSize:25,fontWeight:FontWeight.bold)),
-          Text('Manage monthly salaries for teachers, office staff and school workers.',style:TextStyle(fontSize:12,color:WindowsAppearance.resolve(Colors.white70)))])]),
-      actions:[IconButton(tooltip:'Refresh',onPressed:_load,icon:const Icon(Icons.refresh))]),
-      body:_loading ? const Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints){ WindowsAppearance.watch(context); return
+      title: Row(children:[Icon(Icons.account_balance_wallet,color: WindowsAppearance.foreground(Colors.lightBlueAccent)),SizedBox(width:16),
+        Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Staff Salary',style:TextStyle(fontFamily: 'Segoe UI', fontSize:25,fontWeight:FontWeight.bold)),
+          Text('Manage monthly salaries for teachers, office staff and school workers.',style:TextStyle(fontFamily: 'Segoe UI', fontSize:12,color:WindowsAppearance.foreground(Colors.white70)))])]),
+      actions:[IconButton(tooltip:'Refresh',onPressed:_load,icon:Icon(Icons.refresh))]),
+      body:_loading ? Center(child:CircularProgressIndicator()) : LayoutBuilder(builder:(context,constraints){ WindowsAppearance.watch(context); return
         ListView(padding:const EdgeInsets.all(20),children:[
           Wrap(spacing:12,runSpacing:12,crossAxisAlignment:WrapCrossAlignment.center,children:[
-            IconButton(tooltip:'Previous month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month-1);_selected.clear();}),icon:const Icon(Icons.chevron_left)),
-            OutlinedButton.icon(icon:const Icon(Icons.calendar_month),label:Text(_monthLabel),onPressed:() async {
+            IconButton(tooltip:'Previous month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month-1);_selected.clear();}),icon:Icon(Icons.chevron_left)),
+            OutlinedButton.icon(icon:Icon(Icons.calendar_month),label:Text(_monthLabel),onPressed:() async {
               final day=await showDatePicker(context:context,initialDate:_month,firstDate:DateTime(2000),lastDate:DateTime(2100));
               if(day!=null&&mounted)setState((){_month=DateTime(day.year,day.month);_selected.clear();});
             }),
-            IconButton(tooltip:'Next month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month+1);_selected.clear();}),icon:const Icon(Icons.chevron_right)),
-            FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:const Icon(Icons.calculate_outlined),label:const Text('Calculate Payroll')),
-            FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:const Color(0xff12b975)),onPressed:_selected.isEmpty?null:_paySelected,icon:const Icon(Icons.done_all),label:const Text('Mark Selected as Paid')),
-            OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:const Icon(Icons.history),label:const Text('Payment History')),
-            OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:const Icon(Icons.download_outlined),label:const Text('Export CSV')),
+            IconButton(tooltip:'Next month',onPressed:()=>setState((){_month=DateTime(_month.year,_month.month+1);_selected.clear();}),icon:Icon(Icons.chevron_right)),
+            FilledButton.icon(onPressed:_staff.isEmpty?null:_calculatePayroll,icon:Icon(Icons.calculate_outlined),label:Text('Calculate Payroll')),
+            FilledButton.icon(style:FilledButton.styleFrom(backgroundColor: WindowsAppearance.primary, foregroundColor: WindowsAppearance.onPrimary),onPressed:_selected.isEmpty?null:_paySelected,icon:Icon(Icons.done_all),label:Text('Mark Selected as Paid')),
+            OutlinedButton.icon(key: const ValueKey('salary-history'), onPressed:()=>_history(),icon:Icon(Icons.history),label:Text('Payment History')),
+            OutlinedButton.icon(onPressed:_working?null:()=>_output(csv:true),icon:Icon(Icons.download_outlined),label:Text('Export CSV')),
 
-          ]),const SizedBox(height:18),
+          ]),SizedBox(height:18),
           Wrap(spacing:12,runSpacing:12,children:[
-            _metric('Total Staff','${_staff.length}',Colors.blue,Icons.groups_outlined,'${_staff.where((s)=>s['role']=='Teacher').length} Teachers'),
-            _metric('Gross Salary','₹${StaffPayroll.format(net+deductions)}',Colors.teal,Icons.currency_rupee,'Total earnings'),
-            _metric('Total Deductions','₹${StaffPayroll.format(deductions)}',Colors.pink,Icons.pie_chart_outline,'Recorded deductions'),
-            _metric('Net payroll','₹${StaffPayroll.format(net)}',Colors.deepPurple,Icons.account_balance,'After all deductions'),
+            _metric('Total Staff','${_staff.length}',WindowsAppearance.primary,Icons.groups_outlined,'${_staff.where((s)=>s['role']=='Teacher').length} Teachers'),
+            _metric('Gross Salary','₹${StaffPayroll.format(net+deductions)}',WindowsAppearance.primary,Icons.currency_rupee,'Total earnings'),
+            _metric('Total Deductions','₹${StaffPayroll.format(deductions)}',WindowsAppearance.foreground(Colors.redAccent),Icons.pie_chart_outline,'Recorded deductions'),
+            _metric('Net payroll','₹${StaffPayroll.format(net)}',WindowsAppearance.primary,Icons.account_balance,'After all deductions'),
             _metric('Paid','₹${StaffPayroll.format(paid)}',Colors.green,Icons.check_circle_outline,'$paidCount staff paid'),
             _metric('Pending','₹${StaffPayroll.format(net-paid)}',Colors.orange,Icons.hourglass_empty,'Remaining balance'),
-          ]),const SizedBox(height:18),
-          if(!_local) const Padding(padding:EdgeInsets.all(12),child:Text('Local Data is OFF. Unsynced salary changes stay in this session only. Enable Local Data to keep them on this computer.')),
-           Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:12)),
-          if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:const TextStyle(color:Colors.redAccent))),
-          const SizedBox(height:16),
+          ]),SizedBox(height:18),
+          if(!_local) Padding(padding:EdgeInsets.all(12),child:Text('Local Data is OFF. Unsynced salary changes stay in this session only. Enable Local Data to keep them on this computer.')),
+           Text('Records belong to the active school. Teacher salary appears in the teacher app after school sync.',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:12)),
+          if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)))),
+          SizedBox(height:16),
           Wrap(spacing:10,runSpacing:10,children:[
             for(final role in ['All staff','Teacher','Office staff','Driver','Guard','Support staff','Other'])
-              ChoiceChip(selectedColor:const Color(0xff6252ee),labelStyle: TextStyle(color:WindowsAppearance.resolve(Colors.white)),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
+              ChoiceChip(selectedColor:WindowsAppearance.background(const Color(0xff6252ee)),labelStyle: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.resolve(Colors.white)),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
             SizedBox(width:320,child:TextField(onChanged:(v)=>setState(()=>_search=v),decoration:const InputDecoration(hintText:'Search by name, ID or department...',prefixIcon:Icon(Icons.search)))),
-          ]),const SizedBox(height:16),
-          if(people.isEmpty) const Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add teachers in Teachers and non-teaching staff in Other Staff.')),
+          ]),SizedBox(height:16),
+          if(people.isEmpty) Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add teachers in Teachers and non-teaching staff in Other Staff.')),
           Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:Card(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(
             headingRowColor:WidgetStateProperty.all(WindowsAppearance.resolve(const Color(0xff172c42))),columnSpacing:14,dataRowMinHeight:64,dataRowMaxHeight:76,
             columns:[for(final label in ['Name / Employee ID','Role / Department','Attendance','Basic Pay','Allowances','Deductions','Net Salary','Status','Action'])DataColumn(label:Text(label))],
             rows:[for(final person in people)_tableRow(person,rows)],
-          )))),if(constraints.maxWidth>=1350)...[const SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
+          )))),if(constraints.maxWidth>=1350)...[SizedBox(width:14),SizedBox(width:270,child:_monthSummary(net,paid,deductions,paidCount,rows.length))]]),
           if(constraints.maxWidth<1350)_monthSummary(net,paid,deductions,paidCount,rows.length),
           for(final row in rows.where((r)=>!_staff.any((s)=>s['id']==r['staffId'])))
-            Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'}'),trailing:IconButton(icon:const Icon(Icons.history),onPressed:()=>_history(row)))),
+            Card(child:ListTile(title:Text('${row['name'] ?? row['teacherId'] ?? 'Previous staff'} • ₹${StaffPayroll.format(StaffPayroll.total(row))}'),subtitle:Text('${row['status'] ?? 'Previous record'}'),trailing:IconButton(icon:Icon(Icons.history),onPressed:()=>_history(row)))),
         ]); })));
   }
   Widget _metric(String label,String value,Color color,IconData icon,String detail)=>SizedBox(width:205,child:Container(
     padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:color.withValues(alpha:.12),border:Border.all(color:color.withValues(alpha:.35)),borderRadius:BorderRadius.circular(10)),
-    child:Row(children:[CircleAvatar(backgroundColor:color.withValues(alpha:.6),child:Icon(icon,color:WindowsAppearance.resolve(Colors.white))),const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text(label,style: TextStyle(fontSize:12,color:WindowsAppearance.resolve(Colors.white70))),const SizedBox(height:8),FittedBox(child:Text(value,style:const TextStyle(fontSize:22,fontWeight:FontWeight.bold))),const SizedBox(height:8),Text(detail,style: TextStyle(fontSize:10,color:WindowsAppearance.resolve(Colors.white54)))]))])));
+    child:Row(children:[CircleAvatar(backgroundColor:color.withValues(alpha:.6),child:Icon(icon,color:WindowsAppearance.onColor(color.withValues(alpha:.6)))),SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text(label,style: TextStyle(fontFamily: 'Segoe UI', fontSize:12,color:WindowsAppearance.foreground(Colors.white70))),SizedBox(height:8),FittedBox(child:Text(value,style:TextStyle(fontFamily: 'Segoe UI', fontSize:22,fontWeight:FontWeight.bold))),SizedBox(height:8),Text(detail,style: TextStyle(fontFamily: 'Segoe UI', fontSize:10,color:WindowsAppearance.foreground(Colors.white54)))]))])));
   Widget _monthSummary(int net,int paid,int deductions,int count,int total)=>Card(child:Padding(padding:const EdgeInsets.all(18),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-    Text('$_monthLabel Summary',style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),const SizedBox(height:20),
+    Text('$_monthLabel Summary',style:TextStyle(fontFamily: 'Segoe UI', fontSize:18,fontWeight:FontWeight.bold)),SizedBox(height:20),
     Center(child:SizedBox(width:110,height:110,child:Stack(alignment:Alignment.center,children:[
-      SizedBox.expand(child:CircularProgressIndicator(value:net==0?0:paid/net,strokeWidth:14,backgroundColor:Colors.orange,color:Colors.cyan)),Text('$total\nSalary records',textAlign:TextAlign.center)]))),
-    const SizedBox(height:24),Text('Paid staff: $count'),const Divider(),Text('Gross Salary: ₹${StaffPayroll.format(net+deductions)}'),
-    const SizedBox(height:10),Text('Total Deductions: ₹${StaffPayroll.format(deductions)}'),const Divider(),Text('Net Payable: ₹${StaffPayroll.format(net)}'),
-    const SizedBox(height:10),Text('Paid Amount: ₹${StaffPayroll.format(paid)}',style:const TextStyle(color:Colors.greenAccent)),
-    const SizedBox(height:10),Text('Pending Amount: ₹${StaffPayroll.format(net-paid)}',style:const TextStyle(color:Colors.orangeAccent)),
+      SizedBox.expand(child:CircularProgressIndicator(value:net==0?0:paid/net,strokeWidth:14,backgroundColor: WindowsAppearance.background(Colors.orange),color: WindowsAppearance.foreground(Colors.cyan))),Text('$total\nSalary records',textAlign:TextAlign.center)]))),
+    SizedBox(height:24),Text('Paid staff: $count'),const Divider(),Text('Gross Salary: ₹${StaffPayroll.format(net+deductions)}'),
+    SizedBox(height:10),Text('Total Deductions: ₹${StaffPayroll.format(deductions)}'),const Divider(),Text('Net Payable: ₹${StaffPayroll.format(net)}'),
+    SizedBox(height:10),Text('Paid Amount: ₹${StaffPayroll.format(paid)}',style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.greenAccent))),
+    SizedBox(height:10),Text('Pending Amount: ₹${StaffPayroll.format(net-paid)}',style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))),
   ])));
   DataRow _tableRow(Map<String,dynamic> person,List<Map<String,dynamic>> rows) {
     final row=rows.where((r)=>r['staffId']==person['id']).firstOrNull;
@@ -365,14 +350,14 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final status=row?['status']?.toString()??'Not set';
     final color=status=='Paid'?Colors.green:Colors.orange;
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:const TextStyle(fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style: TextStyle(fontSize:11,color:WindowsAppearance.resolve(Colors.white54)))])),
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style: TextStyle(fontSize:11,color:WindowsAppearance.resolve(Colors.white54)))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:TextStyle(fontFamily: 'Segoe UI', fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),
       DataCell(Row(children:[
-        if(row==null)TextButton(onPressed:()=>_salary(person,null),child:const Text('Set salary'))
-        else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:const Text('View Payslip')),
+        if(row==null)TextButton(onPressed:()=>_salary(person,null),child:Text('Set salary'))
+        else FilledButton.tonal(onPressed:_working?null:()=>_output(row:row),child:Text('View Payslip')),
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
           if(action=='pay'&&row!=null)_payment(row);

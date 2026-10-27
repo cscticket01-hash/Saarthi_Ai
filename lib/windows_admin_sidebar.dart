@@ -30,30 +30,30 @@ class WindowsAdminSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  SizedBox(
     width: width,
-    child: ColoredBox(color: WindowsAppearance.resolve(const Color(0xFF06131A)), child: SafeArea(
+    child: ColoredBox(color: WindowsAppearance.background(const Color(0xFF06131A)), child: SafeArea(
       child: Column(children: [
         Expanded(child: ListView(padding: EdgeInsets.zero, children: [header,
           for (final entry in entries) Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: Material(color: entry.$5.withValues(alpha: .07),
+            child: Material(color: WindowsAppearance.primary.withValues(alpha: .07),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14),
-                side: BorderSide(color: entry.$5.withValues(alpha: .18))),
+                side: BorderSide(color: WindowsAppearance.primary.withValues(alpha: .18))),
               child: ListTile(key: ValueKey('admin-nav-${entry.$1.name}'),
-                leading: Icon(entry.$4, color: entry.$5),
-                title: ui.Text(entry.$2, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
-                subtitle: ui.Text(entry.$3, maxLines: 2, style:  TextStyle(fontSize: 10, color: WindowsAppearance.resolve(Colors.white54))),
-                trailing: Icon(Icons.chevron_right_rounded, color: entry.$5),
+                leading: Icon(entry.$4, color: WindowsAppearance.primary),
+                title: ui.Text(entry.$2, style: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12.5, fontWeight: FontWeight.w800)),
+                subtitle: ui.Text(entry.$3, maxLines: 2, style:  TextStyle(fontFamily: 'Segoe UI', fontSize: 10, color: WindowsAppearance.foreground(Colors.white54))),
+                trailing: Icon(Icons.chevron_right_rounded, color: WindowsAppearance.primary),
                 onTap: () => onSelected(entry.$1)),
             ),
           ),
         ])),
         const Divider(height: 1),
          Padding(padding: EdgeInsets.only(top: 8),
-          child: ui.Text('Vidya Saarthi • School Management', style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10))),
+          child: ui.Text('Vidya Saarthi • School Management', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10))),
         Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
           child: SizedBox(width: double.infinity, child: TextButton.icon(
             key: const ValueKey('admin-logout'), onPressed: onLogout,
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(foregroundColor: WindowsAppearance.primary),
             icon: const Icon(Icons.logout_rounded), label: const ui.Text('Logout')))),
       ]),
     )),

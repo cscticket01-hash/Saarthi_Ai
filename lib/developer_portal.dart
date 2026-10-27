@@ -1,3 +1,4 @@
+import 'developer_windows_theme.dart';
 import 'complaint_retention.dart';
 import 'developer_notification_panel.dart';
 import 'developer_login_shell.dart';
@@ -1007,6 +1008,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       'Support',
       'Firebase',
       'Admin Profile',
+      'Windows Theme',
     ];
     return DeveloperIdleSession(
       child: Scaffold(
@@ -1065,6 +1067,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             Icons.support_agent_rounded,
                             Icons.cloud_outlined,
                             Icons.manage_accounts_outlined,
+                            Icons.palette_outlined,
                           ][i],
                         ),
                         title: Text(titles[i]),
@@ -1157,7 +1160,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         ? _support()
                         : _page == 4
                         ? const FirebaseMonitorPanel()
-                        : const DeveloperAccountProfile(),
+                        : _page == 5 ? const DeveloperAccountProfile() : const DeveloperWindowsTheme(),
                   ],
                   if (narrow)
                     TextButton(

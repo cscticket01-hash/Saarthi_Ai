@@ -116,7 +116,7 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
             .toList()
           ..sort((a, b) => b.compareTo(a));
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         title: const Text('Exam History'),
         actions: [

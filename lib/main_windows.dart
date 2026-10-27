@@ -100,9 +100,9 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: WindowsAppearance.mode,
-      builder: (context, mode, _) => ValueListenableBuilder<String>(
+    return ListenableBuilder(
+      listenable: Listenable.merge([WindowsAppearance.mode, WindowsAppearance.brand]),
+      builder: (context, _) => ValueListenableBuilder<String>(
         valueListenable: WindowsUiLanguage.changed,
         builder: (context, language, _) => MaterialApp(
           navigatorKey: _schoolNavigatorKey,
@@ -117,7 +117,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           title: 'Vidya Saarthi',
           debugShowCheckedModeBanner: false,
 
-          themeMode: mode,
+          themeMode: WindowsAppearance.mode.value,
           theme: WindowsAppearance.theme(Brightness.light),
           darkTheme: WindowsAppearance.theme(Brightness.dark),
           builder: (context, child) {
@@ -238,9 +238,9 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     WindowsAppearance.watch(context);
     if (_loading) {
       return Scaffold(
-        backgroundColor: WindowsAppearance.resolve(Color(0xFF0B141A)),
+        backgroundColor: WindowsAppearance.background(Color(0xFF0B141A)),
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
         ),
       );
     }
@@ -416,6 +416,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           await WindowsLocalSession.markLoggedIn();
           own();
           await FirebaseAuth.instance.bootstrapLocalUser();
+          await ManagedSchoolSession.refreshAppearanceAtUnlock();
         }
         own();
         if (!mounted) return;
@@ -450,9 +451,9 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     WindowsAppearance.watch(context);
     if (_loading) {
       return Scaffold(
-        backgroundColor: WindowsAppearance.resolve(Color(0xFF0B141A)),
+        backgroundColor: WindowsAppearance.background(Color(0xFF0B141A)),
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
         ),
       );
     }
@@ -468,14 +469,14 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
               opacity: value,
               child: Transform.scale(scale: 0.85 + value * 0.15, child: child),
             ),
-            child: const Column(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle, color: Color(0xFF00D9A5), size: 76),
+                Icon(Icons.check_circle, color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 76),
                 SizedBox(height: 18),
                 Text(
                   'Login Successful',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontFamily: 'Segoe UI', fontSize: 26, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -484,29 +485,29 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
       );
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 430),
           child: Card(
-            color: WindowsAppearance.resolve(const Color(0xFF172229)),
+            color: WindowsAppearance.background(const Color(0xFF172229)),
             child: Padding(
               padding: const EdgeInsets.all(26),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.lock_rounded,
-                    color: Color(0xFF00D9A5),
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     size: 42,
                   ),
                   const SizedBox(height: 12),
                   Text(
                     _schoolName.isEmpty ? 'Vidya Saarthi' : _schoolName,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 21,
                       fontWeight: FontWeight.w800,
                     ),
@@ -515,8 +516,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   Text(
                     'App Lock • Enter your saved local password.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white60),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white60),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -525,15 +526,15 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     autofocus: true,
                     obscureText: true,
                     onSubmitted: (_) => _unlock(),
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration: InputDecoration(
                       labelText: 'App Lock Password',
                       errorText: _error,
                       prefixIcon: const Icon(Icons.password_rounded),
                       filled: true,
-                      fillColor: WindowsAppearance.resolve(
+                      fillColor: WindowsAppearance.background(
                         const Color(0xFF0F191F),
                       ),
                       border: OutlineInputBorder(
@@ -548,7 +549,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                     icon: const Icon(Icons.login_rounded),
                     label: const Text('Unlock App'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF00A884),
+                      backgroundColor: WindowsAppearance.primary,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                   ),
@@ -697,7 +698,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+          Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
         ],
         const SizedBox(height: 18),
         SizedBox(
@@ -711,7 +712,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: WindowsAppearance.resolve(Colors.white),
+                      color: WindowsAppearance.foreground(Colors.white),
                     ),
                   )
                 : const Icon(Icons.login_rounded),
@@ -815,7 +816,7 @@ class _WindowsFirstRunSecuritySetupState
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+          Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
         ],
         const SizedBox(height: 18),
         SizedBox(
@@ -829,7 +830,7 @@ class _WindowsFirstRunSecuritySetupState
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: WindowsAppearance.resolve(Colors.white),
+                      color: WindowsAppearance.foreground(Colors.white),
                     ),
                   )
                 : const Icon(Icons.arrow_forward_rounded),
@@ -858,7 +859,7 @@ class _LocalAuthShell extends StatelessWidget {
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF06171D)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF06171D)),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -866,10 +867,10 @@ class _LocalAuthShell extends StatelessWidget {
             width: 500,
             padding: const EdgeInsets.all(30),
             decoration: BoxDecoration(
-              color: WindowsAppearance.resolve(const Color(0xFF0A1E26)),
+              color: WindowsAppearance.background(const Color(0xFF0A1E26)),
               borderRadius: BorderRadius.circular(26),
               border: Border.all(
-                color: const Color(0xFF00E8D0).withOpacity(0.35),
+                color: WindowsAppearance.outline(const Color(0xFF00E8D0).withOpacity(0.35)),
               ),
             ),
             child: Column(
@@ -879,22 +880,22 @@ class _LocalAuthShell extends StatelessWidget {
                   width: 72,
                   height: 72,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF33E9D0), Color(0xFF00A8FF)],
+                    gradient: LinearGradient(
+                      colors: WindowsAppearance.gradientColors([Color(0xFF33E9D0), Color(0xFF00A8FF)]),
                     ),
                     borderRadius: BorderRadius.circular(22),
                   ),
                   child: Icon(
                     Icons.admin_panel_settings_rounded,
-                    color: WindowsAppearance.resolve(Colors.white),
+                    color: WindowsAppearance.foreground(Colors.white),
                     size: 38,
                   ),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   title,
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
                   ),
@@ -902,8 +903,8 @@ class _LocalAuthShell extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF00D9A5),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.5,
@@ -913,8 +914,8 @@ class _LocalAuthShell extends StatelessWidget {
                 Text(
                   description,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white54),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white54),
                     fontSize: 11,
                     height: 1.4,
                   ),

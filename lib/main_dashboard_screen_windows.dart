@@ -275,34 +275,34 @@ class _WindowsSectionLockDefinition {
   final Color color;
 }
 
-const List<_WindowsSectionLockDefinition> _windowsSectionLockDefinitions = [
+List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
   _WindowsSectionLockDefinition(
     key: _windowsStudentRecordsLock,
     title: 'Student Records',
     subtitle: 'Students, profiles aur ID cards ko protect karein.',
     icon: Icons.people_alt_rounded,
-    color: Color(0xFF00A884),
+    color: WindowsAppearance.foreground(Color(0xFF00A884)),
   ),
   _WindowsSectionLockDefinition(
     key: _windowsFeesCollectionLock,
     title: 'Fees Collection',
     subtitle: 'Fee collection, receipts aur dues ko protect karein.',
     icon: Icons.payments_rounded,
-    color: Colors.greenAccent,
+    color: WindowsAppearance.foreground(Colors.greenAccent),
   ),
   _WindowsSectionLockDefinition(
     key: _windowsSchoolExpensesLock,
     title: 'School Expenses',
     subtitle: 'Expense entry, ledger aur reports ko protect karein.',
     icon: Icons.account_balance_wallet_rounded,
-    color: Colors.amberAccent,
+    color: WindowsAppearance.foreground(Colors.amberAccent),
   ),
   _WindowsSectionLockDefinition(
     key: _windowsAttendanceLock,
     title: 'Attendance',
     subtitle: 'Student/Teacher QR attendance ko protect karein.',
     icon: Icons.fact_check_rounded,
-    color: Color(0xFF69C2FF),
+    color: WindowsAppearance.foreground(Color(0xFF69C2FF)),
   ),
 ];
 
@@ -602,12 +602,12 @@ class _WindowsLicenseSettingsPanelState
   }
 
   Color _statusColor() {
-    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?const Color(0xFF00D9A5):Colors.redAccent;
+    if (_centralManaged) return WindowsPlatformClient.instance.state.value.allowed?WindowsAppearance.foreground(const Color(0xFF00D9A5)):WindowsAppearance.foreground(Colors.redAccent);
     final state = WindowsPlatformClient.instance.state.value;
-    if (state.allowed && state.status == 'licensed') return const Color(0xFF00D9A5);
-    if (_savedKey.isEmpty) return WindowsAppearance.resolve(Colors.white54);
-    if (!state.allowed) return Colors.redAccent;
-    return Colors.orangeAccent;
+    if (state.allowed && state.status == 'licensed') return WindowsAppearance.foreground(const Color(0xFF00D9A5));
+    if (_savedKey.isEmpty) return WindowsAppearance.foreground(Colors.white54);
+    if (!state.allowed) return WindowsAppearance.foreground(Colors.redAccent);
+    return WindowsAppearance.foreground(Colors.orangeAccent);
   }
 
   Future<void> _save() async {
@@ -615,8 +615,8 @@ class _WindowsLicenseSettingsPanelState
     final key = _licenseKey.text.trim();
     if (key.length < 8) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Valid Licensing Key daalein.'),
         ),
       );
@@ -635,8 +635,8 @@ class _WindowsLicenseSettingsPanelState
         _licenseKey.clear();
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
           content: Text('Licensing Key secure storage me save ho gayi.'),
         ),
       );
@@ -645,7 +645,7 @@ class _WindowsLicenseSettingsPanelState
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Licensing Key save error: $e'),
         ),
       );
@@ -657,7 +657,7 @@ class _WindowsLicenseSettingsPanelState
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         title: const Text('Remove Licensing Key'),
         content: const Text(
           'Saved key is device se remove ho jayegi. Website verification record delete nahi hoga.',
@@ -709,10 +709,10 @@ class _WindowsLicenseSettingsPanelState
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     if (_loading) {
-      return const Center(
+      return Center(
         child: Padding(
           padding: EdgeInsets.all(22),
-          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
         ),
       );
     }
@@ -721,22 +721,22 @@ class _WindowsLicenseSettingsPanelState
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.vpn_key_rounded, color: Colors.orangeAccent),
+              Icon(Icons.vpn_key_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
               const SizedBox(width: 10),
                Expanded(
                 child: Text(
                   'Licensing Key',
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
                   ),
@@ -744,7 +744,7 @@ class _WindowsLicenseSettingsPanelState
               ),
               Text(
                 _statusText(),
-                style: TextStyle(
+                style: TextStyle(fontFamily: 'Segoe UI', 
                   color: _statusColor(),
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
@@ -755,7 +755,7 @@ class _WindowsLicenseSettingsPanelState
           const SizedBox(height: 8),
            Text(
             'Adobe-style activation ke liye key yahan add hogi. School Firebase aur Google Drive connection isse alag rahega.',
-            style: TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11, height: 1.4),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11, height: 1.4),
           ),
           const SizedBox(height: 14),
           if(_centralManaged) Padding(padding:const EdgeInsets.only(bottom:14),child:Text('Expiry / renewal: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}\nDays remaining: ${WindowsPlatformClient.instance.state.value.daysLeft}')),
@@ -765,13 +765,13 @@ class _WindowsLicenseSettingsPanelState
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                color: WindowsAppearance.background(const Color(0xFF0F191F)),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.lock_rounded,
-                      color: Color(0xFF00D9A5), size: 20),
+                  Icon(Icons.lock_rounded,
+                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -779,33 +779,33 @@ class _WindowsLicenseSettingsPanelState
                       children: [
                         Text(_licenceLocked ? 'School licence' : 'Saved Key',
                             style:
-                                TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10)),
+                                TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10)),
                         const SizedBox(height: 3),
                         SelectableText(
                           _licenceLocked ? 'Licence verified and locked' :
                               _savedKey.isEmpty ? 'No key saved on this device' : _maskedKey(_savedKey),
-                          style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.w700),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 3),
                         Text(
                           _licenceLocked ? 'Renewal requires a new key from the developer.' :
                               _savedKey.isEmpty ? 'The school licence status is shown above.' : 'Saved: ${_savedAtText()}',
-                          style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white38), fontSize: 10),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                         ),
                       ],
                     ),
                   ),
                   if (_licenceLocked)
-                    const Icon(Icons.lock_rounded, key: ValueKey('windows-licence-locked'),
-                        color: Color(0xFF00D9A5))
+                    Icon(Icons.lock_rounded, key: ValueKey('windows-licence-locked'),
+                        color: WindowsAppearance.foreground(Color(0xFF00D9A5)))
                   else IconButton(
                     key: const ValueKey('windows-licence-remove'),
                     tooltip: WindowsUiLanguage.translate('Remove key'),
                     onPressed: _saving ? null : _clear,
-                    icon: const Icon(Icons.delete_outline_rounded,
-                        color: Colors.orangeAccent),
+                    icon: Icon(Icons.delete_outline_rounded,
+                        color: WindowsAppearance.foreground(Colors.orangeAccent)),
                   ),
                 ],
               ),
@@ -813,8 +813,8 @@ class _WindowsLicenseSettingsPanelState
             const SizedBox(height: 12),
           ],
           if (_licenceLocked)
-            const Text('Licence locked until renewal.',
-                style: TextStyle(color: Color(0xFF00D9A5), fontSize: 12)),
+            Text('Licence locked until renewal.',
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 12)),
           if (!_licenceLocked) ...[
           if (_renewalRequired) const Padding(
             padding: EdgeInsets.only(bottom: 12),
@@ -823,12 +823,12 @@ class _WindowsLicenseSettingsPanelState
           TextField(
             controller: _licenseKey,
             textCapitalization: TextCapitalization.characters,
-            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
             decoration: InputDecoration(
               labelText: _renewalRequired ? 'New renewal licence key' : 'Enter Licensing Key',
               prefixIcon: const Icon(Icons.key_rounded),
               filled: true,
-              fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+              fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
@@ -842,15 +842,15 @@ class _WindowsLicenseSettingsPanelState
             child: ElevatedButton.icon(
               onPressed: _saving ? null : _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00A884),
-                foregroundColor: WindowsAppearance.resolve(Colors.white),
+                backgroundColor: WindowsAppearance.primary,
+                foregroundColor: WindowsAppearance.onPrimary,
               ),
               icon: _saving
                   ?  SizedBox(
                       width: 17,
                       height: 17,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: WindowsAppearance.resolve(Colors.white)),
+                          strokeWidth: 2, color: WindowsAppearance.foreground(Colors.white)),
                     )
                   : const Icon(Icons.verified_user_rounded),
               label: Text(_saving ? 'Saving...' : 'Save Licensing Key'),
@@ -858,9 +858,9 @@ class _WindowsLicenseSettingsPanelState
           ),
           ],
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'Keys are verified by the developer platform and bound to this school.',
-            style: TextStyle(color: Colors.orangeAccent, fontSize: 10.5),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent), fontSize: 10.5),
           ),
         ],
       ),
@@ -919,22 +919,22 @@ Future<bool> _requireWindowsSectionPassword(
           }
 
           return AlertDialog(
-            backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+            backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
             title: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.lock_rounded,
-                  color: Color(0xFF00D9A5),
+                  color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     '$sectionTitle Password',
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
                     ),
@@ -950,17 +950,17 @@ Future<bool> _requireWindowsSectionPassword(
                 obscureText: true,
                 enabled: !verifying,
                 onSubmitted: (_) => verifyPassword(),
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: InputDecoration(
                   labelText: 'Enter $sectionTitle Password',
-                  labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                  labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                   errorText: error,
-                  prefixIcon: const Icon(
+                  prefixIcon: Icon(
                     Icons.password_rounded,
-                    color: Color(0xFF00A884),
+                    color: WindowsAppearance.foreground(Color(0xFF00A884)),
                   ),
                   filled: true,
-                  fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                  fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
@@ -983,7 +983,7 @@ Future<bool> _requireWindowsSectionPassword(
                         height: 16,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: WindowsAppearance.foreground(Colors.white),
                         ),
                       )
                     : const Icon(Icons.lock_open_rounded, size: 17),
@@ -1140,12 +1140,12 @@ Widget _buildPortalSessionTimer(ValueNotifier<int> secondsListenable) {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.timer_outlined, size: 12, color: color),
+              Icon(Icons.timer_outlined, size: 12, color: WindowsAppearance.foreground(color)),
               const SizedBox(width: 4),
               Text(
                 _formatPortalTimer(seconds),
-                style: TextStyle(
-                  color: color,
+                style: TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(color),
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0.2,
@@ -1602,13 +1602,13 @@ Widget _windowsSharedAdminSidebar(BuildContext context, {required ValueChanged<W
         final profile = _mergeSchoolProfile(snapshot.data?.data());
         final logo = profile['logoUrl']?.toString() ?? '';
         return Padding(padding: const EdgeInsets.all(12), child: Material(
-          color: WindowsAppearance.resolve(const Color(0xFF123D38)), borderRadius: BorderRadius.circular(18),
+          color: WindowsAppearance.background(const Color(0xFF123D38)), borderRadius: BorderRadius.circular(18),
           child: ListTile(onTap: onAnalytics,
             leading: SizedBox(width: 50, height: 50, child: logo.isEmpty
-              ? const Icon(Icons.school_rounded, color: Color(0xFF00D9A5), size: 34)
+              ? Icon(Icons.school_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 34)
               : _windowsSchoolProfileImage(logo, fallback: const Icon(Icons.school_rounded))),
             title: Text(_schoolName(profile), translate: false, maxLines: 2),
-            subtitle: const Text('ADMIN NAVIGATION', style: TextStyle(color: Color(0xFF00D9A5), fontSize: 10)),
+            subtitle: Text('ADMIN NAVIGATION', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10)),
           )));
       }));
 Future<void> _windowsConfirmLogout(BuildContext context) async {
@@ -2098,14 +2098,14 @@ void _startInlineScanner() {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0C171D)),
+        color: WindowsAppearance.background(const Color(0xFF0C171D)),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFF00A884).withOpacity(0.45),
+          color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.45)),
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF00A884).withOpacity(0.08),
+            color: WindowsAppearance.shadow(const Color(0xFF00A884).withOpacity(0.08)),
             blurRadius: 24,
             offset: const Offset(0, 10),
           ),
@@ -2122,12 +2122,12 @@ void _startInlineScanner() {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00A884).withOpacity(0.14),
+                    color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.14)),
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.qr_code_scanner_rounded,
-                    color: Color(0xFF00D9A5),
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     size: 22,
                   ),
                 ),
@@ -2138,8 +2138,8 @@ void _startInlineScanner() {
                     children: [
                       Text(
                         'SCAN STUDENT ID CARD',
-                        style: TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 13,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0.4,
@@ -2148,8 +2148,8 @@ void _startInlineScanner() {
                       SizedBox(height: 2),
                       Text(
                         'ID card ka QR frame ke andar rakhein',
-                        style: TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white54),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10.5,
                         ),
                       ),
@@ -2161,7 +2161,7 @@ void _startInlineScanner() {
                   onPressed: _closeInlineScanner,
                   icon:  Icon(
                     Icons.close_rounded,
-                    color: WindowsAppearance.resolve(Colors.white60),
+                    color: WindowsAppearance.foreground(Colors.white60),
                   ),
                 ),
               ],
@@ -2198,12 +2198,12 @@ void _startInlineScanner() {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
-                        color: const Color(0xFF00E8B5),
+                        color: WindowsAppearance.outline(const Color(0xFF00E8B5)),
                         width: 2.5,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF00E8B5)
+                          color: WindowsAppearance.shadow(const Color(0xFF00E8B5))
                               .withOpacity(0.18),
                           blurRadius: 18,
                           spreadRadius: 1,
@@ -2218,11 +2218,11 @@ void _startInlineScanner() {
                                 const EdgeInsets.symmetric(horizontal: 16),
                             height: 2,
                             decoration: BoxDecoration(
-                              color: const Color(0xFF00E8B5),
+                              color: WindowsAppearance.background(const Color(0xFF00E8B5)),
                               borderRadius: BorderRadius.circular(20),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xFF00E8B5)
+                                  color: WindowsAppearance.shadow(const Color(0xFF00E8B5))
                                       .withOpacity(0.7),
                                   blurRadius: 10,
                                 ),
@@ -2237,20 +2237,20 @@ void _startInlineScanner() {
 
                 if (_isQrVerifying)
                   Container(
-                    color: Colors.black.withOpacity(0.55),
+                    color: WindowsAppearance.background(Colors.black.withOpacity(0.55)),
                     child:  Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           CircularProgressIndicator(
-                            color: Color(0xFF00E8B5),
+                            color: WindowsAppearance.foreground(Color(0xFF00E8B5)),
                             strokeWidth: 3,
                           ),
                           SizedBox(height: 12),
                           Text(
                             'Student verify ho raha hai...',
-                            style: TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white),
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -2265,7 +2265,7 @@ void _startInlineScanner() {
           if (_scanError != null)
             Container(
               width: double.infinity,
-              color: Colors.redAccent.withOpacity(0.12),
+              color: WindowsAppearance.background(Colors.redAccent.withOpacity(0.12)),
               padding: const EdgeInsets.symmetric(
                 horizontal: 14,
                 vertical: 10,
@@ -2273,17 +2273,17 @@ void _startInlineScanner() {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.error_outline_rounded,
-                    color: Colors.redAccent,
+                    color: WindowsAppearance.foreground(Colors.redAccent),
                     size: 18,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       _scanError!,
-                      style: const TextStyle(
-                        color: Colors.redAccent,
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.redAccent),
                         fontSize: 11,
                         height: 1.35,
                       ),
@@ -2315,7 +2315,7 @@ void _startInlineScanner() {
           ),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: const Color(0xFF00A884).withOpacity(0.42),
+            color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.42)),
           ),
         ),
         child: Row(
@@ -2324,12 +2324,12 @@ void _startInlineScanner() {
               width: 52,
               height: 52,
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.14),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.14)),
                 borderRadius: BorderRadius.circular(15),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.qr_code_scanner_rounded,
-                color: Color(0xFF00E8B5),
+                color: WindowsAppearance.foreground(Color(0xFF00E8B5)),
                 size: 29,
               ),
             ),
@@ -2340,8 +2340,8 @@ void _startInlineScanner() {
                 children: [
                   Text(
                     'Scan Student ID Card',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 14,
                       fontWeight: FontWeight.w800,
                     ),
@@ -2349,17 +2349,17 @@ void _startInlineScanner() {
                   SizedBox(height: 4),
                   Text(
                     'Camera se ID card ka QR scan karein',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white54),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white54),
                       fontSize: 10.5,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               Icons.arrow_forward_ios_rounded,
-              color: Color(0xFF00D9A5),
+              color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
               size: 17,
             ),
           ],
@@ -2396,7 +2396,7 @@ void _startInlineScanner() {
         ),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: const Color(0xFF00A884).withOpacity(0.46),
+          color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.46)),
         ),
       ),
       child: Row(
@@ -2409,7 +2409,7 @@ void _startInlineScanner() {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(13),
               border: Border.all(
-                color: const Color(0xFF00D9A5),
+                color: WindowsAppearance.outline(const Color(0xFF00D9A5)),
                 width: 1.6,
               ),
             ),
@@ -2431,18 +2431,18 @@ errorBuilder: (context, error, stackTrace) {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(
                       Icons.verified_rounded,
-                      color: Color(0xFF00D9A5),
+                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                       size: 16,
                     ),
                     SizedBox(width: 5),
                     Text(
                       'STUDENT VERIFIED',
-                      style: TextStyle(
-                        color: Color(0xFF00D9A5),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                         fontSize: 9.5,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.5,
@@ -2455,8 +2455,8 @@ errorBuilder: (context, error, stackTrace) {
                   name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
                   ),
@@ -2464,8 +2464,8 @@ errorBuilder: (context, error, stackTrace) {
                 const SizedBox(height: 3),
                 Text(
                   '$studentClass  •  Roll $roll',
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white60),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white60),
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -2475,8 +2475,8 @@ errorBuilder: (context, error, stackTrace) {
                   'Guardian: $parentName',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white38),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white38),
                     fontSize: 9.5,
                   ),
                 ),
@@ -2488,7 +2488,7 @@ errorBuilder: (context, error, stackTrace) {
             onPressed: _clearScannedStudent,
             icon:  Icon(
               Icons.refresh_rounded,
-              color: WindowsAppearance.resolve(Colors.white54),
+              color: WindowsAppearance.foreground(Colors.white54),
             ),
           ),
         ],
@@ -2498,12 +2498,12 @@ errorBuilder: (context, error, stackTrace) {
 
   Widget _scannerPhotoFallback(String initial) {
     return Container(
-      color: WindowsAppearance.resolve(const Color(0xFF0E171C)),
+      color: WindowsAppearance.background(const Color(0xFF0E171C)),
       child: Center(
         child: Text(
           initial,
-          style: const TextStyle(
-            color: Color(0xFF00A884),
+          style: TextStyle(fontFamily: 'Segoe UI', 
+            color: WindowsAppearance.foreground(Color(0xFF00A884)),
             fontSize: 28,
             fontWeight: FontWeight.w900,
           ),
@@ -2518,15 +2518,15 @@ errorBuilder: (context, error, stackTrace) {
         Expanded(
           child: Container(
             height: 1,
-            color: WindowsAppearance.resolve(Colors.white12),
+            color: WindowsAppearance.background(Colors.white12),
           ),
         ),
          Padding(
           padding: EdgeInsets.symmetric(horizontal: 10),
           child: Text(
             'OR LOGIN MANUALLY',
-            style: TextStyle(
-              color: WindowsAppearance.resolve(Colors.white30),
+            style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white30),
               fontSize: 9,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.7,
@@ -2536,7 +2536,7 @@ errorBuilder: (context, error, stackTrace) {
         Expanded(
           child: Container(
             height: 1,
-            color: WindowsAppearance.resolve(Colors.white12),
+            color: WindowsAppearance.background(Colors.white12),
           ),
         ),
       ],
@@ -2554,7 +2554,7 @@ errorBuilder: (context, error, stackTrace) {
     if (idText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(
             _isAdminMode
                 ? 'Admin Email bharein.'
@@ -2567,8 +2567,8 @@ errorBuilder: (context, error, stackTrace) {
 
     if (password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Password / Date of Birth bharein.',
           ),
@@ -2585,9 +2585,9 @@ errorBuilder: (context, error, stackTrace) {
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             duration: Duration(seconds: 5),
-            backgroundColor: Colors.orangeAccent,
+            backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
             content: Text(
               'Student Portal use karne ke liye Notifications Allow karna zaroori hai. Browser/site settings me Notifications Allow karke dobara Login karein.',
             ),
@@ -2622,8 +2622,8 @@ errorBuilder: (context, error, stackTrace) {
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Color(0xFF00A884),
+          SnackBar(
+            backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
             content: Text('Admin Login Safal hua!'),
           ),
         );
@@ -2652,8 +2652,8 @@ errorBuilder: (context, error, stackTrace) {
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
+          SnackBar(
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text(
               'Student record nahi mila! Class aur Roll No check karein.',
             ),
@@ -2675,8 +2675,8 @@ errorBuilder: (context, error, stackTrace) {
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.orangeAccent,
+          SnackBar(
+            backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
             content: Text(
               'Is student ka Date of Birth database mein set nahi hai.',
             ),
@@ -2704,8 +2704,8 @@ if (!passwordMatched) {
   if (!mounted) return;
 
   ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      backgroundColor: Colors.redAccent,
+    SnackBar(
+      backgroundColor: WindowsAppearance.background(Colors.redAccent),
       content: Text(
         'Galat Password! Apna Date of Birth sahi format mein enter karein.',
       ),
@@ -2723,8 +2723,8 @@ if (!passwordMatched) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
           content: Text('Student Login Safal hua!'),
         ),
       );
@@ -2764,7 +2764,7 @@ if (!passwordMatched) {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(errorMessage),
         ),
       );
@@ -2773,7 +2773,7 @@ if (!passwordMatched) {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Login error: $e'),
         ),
       );
@@ -2788,7 +2788,7 @@ if (!passwordMatched) {
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     if (_isRestoringSession) {
       return Scaffold(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF06171D)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF06171D)),
         body: Container(
           width: double.infinity,
           height: double.infinity,
@@ -2810,12 +2810,12 @@ if (!passwordMatched) {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.auto_stories_rounded,
-                    color: Color(0xFF00E8D0), size: 54),
+                    color: WindowsAppearance.foreground(Color(0xFF00E8D0)), size: 54),
                 SizedBox(height: 14),
                 Text(
                   'Vidya Saarthi',
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 24,
                     fontWeight: FontWeight.w900,
                   ),
@@ -2823,8 +2823,8 @@ if (!passwordMatched) {
                 SizedBox(height: 5),
                 Text(
                   'SMART SCHOOL MANAGEMENT SUITE',
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Color(0xFFBCE8E5)),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Color(0xFFBCE8E5)),
                     fontSize: 9.5,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.7,
@@ -2835,7 +2835,7 @@ if (!passwordMatched) {
                   width: 26,
                   height: 26,
                   child: CircularProgressIndicator(
-                    color: Color(0xFF00D9A5),
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     strokeWidth: 2.5,
                   ),
                 ),
@@ -2860,7 +2860,7 @@ if (!passwordMatched) {
       return Icon(
         icon,
         size: size,
-        color: const Color(0xFF00E8D0).withOpacity(opacity),
+        color: WindowsAppearance.foreground(const Color(0xFF00E8D0)).withOpacity(opacity),
       );
     }
 
@@ -2869,18 +2869,18 @@ if (!passwordMatched) {
         width: isCompact ? 68 : 82,
         height: isCompact ? 68 : 82,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [
+          gradient: LinearGradient(
+            colors: WindowsAppearance.gradientColors([
               Color(0xFF33E9D0),
               Color(0xFF00A8FF),
-            ],
+            ]),
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF00E8D0).withOpacity(0.25),
+              color: WindowsAppearance.shadow(const Color(0xFF00E8D0).withOpacity(0.25)),
               blurRadius: 28,
               spreadRadius: 2,
             ),
@@ -2891,7 +2891,7 @@ if (!passwordMatched) {
           children: [
             Icon(
               Icons.auto_stories_rounded,
-              color: WindowsAppearance.resolve(Colors.white),
+              color: WindowsAppearance.foreground(Colors.white),
               size: isCompact ? 38 : 46,
             ),
             Positioned(
@@ -2899,7 +2899,7 @@ if (!passwordMatched) {
               right: 7,
               child: Icon(
                 Icons.star_rounded,
-                color: Colors.amberAccent,
+                color: WindowsAppearance.foreground(Colors.amberAccent),
                 size: isCompact ? 16 : 19,
               ),
             ),
@@ -2917,8 +2917,8 @@ if (!passwordMatched) {
               children: [
                 TextSpan(
                   text: 'Vidya ',
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: isCompact ? 36 : 52,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -1.0,
@@ -2926,8 +2926,8 @@ if (!passwordMatched) {
                 ),
                 TextSpan(
                   text: 'Saarthi',
-                  style: TextStyle(
-                    color: const Color(0xFF00E8D0),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(const Color(0xFF00E8D0)),
                     fontSize: isCompact ? 36 : 52,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -1.0,
@@ -2940,8 +2940,8 @@ if (!passwordMatched) {
           Text(
             'SMART SCHOOL MANAGEMENT SUITE',
             textAlign: isCompact ? TextAlign.center : TextAlign.left,
-            style: TextStyle(
-              color: WindowsAppearance.resolve(const Color(0xFFBCE8E5)).withOpacity(0.82),
+            style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(const Color(0xFFBCE8E5)).withOpacity(0.82),
               fontSize: isCompact ? 10.5 : 13,
               fontWeight: FontWeight.w700,
               letterSpacing: isCompact ? 2.0 : 3.2,
@@ -2989,8 +2989,8 @@ if (!passwordMatched) {
                 ? 'EMPOWERING SCHOOLS  •  ENABLING EDUCATION'
                 : 'EMPOWERING SCHOOLS   •   ENABLING EDUCATION   •   BUILDING BRIGHTER TOMORROWS',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: WindowsAppearance.resolve(Colors.white).withOpacity(0.64),
+            style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white).withOpacity(0.64),
               fontSize: isCompact ? 8.5 : 10,
               fontWeight: FontWeight.w700,
               letterSpacing: isCompact ? 1.0 : 2.3,
@@ -3015,17 +3015,17 @@ if (!passwordMatched) {
           ),
           borderRadius: BorderRadius.circular(26),
           border: Border.all(
-            color: const Color(0xFF00E8D0).withOpacity(0.72),
+            color: WindowsAppearance.outline(const Color(0xFF00E8D0).withOpacity(0.72)),
             width: 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF00D7C0).withOpacity(0.14),
+              color: WindowsAppearance.shadow(const Color(0xFF00D7C0).withOpacity(0.14)),
               blurRadius: 35,
               spreadRadius: 2,
             ),
             BoxShadow(
-              color: Colors.black.withOpacity(0.40),
+              color: WindowsAppearance.shadow(Colors.black.withOpacity(0.40)),
               blurRadius: 35,
               offset: const Offset(0, 18),
             ),
@@ -3037,10 +3037,10 @@ if (!passwordMatched) {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.13),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.13)),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: const Color(0xFF00E8D0).withOpacity(0.25),
+                  color: WindowsAppearance.outline(const Color(0xFF00E8D0).withOpacity(0.25)),
                 ),
               ),
               child: Icon(
@@ -3048,14 +3048,14 @@ if (!passwordMatched) {
                     ? Icons.admin_panel_settings_rounded
                     : Icons.school_rounded,
                 size: 35,
-                color: const Color(0xFF00D9A5),
+                color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
               ),
             ),
             const SizedBox(height: 14),
             Text(
               _isAdminMode ? 'ADMIN LOGIN' : 'STUDENT LOGIN',
-              style: TextStyle(
-                color: WindowsAppearance.resolve(Colors.white),
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white),
                 fontSize: isCompact ? 21 : 24,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.3,
@@ -3067,8 +3067,8 @@ if (!passwordMatched) {
                   ? 'Access your school management dashboard'
                   : 'Access your student portal securely',
               textAlign: TextAlign.center,
-              style:  TextStyle(
-                color: WindowsAppearance.resolve(Colors.white54),
+              style:  TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white54),
                 fontSize: 11.5,
               ),
             ),
@@ -3078,9 +3078,9 @@ if (!passwordMatched) {
             Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF142832)),
+                color: WindowsAppearance.background(const Color(0xFF142832)),
                 borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
               ),
               child: Row(
                 children: [
@@ -3092,11 +3092,11 @@ if (!passwordMatched) {
                         padding: const EdgeInsets.symmetric(vertical: 11),
                         decoration: BoxDecoration(
                           gradient: _isAdminMode
-                              ? const LinearGradient(
-                                  colors: [
+                              ? LinearGradient(
+                                  colors: WindowsAppearance.gradientColors([
                                     Color(0xFF00A884),
                                     Color(0xFF00D9A5),
-                                  ],
+                                  ]),
                                 )
                               : null,
                           color: _isAdminMode ? null : Colors.transparent,
@@ -3105,12 +3105,12 @@ if (!passwordMatched) {
                         child:  Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.security, size: 16, color: WindowsAppearance.resolve(Colors.white)),
+                            Icon(Icons.security, size: 16, color: WindowsAppearance.foreground(Colors.white)),
                             SizedBox(width: 6),
                             Text(
                               'Admin',
-                              style: TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white),
+                              style: TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white),
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -3127,11 +3127,11 @@ if (!passwordMatched) {
                         padding: const EdgeInsets.symmetric(vertical: 11),
                         decoration: BoxDecoration(
                           gradient: !_isAdminMode
-                              ? const LinearGradient(
-                                  colors: [
+                              ? LinearGradient(
+                                  colors: WindowsAppearance.gradientColors([
                                     Color(0xFF00A884),
                                     Color(0xFF00D9A5),
-                                  ],
+                                  ]),
                                 )
                               : null,
                           color: !_isAdminMode ? null : Colors.transparent,
@@ -3140,12 +3140,12 @@ if (!passwordMatched) {
                         child:  Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.person, size: 16, color: WindowsAppearance.resolve(Colors.white)),
+                            Icon(Icons.person, size: 16, color: WindowsAppearance.foreground(Colors.white)),
                             SizedBox(width: 6),
                             Text(
                               'Student',
-                              style: TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white),
+                              style: TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white),
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -3180,7 +3180,7 @@ if (!passwordMatched) {
               DropdownButtonFormField<String>(
                 value: _selectedClass,
                 dropdownColor: WindowsAppearance.resolve(const Color(0xFF162A32)),
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: _inputDecoration('Class'),
                 items: _classList
                     .map(
@@ -3202,7 +3202,7 @@ if (!passwordMatched) {
             if (_isAdminMode || _scannedStudentData == null)
               TextField(
                 controller: _usernameController,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: _inputDecoration(
                   _isAdminMode ? 'Admin Email' : 'Student ID / Roll No',
                   icon: _isAdminMode
@@ -3217,7 +3217,7 @@ if (!passwordMatched) {
             TextField(
               controller: _passwordController,
               obscureText: _obscurePassword,
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
               decoration: _inputDecoration(
                 _isAdminMode
                     ? 'Password'
@@ -3230,7 +3230,7 @@ if (!passwordMatched) {
                     _obscurePassword
                         ? Icons.visibility_off
                         : Icons.visibility,
-                    color: WindowsAppearance.resolve(Colors.grey),
+                    color: WindowsAppearance.foreground(Colors.grey),
                   ),
                   onPressed: () => setState(
                     () => _obscurePassword = !_obscurePassword,
@@ -3246,10 +3246,10 @@ if (!passwordMatched) {
               height: 52,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00B894),
-                  foregroundColor: WindowsAppearance.resolve(Colors.white),
+                  backgroundColor: WindowsAppearance.primary,
+                  foregroundColor: WindowsAppearance.onPrimary,
                   elevation: 0,
-                  shadowColor: const Color(0xFF00D9A5).withOpacity(0.35),
+                  shadowColor: WindowsAppearance.primary,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(13),
                   ),
@@ -3260,7 +3260,7 @@ if (!passwordMatched) {
                         width: 21,
                         height: 21,
                         child: CircularProgressIndicator(
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: WindowsAppearance.foreground(Colors.white),
                           strokeWidth: 2,
                         ),
                       )
@@ -3273,7 +3273,7 @@ if (!passwordMatched) {
                                 : _scannedStudentData != null
                                     ? 'VERIFY DOB & ENTER PORTAL'
                                     : 'LOGIN AS STUDENT',
-                            style: const TextStyle(
+                            style: const TextStyle(fontFamily: 'Segoe UI', 
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.2,
                             ),
@@ -3290,7 +3290,7 @@ if (!passwordMatched) {
     }
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF06171D)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF06171D)),
       body: Stack(
         children: [
           Positioned.fill(
@@ -3372,7 +3372,7 @@ if (!passwordMatched) {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF00E8D0).withOpacity(0.28),
+                              color: WindowsAppearance.shadow(const Color(0xFF00E8D0).withOpacity(0.28)),
                               blurRadius: 16,
                               spreadRadius: 2,
                             ),
@@ -3399,7 +3399,7 @@ if (!passwordMatched) {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF00B6FF).withOpacity(0.22),
+                              color: WindowsAppearance.shadow(const Color(0xFF00B6FF).withOpacity(0.22)),
                               blurRadius: 14,
                               spreadRadius: 2,
                             ),
@@ -3457,19 +3457,19 @@ if (!passwordMatched) {
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:  TextStyle(
-        color: WindowsAppearance.resolve(Colors.grey),
+      hintStyle:  TextStyle(fontFamily: 'Segoe UI', 
+        color: WindowsAppearance.foreground(Colors.grey),
         fontSize: 13,
       ),
       prefixIcon: icon == null
           ? null
           : Icon(
               icon,
-              color: const Color(0xFF00A884),
+              color: WindowsAppearance.foreground(const Color(0xFF00A884)),
             ),
       suffixIcon: suffixIcon,
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+      fillColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide.none,
@@ -3529,7 +3529,7 @@ void _handleLoginBack(bool didPop) {
     ..showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         content: Text(
           remaining == 1
               ? 'Login page par jaane ke liye Back 1 baar aur dabayein.'
@@ -3621,9 +3621,9 @@ void _handleLoginBack(bool didPop) {
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         duration: Duration(seconds: 5),
-        backgroundColor: Colors.orangeAccent,
+        backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
         content: Text(
           'Notification permission blocked hai. Browser ke Site Settings / App Settings me Notifications Allow karein.',
         ),
@@ -3720,7 +3720,7 @@ void _handleLoginBack(bool didPop) {
     final denied = supported && html.Notification.permission == 'denied';
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0F171D)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0F171D)),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(22),
@@ -3730,10 +3730,10 @@ void _handleLoginBack(bool didPop) {
               width: double.infinity,
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                color: WindowsAppearance.background(const Color(0xFF172229)),
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(
-                  color: const Color(0xFF00A884).withOpacity(0.28),
+                  color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.28)),
                 ),
               ),
               child: Column(
@@ -3743,12 +3743,12 @@ void _handleLoginBack(bool didPop) {
                     width: 64,
                     height: 64,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF00A884).withOpacity(0.12),
+                      color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.12)),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.notifications_active_rounded,
-                      color: Color(0xFF00D9A5),
+                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                       size: 31,
                     ),
                   ),
@@ -3756,8 +3756,8 @@ void _handleLoginBack(bool didPop) {
                    Text(
                     'Notifications Required',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 19,
                       fontWeight: FontWeight.w800,
                     ),
@@ -3770,8 +3770,8 @@ void _handleLoginBack(bool didPop) {
                             ? 'Notifications browser/site settings se blocked hain. Pehle Site Settings me Notifications ko Allow karein, phir neeche button dabayein.'
                             : 'School ke notices mobile/browser par paane ke liye Notifications Allow karna zaroori hai. Permission ke bina Student Portal open nahi hoga.',
                     textAlign: TextAlign.center,
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white60),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white60),
                       fontSize: 12.5,
                       height: 1.5,
                     ),
@@ -3782,7 +3782,7 @@ void _handleLoginBack(bool didPop) {
                     height: 46,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00A884),
+                        backgroundColor: WindowsAppearance.primary,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -3796,12 +3796,12 @@ void _handleLoginBack(bool didPop) {
                               height: 17,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: WindowsAppearance.resolve(Colors.white),
+                                color: WindowsAppearance.foreground(Colors.white),
                               ),
                             )
                           :  Icon(
                               Icons.notifications_rounded,
-                              color: WindowsAppearance.resolve(Colors.white),
+                              color: null,
                               size: 19,
                             ),
                       label: Text(
@@ -3810,8 +3810,8 @@ void _handleLoginBack(bool didPop) {
                             : denied
                                 ? 'I Enabled It — Check Again'
                                 : 'Allow Notifications',
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: null,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -3820,14 +3820,14 @@ void _handleLoginBack(bool didPop) {
                   const SizedBox(height: 10),
                   TextButton.icon(
                     onPressed: _logoutStudent,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.logout_rounded,
-                      color: Colors.redAccent,
+                      color: WindowsAppearance.foreground(Colors.redAccent),
                       size: 17,
                     ),
-                    label: const Text(
+                    label: Text(
                       'Logout',
-                      style: TextStyle(color: Colors.redAccent),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)),
                     ),
                   ),
                 ],
@@ -3890,11 +3890,11 @@ void _handleLoginBack(bool didPop) {
 
   Color _categoryColor(String category) {
     switch (category.toLowerCase()) {
-      case 'holiday': return Colors.orangeAccent;
-      case 'exam': return Colors.redAccent;
-      case 'event': return Colors.blueAccent;
+      case 'holiday': return WindowsAppearance.foreground(Colors.orangeAccent);
+      case 'exam': return WindowsAppearance.foreground(Colors.redAccent);
+      case 'event': return WindowsAppearance.foreground(Colors.blueAccent);
       case 'general':
-      default: return const Color(0xFF00A884);
+      default: return WindowsAppearance.foreground(const Color(0xFF00A884));
     }
   }
 
@@ -3945,37 +3945,37 @@ void _handleLoginBack(bool didPop) {
         return StatefulBuilder(
           builder: (context, setDialogState) {WindowsAppearance.watch(context);
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title:  Row(
                 children: [
-                  Icon(Icons.phone_android_rounded, color: Color(0xFF00A884)),
+                  Icon(Icons.phone_android_rounded, color: WindowsAppearance.foreground(Color(0xFF00A884))),
                   SizedBox(width: 10),
-                  Text('Update Mobile Number', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text('Update Mobile Number', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: TextField(
                 controller: mobileController,
                 keyboardType: TextInputType.phone,
                 maxLength: 10,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: InputDecoration(
                   hintText: 'Enter 10 digit mobile number',
-                  hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
-                  prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF00A884)),
+                  hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
+                  prefixIcon: Icon(Icons.phone_outlined, color: WindowsAppearance.foreground(Color(0xFF00A884))),
                   filled: true,
-                  fillColor: WindowsAppearance.resolve(const Color(0xFF121B22)),
-                  counterStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                  fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
+                  counterStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                 ),
               ),
               actions: [
                 TextButton(
                   onPressed: isSaving ? null : () => Navigator.pop(ctx),
-                  child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+                  child:  Text('Cancel', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey))),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+                  style: ElevatedButton.styleFrom(backgroundColor: WindowsAppearance.primary),
                   onPressed: isSaving
                       ? null
                       : () async {
@@ -3986,17 +3986,17 @@ void _handleLoginBack(bool didPop) {
                             Navigator.pop(ctx);
                             _fetchStudentProfile();
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(backgroundColor: Color(0xFF00A884), content: Text('Mobile number successfully update ho gaya!')),
+                              SnackBar(backgroundColor: WindowsAppearance.background(Color(0xFF00A884)), content: Text('Mobile number successfully update ho gaya!')),
                             );
                           } catch (e) {
                             setDialogState(() => isSaving = false);
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Update error: $e')));
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Update error: $e')));
                           }
                         },
                   child: isSaving
-                      ?  SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: WindowsAppearance.resolve(Colors.white)))
-                      :  Text('Save', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+                      ?  SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: WindowsAppearance.foreground(Colors.white)))
+                      :  Text('Save', style: TextStyle(fontFamily: 'Segoe UI', color: null)),
                 ),
               ],
             );
@@ -4033,16 +4033,16 @@ void _handleLoginBack(bool didPop) {
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF00A884), width: 2),
+                  border: Border.all(color: WindowsAppearance.outline(const Color(0xFF00A884)), width: 2),
                   boxShadow: [
-                    BoxShadow(color: const Color(0xFF00A884).withOpacity(0.18), blurRadius: 22, spreadRadius: 2),
+                    BoxShadow(color: WindowsAppearance.shadow(const Color(0xFF00A884).withOpacity(0.18)), blurRadius: 22, spreadRadius: 2),
                   ],
                 ),
                 child: ClipOval(
                   child: isLoadingProfile
                       ?  ColoredBox(
-                          color: WindowsAppearance.resolve(Color(0xFF0F171D)),
-                          child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF00A884)))),
+                          color: WindowsAppearance.background(Color(0xFF0F171D)),
+                          child: Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: WindowsAppearance.foreground(Color(0xFF00A884))))),
                         )
                       : photoUrl.isNotEmpty
                           ? schoolNetworkImage(
@@ -4050,43 +4050,43 @@ void _handleLoginBack(bool didPop) {
                               fit: BoxFit.cover,
 errorBuilder: (context, error, stackTrace) {
                                 return ColoredBox(
-                                  color: WindowsAppearance.resolve(const Color(0xFF0F171D)),
-                                  child: Center(child: Text(studentInitial, style: const TextStyle(color: Color(0xFF00A884), fontSize: 38, fontWeight: FontWeight.bold))),
+                                  color: WindowsAppearance.background(const Color(0xFF0F171D)),
+                                  child: Center(child: Text(studentInitial, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884)), fontSize: 38, fontWeight: FontWeight.bold))),
                                 );
                               },
                             )
                           : ColoredBox(
-                              color: WindowsAppearance.resolve(const Color(0xFF0F171D)),
-                              child: Center(child: Text(studentInitial, style: const TextStyle(color: Color(0xFF00A884), fontSize: 38, fontWeight: FontWeight.bold))),
+                              color: WindowsAppearance.background(const Color(0xFF0F171D)),
+                              child: Center(child: Text(studentInitial, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884)), fontSize: 38, fontWeight: FontWeight.bold))),
                             ),
                 ),
               ),
               Container(
                 width: 28,
                 height: 28,
-                decoration: BoxDecoration(color: const Color(0xFF00A884), shape: BoxShape.circle, border: Border.all(color: WindowsAppearance.resolve(const Color(0xFF172229)), width: 3)),
-                child:  Icon(Icons.check_rounded, size: 15, color: WindowsAppearance.resolve(Colors.white)),
+                decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF00A884)), shape: BoxShape.circle, border: Border.all(color: WindowsAppearance.outline(const Color(0xFF172229)), width: 3)),
+                child:  Icon(Icons.check_rounded, size: 15, color: WindowsAppearance.foreground(Colors.white)),
               ),
             ],
           ),
           const SizedBox(height: 14),
-          Text(studentName, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 20, fontWeight: FontWeight.w700)),
+          Text(studentName, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 20, fontWeight: FontWeight.w700)),
           const SizedBox(height: 5),
-           Text('Vidya Saarthi Student Portal', style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 12)),
+           Text('Vidya Saarthi Student Portal', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 12)),
           const SizedBox(height: 13),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.12),
+              color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.12)),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFF00A884).withOpacity(0.28)),
+              border: Border.all(color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.28))),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.verified_rounded, color: Color(0xFF00A884), size: 15),
+                Icon(Icons.verified_rounded, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 15),
                 SizedBox(width: 6),
-                Text('Active / Enrolled', style: TextStyle(color: Color(0xFF00A884), fontSize: 11, fontWeight: FontWeight.w700)),
+                Text('Active / Enrolled', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884)), fontSize: 11, fontWeight: FontWeight.w700)),
               ],
             ),
           ),
@@ -4097,20 +4097,20 @@ errorBuilder: (context, error, stackTrace) {
 
   Widget _buildProfileDetails() {
     if (isLoadingProfile) {
-      return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(color: Color(0xFF00A884))));
+      return Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884)))));
     }
     if (studentData == null) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-             Icon(Icons.person_off_outlined, color: WindowsAppearance.resolve(Colors.white38), size: 38),
+             Icon(Icons.person_off_outlined, color: WindowsAppearance.foreground(Colors.white38), size: 38),
             const SizedBox(height: 10),
-            Text(profileError ?? 'Profile unavailable', textAlign: TextAlign.center, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 12)),
+            Text(profileError ?? 'Profile unavailable', textAlign: TextAlign.center, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 12)),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _fetchStudentProfile,
-              style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF00A884), side: const BorderSide(color: Color(0xFF00A884))),
+              style: OutlinedButton.styleFrom(foregroundColor: WindowsAppearance.primary, side: BorderSide(color: WindowsAppearance.outline(Color(0xFF00A884)))),
               icon: const Icon(Icons.refresh_rounded, size: 17),
               label: const Text('Retry'),
             ),
@@ -4148,36 +4148,36 @@ errorBuilder: (context, error, stackTrace) {
         const SizedBox(height: 9),
         _profileInfoTile(icon: Icons.hotel_outlined, label: 'Hostel Facility', value: hostel.isEmpty ? 'No' : hostel),
         const SizedBox(height: 9),
-        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: const Color(0xFF00A884)),
+        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: WindowsAppearance.primary),
         const SizedBox(height: 14),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: _showMobileUpdateDialog,
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFF00A884)),
-              foregroundColor: const Color(0xFF00A884),
+              side: BorderSide(color: WindowsAppearance.outline(Color(0xFF00A884))),
+              foregroundColor: WindowsAppearance.primary,
               padding: const EdgeInsets.symmetric(vertical: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             icon: const Icon(Icons.phone_android_rounded, size: 18),
-            label: const Text('Update Mobile Number', style: TextStyle(fontWeight: FontWeight.bold)),
+            label: const Text('Update Mobile Number', style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.bold)),
           ),
         ),
         const SizedBox(height: 14),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF0F171D)), borderRadius: BorderRadius.circular(13), border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.05))),
+          decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF0F171D)), borderRadius: BorderRadius.circular(13), border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.05))),
           child:  Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.lock_outline_rounded, color: WindowsAppearance.resolve(Colors.white38), size: 17),
+              Icon(Icons.lock_outline_rounded, color: WindowsAppearance.foreground(Colors.white38), size: 17),
               SizedBox(width: 9),
               Expanded(
                 child: Text(
                   'Profile details school database se linked hain. Student sirf apna mobile number update kar sakta hai.',
-                  style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 11.5, height: 1.45),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 11.5, height: 1.45),
                 ),
               ),
             ],
@@ -4192,9 +4192,9 @@ errorBuilder: (context, error, stackTrace) {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF1D2A31)),
+        color: WindowsAppearance.background(const Color(0xFF1D2A31)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.035)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.035)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -4202,17 +4202,17 @@ errorBuilder: (context, error, stackTrace) {
           Container(
             width: 35,
             height: 35,
-            decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF0F171D)), borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, color: const Color(0xFF00A884), size: 18),
+            decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF0F171D)), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884)), size: 18),
           ),
           const SizedBox(width: 11),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 9.5)),
+                Text(label, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5)),
                 const SizedBox(height: 3),
-                Text(value, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: valueColor, fontSize: 12.5, fontWeight: FontWeight.w700, height: 1.25)),
+                Text(value, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(fontFamily: 'Segoe UI', color: valueColor, fontSize: 12.5, fontWeight: FontWeight.w700, height: 1.25)),
               ],
             ),
           ),
@@ -4226,10 +4226,10 @@ errorBuilder: (context, error, stackTrace) {
       width: double.infinity,
       height: height,
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.07)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 25, offset: const Offset(0, 10))],
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.07)),
+        boxShadow: [BoxShadow(color: WindowsAppearance.shadow(Colors.black.withOpacity(0.18)), blurRadius: 25, offset: const Offset(0, 10))],
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -4245,33 +4245,33 @@ errorBuilder: (context, error, stackTrace) {
                     Container(
                       width: 42,
                       height: 42,
-                      decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.13), borderRadius: BorderRadius.circular(12)),
-                      child: const Icon(Icons.campaign_rounded, color: Color(0xFF00A884), size: 21),
+                      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.13)), borderRadius: BorderRadius.circular(12)),
+                      child: Icon(Icons.campaign_rounded, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 21),
                     ),
                     const SizedBox(width: 11),
                      Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('School Notice Board', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 18, fontWeight: FontWeight.w700)),
+                          Text('School Notice Board', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 18, fontWeight: FontWeight.w700)),
                           SizedBox(height: 2),
-                          Text('Latest announcements & updates', style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 11)),
+                          Text('Latest announcements & updates', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 11)),
                         ],
                       ),
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                       decoration: BoxDecoration(
-                        color: WindowsAppearance.resolve(const Color(0xFF0F171D)),
+                        color: WindowsAppearance.background(const Color(0xFF0F171D)),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.05)),
+                        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.05)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                           Icon(Icons.notifications_none_rounded, color: WindowsAppearance.resolve(Colors.white54), size: 15),
+                           Icon(Icons.notifications_none_rounded, color: WindowsAppearance.foreground(Colors.white54), size: 15),
                           const SizedBox(width: 5),
-                          Text('$count', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontSize: 11, fontWeight: FontWeight.bold)),
+                          Text('$count', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 11, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -4280,13 +4280,13 @@ errorBuilder: (context, error, stackTrace) {
               },
             ),
             const SizedBox(height: 15),
-            Container(height: 1, color: WindowsAppearance.resolve(Colors.white).withOpacity(0.06)),
+            Container(height: 1, color: WindowsAppearance.background(Colors.white).withOpacity(0.06)),
             const SizedBox(height: 14),
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance.collection('school_notices').orderBy('timestamp', descending: true).snapshots(),
                 builder: (context, snapshot) {WindowsAppearance.watch(context);
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884), strokeWidth: 2.5));
+                  if (snapshot.connectionState == ConnectionState.waiting) return Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884)), strokeWidth: 2.5));
                   if (snapshot.hasError) return Center(child: _emptyNoticeState(icon: Icons.error_outline_rounded, title: 'Notice load nahi ho paya', subtitle: 'Internet ya Firebase check karein.'));
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return Center(child: _emptyNoticeState(icon: Icons.notifications_none_rounded, title: 'Abhi koi notice nahi hai', subtitle: 'School jab notice publish karega, yahan dikhega.'));
                   final docs = snapshot.data!.docs;
@@ -4318,7 +4318,7 @@ errorBuilder: (context, error, stackTrace) {
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF10181E)), borderRadius: BorderRadius.circular(15), border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055))),
+      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF10181E)), borderRadius: BorderRadius.circular(15), border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055))),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4326,7 +4326,7 @@ errorBuilder: (context, error, stackTrace) {
             width: 42,
             height: 42,
             decoration: BoxDecoration(color: accent.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-            child: Icon(categoryIcon, color: accent, size: 20),
+            child: Icon(categoryIcon, color: WindowsAppearance.foreground(accent), size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -4341,24 +4341,24 @@ errorBuilder: (context, error, stackTrace) {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(color: accent.withOpacity(0.11), borderRadius: BorderRadius.circular(20)),
-                      child: Text(category, style: TextStyle(color: accent, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                      child: Text(category, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(accent), fontSize: 9.5, fontWeight: FontWeight.w800)),
                     ),
                     if (date.isNotEmpty)
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                           Icon(Icons.calendar_today_rounded, size: 11, color: WindowsAppearance.resolve(Colors.white30)),
+                           Icon(Icons.calendar_today_rounded, size: 11, color: WindowsAppearance.foreground(Colors.white30)),
                           const SizedBox(width: 4),
-                          Text(date, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 9.5)),
+                          Text(date, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 9.5)),
                         ],
                       ),
                   ],
                 ),
                 const SizedBox(height: 7),
-                Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 14, fontWeight: FontWeight.w700, height: 1.25)),
+                Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 14, fontWeight: FontWeight.w700, height: 1.25)),
                 if (description.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Text(description, maxLines: 4, overflow: TextOverflow.ellipsis, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11.5, height: 1.45)),
+                  Text(description, maxLines: 4, overflow: TextOverflow.ellipsis, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11.5, height: 1.45)),
                 ],
               ],
             ),
@@ -4377,13 +4377,13 @@ errorBuilder: (context, error, stackTrace) {
           Container(
             width: 68,
             height: 68,
-            decoration: BoxDecoration(color: const Color(0xFF00A884).withOpacity(0.08), shape: BoxShape.circle),
-            child: Icon(icon, color: const Color(0xFF00A884), size: 30),
+            decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.08)), shape: BoxShape.circle),
+            child: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884)), size: 30),
           ),
           const SizedBox(height: 14),
-          Text(title, textAlign: TextAlign.center, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontSize: 14, fontWeight: FontWeight.w600)),
+          Text(title, textAlign: TextAlign.center, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
-          Text(subtitle, textAlign: TextAlign.center, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 11, height: 1.4)),
+          Text(subtitle, textAlign: TextAlign.center, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 11, height: 1.4)),
         ],
       ),
     );
@@ -4396,10 +4396,10 @@ errorBuilder: (context, error, stackTrace) {
     }
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0F171D)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0F171D)),
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         titleSpacing: 18,
         title: Row(
           children: [
@@ -4407,15 +4407,15 @@ errorBuilder: (context, error, stackTrace) {
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.15),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.15)),
                 borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: const Color(0xFF00A884).withOpacity(0.35)),
+                border: Border.all(color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.35))),
               ),
-              child: const Icon(Icons.school_rounded, color: Color(0xFF00A884), size: 21),
+              child: Icon(Icons.school_rounded, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 21),
             ),
             const SizedBox(width: 11),
              Expanded(
-              child: Text('Student Portal', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+              child: Text('Student Portal', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
             ),
           ],
         ),
@@ -4427,8 +4427,8 @@ errorBuilder: (context, error, stackTrace) {
             icon: Container(
               width: 38,
               height: 38,
-              decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.10), borderRadius: BorderRadius.circular(11)),
-              child: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 19),
+              decoration: BoxDecoration(color: WindowsAppearance.background(Colors.redAccent.withOpacity(0.10)), borderRadius: BorderRadius.circular(11)),
+              child: Icon(Icons.logout_rounded, color: WindowsAppearance.foreground(Colors.redAccent), size: 19),
             ),
             onPressed: _logoutStudent,
           ),
@@ -4475,10 +4475,10 @@ body: PopScope(
   Widget _buildDesktopProfileCard() {
     return Container(
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.07)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.20), blurRadius: 25, offset: const Offset(0, 10))],
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.07)),
+        boxShadow: [BoxShadow(color: WindowsAppearance.shadow(Colors.black.withOpacity(0.20)), blurRadius: 25, offset: const Offset(0, 10))],
       ),
       child: Column(
         children: [
@@ -4493,10 +4493,10 @@ body: PopScope(
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.07)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 22, offset: const Offset(0, 9))],
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.07)),
+        boxShadow: [BoxShadow(color: WindowsAppearance.shadow(Colors.black.withOpacity(0.18)), blurRadius: 22, offset: const Offset(0, 9))],
       ),
       child: Column(
         children: [
@@ -4514,12 +4514,13 @@ body: PopScope(
 // Decorative only. No existing dashboard logic depends on this painter.
 // ============================================================
 class _VidyaSaarthiWavePainter extends CustomPainter {
-  const _VidyaSaarthiWavePainter();
+  _VidyaSaarthiWavePainter() : paletteKey=(WindowsAppearance.mode.value, WindowsAppearance.brand.value.toARGB32());
+  final (ThemeMode,int) paletteKey;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final teal = const Color(0xFF00E6C0);
-    final cyan = const Color(0xFF39D7FF);
+    final teal = WindowsAppearance.primary;
+    final cyan = WindowsAppearance.primary;
 
     final softGlow = Paint()
       ..style = PaintingStyle.stroke
@@ -4660,7 +4661,7 @@ class _VidyaSaarthiWavePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _VidyaSaarthiWavePainter oldDelegate) => false;
+  bool shouldRepaint(covariant _VidyaSaarthiWavePainter oldDelegate) => oldDelegate.paletteKey != paletteKey;
 }
 
 // ============================================================
@@ -4700,7 +4701,7 @@ void _handleLoginBack(bool didPop) {
     ..showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 1),
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         content: Text(
           remaining == 1
               ? 'Login page par jaane ke liye Back 1 baar aur dabayein.'
@@ -4847,7 +4848,7 @@ void _handleLoginBack(bool didPop) {
     final title = _noticeTitleController.text.trim();
     final description = _noticeDescController.text.trim();
     if (title.isEmpty || description.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Title aur details bharna zaroori hai.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Title aur details bharna zaroori hai.')));
       return;
     }
     setState(() => _isSavingNotice = true);
@@ -4864,14 +4865,14 @@ void _handleLoginBack(bool didPop) {
       if (!mounted) return;
       _cancelNoticeEdit();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        backgroundColor: result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange,
+        backgroundColor: WindowsAppearance.background(result.notificationSent || result.schoolPublished ? const Color(0xFF00A884) : Colors.orange),
         content: Text(result.notificationSent
           ? 'Published to the school student app. Notification accepted for ${result.recipients} registered students.'
           : result.schoolPublished ? 'Notice published to this school dashboard.\n${result.info}${result.error}' : 'Notice saved locally. Background sync queued. ${result.error}')));
     } catch (e) {
       if (mounted) {
         setState(() => _isSavingNotice = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Notice save error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Notice save error: $e')));
       }
     }
   }
@@ -4900,9 +4901,9 @@ void _handleLoginBack(bool didPop) {
     try {
       await FirebaseFirestore.instance.collection('school_notices').doc(id).delete();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(backgroundColor: Colors.redAccent, content: Text('Notice delete ho gaya!')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Notice delete ho gaya!')));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Delete error: $e')));
     }
   }
 
@@ -4982,8 +4983,8 @@ void _handleLoginBack(bool didPop) {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Color(0xFF00A884),
+            SnackBar(
+              backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
               content: Text('Student mil gaya!'),
             ),
           );
@@ -4995,8 +4996,8 @@ void _handleLoginBack(bool didPop) {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: Colors.redAccent,
+            SnackBar(
+              backgroundColor: WindowsAppearance.background(Colors.redAccent),
               content: Text('Is Roll No ka koi student nahi mila!'),
             ),
           );
@@ -5006,7 +5007,7 @@ void _handleLoginBack(bool didPop) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: Colors.redAccent,
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text('Search error: $e'),
           ),
         );
@@ -5020,11 +5021,11 @@ void _handleLoginBack(bool didPop) {
     showDialog(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-        title:  Text('Add Teacher', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
-        content:  Text('Teacher database fields baad mein connect kiye ja sakte hain.', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
+        title:  Text('Add Teacher', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
+        content:  Text('Teacher database fields baad mein connect kiye ja sakte hain.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close', style: TextStyle(color: Color(0xFF00A884)))),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Close', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884))))),
         ],
       ); },
     );
@@ -5035,11 +5036,11 @@ void _handleLoginBack(bool didPop) {
     showDialog(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-        title:  Text('Admin Profile', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
-        content: Text(user?.email ?? 'Admin', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70))),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
+        title:  Text('Admin Profile', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
+        content: Text(user?.email ?? 'Admin', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close', style: TextStyle(color: Color(0xFF00A884)))),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Close', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00A884))))),
         ],
       ); },
     );
@@ -5274,7 +5275,7 @@ Future<void> _downloadIdCard() async {
         .showSnackBar(
       SnackBar(
         backgroundColor:
-            Color(0xFF00A884),
+            WindowsAppearance.background(Color(0xFF00A884)),
         content: Text(
           'Student ID Card PDF saved: $savedPath',
         ),
@@ -5290,7 +5291,7 @@ Future<void> _downloadIdCard() async {
         .showSnackBar(
       SnackBar(
         backgroundColor:
-            Colors.redAccent,
+            WindowsAppearance.background(Colors.redAccent),
         content: Text(
           'ID Card download error: $e',
         ),
@@ -5320,7 +5321,7 @@ Future<void> _printIdCard() async {
         .showSnackBar(
       SnackBar(
         backgroundColor:
-            Colors.redAccent,
+            WindowsAppearance.background(Colors.redAccent),
         content: Text(
           'ID Card print error: $e',
         ),
@@ -5333,18 +5334,18 @@ Future<void> _printIdCard() async {
     final shouldLogout = await showDialog<bool>(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
         ),
         title:  Row(
           children: [
-            Icon(Icons.logout_rounded, color: Colors.redAccent),
+            Icon(Icons.logout_rounded, color: WindowsAppearance.foreground(Colors.redAccent)),
             SizedBox(width: 10),
             Text(
               'Logout Admin?',
-              style: TextStyle(
-                color: WindowsAppearance.resolve(Colors.white),
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white),
                 fontSize: 17,
                 fontWeight: FontWeight.w800,
               ),
@@ -5353,20 +5354,20 @@ Future<void> _printIdCard() async {
         ),
         content:  Text(
           'Logout karne ke baad App Lock dikhega.',
-          style: TextStyle(color: WindowsAppearance.resolve(Colors.white70)),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child:  Text(
               'Cancel',
-              style: TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
             ),
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              foregroundColor: WindowsAppearance.resolve(Colors.white),
+              backgroundColor: WindowsAppearance.primary,
+              foregroundColor: WindowsAppearance.onPrimary,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             icon: const Icon(Icons.logout_rounded, size: 18),
@@ -5458,19 +5459,19 @@ Future<void> _printIdCard() async {
 
     return Scaffold(
       key: _adminScaffoldKey,
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         automaticallyImplyLeading: false,
         toolbarHeight: 72,
         elevation: 0,
         scrolledUnderElevation: 0,
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B21)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF111B21)),
         surfaceTintColor: Colors.transparent,
         titleSpacing: 18,
         title: Row(
           children: [
             Material(
-              color: Colors.transparent,
+              color: WindowsAppearance.background(Colors.transparent),
               child: InkWell(
                 borderRadius: BorderRadius.circular(13),
                 onTap: () {
@@ -5512,15 +5513,15 @@ Future<void> _printIdCard() async {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF00A884), Color(0xFF00C896)],
+                    gradient: LinearGradient(
+                      colors: WindowsAppearance.gradientColors([Color(0xFF00A884), Color(0xFF00C896)]),
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(13),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF00A884).withOpacity(0.22),
+                        color: WindowsAppearance.shadow(const Color(0xFF00A884).withOpacity(0.22)),
                         blurRadius: 16,
                         offset: const Offset(0, 6),
                       ),
@@ -5528,7 +5529,7 @@ Future<void> _printIdCard() async {
                   ),
                   child:  Icon(
                     Icons.menu_rounded,
-                    color: WindowsAppearance.resolve(Colors.white),
+                    color: WindowsAppearance.foreground(Colors.white),
                     size: 25,
                   ),
                 ),
@@ -5544,8 +5545,8 @@ Future<void> _printIdCard() async {
                     'School Admin Console',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0.1,
@@ -5556,8 +5557,8 @@ Future<void> _printIdCard() async {
                     'Vidya Saarthi • School Management',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white38),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white38),
                       fontSize: 10.5,
                       fontWeight: FontWeight.w500,
                     ),
@@ -5587,15 +5588,15 @@ Future<void> _printIdCard() async {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.12),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.12)),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF00A884).withOpacity(0.28),
+                  color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.28)),
                 ),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.settings_rounded,
-                color: Color(0xFF00A884),
+                color: WindowsAppearance.foreground(Color(0xFF00A884)),
                 size: 21,
               ),
             ),
@@ -5612,7 +5613,7 @@ Future<void> _printIdCard() async {
             ..showSnackBar(
                SnackBar(
                 duration: Duration(seconds: 2),
-                backgroundColor: WindowsAppearance.resolve(Color(0xFF1F2C34)),
+                backgroundColor: WindowsAppearance.background(Color(0xFF1F2C34)),
                 content: Text(
                   'Login screen par jaane ke liye Settings se Logout karein.',
                 ),
@@ -5707,11 +5708,11 @@ Future<void> _printIdCard() async {
             ),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: const Color(0xFF00A884).withOpacity(0.16),
+              color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.16)),
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.22),
+                color: WindowsAppearance.shadow(Colors.black.withOpacity(0.22)),
                 blurRadius: 28,
                 offset: const Offset(0, 12),
               ),
@@ -5720,7 +5721,7 @@ Future<void> _printIdCard() async {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              const CustomPaint(
+              CustomPaint(
                 painter: _VidyaSaarthiWavePainter(),
               ),
 
@@ -5760,17 +5761,17 @@ Future<void> _printIdCard() async {
                     ),
                     borderRadius: BorderRadius.circular(21),
                     border: Border.all(
-                      color: const Color(0xFF23E4BD).withOpacity(0.66),
+                      color: WindowsAppearance.outline(const Color(0xFF23E4BD).withOpacity(0.66)),
                       width: 1.2,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF00D9A5).withOpacity(0.16),
+                        color: WindowsAppearance.shadow(const Color(0xFF00D9A5).withOpacity(0.16)),
                         blurRadius: 28,
                         spreadRadius: 1,
                       ),
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.25),
+                        color: WindowsAppearance.shadow(Colors.black.withOpacity(0.25)),
                         blurRadius: 18,
                         offset: const Offset(0, 8),
                       ),
@@ -5791,7 +5792,7 @@ Future<void> _printIdCard() async {
                               alignment: Alignment.centerLeft,
                               child: RichText(
                                 text: TextSpan(
-                                  style: TextStyle(
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
                                     fontSize: brandFontSize,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: -0.8,
@@ -5800,12 +5801,12 @@ Future<void> _printIdCard() async {
                                   children:  [
                                     TextSpan(
                                       text: 'Vidya ',
-                                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                     ),
                                     TextSpan(
                                       text: 'Saarthi',
-                                      style: TextStyle(
-                                        color: Color(0xFF17DFC0),
+                                      style: TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Color(0xFF17DFC0)),
                                       ),
                                     ),
                                   ],
@@ -5819,8 +5820,8 @@ Future<void> _printIdCard() async {
                               child: Text(
                                 'D I G I T A L   S C H O O L   C O N T R O L   H U B',
                                 maxLines: 1,
-                                style: TextStyle(
-                                  color: WindowsAppearance.resolve(Colors.white70),
+                                style: TextStyle(fontFamily: 'Segoe UI', 
+                                  color: WindowsAppearance.foreground(Colors.white70),
                                   fontSize: subtitleFontSize,
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: isPhone ? 0.6 : 1.25,
@@ -5844,12 +5845,12 @@ Future<void> _printIdCard() async {
                                     ),
                                   ),
                                 ),
-                                const Padding(
+                                Padding(
                                   padding: EdgeInsets.symmetric(horizontal: 11),
                                   child: Icon(
                                     Icons.school_rounded,
                                     size: 17,
-                                    color: Color(0xFF00E6B8),
+                                    color: WindowsAppearance.foreground(Color(0xFF00E6B8)),
                                   ),
                                 ),
                                 Expanded(
@@ -5902,7 +5903,7 @@ Future<void> _printIdCard() async {
                 ],
               ),
               border: Border.all(
-                color: const Color(0xFF00E6C0).withOpacity(0.35),
+                color: WindowsAppearance.outline(const Color(0xFF00E6C0).withOpacity(0.35)),
               ),
             ),
           ),
@@ -5911,7 +5912,7 @@ Future<void> _printIdCard() async {
             child: Icon(
               Icons.auto_stories_rounded,
               size: size * 0.66,
-              color: const Color(0xFF2BDCC1),
+              color: WindowsAppearance.foreground(const Color(0xFF2BDCC1)),
             ),
           ),
           Positioned(
@@ -5919,8 +5920,8 @@ Future<void> _printIdCard() async {
             child: Container(
               width: size * 0.18,
               height: size * 0.18,
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFC857),
+              decoration: BoxDecoration(
+                color: WindowsAppearance.background(Color(0xFFFFC857)),
                 shape: BoxShape.circle,
               ),
             ),
@@ -5932,16 +5933,16 @@ Future<void> _printIdCard() async {
               width: size * 0.34,
               height: size * 0.34,
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF0A2429)),
+                color: WindowsAppearance.background(const Color(0xFF0A2429)),
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: const Color(0xFF00E6C0).withOpacity(0.60),
+                  color: WindowsAppearance.outline(const Color(0xFF00E6C0).withOpacity(0.60)),
                 ),
               ),
               child: Icon(
                 Icons.school_rounded,
                 size: size * 0.20,
-                color: const Color(0xFF00E6C0),
+                color: WindowsAppearance.foreground(const Color(0xFF00E6C0)),
               ),
             ),
           ),
@@ -5973,11 +5974,11 @@ Future<void> _printIdCard() async {
         ),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: const Color(0xFF00A884).withOpacity(0.16),
+          color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.16)),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.22),
+            color: WindowsAppearance.shadow(Colors.black.withOpacity(0.22)),
             blurRadius: 28,
             offset: const Offset(0, 12),
           ),
@@ -5989,25 +5990,25 @@ Future<void> _printIdCard() async {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.13),
+              color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.13)),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: const Color(0xFF00A884).withOpacity(0.20),
+                color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.20)),
               ),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   Icons.verified_user_rounded,
-                  color: Color(0xFF00D9A5),
+                  color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                   size: 14,
                 ),
                 SizedBox(width: 6),
                 Text(
                   'ADMIN ACCESS',
-                  style: TextStyle(
-                    color: Color(0xFF00D9A5),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     fontSize: 9.5,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.7,
@@ -6024,8 +6025,8 @@ Future<void> _printIdCard() async {
               final schoolName = _schoolName(profile);
               return Text(
                 schoolName.isEmpty ? 'Welcome' : 'Welcome to $schoolName',
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white),
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
                   height: 1.2,
@@ -6038,8 +6039,8 @@ Future<void> _printIdCard() async {
             adminEmail,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style:  TextStyle(
-              color: WindowsAppearance.resolve(Colors.white60),
+            style:  TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white60),
               fontSize: 12,
               height: 1.4,
             ),
@@ -6047,8 +6048,8 @@ Future<void> _printIdCard() async {
           const SizedBox(height: 5),
           Text(
             dateText,
-            style:  TextStyle(
-              color: WindowsAppearance.resolve(Colors.white38),
+            style:  TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white38),
               fontSize: 10.5,
               fontWeight: FontWeight.w600,
             ),
@@ -6161,12 +6162,12 @@ Widget _buildOverviewCards() {
       width: width,
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF111B21)),
+        color: WindowsAppearance.background(const Color(0xFF111B21)),
         borderRadius: BorderRadius.circular(17),
         border: Border.all(
           color: onTap != null
               ? accent.withOpacity(0.28)
-              : WindowsAppearance.resolve(Colors.white).withOpacity(0.055),
+              : WindowsAppearance.outline(Colors.white).withOpacity(0.055),
         ),
       ),
       child: Row(
@@ -6179,7 +6180,7 @@ Widget _buildOverviewCards() {
               borderRadius: BorderRadius.circular(13),
               border: Border.all(color: accent.withOpacity(0.18)),
             ),
-            child: Icon(icon, color: accent, size: 21),
+            child: Icon(icon, color: WindowsAppearance.foreground(accent), size: 21),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -6190,8 +6191,8 @@ Widget _buildOverviewCards() {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -6201,8 +6202,8 @@ Widget _buildOverviewCards() {
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white38),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white38),
                     fontSize: 9.8,
                   ),
                 ),
@@ -6224,7 +6225,7 @@ Widget _buildOverviewCards() {
     if (onTap == null) return card;
 
     return Material(
-      color: Colors.transparent,
+      color: WindowsAppearance.background(Colors.transparent),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(17),
@@ -6251,7 +6252,7 @@ Widget _buildOverviewCards() {
                   icon: const Icon(Icons.close_rounded, size: 16),
                   label: const Text('Cancel Edit'),
                   style: TextButton.styleFrom(
-                    foregroundColor: Colors.redAccent,
+                    foregroundColor: WindowsAppearance.primary,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                 ),
@@ -6265,11 +6266,11 @@ Widget _buildOverviewCards() {
                     isExpanded: true,
                     value: _noticeCategory,
                     dropdownColor: WindowsAppearance.resolve(const Color(0xFF1B2A32)),
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: _inputDecoration('Notice Type').copyWith(
-                      prefixIcon: const Icon(
+                      prefixIcon: Icon(
                         Icons.category_outlined,
-                        color: Color(0xFF00A884),
+                        color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         size: 19,
                       ),
                     ),
@@ -6290,11 +6291,11 @@ Widget _buildOverviewCards() {
 
                   final title = TextField(
                     controller: _noticeTitleController,
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: _inputDecoration('Notice Title').copyWith(
-                      prefixIcon: const Icon(
+                      prefixIcon: Icon(
                         Icons.title_rounded,
-                        color: Color(0xFF00A884),
+                        color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         size: 19,
                       ),
                     ),
@@ -6324,14 +6325,14 @@ Widget _buildOverviewCards() {
                 controller: _noticeDescController,
                 minLines: 3,
                 maxLines: 5,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: _inputDecoration('Details / Instructions').copyWith(
                   alignLabelWithHint: true,
-                  prefixIcon: const Padding(
+                  prefixIcon: Padding(
                     padding: EdgeInsets.only(bottom: 54),
                     child: Icon(
                       Icons.notes_rounded,
-                      color: Color(0xFF00A884),
+                      color: WindowsAppearance.foreground(Color(0xFF00A884)),
                       size: 19,
                     ),
                   ),
@@ -6343,8 +6344,8 @@ Widget _buildOverviewCards() {
                 height: 46,
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.35),
+                    backgroundColor: WindowsAppearance.primary,
+                    disabledBackgroundColor: WindowsAppearance.disabledSurface,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -6356,14 +6357,14 @@ Widget _buildOverviewCards() {
                           height: 17,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: WindowsAppearance.resolve(Colors.white),
+                            color: WindowsAppearance.foreground(Colors.white),
                           ),
                         )
                       : Icon(
                           _editingNoticeId == null
                               ? Icons.send_rounded
                               : Icons.check_circle_outline_rounded,
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: null,
                           size: 18,
                         ),
                   label: Text(
@@ -6372,8 +6373,8 @@ Widget _buildOverviewCards() {
                         : (_editingNoticeId == null
                             ? 'Publish Notice'
                             : 'Update Notice'),
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: null,
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
                     ),
@@ -6397,10 +6398,10 @@ Widget _buildOverviewCards() {
                   padding: const EdgeInsets.all(12),
                   margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
-                    color: WindowsAppearance.resolve(const Color(0xFF0D171C)),
+                    color: WindowsAppearance.background(const Color(0xFF0D171C)),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: const Color(0xFF00A884).withOpacity(0.12),
+                      color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.12)),
                     ),
                   ),
                   child: Row(
@@ -6412,7 +6413,7 @@ Widget _buildOverviewCards() {
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: const Color(0xFF00A884),
+                            color: WindowsAppearance.outline(const Color(0xFF00A884)),
                             width: 1.5,
                           ),
                         ),
@@ -6421,10 +6422,10 @@ Widget _buildOverviewCards() {
                             _studentPhotoUrl!,
                             fit: BoxFit.cover,
 errorBuilder: (_, __, ___) =>  ColoredBox(
-                              color: WindowsAppearance.resolve(Color(0xFF162229)),
+                              color: WindowsAppearance.background(Color(0xFF162229)),
                               child: Icon(
                                 Icons.person_rounded,
-                                color: Color(0xFF00A884),
+                                color: WindowsAppearance.foreground(Color(0xFF00A884)),
                                 size: 27,
                               ),
                             ),
@@ -6442,8 +6443,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   : _nameController.text.trim(),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white),
+                              style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white),
                                 fontSize: 13,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -6451,17 +6452,17 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                             const SizedBox(height: 4),
                             Text(
                               '$_directoryClass • Roll ${_rollController.text.trim()}',
-                              style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white38),
+                              style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white38),
                                 fontSize: 10.5,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const Icon(
+                      Icon(
                         Icons.verified_rounded,
-                        color: Color(0xFF00A884),
+                        color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         size: 19,
                       ),
                     ],
@@ -6475,11 +6476,11 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   final classField = DropdownButtonFormField<String>(
                     value: _directoryClass,
                     dropdownColor: WindowsAppearance.resolve(const Color(0xFF1B2A32)),
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: _inputDecoration('Class').copyWith(
-                      prefixIcon: const Icon(
+                      prefixIcon: Icon(
                         Icons.school_outlined,
-                        color: Color(0xFF00A884),
+                        color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         size: 19,
                       ),
                     ),
@@ -6506,7 +6507,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   final rollField = TextField(
                     controller: _rollController,
                     keyboardType: TextInputType.number,
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     onChanged: (_) {
                       if (_studentPhotoUrl != null ||
                           _nameController.text.isNotEmpty ||
@@ -6519,9 +6520,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       }
                     },
                     decoration: _inputDecoration('Roll No').copyWith(
-                      prefixIcon: const Icon(
+                      prefixIcon: Icon(
                         Icons.numbers_rounded,
-                        color: Color(0xFF00A884),
+                        color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         size: 19,
                       ),
                     ),
@@ -6550,11 +6551,11 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               TextField(
                 controller: _nameController,
                 readOnly: true,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: _inputDecoration('Student Full Name').copyWith(
                   prefixIcon:  Icon(
                     Icons.person_outline_rounded,
-                    color: WindowsAppearance.resolve(Colors.white38),
+                    color: WindowsAppearance.foreground(Colors.white38),
                     size: 19,
                   ),
                 ),
@@ -6563,11 +6564,11 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               TextField(
                 controller: _parentContactController,
                 readOnly: true,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                 decoration: _inputDecoration('Parent Contact No').copyWith(
                   prefixIcon:  Icon(
                     Icons.phone_outlined,
-                    color: WindowsAppearance.resolve(Colors.white38),
+                    color: WindowsAppearance.foreground(Colors.white38),
                     size: 19,
                   ),
                 ),
@@ -6634,9 +6635,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   .snapshots(),
               builder: (context, snapshot) {WindowsAppearance.watch(context);
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
+                  return Center(
                     child: CircularProgressIndicator(
-                      color: Color(0xFF00A884),
+                      color: WindowsAppearance.foreground(Color(0xFF00A884)),
                       strokeWidth: 2.4,
                     ),
                   );
@@ -6671,17 +6672,17 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                     final accent = _adminCategoryColor(category);
 
                     return Material(
-                      color: Colors.transparent,
+                      color: WindowsAppearance.background(Colors.transparent),
                       child: InkWell(
                         onTap: () => _showNoticeDetailDialog(data),
                         borderRadius: BorderRadius.circular(14),
                         child: Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: WindowsAppearance.resolve(const Color(0xFF0D171C)),
+                            color: WindowsAppearance.background(const Color(0xFF0D171C)),
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
-                              color: WindowsAppearance.resolve(Colors.white).withOpacity(0.045),
+                              color: WindowsAppearance.outline(Colors.white).withOpacity(0.045),
                             ),
                           ),
                           child: Row(
@@ -6696,7 +6697,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 ),
                                 child: Icon(
                                   _adminCategoryIcon(category),
-                                  color: accent,
+                                  color: WindowsAppearance.foreground(accent),
                                   size: 19,
                                 ),
                               ),
@@ -6721,8 +6722,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                           ),
                                           child: Text(
                                             category,
-                                            style: TextStyle(
-                                              color: accent,
+                                            style: TextStyle(fontFamily: 'Segoe UI', 
+                                              color: WindowsAppearance.foreground(accent),
                                               fontSize: 9,
                                               fontWeight: FontWeight.w800,
                                             ),
@@ -6730,8 +6731,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                         ),
                                         Text(
                                           'Notice ${index + 1}',
-                                          style:  TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white24),
+                                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white24),
                                             fontSize: 8.8,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -6742,8 +6743,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     Text(data['title']?.toString() ?? 'Untitled Notice', translate: false,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style:  TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white),
+                                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white),
                                         fontSize: 12.5,
                                         fontWeight: FontWeight.w800,
                                         height: 1.25,
@@ -6753,8 +6754,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     Text(data['description']?.toString() ?? '', translate: false,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style:  TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white38),
+                                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white38),
                                         fontSize: 10.2,
                                         height: 1.4,
                                       ),
@@ -6764,10 +6765,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                               ),
                               PopupMenuButton<String>(
                                 tooltip: WindowsUiLanguage.translate('Notice Actions'),
-                                color: WindowsAppearance.resolve(const Color(0xFF1B2A32)),
+                                color: WindowsAppearance.foreground(const Color(0xFF1B2A32)),
                                 icon:  Icon(
                                   Icons.more_vert_rounded,
-                                  color: WindowsAppearance.resolve(Colors.white38),
+                                  color: WindowsAppearance.foreground(Colors.white38),
                                   size: 20,
                                 ),
                                 onSelected: (value) {
@@ -6784,9 +6785,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     value: 'preview',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.visibility_outlined, color: Color(0xFF00A884), size: 18),
+                                        Icon(Icons.visibility_outlined, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 18),
                                         SizedBox(width: 9),
-                                        Text('Preview', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+                                        Text('Preview', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
                                       ],
                                     ),
                                   ),
@@ -6794,9 +6795,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     value: 'edit',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.edit_outlined, color: Colors.blueAccent, size: 18),
+                                        Icon(Icons.edit_outlined, color: WindowsAppearance.foreground(Colors.blueAccent), size: 18),
                                         SizedBox(width: 9),
-                                        Text('Edit', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+                                        Text('Edit', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
                                       ],
                                     ),
                                   ),
@@ -6804,9 +6805,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     value: 'delete',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 18),
+                                        Icon(Icons.delete_outline_rounded, color: WindowsAppearance.foreground(Colors.redAccent), size: 18),
                                         SizedBox(width: 9),
-                                        Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                                        Text('Delete', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
                                       ],
                                     ),
                                   ),
@@ -6839,12 +6840,12 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF111B21)),
+        color: WindowsAppearance.background(const Color(0xFF111B21)),
         borderRadius: BorderRadius.circular(19),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.14),
+            color: WindowsAppearance.shadow(Colors.black.withOpacity(0.14)),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),
@@ -6864,7 +6865,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: accent.withOpacity(0.15)),
                 ),
-                child: Icon(icon, color: accent, size: 20),
+                child: Icon(icon, color: WindowsAppearance.foreground(accent), size: 20),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -6875,8 +6876,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
@@ -6886,8 +6887,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       subtitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white38),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white38),
                         fontSize: 9.8,
                         height: 1.3,
                       ),
@@ -6904,7 +6905,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
           const SizedBox(height: 15),
           Container(
             height: 1,
-            color: WindowsAppearance.resolve(Colors.white).withOpacity(0.045),
+            color: WindowsAppearance.background(Colors.white).withOpacity(0.045),
           ),
           const SizedBox(height: 15),
           child,
@@ -6924,9 +6925,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       return ElevatedButton.icon(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF00A884),
-          disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.30),
-          foregroundColor: WindowsAppearance.resolve(Colors.white),
+          backgroundColor: WindowsAppearance.primary,
+          disabledBackgroundColor: WindowsAppearance.disabledSurface,
+          foregroundColor: WindowsAppearance.onPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(11),
@@ -6935,7 +6936,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         icon: Icon(icon, size: 18),
         label: Text(
           label,
-          style: const TextStyle(
+          style: const TextStyle(fontFamily: 'Segoe UI', 
             fontSize: 11.5,
             fontWeight: FontWeight.w700,
           ),
@@ -6947,20 +6948,20 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       return TextButton.icon(
         onPressed: onPressed,
         style: TextButton.styleFrom(
-          foregroundColor: const Color(0xFF00D9A5),
-          backgroundColor: const Color(0xFF00A884).withOpacity(0.075),
+          foregroundColor: WindowsAppearance.primary,
+          backgroundColor: WindowsAppearance.primary,
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(11),
             side: BorderSide(
-              color: const Color(0xFF00A884).withOpacity(0.14),
+              color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.14)),
             ),
           ),
         ),
         icon: Icon(icon, size: 18),
         label: Text(
           label,
-          style: const TextStyle(
+          style: const TextStyle(fontFamily: 'Segoe UI', 
             fontSize: 11.5,
             fontWeight: FontWeight.w700,
           ),
@@ -6971,10 +6972,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
     return OutlinedButton.icon(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        foregroundColor: const Color(0xFF00D9A5),
+        foregroundColor: WindowsAppearance.primary,
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
         side: BorderSide(
-          color: const Color(0xFF00A884).withOpacity(0.38),
+          color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.38)),
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(11),
@@ -6983,7 +6984,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       icon: Icon(icon, size: 18),
       label: Text(
         label,
-        style: const TextStyle(
+        style: const TextStyle(fontFamily: 'Segoe UI', 
           fontSize: 11.5,
           fontWeight: FontWeight.w700,
         ),
@@ -7006,12 +7007,12 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               width: 62,
               height: 62,
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.08),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.08)),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 icon,
-                color: const Color(0xFF00A884),
+                color: WindowsAppearance.foreground(const Color(0xFF00A884)),
                 size: 27,
               ),
             ),
@@ -7019,8 +7020,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
             Text(
               title,
               textAlign: TextAlign.center,
-              style:  TextStyle(
-                color: WindowsAppearance.resolve(Colors.white70),
+              style:  TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white70),
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700,
               ),
@@ -7029,8 +7030,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style:  TextStyle(
-                color: WindowsAppearance.resolve(Colors.white30),
+              style:  TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white30),
                 fontSize: 10,
                 height: 1.4,
               ),
@@ -7044,14 +7045,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
   Color _adminCategoryColor(String category) {
     switch (category.toLowerCase()) {
       case 'holiday':
-        return Colors.orangeAccent;
+        return WindowsAppearance.foreground(Colors.orangeAccent);
       case 'exam':
-        return Colors.redAccent;
+        return WindowsAppearance.foreground(Colors.redAccent);
       case 'event':
-        return Colors.blueAccent;
+        return WindowsAppearance.foreground(Colors.blueAccent);
       case 'general':
       default:
-        return const Color(0xFF00A884);
+        return WindowsAppearance.foreground(const Color(0xFF00A884));
     }
   }
 
@@ -7076,7 +7077,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
     showDialog(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B21)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF111B21)),
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
@@ -7096,7 +7097,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
               ),
               child: Icon(
                 _adminCategoryIcon(category),
-                color: accent,
+                color: WindowsAppearance.foreground(accent),
                 size: 20,
               ),
             ),
@@ -7113,8 +7114,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                     ),
                     child: Text(
                       category,
-                      style: TextStyle(
-                        color: accent,
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(accent),
                         fontSize: 9.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -7122,8 +7123,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   ),
                   const SizedBox(height: 8),
                   Text(data['title']?.toString() ?? 'Notice', translate: false,
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
                     ),
@@ -7136,8 +7137,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: Text(data['description']?.toString() ?? '', translate: false,
-            style:  TextStyle(
-              color: WindowsAppearance.resolve(Colors.white70),
+            style:  TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white70),
               fontSize: 12,
               height: 1.6,
             ),
@@ -7146,10 +7147,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text(
+            child: Text(
               'Close',
-              style: TextStyle(
-                color: Color(0xFF00A884),
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Color(0xFF00A884)),
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -7162,12 +7163,12 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:  TextStyle(
-        color: WindowsAppearance.resolve(Colors.white30),
+      hintStyle:  TextStyle(fontFamily: 'Segoe UI', 
+        color: WindowsAppearance.foreground(Colors.white30),
         fontSize: 11.5,
       ),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF0D171C)),
+      fillColor: WindowsAppearance.background(const Color(0xFF0D171C)),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: 13,
         vertical: 13,
@@ -7175,13 +7176,13 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
         borderSide: BorderSide(
-          color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055),
+          color: WindowsAppearance.outline(Colors.white).withOpacity(0.055),
         ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
-        borderSide: const BorderSide(
-          color: Color(0xFF00A884),
+        borderSide: BorderSide(
+          color: WindowsAppearance.outline(Color(0xFF00A884)),
           width: 1.15,
         ),
       ),
@@ -7755,9 +7756,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return '$prefix${change.abs().toStringAsFixed(1)}%';
   }
 
-  Color _trendColor(String value) => value.startsWith('▼')
+  Color _trendColor(String value) => WindowsAppearance.foreground(value.startsWith('▼')
       ? Colors.redAccent
-      : const Color(0xFF00D9A5);
+      : const Color(0xFF00D9A5));
 
   Widget _metricCard({
     required double width,
@@ -7773,7 +7774,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       constraints: const BoxConstraints(minHeight: 100),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0D2027)),
+        color: WindowsAppearance.background(const Color(0xFF0D2027)),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withOpacity(.25)),
         boxShadow: [
@@ -7793,7 +7794,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               color: color.withOpacity(.13),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: WindowsAppearance.foreground(color), size: 22),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -7804,8 +7805,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white70),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white70),
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -7815,8 +7816,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
                   ),
@@ -7828,8 +7829,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white30),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white30),
                           fontSize: 8.5,
                         ),
                       ),
@@ -7837,7 +7838,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                     if (trend != '—')
                       Text(
                         trend,
-                        style: TextStyle(
+                        style: TextStyle(fontFamily: 'Segoe UI', 
                           color: _trendColor(trend),
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
@@ -7865,7 +7866,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(13, 12, 13, 10),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0D2027)),
+        color: WindowsAppearance.background(const Color(0xFF0D2027)),
         borderRadius: BorderRadius.circular(17),
         border: Border.all(color: color.withOpacity(.20)),
       ),
@@ -7881,7 +7882,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   color: color.withOpacity(.13),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: 18),
+                child: Icon(icon, color: WindowsAppearance.foreground(color), size: 18),
               ),
               const SizedBox(width: 9),
               Expanded(
@@ -7890,16 +7891,16 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   children: [
                     Text(
                       title,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 12.5,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     Text(
                       subtitle,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white38),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white38),
                         fontSize: 9,
                       ),
                     ),
@@ -7921,7 +7922,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                   ),
                   child: Text(
                     trend,
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color: _trendColor(trend),
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
@@ -7936,7 +7937,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
           SizedBox(height: 190, child: chart),
           if ((_chartMonths[title] ?? -1) >= 0 && _data != null)
             Text(_chartMonthSummary(title, _chartMonths[title]!), key: ValueKey('monthly-value-$title'),
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontWeight: FontWeight.w700)),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w700)),
           if (footer != null) ...[
             const SizedBox(height: 2),
             footer,
@@ -7968,9 +7969,9 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       for (var i = 0; i < 12; i++) PopupMenuItem(value: i, child: Text('${WindowsUiLanguage.translate(_monthLabels[i])} ${i + 1 < _academicYearRolloverMonth ? _selectedYear + 1 : _selectedYear}', translate: false)),
     ],
     child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-      decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF12313A)), borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF12313A)), borderRadius: BorderRadius.circular(8)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text((_chartMonths[chart] ?? -1) == -1 ? 'Monthly' : _monthLabels[_chartMonths[chart]!], style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontSize: 10)),
+        Text((_chartMonths[chart] ?? -1) == -1 ? 'Monthly' : _monthLabels[_chartMonths[chart]!], style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 10)),
         const Icon(Icons.keyboard_arrow_down_rounded, size: 16),
       ])));
   List<T> _chartValues<T>(String chart, List<T> values) {
@@ -7986,12 +7987,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
         Container(
           width: 8,
           height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          decoration: BoxDecoration(color: WindowsAppearance.background(color), shape: BoxShape.circle),
         ),
         const SizedBox(width: 5),
         Text(
           label,
-          style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 9),
+          style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 9),
         ),
       ],
     );
@@ -8049,13 +8050,13 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     final data = _data;
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF06151B)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF06151B)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF071A21)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF071A21)),
         elevation: 0,
         title: const Text(
           'Admin Analytics',
-          style: TextStyle(fontWeight: FontWeight.w800),
+          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
         ),
         actions: [
           IconButton(
@@ -8097,7 +8098,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                             ),
                             borderRadius: BorderRadius.circular(21),
                             border: Border.all(
-                              color: const Color(0xFF00D9A5).withOpacity(.22),
+                              color: WindowsAppearance.outline(const Color(0xFF00D9A5).withOpacity(.22)),
                             ),
                           ),
                           child: Row(
@@ -8106,12 +8107,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                 width: 54,
                                 height: 54,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF00A884).withOpacity(.14),
+                                  color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(.14)),
                                   borderRadius: BorderRadius.circular(15),
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.analytics_rounded,
-                                  color: Color(0xFF00D9A5),
+                                  color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                   size: 29,
                                 ),
                               ),
@@ -8122,8 +8123,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                   children: [
                                      Text(
                                       'School Analytics',
-                                      style: TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white),
+                                      style: TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white),
                                         fontSize: 24,
                                         fontWeight: FontWeight.w900,
                                       ),
@@ -8133,8 +8134,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                       schoolName.toUpperCase(),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style:  TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white54),
+                                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white54),
                                         fontSize: 10,
                                         letterSpacing: 1.3,
                                         fontWeight: FontWeight.w700,
@@ -8147,12 +8148,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                 child: DropdownButton<int>(
                                   value: _selectedYear,
                                   dropdownColor: WindowsAppearance.resolve(const Color(0xFF12272F)),
-                                  icon: const Icon(
+                                  icon: Icon(
                                     Icons.keyboard_arrow_down_rounded,
-                                    color: Color(0xFF00D9A5),
+                                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                   ),
-                                  style:  TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white),
+                                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white),
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -8189,15 +8190,15 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                                   width: 42,
                                   height: 42,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF00A884).withOpacity(.12),
+                                    color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(.12)),
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: const Color(0xFF00A884).withOpacity(.25),
+                                      color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(.25)),
                                     ),
                                   ),
-                                  child: const Icon(
+                                  child: Icon(
                                     Icons.settings_rounded,
-                                    color: Color(0xFF00D9A5),
+                                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                     size: 20,
                                   ),
                                 ),
@@ -8207,11 +8208,11 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                         ),
                         const SizedBox(height: 16),
                         if (_loading && data == null)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: 100),
                             child: Center(
                               child: CircularProgressIndicator(
-                                color: Color(0xFF00D9A5),
+                                color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                               ),
                             ),
                           )
@@ -8222,7 +8223,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                               child: Text(
                                 _error ?? 'Analytics data available nahi hai.',
                                 textAlign: TextAlign.center,
-                                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                               ),
                             ),
                           )
@@ -8236,8 +8237,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                             padding: const EdgeInsets.only(top: 12),
                             child: Text(
                               _error!,
-                              style: const TextStyle(
-                                color: Colors.orangeAccent,
+                              style: TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.orangeAccent),
                                 fontSize: 10,
                               ),
                             ),
@@ -8288,7 +8289,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Live student records',
               trend: _trend(data.admissionsByMonth),
               icon: Icons.groups_rounded,
-              color: const Color(0xFF00D9D0),
+              color: WindowsAppearance.foreground(const Color(0xFF00D9D0)),
             ),
             _metricCard(
               width: width,
@@ -8297,7 +8298,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Teacher directory',
               trend: '—',
               icon: Icons.person_rounded,
-              color: Colors.purpleAccent,
+              color: WindowsAppearance.foreground(Colors.purpleAccent),
             ),
             _metricCard(
               width: width,
@@ -8306,7 +8307,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Fee payments recorded',
               trend: _trend(data.feesByMonth),
               icon: Icons.account_balance_wallet_rounded,
-              color: Colors.greenAccent,
+              color: WindowsAppearance.foreground(Colors.greenAccent),
             ),
             _metricCard(
               width: width,
@@ -8315,7 +8316,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Expense entries recorded',
               trend: _trend(data.expensesByMonth),
               icon: Icons.monetization_on_rounded,
-              color: Colors.amberAccent,
+              color: WindowsAppearance.foreground(Colors.amberAccent),
             ),
             _metricCard(
               width: width,
@@ -8324,7 +8325,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Exam results',
               trend: _trend(data.passFailByMonth.map((e) => e.pass).toList()),
               icon: Icons.school_rounded,
-              color: const Color(0xFF00D9A5),
+              color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
             ),
             _metricCard(
               width: width,
@@ -8333,7 +8334,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Exam results',
               trend: _trend(data.passFailByMonth.map((e) => e.fail).toList()),
               icon: Icons.school_outlined,
-              color: Colors.redAccent,
+              color: WindowsAppearance.foreground(Colors.redAccent),
             ),
             _metricCard(
               width: width,
@@ -8342,7 +8343,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Attendance records',
               trend: _trend(data.attendanceTrend),
               icon: Icons.person_pin_circle_rounded,
-              color: const Color(0xFF69C2FF),
+              color: WindowsAppearance.foreground(const Color(0xFF69C2FF)),
             ),
             _metricCard(
               width: width,
@@ -8351,7 +8352,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
               subtitle: 'Attendance records',
               trend: '—',
               icon: Icons.groups_rounded,
-              color: const Color(0xFF4D86FF),
+              color: WindowsAppearance.foreground(const Color(0xFF4D86FF)),
             ),
           ],
         );
@@ -8378,12 +8379,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 title: 'Student Attendance Trend',
                 subtitle: 'Monthly student attendance',
                 icon: Icons.groups_rounded,
-                color: const Color(0xFF00D9D0),
+                color: WindowsAppearance.foreground(const Color(0xFF00D9D0)),
                 trend: _trend(data.attendanceTrend),
                 chart: _AnalyticsLineChart(
                   values: _chartValues('Student Attendance Trend', data.attendanceTrend),
                   labels: _chartLabels('Student Attendance Trend'),
-                  color: const Color(0xFF16D8E4),
+                  color: WindowsAppearance.foreground(const Color(0xFF16D8E4)),
                   percent: true,
                 ),
               ),
@@ -8394,12 +8395,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 title: 'Monthly Fees Collection',
                 subtitle: 'Student fee payments',
                 icon: Icons.account_balance_wallet_rounded,
-                color: Colors.greenAccent,
+                color: WindowsAppearance.foreground(Colors.greenAccent),
                 trend: _trend(data.feesByMonth),
                 chart: _AnalyticsBarChart(
                   values: _chartValues('Monthly Fees Collection', data.feesByMonth),
                   labels: _chartLabels('Monthly Fees Collection'),
-                  color: const Color(0xFF24D5BE),
+                  color: WindowsAppearance.foreground(const Color(0xFF24D5BE)),
                   money: true,
                 ),
               ),
@@ -8410,12 +8411,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 title: 'Monthly School Expenses',
                 subtitle: 'Google Drive expense entries',
                 icon: Icons.monetization_on_rounded,
-                color: Colors.amberAccent,
+                color: WindowsAppearance.foreground(Colors.amberAccent),
                 trend: _trend(data.expensesByMonth),
                 chart: _AnalyticsBarChart(
                   values: _chartValues('Monthly School Expenses', data.expensesByMonth),
                   labels: _chartLabels('Monthly School Expenses'),
-                  color: Colors.orangeAccent,
+                  color: WindowsAppearance.foreground(Colors.orangeAccent),
                   money: true,
                 ),
               ),
@@ -8426,7 +8427,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 title: 'Pass vs Fail Trend',
                 subtitle: 'Monthly exam results',
                 icon: Icons.bar_chart_rounded,
-                color: Colors.orangeAccent,
+                color: WindowsAppearance.foreground(Colors.orangeAccent),
                 trend: _trend(
                   data.passFailByMonth.map((e) => e.pass).toList(),
                 ),
@@ -8450,12 +8451,12 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 title: 'New Admissions',
                 subtitle: 'Monthly admission records',
                 icon: Icons.person_add_alt_1_rounded,
-                color: const Color(0xFF00B7FF),
+                color: WindowsAppearance.foreground(const Color(0xFF00B7FF)),
                 trend: _trend(data.admissionsByMonth),
                 chart: _AnalyticsLineChart(
                   values: _chartValues('New Admissions', data.admissionsByMonth),
                   labels: _chartLabels('New Admissions'),
-                  color: const Color(0xFF28A9F0),
+                  color: WindowsAppearance.foreground(const Color(0xFF28A9F0)),
                 ),
               ),
             ),
@@ -8485,7 +8486,7 @@ class _AnalyticsLineChart extends StatelessWidget {
       painter: _AnalyticsLinePainter(
         values: values,
         labels: labels,
-        color: color,
+        color: WindowsAppearance.foreground(color),
         percent: percent,
       ),
       child: const SizedBox.expand(),
@@ -8512,7 +8513,7 @@ class _AnalyticsBarChart extends StatelessWidget {
       painter: _AnalyticsBarPainter(
         values: values,
         labels: labels,
-        color: color,
+        color: WindowsAppearance.foreground(color),
         money: money,
       ),
       child: const SizedBox.expand(),
@@ -8540,8 +8541,8 @@ class _AnalyticsPassFailChart extends StatelessWidget {
 
 abstract class _AnalyticsPainterBase extends CustomPainter {
   static const Color gridColor = Color(0x263A7B86);
-  static const TextStyle axisStyle = TextStyle(
-    color: Colors.white54,
+  static TextStyle get axisStyle => TextStyle(fontFamily: 'Segoe UI', 
+    color: WindowsAppearance.foreground(Colors.white54),
     fontSize: 8,
   );
 
@@ -8955,8 +8956,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     final schoolLongitude = double.tryParse(_schoolLongitudeController.text.trim());
     final attendanceRadius = parseSchoolAttendanceRadius(_attendanceRadiusController.text.trim());
     if (attendanceRadius == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        backgroundColor: Colors.orangeAccent,
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
         content: Text('Attendance range 25 se 200 metre ke beech select karein.')));
       return;
     }
@@ -8966,8 +8967,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         schoolLatitude < -90 || schoolLatitude > 90 ||
         schoolLongitude < -180 || schoolLongitude > 180) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
           content: Text('Valid School Latitude aur Longitude required hai.'),
         ),
       );
@@ -8976,8 +8977,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
 
     if (schoolName.isEmpty || principalName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
           content: Text('School Name aur Principal Name required hai.'),
         ),
       );
@@ -9042,8 +9043,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
           content: Text(
             'School settings saved on this PC. Cloud sync pending.',
           ),
@@ -9057,7 +9058,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('School Settings save error: $e'),
         ),
       );
@@ -9075,9 +9076,9 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF111B21)),
+        color: WindowsAppearance.background(const Color(0xFF111B21)),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Row(
         children: [
@@ -9086,7 +9087,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
             height: 74,
             padding: const EdgeInsets.all(5),
             decoration: BoxDecoration(
-              color: WindowsAppearance.resolve(Colors.white),
+              color: WindowsAppearance.background(Colors.white),
               borderRadius: BorderRadius.circular(14),
             ),
             child: ClipRRect(
@@ -9098,13 +9099,13 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                           currentUrl,
                           fallback: Icon(
                             icon,
-                            color: const Color(0xFF00A884),
+                            color: WindowsAppearance.foreground(const Color(0xFF00A884)),
                             size: 34,
                           ),
                         )
                       : Icon(
                           icon,
-                          color: const Color(0xFF00A884),
+                          color: WindowsAppearance.foreground(const Color(0xFF00A884)),
                           size: 34,
                         ),
             ),
@@ -9116,8 +9117,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
               children: [
                 Text(
                   title,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontWeight: FontWeight.w800,
                     fontSize: 13,
                   ),
@@ -9125,8 +9126,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white38),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white38),
                     fontSize: 10,
                     height: 1.35,
                   ),
@@ -9152,21 +9153,21 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   InputDecoration _field(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-      prefixIcon: Icon(icon, color: const Color(0xFF00A884)),
+      labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+      prefixIcon: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884))),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+      fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
         borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
-        borderSide: BorderSide(color: WindowsAppearance.resolve(Colors.white).withOpacity(.07)),
+        borderSide: BorderSide(color: WindowsAppearance.outline(Colors.white).withOpacity(.07)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
-        borderSide: const BorderSide(color: Color(0xFF00A884)),
+        borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF00A884))),
       ),
     );
   }
@@ -9174,13 +9175,13 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         elevation: 0,
         title: const Text(
           'School Settings',
-          style: TextStyle(fontWeight: FontWeight.w800),
+          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
         ),
         actions: [
           IconButton(
@@ -9191,8 +9192,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
         ],
       ),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          ? Center(
+              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
             )
           : SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 30),
@@ -9211,14 +9212,14 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                           ),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: const Color(0xFF00A884).withOpacity(.20),
+                            color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(.20)),
                           ),
                         ),
                         child:  Row(
                           children: [
                             Icon(
                               Icons.school_rounded,
-                              color: Color(0xFF00D9A5),
+                              color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                               size: 30,
                             ),
                             SizedBox(width: 12),
@@ -9228,8 +9229,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                 children: [
                                   Text(
                                     'Reusable School Identity',
-                                    style: TextStyle(
-                                      color: WindowsAppearance.resolve(Colors.white),
+                                    style: TextStyle(fontFamily: 'Segoe UI', 
+                                      color: WindowsAppearance.foreground(Colors.white),
                                       fontSize: 18,
                                       fontWeight: FontWeight.w900,
                                     ),
@@ -9237,8 +9238,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   SizedBox(height: 4),
                                   Text(
                                     'Details and images save on this PC immediately. Background sync sends them to this school’s connected Drive.',
-                                    style: TextStyle(
-                                      color: WindowsAppearance.resolve(Colors.white54),
+                                    style: TextStyle(fontFamily: 'Segoe UI', 
+                                      color: WindowsAppearance.foreground(Colors.white54),
                                       fontSize: 11,
                                       height: 1.4,
                                     ),
@@ -9252,7 +9253,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                       const SizedBox(height: 16),
                       TextField(
                         controller: _schoolNameController,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _field(
                           'School Name',
                           Icons.account_balance_rounded,
@@ -9261,7 +9262,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _principalNameController,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _field(
                           'School Principal Name',
                           Icons.person_rounded,
@@ -9271,7 +9272,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                       TextField(
                         controller: _schoolContactController,
                         keyboardType: TextInputType.phone,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _field(
                           'School Contact No.',
                           Icons.phone_rounded,
@@ -9339,24 +9340,24 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF111B21)),
+                          color: WindowsAppearance.background(const Color(0xFF111B21)),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFF69C2FF).withOpacity(.20)),
+                          border: Border.all(color: WindowsAppearance.outline(const Color(0xFF69C2FF).withOpacity(.20))),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                              Row(
                               children: [
-                                Icon(Icons.location_on_rounded, color: Color(0xFF69C2FF)),
+                                Icon(Icons.location_on_rounded, color: WindowsAppearance.foreground(Color(0xFF69C2FF))),
                                 SizedBox(width: 9),
-                                Text('School Location & Attendance Geofence', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.w900)),
+                                Text('School Location & Attendance Geofence', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w900)),
                               ],
                             ),
                             const SizedBox(height: 6),
                              Text(
                               'Student/Teacher QR attendance tabhi accept hogi jab device configured school location ke radius ke andar ho.',
-                              style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 10.5, height: 1.4),
+                              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 10.5, height: 1.4),
                             ),
                             const SizedBox(height: 12),
                             Row(
@@ -9365,7 +9366,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   child: TextField(
                                     controller: _schoolLatitudeController,
                                     keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                     decoration: _field('Latitude', Icons.my_location_rounded),
                                   ),
                                 ),
@@ -9374,7 +9375,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   child: TextField(
                                     controller: _schoolLongitudeController,
                                     keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                     decoration: _field('Longitude', Icons.explore_rounded),
                                   ),
                                 ),
@@ -9385,7 +9386,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                     controller: _attendanceRadiusController,
                                     enabled: !_saving,
                                     keyboardType: TextInputType.number,
-                                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                     decoration: _field('Range (25–200 m)', Icons.radar_rounded),
                                   ),
                                 ),
@@ -9407,8 +9408,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                             const SizedBox(height: 8),
                              Text(
                               'Google Maps par school ki exact location select karein. School apni attendance range 25–200 metre choose kar sakta hai. Save karne par selected range apply hogi.',
-                              style: TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white38),
+                              style: TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white38),
                                 fontSize: 10,
                                 height: 1.35,
                               ),
@@ -9421,21 +9422,21 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF111B21)),
+                          color: WindowsAppearance.background(const Color(0xFF111B21)),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.language_rounded, color: Color(0xFF00D9A5)),
+                            Icon(Icons.language_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5))),
                             const SizedBox(width: 10),
                              Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Windows App Language', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.w900)),
+                                  Text('Windows App Language', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w900)),
                                   SizedBox(height: 3),
-                                  Text('English • Hindi • Bengali • Assamese', style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10)),
+                                  Text('English • Hindi • Bengali • Assamese', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10)),
                                 ],
                               ),
                             ),
@@ -9464,8 +9465,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                         const SizedBox(height: 12),
                         Text(
                           _error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.redAccent),
                             fontSize: 11,
                           ),
                         ),
@@ -9476,8 +9477,8 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                         height: 50,
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF00A884),
-                            foregroundColor: WindowsAppearance.resolve(Colors.white),
+                            backgroundColor: WindowsAppearance.primary,
+                            foregroundColor: WindowsAppearance.onPrimary,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(13),
                             ),
@@ -9489,7 +9490,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                                   height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: WindowsAppearance.resolve(Colors.white),
+                                    color: WindowsAppearance.foreground(Colors.white),
                                   ),
                                 )
                               : const Icon(Icons.cloud_upload_rounded),
@@ -9497,7 +9498,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                             _saving
                                 ? 'Saving to Google Drive...'
                                 : 'SAVE SCHOOL SETTINGS',
-                            style: const TextStyle(
+                            style: const TextStyle(fontFamily: 'Segoe UI', 
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -9519,15 +9520,15 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         titleSpacing: 6,
         title:  Text(
           'Settings',
-          style: TextStyle(
-            color: WindowsAppearance.resolve(Colors.white),
+          style: TextStyle(fontFamily: 'Segoe UI', 
+            color: WindowsAppearance.foreground(Colors.white),
             fontSize: 18,
             fontWeight: FontWeight.w700,
           ),
@@ -9610,7 +9611,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _academicYearRolloverMonth = month);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             'Academic year ab ${month == 1 ? 'January' : 'April'} se change hoga.',
           ),
@@ -9620,7 +9621,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Academic year setting save error: $e'),
         ),
       );
@@ -9650,8 +9651,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
 
     if (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Kripya valid Gmail ID daalein.'),
         ),
       );
@@ -9661,8 +9662,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     if (scriptUrl.isEmpty ||
         !scriptUrl.startsWith('https://script.google.com/')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Kripya valid Google Apps Script Web App URL daalein.'),
         ),
       );
@@ -9687,8 +9688,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
           content: Text('Google Drive configuration save ho gayi!'),
         ),
       );
@@ -9697,7 +9698,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Error: $e'),
         ),
       );
@@ -9708,31 +9709,31 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title:  Row(
           children: [
-            Icon(Icons.link_off_rounded, color: Colors.orangeAccent),
+            Icon(Icons.link_off_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
             SizedBox(width: 10),
             Text(
               'Change Drive Account?',
-              style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17),
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17),
             ),
           ],
         ),
         content:  Text(
           'Current Google Drive / Apps Script configuration remove ho jayegi. Student records delete nahi honge.',
-          style: TextStyle(color: WindowsAppearance.resolve(Colors.white70), height: 1.45),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), height: 1.45),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+            child:  Text('Cancel', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey))),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent,
-              foregroundColor: Colors.black,
+              backgroundColor: WindowsAppearance.primary,
+              foregroundColor: WindowsAppearance.onPrimary,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Continue'),
@@ -9759,8 +9760,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
           content: Text('Google Drive configuration remove ho gayi.'),
         ),
       );
@@ -9769,7 +9770,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Error: $e'),
         ),
       );
@@ -9844,18 +9845,18 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             }
 
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
               title:  Row(
                 children: [
-                  Icon(Icons.badge_rounded, color: Color(0xFF00D9A5)),
+                  Icon(Icons.badge_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5))),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Activate TEST Student UID?',
-                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17),
                     ),
                   ),
                 ],
@@ -9870,8 +9871,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
                       'TEST UID activate hone par existing students ko Class 1 → Class 12 aur Roll No order me permanent TEST UID assign hoga. '
                       'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white70),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white70),
                         fontSize: 12,
                         height: 1.5,
                       ),
@@ -9881,17 +9882,17 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.orangeAccent.withOpacity(0.08),
+                        color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.08)),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: Colors.orangeAccent.withOpacity(0.25),
+                          color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.25)),
                         ),
                       ),
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
                             : 'Verification time complete. Ab App Lock Password enter karein.',
-                        style: TextStyle(
+                        style: TextStyle(fontFamily: 'Segoe UI', 
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
                               : const Color(0xFF00D9A5),
@@ -9905,17 +9906,17 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                       controller: passwordController,
                       enabled: secondsLeft == 0,
                       obscureText: true,
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
                         labelText: 'App Lock Password',
-                        labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-                        prefixIcon: const Icon(
+                        labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+                        prefixIcon: Icon(
                           Icons.lock_outline_rounded,
-                          color: Color(0xFF00A884),
+                          color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         ),
                         filled: true,
-                        fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                        fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
@@ -9930,13 +9931,13 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                   onPressed: () => Navigator.pop(dialogContext),
                   child:  Text(
                     'Cancel',
-                    style: TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                   ),
                 ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: WindowsAppearance.resolve(Colors.white),
+                    backgroundColor: WindowsAppearance.primary,
+                    foregroundColor: WindowsAppearance.onPrimary,
                   ),
                   onPressed: secondsLeft == 0 &&
                           passwordController.text.trim().isNotEmpty
@@ -9986,7 +9987,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       } on FormatException catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: Colors.redAccent,
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text(e.message.toString()),
           ),
         );
@@ -10113,7 +10114,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             missing.isEmpty
                 ? 'TEST Student UID ON ho gaya. Sab existing students ke UID pehle se assigned hain.'
@@ -10126,7 +10127,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
                 ? 'App Lock Password galat hai.'
@@ -10139,7 +10140,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID activation error: $e'),
         ),
       );
@@ -10170,7 +10171,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID OFF error: $e'),
         ),
       );
@@ -10195,7 +10196,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID setting save error: $e'),
         ),
       );
@@ -10251,9 +10252,9 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
       ),
       child: Row(
         children: [
@@ -10263,8 +10264,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    color: enabled ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.resolve(Colors.white30),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: enabled ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.foreground(Colors.white30),
                     fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -10272,8 +10273,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    color: enabled ? WindowsAppearance.resolve(Colors.white38) : WindowsAppearance.resolve(Colors.white24),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: enabled ? WindowsAppearance.foreground(Colors.white38) : WindowsAppearance.foreground(Colors.white24),
                     fontSize: 10,
                     height: 1.35,
                   ),
@@ -10284,7 +10285,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           const SizedBox(width: 12),
           Switch(
             value: value,
-            activeColor: const Color(0xFF00D9A5),
+            activeColor: WindowsAppearance.primary,
             onChanged: enabled ? onChanged : null,
           ),
         ],
@@ -10306,13 +10307,13 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           Container(
             width: 6,
             height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: WindowsAppearance.background(color), shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
           Text(
             text,
-            style: TextStyle(
-              color: color,
+            style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(color),
               fontSize: 9,
               fontWeight: FontWeight.w800,
             ),
@@ -10332,9 +10333,9 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.05)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.05)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -10343,10 +10344,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: const Color(0xFF4DA3FF).withOpacity(0.09),
+              color: WindowsAppearance.background(const Color(0xFF4DA3FF).withOpacity(0.09)),
               borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(icon, color: const Color(0xFF4DA3FF), size: 17),
+            child: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF4DA3FF)), size: 17),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -10355,8 +10356,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
               children: [
                 Text(
                   label,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white38),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white38),
                     fontSize: 9.5,
                   ),
                 ),
@@ -10364,16 +10365,16 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 selectable
                     ? SelectableText(
                         value,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white70),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white70),
                           fontSize: 11.5,
                           height: 1.35,
                         ),
                       )
                     : Text(
                         value,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -10389,18 +10390,18 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   InputDecoration _modernInputDecoration(String hint, IconData icon) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 12),
-      prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
+      hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 12),
+      prefixIcon: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884)), size: 19),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+      fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.06)),
+        borderSide: BorderSide(color: WindowsAppearance.outline(Colors.white).withOpacity(0.06)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF00A884)),
+        borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF00A884))),
       ),
     );
   }
@@ -10575,18 +10576,18 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 
   Color _statusColor(String status) {
-    if (status == 'PAID') return const Color(0xFF00A884);
-    if (status == 'PARTIAL') return Colors.orangeAccent;
-    return Colors.redAccent;
+    if (status == 'PAID') return WindowsAppearance.foreground(const Color(0xFF00A884));
+    if (status == 'PARTIAL') return WindowsAppearance.foreground(Colors.orangeAccent);
+    return WindowsAppearance.foreground(Colors.redAccent);
   }
 
   InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-      prefixIcon: Icon(icon, color: const Color(0xFF00A884)),
+      labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+      prefixIcon: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884))),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+      fillColor: WindowsAppearance.background(const Color(0xFF172229)),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide.none,
@@ -10604,7 +10605,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
       width: 185,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withOpacity(0.30)),
       ),
@@ -10617,7 +10618,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
               color: color.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color),
+            child: Icon(icon, color: WindowsAppearance.foreground(color)),
           ),
           const SizedBox(width: 11),
           Expanded(child: Column(
@@ -10625,15 +10626,15 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
             children: [
               Text(
                 '$count',
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white),
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               Text(
                 title,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 11),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 11),
               ),
             ],
           )),
@@ -10700,8 +10701,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     if (studentClass.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Student class missing hai.'),
         ),
       );
@@ -10785,7 +10786,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Fee settings load error: $e'),
         ),
       );
@@ -10808,17 +10809,17 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title:  Row(
           children: [
-            Icon(Icons.help_outline_rounded, color: Colors.orangeAccent),
+            Icon(Icons.help_outline_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
             SizedBox(width: 10),
-            Text('Are you sure?', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+            Text('Are you sure?', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
           ],
         ),
         content: Text(
           '$studentName\n$studentClass • Roll $roll\n${_monthName(_selectedMonth)}\n\nCollect ${_money(amount)} via $_paymentMode?',
-          style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), height: 1.5),
+          style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), height: 1.5),
         ),
         actions: [
           TextButton(
@@ -10826,9 +10827,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00A884)),
+            style: ElevatedButton.styleFrom(backgroundColor: WindowsAppearance.primary),
             onPressed: () => Navigator.pop(ctx, true),
-            child:  Text('Yes, Collect', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+            child:  Text('Yes, Collect', style: TextStyle(fontFamily: 'Segoe UI', color: null)),
           ),
         ],
       ); },
@@ -10897,8 +10898,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     if (_selectedFeeHeads.isEmpty || expected <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.orangeAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
           content: Text('Kam se kam ek fee item tick karein aur fee amount set karein.'),
         ),
       );
@@ -10908,7 +10909,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     if (amount <= 0 || amount > remainingBefore) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.orangeAccent,
+          backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
           content: Text('Amount 1 se ${_money(remainingBefore)} ke beech hona chahiye.'),
         ),
       );
@@ -11062,7 +11063,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             status == 'PAID'
                 ? 'Payment complete. Current month Collect button lock ho gaya.'
@@ -11080,7 +11081,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       setState(() => _isSavingPayment = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Payment save error: $e'),
         ),
       );
@@ -11189,7 +11190,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
         decoration: BoxDecoration(
-          color: WindowsAppearance.resolve(const Color(0xFF14242C)),
+          color: WindowsAppearance.background(const Color(0xFF14242C)),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: color.withOpacity(0.22)),
         ),
@@ -11197,8 +11198,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           children: [
             Text(
               _money(amount),
-              style: TextStyle(
-                color: color,
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(color),
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
               ),
@@ -11206,7 +11207,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             const SizedBox(height: 3),
             Text(
               label,
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 10.5),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 10.5),
             ),
           ],
         ),
@@ -11237,20 +11238,20 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0E1B22)),
+        color: WindowsAppearance.background(const Color(0xFF0E1B22)),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.receipt_long_rounded, color: Color(0xFF38A8FF), size: 21),
+              Icon(Icons.receipt_long_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
               const SizedBox(width: 8),
                Text(
                 'Fee Structure',
-                style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -11261,9 +11262,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           : 'Is class ka fee structure Settings me configure nahi hai.'
                       : 'Student select hone tak amounts ₹0 rahenge.',
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: settingsReady || !studentSelected
-                        ? WindowsAppearance.resolve(Colors.white38)
+                        ? WindowsAppearance.foreground(Colors.white38)
                         : Colors.orangeAccent,
                     fontSize: 9.5,
                   ),
@@ -11277,7 +11278,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     height: 30,
                     child: Checkbox(
                       value: allSelected,
-                      activeColor: const Color(0xFF00A884),
+                      activeColor: WindowsAppearance.primary,
                       visualDensity: VisualDensity.compact,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onChanged: canSelectAll
@@ -11300,8 +11301,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ),
                   Text(
                     'Select All',
-                    style: TextStyle(
-                      color: canSelectAll ? WindowsAppearance.resolve(Colors.white70) : WindowsAppearance.resolve(Colors.white30),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: canSelectAll ? WindowsAppearance.foreground(Colors.white70) : WindowsAppearance.foreground(Colors.white30),
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -11351,14 +11352,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: WindowsAppearance.resolve(const Color(0xFF172932)),
+              color: WindowsAppearance.background(const Color(0xFF172932)),
               borderRadius: BorderRadius.circular(8),
             ),
             child:  Row(
               children: [
-                SizedBox(width: 44, child: Text('Select', style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 10))),
-                Expanded(child: Text('Fee Type', style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 10))),
-                SizedBox(width: 120, child: Text('Amount (₹)', style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 10))),
+                SizedBox(width: 44, child: Text('Select', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 10))),
+                Expanded(child: Text('Fee Type', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 10))),
+                SizedBox(width: 120, child: Text('Amount (₹)', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 10))),
               ],
             ),
           ),
@@ -11367,7 +11368,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             height: 255,
             child: ListView.separated(
               itemCount: _feeHeads.length,
-              separatorBuilder: (_, __) =>  Divider(height: 1, color: WindowsAppearance.resolve(Colors.white10)),
+              separatorBuilder: (_, __) =>  Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
               itemBuilder: (context, index) {
                 final head = _feeHeads[index];
                 final amount = studentSelected && settingsReady
@@ -11391,8 +11392,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         width: 44,
                         child: Checkbox(
                           value: checked,
-                          activeColor: const Color(0xFF00A884),
-                          side: BorderSide(color: configured ? WindowsAppearance.resolve(Colors.white54) : WindowsAppearance.resolve(Colors.white12)),
+                          activeColor: WindowsAppearance.primary,
+                          side: BorderSide(color: configured ? WindowsAppearance.outline(Colors.white54) : WindowsAppearance.outline(Colors.white12)),
                           onChanged: canToggle
                               ? (value) {
                                   setState(() {
@@ -11413,8 +11414,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         child: Text(
                           head,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: configured ? WindowsAppearance.resolve(Colors.white70) : WindowsAppearance.resolve(Colors.white30),
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: configured ? WindowsAppearance.foreground(Colors.white70) : WindowsAppearance.foreground(Colors.white30),
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -11426,14 +11427,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         alignment: Alignment.centerLeft,
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF12242D)),
+                          color: WindowsAppearance.background(const Color(0xFF12242D)),
                           borderRadius: BorderRadius.circular(7),
-                          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Text(
                           amount > 0 ? amount.toStringAsFixed(0) : '0',
-                          style: TextStyle(
-                            color: amount > 0 ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white30),
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: amount > 0 ? const Color(0xFF00D9A5) : WindowsAppearance.foreground(Colors.white30),
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                           ),
@@ -11471,20 +11472,20 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0E1B22)),
+        color: WindowsAppearance.background(const Color(0xFF0E1B22)),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
            Row(
             children: [
-              Icon(Icons.account_balance_wallet_outlined, color: Color(0xFF38A8FF), size: 21),
+              Icon(Icons.account_balance_wallet_outlined, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
               SizedBox(width: 8),
               Text(
                 'Payment Details',
-                style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
               ),
             ],
           ),
@@ -11494,19 +11495,19 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               _amountSummaryBox(
                 label: 'Total Fee',
                 amount: studentSelected ? expected : 0,
-                color: const Color(0xFF00D9A5),
+                color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
               ),
               const SizedBox(width: 8),
               _amountSummaryBox(
                 label: 'Amount Paid',
                 amount: studentSelected ? paid : 0,
-                color: const Color(0xFF00D9A5),
+                color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
               ),
               const SizedBox(width: 8),
               _amountSummaryBox(
                 label: 'Remaining Due',
                 amount: studentSelected ? remaining : 0,
-                color: remaining > 0 ? Colors.redAccent : const Color(0xFF00D9A5),
+                color: WindowsAppearance.foreground(remaining > 0 ? Colors.redAccent : const Color(0xFF00D9A5)),
               ),
             ],
           ),
@@ -11515,13 +11516,13 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             controller: _receivedAmountController,
             enabled: studentSelected && settingsReady && !alreadyPaid && !_isSavingPayment,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.w700),
+            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w700),
             decoration: _inputDecoration('Received Amount (Partial/Full)', Icons.currency_rupee_rounded),
           ),
           const SizedBox(height: 14),
            Text(
             'Payment Mode',
-            style: TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontWeight: FontWeight.w800, fontSize: 12),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w800, fontSize: 12),
           ),
           const SizedBox(height: 8),
           Row(
@@ -11540,12 +11541,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.orangeAccent.withOpacity(0.08),
+                color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.08)),
                 borderRadius: BorderRadius.circular(9),
               ),
               child: Text(
                 _activeFeeSettingsMessage ?? 'Fixed fee structure Settings me save karein.',
-                style: const TextStyle(color: Colors.orangeAccent, fontSize: 10.5),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent), fontSize: 10.5),
               ),
             ),
           if (alreadyPaid)
@@ -11554,12 +11555,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               margin: const EdgeInsets.only(bottom: 10),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFF00A884).withOpacity(0.08),
+                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.08)),
                 borderRadius: BorderRadius.circular(9),
               ),
               child: Text(
                 '✓ ${_monthName(_selectedMonth)} ka payment complete hai. Next month collection automatically unlock hoga.',
-                style: const TextStyle(color: Color(0xFF00D9A5), fontSize: 10.5, fontWeight: FontWeight.w700),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10.5, fontWeight: FontWeight.w700),
               ),
             ),
           Row(
@@ -11575,7 +11576,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: hasReceipt ? () => _whatsappLastReceipt(ledger) : null,
-                  icon: const Icon(Icons.send_rounded, color: Color(0xFF25D366)),
+                  icon: Icon(Icons.send_rounded, color: WindowsAppearance.foreground(Color(0xFF25D366))),
                   label: const Text('WhatsApp Receipt'),
                 ),
               ),
@@ -11586,7 +11587,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             width: double.infinity,
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00A884),
+                backgroundColor: WindowsAppearance.primary,
                 padding: const EdgeInsets.symmetric(vertical: 15),
               ),
               onPressed: canCollect && studentDoc != null
@@ -11596,16 +11597,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ?  SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: WindowsAppearance.resolve(Colors.white)),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: WindowsAppearance.foreground(Colors.white)),
                     )
-                  : Icon(alreadyPaid ? Icons.lock_rounded : Icons.check_circle_rounded, color: WindowsAppearance.resolve(Colors.white)),
+                  : Icon(alreadyPaid ? Icons.lock_rounded : Icons.check_circle_rounded, color: null),
               label: Text(
                 alreadyPaid
                     ? 'PAID - LOCKED'
                     : _isSavingPayment
                         ? 'Saving...'
                         : 'Collect Payment',
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.w800),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: null, fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -11619,9 +11620,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(
         foregroundColor: selected ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white60),
-        backgroundColor: selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent,
+        backgroundColor: WindowsAppearance.background(selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent),
         side: BorderSide(
-          color: selected ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white12),
+          color: selected ? const Color(0xFF00D9A5) : WindowsAppearance.outline(Colors.white12),
         ),
         padding: const EdgeInsets.symmetric(vertical: 13),
       ),
@@ -11662,9 +11663,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF102129)),
+        color: WindowsAppearance.background(const Color(0xFF102129)),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF00A884).withOpacity(0.28)),
+        border: Border.all(color: WindowsAppearance.outline(const Color(0xFF00A884).withOpacity(0.28))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -11673,10 +11674,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             children: [
               CircleAvatar(
                 radius: 26,
-                backgroundColor: const Color(0x2200A884),
+                backgroundColor: WindowsAppearance.background(const Color(0x2200A884)),
                 child: Text(
                   studentSelected && name.isNotEmpty ? name[0].toUpperCase() : '—',
-                  style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.w900, fontSize: 18),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontWeight: FontWeight.w900, fontSize: 18),
                 ),
               ),
               const SizedBox(width: 12),
@@ -11686,8 +11687,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   children: [
                     Text(
                       studentSelected ? name : 'Student select karein',
-                      style: TextStyle(
-                        color: studentSelected ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.resolve(Colors.white54),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: studentSelected ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.foreground(Colors.white54),
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
                       ),
@@ -11697,14 +11698,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                       studentSelected
                           ? '$studentClass  •  Roll No: $roll  •  Month: ${_monthName(_selectedMonth)}'
                           : 'Name ya Roll No search karein, phir neeche matching student select karein.',
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                     if (feeStudentUid.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
                         'Student UID: $feeStudentUid',
-                        style: const TextStyle(
-                          color: Color(0xFF00D9A5),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                           fontSize: 10.5,
                           fontWeight: FontWeight.w800,
                         ),
@@ -11722,7 +11723,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ),
                   child: Text(
                     status == 'PARTIAL' ? 'PARTIAL PAID' : status,
-                    style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w800),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: statusColor, fontSize: 10, fontWeight: FontWeight.w800),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -11737,7 +11738,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {WindowsAppearance.watch(context);
-              final wide = constraints.maxWidth >= 850;
+              final wide = constraints.maxWidth >= 1100;
               final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
               final feePanel = _feeStructurePanel(
                 studentSelected: studentSelected,
@@ -11772,7 +11773,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
               return Column(
                 children: [
-                  feePanel,
+                  SizedBox(height: panelHeight, child: feePanel),
                   const SizedBox(height: 12),
                   SizedBox(height: panelHeight, child: paymentPanel),
                 ],
@@ -11815,7 +11816,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           border: Border.all(
             color: isActive
                 ? const Color(0xFF00D9A5).withOpacity(0.65)
-                : WindowsAppearance.resolve(Colors.white).withOpacity(0.04),
+                : WindowsAppearance.outline(Colors.white).withOpacity(0.04),
           ),
         ),
         child: Row(
@@ -11823,16 +11824,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             Icon(
               isActive ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
               color: canSelect
-                  ? (isActive ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white38))
+                  ? (isActive ? const Color(0xFF00D9A5) : WindowsAppearance.foreground(Colors.white38))
                   : WindowsAppearance.resolve(Colors.white12),
               size: 22,
             ),
             const SizedBox(width: 10),
             CircleAvatar(
-              backgroundColor: const Color(0x2200A884),
+              backgroundColor: WindowsAppearance.background(const Color(0x2200A884)),
               child: Text(
                 name.isNotEmpty ? name[0].toUpperCase() : 'S',
-                style: const TextStyle(color: Color(0xFF00D9A5), fontWeight: FontWeight.bold),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(width: 12),
@@ -11841,22 +11842,22 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               child: Text(
                 name,
                 overflow: TextOverflow.ellipsis,
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white), fontWeight: FontWeight.bold),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.bold),
               ),
             ),
             Expanded(
-              child: Text(studentClass, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11)),
+              child: Text(studentClass, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11)),
             ),
             SizedBox(
               width: 80,
-              child: Text('Roll $roll', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11)),
+              child: Text('Roll $roll', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11)),
             ),
             if (expected > 0) ...[
               SizedBox(
                 width: 100,
                 child: Text(
                   'Due ${_money(balance)}',
-                  style: const TextStyle(color: Colors.orangeAccent, fontSize: 10.5),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent), fontSize: 10.5),
                 ),
               ),
             ],
@@ -11868,7 +11869,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ),
               child: Text(
                 status == 'PARTIAL' ? 'PARTIAL' : status,
-                style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(color), fontSize: 10, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -11881,17 +11882,17 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     if (!_studentUidConfigLoaded) {
       return  Scaffold(
-        backgroundColor: WindowsAppearance.resolve(Color(0xFF0B141A)),
+        backgroundColor: WindowsAppearance.background(Color(0xFF0B141A)),
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title: const Text('Fees Collection'),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -11899,13 +11900,13 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         builder: (context, studentSnapshot) {WindowsAppearance.watch(context);
           if (studentSnapshot.connectionState == ConnectionState.waiting &&
               !studentSnapshot.hasData) {
-            return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+            return Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))));
           }
           if (studentSnapshot.hasError) {
             return Center(
               child: Text(
                 'Students load error: ${studentSnapshot.error}',
-                style: const TextStyle(color: Colors.redAccent),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)),
               ),
             );
           }
@@ -11916,11 +11917,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             stream: _ledgerStream,
             builder: (context, ledgerSnapshot) {WindowsAppearance.watch(context);
               if (!ledgerSnapshot.hasData && !ledgerSnapshot.hasError) {
-                return const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)));
+                return Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))));
               }
               if (ledgerSnapshot.hasError) {
-                return const Center(child: Text('Fee history could not load. Reopen Fees Collection before collecting a payment.',
-                  style: TextStyle(color: Colors.orangeAccent)));
+                return Center(child: Text('Fee history could not load. Reopen Fees Collection before collecting a payment.',
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))));
               }
               final ledgerByIdentity = <String, Map<String, dynamic>>{};
               final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
@@ -12035,28 +12036,28 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                           title: 'Total Students',
                           count: filtered.length,
                           icon: Icons.groups_rounded,
-                          color: Colors.blueAccent,
+                          color: WindowsAppearance.foreground(Colors.blueAccent),
                         ),
                         _summaryCard(
                           title: 'Paid',
                           count: paidCount,
                           icon: Icons.check_circle_rounded,
-                          color: const Color(0xFF00A884),
+                          color: WindowsAppearance.foreground(const Color(0xFF00A884)),
                         ),
                         _summaryCard(
                           title: 'Partial Paid',
                           count: partialCount,
                           icon: Icons.timelapse_rounded,
-                          color: Colors.orangeAccent,
+                          color: WindowsAppearance.foreground(Colors.orangeAccent),
                         ),
                         _summaryCard(
                           title: 'Due',
                           count: dueCount,
                           icon: Icons.warning_amber_rounded,
-                          color: Colors.redAccent,
+                          color: WindowsAppearance.foreground(Colors.redAccent),
                         ),
                         Material(
-                          color: Colors.transparent,
+                          color: WindowsAppearance.background(Colors.transparent),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
                             onTap: () {
@@ -12072,10 +12073,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                               width: 185,
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
-                                color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                                color: WindowsAppearance.background(const Color(0xFF172229)),
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: const Color(0xFFB388FF)
+                                  color: WindowsAppearance.outline(const Color(0xFFB388FF))
                                       .withOpacity(0.32),
                                 ),
                               ),
@@ -12085,13 +12086,13 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                                     width: 42,
                                     height: 42,
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFB388FF)
+                                      color: WindowsAppearance.background(const Color(0xFFB388FF))
                                           .withOpacity(0.12),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    child: const Icon(
+                                    child: Icon(
                                       Icons.history_rounded,
-                                      color: Color(0xFFB388FF),
+                                      color: WindowsAppearance.foreground(Color(0xFFB388FF)),
                                     ),
                                   ),
                                   const SizedBox(width: 11),
@@ -12102,16 +12103,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                                       children: [
                                         Text(
                                           'History',
-                                          style: TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white),
+                                          style: TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white),
                                             fontSize: 17,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
                                         Text(
                                           'Transactions',
-                                          style: TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white54),
+                                          style: TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white54),
                                             fontSize: 11,
                                           ),
                                         ),
@@ -12130,9 +12131,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: WindowsAppearance.resolve(const Color(0xFF121F26)),
+                        color: WindowsAppearance.background(const Color(0xFF121F26)),
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                       ),
 
 child: Row(
@@ -12140,9 +12141,10 @@ child: Row(
     Expanded(
       flex: 2,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _selectedMonth,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
-        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
           'Month',
           Icons.calendar_month_rounded,
@@ -12172,9 +12174,10 @@ child: Row(
     Expanded(
       flex: 2,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _selectedClass,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
-        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
           'Class',
           Icons.class_rounded,
@@ -12206,7 +12209,7 @@ child: Row(
       flex: 3,
       child: TextField(
         controller: _nameSearchController,
-        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
           'Student Name',
           Icons.person_search_rounded,
@@ -12227,7 +12230,7 @@ child: Row(
       flex: 2,
       child: TextField(
         controller: _rollSearchController,
-        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
           'Roll No',
           Icons.numbers_rounded,
@@ -12249,9 +12252,9 @@ child: Row(
                     const SizedBox(height: 12),
                     Container(
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF101D24)),
+                          color: WindowsAppearance.background(const Color(0xFF101D24)),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Column(
                           children: [
@@ -12259,27 +12262,27 @@ child: Row(
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.groups_2_rounded, color: Color(0xFF38A8FF), size: 19),
+                                  Icon(Icons.groups_2_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 19),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Student List (${filtered.length} result${filtered.length == 1 ? '' : 's'})',
-                                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontWeight: FontWeight.w800),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w800),
                                   ),
                                   const Spacer(),
                                   Text(
                                     searchStarted
                                         ? 'Matching student select karein'
                                         : 'Name ya Roll No search karne ke baad selection active hoga',
-                                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 9.5),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
                                   ),
                                 ],
                               ),
                             ),
-                             Divider(height: 1, color: WindowsAppearance.resolve(Colors.white10)),
+                             Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
                             Container(
                               child: filtered.isEmpty
                                   ?  Center(
-                                      child: Text('No students found', style: TextStyle(color: WindowsAppearance.resolve(Colors.white54))),
+                                      child: Text('No students found', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
                                     )
                                   : ListView.separated(
                                       shrinkWrap: true,
@@ -12511,7 +12514,7 @@ class _FeeCollectionSettingsScreenState
       else if (!names.add(head.toLowerCase())) { error = 'Duplicate fee name: $head'; }
       else if (amount == null || !amount.isFinite || amount < 0) { error = '$head ka amount valid nahi hai.'; }
       if (error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text(error)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text(error)));
         return;
       }
       fees[head] = amount!;
@@ -12529,7 +12532,7 @@ class _FeeCollectionSettingsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             '$selected fee structure saved locally and locked. Cloud sync queued.',
           ),
@@ -12540,7 +12543,7 @@ class _FeeCollectionSettingsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Settings save error: $e'),
         ),
       );
@@ -12696,14 +12699,14 @@ errorBuilder: (
 
   Widget _teacherFallback(String name) {
     return Container(
-      color: WindowsAppearance.resolve(const Color(0xFF10191F)),
+      color: WindowsAppearance.background(const Color(0xFF10191F)),
       alignment: Alignment.center,
       child: Text(
         name.trim().isEmpty
             ? 'T'
             : name.trim()[0].toUpperCase(),
-        style: const TextStyle(
-          color: Colors.purpleAccent,
+        style: TextStyle(fontFamily: 'Segoe UI', 
+          color: WindowsAppearance.foreground(Colors.purpleAccent),
           fontSize: 28,
           fontWeight: FontWeight.w800,
         ),
@@ -12764,20 +12767,20 @@ errorBuilder: (
                 child: TextField(
                   controller: controller,
                   style:
-                       TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                       TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                   decoration: InputDecoration(
                     labelText: day,
                     hintText:
                         'Example: 09:00-10:00 Class 6 Mathematics',
-                    labelStyle: const TextStyle(
-                      color: Colors.purpleAccent,
+                    labelStyle: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.purpleAccent),
                     ),
-                    hintStyle:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white24),
+                    hintStyle:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white24),
                       fontSize: 11,
                     ),
                     filled: true,
-                    fillColor: WindowsAppearance.resolve(const Color(0xFF10191F)),
+                    fillColor: WindowsAppearance.background(const Color(0xFF10191F)),
                     border: OutlineInputBorder(
                       borderRadius:
                           BorderRadius.circular(12),
@@ -12790,7 +12793,7 @@ errorBuilder: (
 
             return AlertDialog(
               backgroundColor:
-                  WindowsAppearance.resolve(const Color(0xFF172229)),
+                  WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius:
                     BorderRadius.circular(20),
@@ -12801,14 +12804,14 @@ errorBuilder: (
                     width: 42,
                     height: 42,
                     decoration: BoxDecoration(
-                      color: Colors.purpleAccent
+                      color: WindowsAppearance.background(Colors.purpleAccent)
                           .withOpacity(0.12),
                       borderRadius:
                           BorderRadius.circular(12),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.calendar_month_rounded,
-                      color: Colors.purpleAccent,
+                      color: WindowsAppearance.foreground(Colors.purpleAccent),
                     ),
                   ),
                   const SizedBox(width: 11),
@@ -12819,8 +12822,8 @@ errorBuilder: (
                       children: [
                          Text(
                           'Weekly Schedule',
-                          style: TextStyle(
-                            color: WindowsAppearance.resolve(Colors.white),
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.white),
                             fontSize: 17,
                             fontWeight:
                                 FontWeight.w800,
@@ -12829,8 +12832,8 @@ errorBuilder: (
                         Text(
                           data['name']?.toString() ??
                               'Teacher',
-                          style:  TextStyle(
-                            color: WindowsAppearance.resolve(Colors.white38),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.white38),
                             fontSize: 10.5,
                           ),
                         ),
@@ -12880,13 +12883,13 @@ errorBuilder: (
                   child:  Text(
                     'Cancel',
                     style:
-                        TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                        TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                   ),
                 ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor:
-                        Colors.purpleAccent,
+                        WindowsAppearance.primary,
                   ),
                   onPressed: saving
                       ? null
@@ -13054,9 +13057,9 @@ errorBuilder: (
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 backgroundColor:
-                                    Color(0xFF00A884),
+                                    WindowsAppearance.background(Color(0xFF00A884)),
                                 content: Text(
                                   'Teacher schedule successfully saved!',
                                 ),
@@ -13074,7 +13077,7 @@ errorBuilder: (
                             ).showSnackBar(
                               SnackBar(
                                 backgroundColor:
-                                    Colors.redAccent,
+                                    WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Schedule save error: $e',
                                 ),
@@ -13089,20 +13092,20 @@ errorBuilder: (
                           child:
                               CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: WindowsAppearance.resolve(Colors.white),
+                            color: WindowsAppearance.foreground(Colors.white),
                           ),
                         )
                       :  Icon(
                           Icons.save_rounded,
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: null,
                           size: 17,
                         ),
                   label: Text(
                     saving
                         ? 'Saving...'
                         : 'Save Schedule',
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: null,
                     ),
                   ),
                 ),
@@ -13225,17 +13228,17 @@ errorBuilder: (
             ) {
               return InputDecoration(
                 labelText: label,
-                labelStyle:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white54),
+                labelStyle:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white54),
                 ),
                 prefixIcon: Icon(
                   icon,
-                  color: Colors.purpleAccent,
+                  color: WindowsAppearance.foreground(Colors.purpleAccent),
                   size: 19,
                 ),
                 filled: true,
                 fillColor:
-                    WindowsAppearance.resolve(const Color(0xFF10191F)),
+                    WindowsAppearance.background(const Color(0xFF10191F)),
                 border: OutlineInputBorder(
                   borderRadius:
                       BorderRadius.circular(12),
@@ -13284,7 +13287,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
 
             return AlertDialog(
               backgroundColor:
-                  WindowsAppearance.resolve(const Color(0xFF172229)),
+                  WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius:
                     BorderRadius.circular(20),
@@ -13293,13 +13296,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                 children: [
                   Icon(
                     Icons.edit_rounded,
-                    color: Colors.blueAccent,
+                    color: WindowsAppearance.foreground(Colors.blueAccent),
                   ),
                   SizedBox(width: 10),
                   Text(
                     'Edit Teacher',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 18,
                       fontWeight:
                           FontWeight.w800,
@@ -13337,7 +13340,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 side: BorderSide(
                                   color: selectedPhotoBytes != null
                                       ? const Color(0xFF00A884)
-                                      : WindowsAppearance.resolve(Colors.white24),
+                                      : WindowsAppearance.outline(Colors.white24),
                                 ),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
@@ -13361,8 +13364,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                       if (bytes.length > 700000) {
                                         if (!mounted) return;
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            backgroundColor: Colors.redAccent,
+                                          SnackBar(
+                                            backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                             content: Text(
                                               'Photo size zyada hai. Chhota photo select karein.',
                                             ),
@@ -13389,16 +13392,16 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                     : Icons.add_a_photo_outlined,
                                 color: selectedPhotoBytes != null
                                     ? const Color(0xFF00A884)
-                                    : WindowsAppearance.resolve(Colors.white70),
+                                    : WindowsAppearance.foreground(Colors.white70),
                               ),
                               label: Text(
                                 selectedPhotoBytes != null
                                     ? 'New Photo Ready'
                                     : 'Change Teacher Photo',
-                                style: TextStyle(
+                                style: TextStyle(fontFamily: 'Segoe UI', 
                                   color: selectedPhotoBytes != null
                                       ? const Color(0xFF00A884)
-                                      : WindowsAppearance.resolve(Colors.white70),
+                                      : WindowsAppearance.foreground(Colors.white70),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -13409,8 +13412,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                         ),
                         decoration: input(
                           'Teacher Full Name *',
@@ -13423,8 +13426,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       TextField(
                         controller:
                             designationCtrl,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                         ),
                         decoration: input(
                           'Designation',
@@ -13439,9 +13442,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               controller:
                                   subjectCtrl,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Subject / Department *',
@@ -13456,9 +13459,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               controller:
                                   qualificationCtrl,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Qualification',
@@ -13481,9 +13484,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                       .phone,
                               maxLength: 10,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Mobile Number *',
@@ -13503,9 +13506,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   TextInputType
                                       .emailAddress,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Email Address',
@@ -13523,9 +13526,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             child: TextField(
                               controller: dobCtrl,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Date of Birth',
@@ -13540,9 +13543,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               controller:
                                   joiningCtrl,
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Joining Date',
@@ -13556,8 +13559,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       const SizedBox(height: 10),
                       TextField(
                         controller: classesCtrl,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                         ),
                         decoration: input(
                           'Assigned Classes',
@@ -13569,8 +13572,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         controller: addressCtrl,
                         minLines: 2,
                         maxLines: 3,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                         ),
                         decoration: input(
                           'Address',
@@ -13591,9 +13594,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               dropdownColor:
                                   WindowsAppearance.resolve(const Color(0xFF172229)),
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Employment Type',
@@ -13643,9 +13646,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               dropdownColor:
                                   WindowsAppearance.resolve(const Color(0xFF172229)),
                               style:
-                                   TextStyle(
+                                   TextStyle(fontFamily: 'Segoe UI', 
                                 color:
-                                    WindowsAppearance.resolve(Colors.white),
+                                    WindowsAppearance.foreground(Colors.white),
                               ),
                               decoration: input(
                                 'Status',
@@ -13699,13 +13702,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   child:  Text(
                     'Cancel',
                     style:
-                        TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                        TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                   ),
                 ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor:
-                        const Color(0xFF00A884),
+                        WindowsAppearance.primary,
                   ),
                   onPressed: saving
                       ? null
@@ -13724,9 +13727,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 backgroundColor:
-                                    Colors.redAccent,
+                                    WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Name aur Subject required hain.',
                                 ),
@@ -13741,9 +13744,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 backgroundColor:
-                                    Colors.redAccent,
+                                    WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Valid 10 digit Mobile Number daalein.',
                                 ),
@@ -13789,8 +13792,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
 
                           if (duplicatePhone) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Colors.orangeAccent,
+                              SnackBar(
+                                backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
                                 content: Text(
                                   'Is Mobile Number se dusra teacher already registered hai.',
                                 ),
@@ -14016,9 +14019,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
-                              const SnackBar(
+                              SnackBar(
                                 backgroundColor:
-                                    Color(0xFF00A884),
+                                    WindowsAppearance.background(Color(0xFF00A884)),
                                 content: Text(
                                   'Teacher saved on this PC. Background school sync queued.',
                                 ),
@@ -14036,7 +14039,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             ).showSnackBar(
                               SnackBar(
                                 backgroundColor:
-                                    Colors.redAccent,
+                                    WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Teacher update error: $e',
                                 ),
@@ -14050,21 +14053,21 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           height: 17,
                           child:
                               CircularProgressIndicator(
-                            color: WindowsAppearance.resolve(Colors.white),
+                            color: WindowsAppearance.foreground(Colors.white),
                             strokeWidth: 2,
                           ),
                         )
                       :  Icon(
                           Icons.save_rounded,
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: null,
                           size: 18,
                         ),
                   label: Text(
                     saving
                         ? 'Saving...'
                         : 'Save Changes',
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: null,
                     ),
                   ),
                 ),
@@ -14118,7 +14121,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           ) {WindowsAppearance.watch(context);
             return AlertDialog(
               backgroundColor:
-                  WindowsAppearance.resolve(const Color(0xFF172229)),
+                  WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius:
                     BorderRadius.circular(18),
@@ -14127,13 +14130,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                 children: [
                   Icon(
                     Icons.warning_amber_rounded,
-                    color: Colors.redAccent,
+                    color: WindowsAppearance.foreground(Colors.redAccent),
                   ),
                   SizedBox(width: 10),
                   Text(
                     'Delete Teacher?',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 18,
                       fontWeight:
                           FontWeight.w800,
@@ -14149,16 +14152,16 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                 children: [
                   Text(
                     '${data['name'] ?? 'Teacher'} ka Sheet, Drive photo aur Firestore record delete hoga.',
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white70),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white70),
                       fontSize: 12.5,
                     ),
                   ),
                   const SizedBox(height: 16),
                    Text(
                     'App Lock Password daalein:',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 12,
                     ),
                   ),
@@ -14168,27 +14171,27 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         passwordController,
                     obscureText:
                         obscureText,
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration:
                         InputDecoration(
                       hintText:
                           'App Lock Password',
                       hintStyle:
-                           TextStyle(
+                           TextStyle(fontFamily: 'Segoe UI', 
                         color:
-                            WindowsAppearance.resolve(Colors.white30),
+                            WindowsAppearance.foreground(Colors.white30),
                       ),
                       filled: true,
                       fillColor:
-                          WindowsAppearance.resolve(const Color(0xFF10191F)),
+                          WindowsAppearance.background(const Color(0xFF10191F)),
                       prefixIcon:
-                          const Icon(
+                          Icon(
                         Icons
                             .lock_outline_rounded,
                         color:
-                            Colors.redAccent,
+                            WindowsAppearance.foreground(Colors.redAccent),
                       ),
                       suffixIcon:
                           IconButton(
@@ -14199,7 +14202,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               : Icons
                                   .visibility,
                           color:
-                              WindowsAppearance.resolve(Colors.white38),
+                              WindowsAppearance.foreground(Colors.white38),
                         ),
                         onPressed: () {
                           setDialogState(
@@ -14228,9 +14231,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     Text(
                       errorText!,
                       style:
-                          const TextStyle(
+                          TextStyle(fontFamily: 'Segoe UI', 
                         color:
-                            Colors.redAccent,
+                            WindowsAppearance.foreground(Colors.redAccent),
                         fontSize: 11,
                       ),
                     ),
@@ -14248,8 +14251,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           ),
                   child:  Text(
                     'Cancel',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.grey),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.grey),
                     ),
                   ),
                 ),
@@ -14258,7 +14261,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       ElevatedButton
                           .styleFrom(
                     backgroundColor:
-                        Colors.redAccent,
+                        WindowsAppearance.primary,
                   ),
                   onPressed: deleting
                       ? null
@@ -14341,20 +14344,20 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           child:
                               CircularProgressIndicator(
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                             strokeWidth: 2,
                           ),
                         )
                       :  Icon(
                           Icons
                               .delete_forever_rounded,
-                          color: WindowsAppearance.resolve(Colors.white),
+                          color: null,
                           size: 18,
                         ),
                   label:  Text(
                     'Delete Teacher',
-                    style: TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: null,
                     ),
                   ),
                 ),
@@ -14401,9 +14404,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Teacher removed on this PC. Background school sync queued.',
           ),
@@ -14416,7 +14419,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
           .showSnackBar(
         SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Teacher delete error: $e',
           ),
@@ -14461,24 +14464,24 @@ errorBuilder: (_, __, ___) => _teacherFallback(
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
       backgroundColor:
-          WindowsAppearance.resolve(const Color(0xFF0B141A)),
+          WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
         backgroundColor:
-            WindowsAppearance.resolve(const Color(0xFF111B21)),
+            WindowsAppearance.background(const Color(0xFF111B21)),
         elevation: 0,
         title:  Row(
           children: [
             Icon(
               Icons.groups_2_rounded,
               color:
-                  Colors.purpleAccent,
+                  WindowsAppearance.foreground(Colors.purpleAccent),
             ),
             SizedBox(width: 10),
             Text(
               'Teachers Directory',
-              style: TextStyle(
-                color: WindowsAppearance.resolve(Colors.white),
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white),
                 fontWeight:
                     FontWeight.w800,
               ),
@@ -14496,9 +14499,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
               style:
                   ElevatedButton.styleFrom(
                 backgroundColor:
-                    Colors.purpleAccent,
+                    WindowsAppearance.primary,
                 foregroundColor:
-                    WindowsAppearance.resolve(Colors.white),
+                    WindowsAppearance.onPrimary,
                 shape:
                     RoundedRectangleBorder(
                   borderRadius:
@@ -14523,7 +14526,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
               ),
               label: const Text(
                 'Add Teacher',
-                style: TextStyle(
+                style: TextStyle(fontFamily: 'Segoe UI', 
                   fontWeight:
                       FontWeight.w700,
                 ),
@@ -14538,7 +14541,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
             padding:
                 const EdgeInsets.all(14),
             color:
-                WindowsAppearance.resolve(const Color(0xFF111B21)),
+                WindowsAppearance.background(const Color(0xFF111B21)),
             child: Column(
               children: [
                 TextField(
@@ -14546,27 +14549,27 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       _searchController,
                   onChanged: (_) =>
                       setState(() {}),
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                   ),
                   decoration:
                       InputDecoration(
                     hintText:
                         'Search teacher, subject, mobile...',
                     hintStyle:
-                         TextStyle(
+                         TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white30),
+                          WindowsAppearance.foreground(Colors.white30),
                     ),
                     prefixIcon:
-                        const Icon(
+                              Icon(
                       Icons.search_rounded,
-                      color: Colors
-                          .purpleAccent,
+                      color: WindowsAppearance.foreground(Colors
+                          .purpleAccent),
                     ),
                     filled: true,
                     fillColor:
-                        WindowsAppearance.resolve(const Color(0xFF0B141A)),
+                        WindowsAppearance.background(const Color(0xFF0B141A)),
                     border:
                         OutlineInputBorder(
                       borderRadius:
@@ -14595,17 +14598,17 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             _statusFilter ==
                                 filter,
                         selectedColor:
-                            Colors
-                                .purpleAccent,
+                            WindowsAppearance.background(Colors
+                                .purpleAccent),
                         backgroundColor:
-                            WindowsAppearance.resolve(const Color(0xFF172229)),
+                            WindowsAppearance.background(const Color(0xFF172229)),
                         labelStyle:
-                            TextStyle(
+                            TextStyle(fontFamily: 'Segoe UI', 
                           color:
                               _statusFilter ==
                                       filter
                                   ? WindowsAppearance.resolve(Colors.white)
-                                  : WindowsAppearance.resolve(Colors.white54),
+                                  : WindowsAppearance.foreground(Colors.white54),
                           fontSize: 11,
                           fontWeight:
                               FontWeight
@@ -14638,11 +14641,11 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         .connectionState ==
                     ConnectionState
                         .waiting) {
-                  return const Center(
+                  return       Center(
                     child:
                         CircularProgressIndicator(
-                      color: Colors
-                          .purpleAccent,
+                      color: WindowsAppearance.foreground(Colors
+                          .purpleAccent),
                     ),
                   );
                 }
@@ -14652,9 +14655,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     child: Text(
                       'Teacher data load error: ${snapshot.error}',
                       style:
-                          const TextStyle(
+                          TextStyle(fontFamily: 'Segoe UI', 
                         color:
-                            Colors.redAccent,
+                            WindowsAppearance.foreground(Colors.redAccent),
                       ),
                     ),
                   );
@@ -14666,9 +14669,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   return  Center(
                     child: Text(
                       'Abhi koi teacher registered nahi hai.',
-                      style: TextStyle(
+                      style: TextStyle(fontFamily: 'Segoe UI', 
                         color:
-                            WindowsAppearance.resolve(Colors.white38),
+                            WindowsAppearance.foreground(Colors.white38),
                       ),
                     ),
                   );
@@ -14790,9 +14793,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   return  Center(
                     child: Text(
                       'Search/filter me koi teacher nahi mila.',
-                      style: TextStyle(
+                      style: TextStyle(fontFamily: 'Segoe UI', 
                         color:
-                            WindowsAppearance.resolve(Colors.white38),
+                            WindowsAppearance.foreground(Colors.white38),
                       ),
                     ),
                   );
@@ -14837,7 +14840,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       decoration:
                           BoxDecoration(
                         color:
-                            WindowsAppearance.resolve(const Color(0xFF111B21)),
+                            WindowsAppearance.background(const Color(0xFF111B21)),
                         borderRadius:
                             BorderRadius
                                 .circular(
@@ -14845,7 +14848,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         ),
                         border:
                             Border.all(
-                          color: WindowsAppearance.resolve(Colors.white)
+                          color: WindowsAppearance.outline(Colors.white)
                               .withOpacity(
                             0.055,
                           ),
@@ -14868,8 +14871,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   BoxShape.circle,
                               border:
                                   Border.all(
-                                color: Colors
-                                    .purpleAccent,
+                                color: WindowsAppearance.outline(Colors
+                                    .purpleAccent),
                                 width: 2,
                               ),
                             ),
@@ -14901,9 +14904,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                     Text(
                                       name,
                                       style:
-                                           TextStyle(
+                                           TextStyle(fontFamily: 'Segoe UI', 
                                         color:
-                                            WindowsAppearance.resolve(Colors.white),
+                                            WindowsAppearance.foreground(Colors.white),
                                         fontSize:
                                             16,
                                         fontWeight:
@@ -14943,7 +14946,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                       child: Text(
                                         status,
                                         style:
-                                            TextStyle(
+                                            TextStyle(fontFamily: 'Segoe UI', 
                                           color: status ==
                                                   'Active'
                                               ? const Color(
@@ -14967,9 +14970,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 Text(
                                   '${data['designation'] ?? 'Teacher'} • ${data['subject'] ?? 'Subject not assigned'}',
                                   style:
-                                       TextStyle(
+                                       TextStyle(fontFamily: 'Segoe UI', 
                                     color:
-                                        WindowsAppearance.resolve(Colors.white70),
+                                        WindowsAppearance.foreground(Colors.white70),
                                     fontSize:
                                         11.5,
                                     fontWeight:
@@ -14983,9 +14986,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 Text(
                                   'Qualification: ${data['qualification'] ?? 'N/A'}',
                                   style:
-                                       TextStyle(
+                                       TextStyle(fontFamily: 'Segoe UI', 
                                     color:
-                                        WindowsAppearance.resolve(Colors.white38),
+                                        WindowsAppearance.foreground(Colors.white38),
                                     fontSize:
                                         10.5,
                                   ),
@@ -14996,9 +14999,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 Text(
                                   'Classes: ${data['assignedClasses'] ?? 'Not Assigned'}',
                                   style:
-                                       TextStyle(
+                                       TextStyle(fontFamily: 'Segoe UI', 
                                     color:
-                                        WindowsAppearance.resolve(Colors.white38),
+                                        WindowsAppearance.foreground(Colors.white38),
                                     fontSize:
                                         10.5,
                                   ),
@@ -15009,9 +15012,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 Text(
                                   '${data['phone'] ?? ''}${(data['email']?.toString().isNotEmpty ?? false) ? ' • ${data['email']}' : ''}',
                                   style:
-                                       TextStyle(
+                                       TextStyle(fontFamily: 'Segoe UI', 
                                     color:
-                                        WindowsAppearance.resolve(Colors.white38),
+                                        WindowsAppearance.foreground(Colors.white38),
                                     fontSize:
                                         10.5,
                                   ),
@@ -15035,15 +15038,15 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                     OutlinedButton
                                         .styleFrom(
                                   foregroundColor:
-                                      Colors
-                                          .purpleAccent,
+                                      WindowsAppearance.foreground(Colors
+                                          .purpleAccent),
                                   side:
                                       BorderSide(
-                                    color: Colors
+                                    color: WindowsAppearance.outline(Colors
                                         .purpleAccent
                                         .withOpacity(
                                       0.45,
-                                    ),
+                                    )),
                                   ),
                                   shape:
                                       RoundedRectangleBorder(
@@ -15068,7 +15071,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                     const Text(
                                   'Schedule',
                                   style:
-                                      TextStyle(
+                                      TextStyle(fontFamily: 'Segoe UI', 
                                     fontSize:
                                         10.5,
                                     fontWeight:
@@ -15080,13 +15083,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               const SizedBox(height: 7),
                               OutlinedButton.icon(
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF69C2FF),
-                                  side: BorderSide(color: const Color(0xFF69C2FF).withOpacity(.45)),
+                                  foregroundColor: WindowsAppearance.primary,
+                                  side: BorderSide(color: WindowsAppearance.outline(const Color(0xFF69C2FF).withOpacity(.45))),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                 ),
                                 onPressed: () => _showTeacherWindowsIdCard(doc.id, data),
                                 icon: const Icon(Icons.badge_rounded, size: 16),
-                                label: const Text('ID Card', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700)),
+                                label: const Text('ID Card', style: TextStyle(fontFamily: 'Segoe UI', fontSize: 10.5, fontWeight: FontWeight.w700)),
                               ),
                               const SizedBox(height: 7),
                               Row(
@@ -15103,14 +15106,14 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                           IconButton
                                               .styleFrom(
                                         backgroundColor:
-                                            Colors
+                                            WindowsAppearance.background(Colors
                                                 .blueAccent
                                                 .withOpacity(
                                           0.12,
-                                        ),
+                                        )),
                                         foregroundColor:
-                                            Colors
-                                                .blueAccent,
+                                            WindowsAppearance.foreground(Colors
+                                                .blueAccent),
                                       ),
                                       onPressed: () =>
                                           _editTeacher(
@@ -15137,14 +15140,14 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                           IconButton
                                               .styleFrom(
                                         backgroundColor:
-                                            Colors
+                                            WindowsAppearance.background(Colors
                                                 .redAccent
                                                 .withOpacity(
                                           0.12,
-                                        ),
+                                        )),
                                         foregroundColor:
-                                            Colors
-                                                .redAccent,
+                                            WindowsAppearance.foreground(Colors
+                                                .redAccent),
                                       ),
                                       onPressed: () =>
                                           _deleteTeacher(
@@ -15279,18 +15282,18 @@ class _AddTeacherScreenState
     return InputDecoration(
       labelText: label,
       labelStyle:
-           TextStyle(
-        color: WindowsAppearance.resolve(Colors.white54),
+           TextStyle(fontFamily: 'Segoe UI', 
+        color: WindowsAppearance.foreground(Colors.white54),
       ),
       prefixIcon: Icon(
         icon,
         color:
-            Colors.purpleAccent,
+            WindowsAppearance.foreground(Colors.purpleAccent),
         size: 19,
       ),
       filled: true,
       fillColor:
-          WindowsAppearance.resolve(const Color(0xFF10191F)),
+          WindowsAppearance.background(const Color(0xFF10191F)),
       border: OutlineInputBorder(
         borderRadius:
             BorderRadius.circular(12),
@@ -15370,9 +15373,9 @@ class _AddTeacherScreenState
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Photo size zyada hai. Chhota photo select karein.',
           ),
@@ -15422,9 +15425,9 @@ class _AddTeacherScreenState
         phone.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Name, Subject aur Mobile required hain.',
           ),
@@ -15438,9 +15441,9 @@ class _AddTeacherScreenState
     ).hasMatch(phone)) {
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Valid 10 digit Mobile Number daalein.',
           ),
@@ -15642,9 +15645,9 @@ class _AddTeacherScreenState
 
       ScaffoldMessenger.of(context)
           .showSnackBar(
-        const SnackBar(
+        SnackBar(
           backgroundColor:
-              Color(0xFF00A884),
+              WindowsAppearance.background(Color(0xFF00A884)),
           content: Text(
             'Teacher saved on this PC. Background school sync queued.',
           ),
@@ -15678,7 +15681,7 @@ class _AddTeacherScreenState
           .showSnackBar(
         SnackBar(
           backgroundColor:
-              Colors.redAccent,
+              WindowsAppearance.background(Colors.redAccent),
           content: Text(
             'Teacher save error: $e',
           ),
@@ -15695,14 +15698,14 @@ class _AddTeacherScreenState
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
       backgroundColor:
-          WindowsAppearance.resolve(const Color(0xFF0B141A)),
+          WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         backgroundColor:
-            WindowsAppearance.resolve(const Color(0xFF111B21)),
+            WindowsAppearance.background(const Color(0xFF111B21)),
         title:  Text(
           'Add New Teacher',
-          style: TextStyle(
-            color: WindowsAppearance.resolve(Colors.white),
+          style: TextStyle(fontFamily: 'Segoe UI', 
+            color: WindowsAppearance.foreground(Colors.white),
             fontWeight:
                 FontWeight.w800,
           ),
@@ -15725,14 +15728,14 @@ class _AddTeacherScreenState
               decoration:
                   BoxDecoration(
                 color:
-                    WindowsAppearance.resolve(const Color(0xFF172229)),
+                    WindowsAppearance.background(const Color(0xFF172229)),
                 borderRadius:
                     BorderRadius
                         .circular(
                   20,
                 ),
                 border: Border.all(
-                  color: WindowsAppearance.resolve(Colors.white)
+                  color: WindowsAppearance.outline(Colors.white)
                       .withOpacity(
                     0.06,
                   ),
@@ -15756,8 +15759,8 @@ class _AddTeacherScreenState
                             BoxShape.circle,
                         border:
                             Border.all(
-                          color: Colors
-                              .purpleAccent,
+                          color: WindowsAppearance.outline(Colors
+                              .purpleAccent),
                           width: 2,
                         ),
                       ),
@@ -15777,13 +15780,13 @@ class _AddTeacherScreenState
                                   )
                                 : Container(
                                     color:
-                                        WindowsAppearance.resolve(const Color(0xFF10191F)),
+                                        WindowsAppearance.background(const Color(0xFF10191F)),
                                     child:
-                                        const Icon(
+                                              Icon(
                                       Icons
                                           .add_a_photo_rounded,
-                                      color: Colors
-                                          .purpleAccent,
+                                      color: WindowsAppearance.foreground(Colors
+                                          .purpleAccent),
                                       size:
                                           35,
                                     ),
@@ -15798,9 +15801,9 @@ class _AddTeacherScreenState
 
                    Text(
                     'Upload Teacher Photo',
-                    style: TextStyle(
+                    style: TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white54),
+                          WindowsAppearance.foreground(Colors.white54),
                       fontSize: 11,
                     ),
                   ),
@@ -15813,9 +15816,9 @@ class _AddTeacherScreenState
                     controller:
                         _nameCtrl,
                     style:
-                         TextStyle(
+                         TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white),
+                          WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration:
                         _field(
@@ -15837,9 +15840,9 @@ class _AddTeacherScreenState
                     controller:
                         _designationCtrl,
                     style:
-                         TextStyle(
+                         TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white),
+                          WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration:
                         _field(
@@ -15861,9 +15864,9 @@ class _AddTeacherScreenState
                           controller:
                               _subjectCtrl,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -15882,9 +15885,9 @@ class _AddTeacherScreenState
                           controller:
                               _qualificationCtrl,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -15913,9 +15916,9 @@ class _AddTeacherScreenState
                                   .phone,
                           maxLength: 10,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -15939,9 +15942,9 @@ class _AddTeacherScreenState
                               TextInputType
                                   .emailAddress,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -15966,9 +15969,9 @@ class _AddTeacherScreenState
                           controller:
                               _dobCtrl,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -15987,9 +15990,9 @@ class _AddTeacherScreenState
                           controller:
                               _joiningCtrl,
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -16010,9 +16013,9 @@ class _AddTeacherScreenState
                     controller:
                         _classesCtrl,
                     style:
-                         TextStyle(
+                         TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white),
+                          WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration:
                         _field(
@@ -16032,9 +16035,9 @@ class _AddTeacherScreenState
                     minLines: 2,
                     maxLines: 3,
                     style:
-                         TextStyle(
+                         TextStyle(fontFamily: 'Segoe UI', 
                       color:
-                          WindowsAppearance.resolve(Colors.white),
+                          WindowsAppearance.foreground(Colors.white),
                     ),
                     decoration:
                         _field(
@@ -16061,9 +16064,9 @@ class _AddTeacherScreenState
                           dropdownColor:
                               WindowsAppearance.resolve(const Color(0xFF172229)),
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -16121,9 +16124,9 @@ class _AddTeacherScreenState
                           dropdownColor:
                               WindowsAppearance.resolve(const Color(0xFF172229)),
                           style:
-                               TextStyle(
+                               TextStyle(fontFamily: 'Segoe UI', 
                             color:
-                                WindowsAppearance.resolve(Colors.white),
+                                WindowsAppearance.foreground(Colors.white),
                           ),
                           decoration:
                               _field(
@@ -16186,8 +16189,8 @@ class _AddTeacherScreenState
                           ElevatedButton
                               .styleFrom(
                         backgroundColor:
-                            Colors
-                                .purpleAccent,
+                            WindowsAppearance.background(Colors
+                                .purpleAccent),
                         shape:
                             RoundedRectangleBorder(
                           borderRadius:
@@ -16209,23 +16212,23 @@ class _AddTeacherScreenState
                                   CircularProgressIndicator(
                                 strokeWidth:
                                     2,
-                                color: WindowsAppearance.resolve(Colors.white),
+                                color: WindowsAppearance.foreground(Colors.white),
                               ),
                             )
                           :  Icon(
                               Icons
                                   .save_rounded,
                               color:
-                                  WindowsAppearance.resolve(Colors.white),
+                                  null,
                             ),
                       label: Text(
                         _saving
                             ? 'Saving Teacher...'
                             : 'SAVE TEACHER PROFILE',
                         style:
-                             TextStyle(
+                             TextStyle(fontFamily: 'Segoe UI', 
                           color:
-                              WindowsAppearance.resolve(Colors.white),
+                              null,
                           fontWeight:
                               FontWeight
                                   .w800,
@@ -16290,13 +16293,13 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         return StatefulBuilder(
           builder: (context, setDlgState) {WindowsAppearance.watch(context);
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               title:  Row(
                 children: [
-                  Icon(Icons.person_add_alt_1, color: Color(0xFF00A884), size: 22),
+                  Icon(Icons.person_add_alt_1, color: WindowsAppearance.foreground(Color(0xFF00A884)), size: 22),
                   SizedBox(width: 10),
-                  Text('Add New Student', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text('Add New Student', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: SizedBox(
@@ -16311,7 +16314,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                             child: DropdownButtonFormField<String>(
                               value: selectedClass,
                               dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                               decoration: _inputDecoration('Class'),
                               items: _classes.where((value) => value != 'All Classes').map((value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
                               onChanged: (value) {
@@ -16324,16 +16327,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                             child: TextField(
                               controller: rollCtrl,
                               keyboardType: TextInputType.number,
-                              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                               decoration: _inputDecoration('Roll No *'),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: nameCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
+                      TextField(controller: nameCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
                       const SizedBox(height: 10),
-                      TextField(controller: parentCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
+                      TextField(controller: parentCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
                       const SizedBox(height: 10),
                       TextField(
                         controller: contactCtrl,
@@ -16342,14 +16345,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           FilteringTextInputFormatter.digitsOnly,
                           LengthLimitingTextInputFormatter(10),
                         ],
-                        style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _inputDecoration('Contact No *'),
                       ),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         value: hostelFacility,
                         dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _inputDecoration('Hostel Facility'),
                         items: const [
                           DropdownMenuItem(value: 'No', child: Text('Hostel Facility: No')),
@@ -16360,26 +16363,26 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         },
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: addressCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Address')),
+                      TextField(controller: addressCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Address')),
                       const SizedBox(height: 10),
                       IndiaAddressFields(country: countryCtrl, state: stateCtrl, district: districtCtrl, enabled: !isSaving),
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('PIN Code'))),
+                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code'))),
                           const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Admission Date'))),
+                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date'))),
                         ],
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: dobCtrl, style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
+                      TextField(controller: dobCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
                     ],
                   ),
                 ),
               ),
               actions: [
                 OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(side: BorderSide(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.grey))),
+                  style: OutlinedButton.styleFrom(side: BorderSide(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.outline(Colors.grey))),
                   onPressed: isSaving ? null : () async {
                     final picker = ImagePicker();
                     final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
@@ -16387,16 +16390,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     final bytes = await image.readAsBytes();
                     setDlgState(() => selectedPhotoBytes = bytes);
                   },
-                  icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70)),
-                  label: Text(selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo', style: TextStyle(color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.resolve(Colors.white70))),
+                  icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.foreground(Colors.white70)),
+                  label: Text(selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo', style: TextStyle(fontFamily: 'Segoe UI', color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.foreground(Colors.white70))),
                 ),
                 TextButton(
                   onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
-                  child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+                  child:  Text('Cancel', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey))),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
+                    backgroundColor: WindowsAppearance.primary,
                   ),
                   onPressed: isSaving
                       ? null
@@ -16409,8 +16412,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                           if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Colors.redAccent,
+                              SnackBar(
+                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Name, Roll No aur Contact bharna zaroori hai!',
                                 ),
@@ -16421,8 +16424,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                           if (!RegExp(r'^[0-9]{10}$').hasMatch(contact)) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                backgroundColor: Colors.redAccent,
+                              SnackBar(
+                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text('Contact number mein exactly 10 digits daalein.'),
                               ),
                             );
@@ -16477,7 +16480,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  backgroundColor: Colors.orangeAccent,
+                                  backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
                                   content: Text(
                                     '$selectedClass me Roll $roll already exist karta hai!',
                                   ),
@@ -16603,7 +16606,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                backgroundColor: Colors.redAccent,
+                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
                                   'Student save error: $e',
                                 ),
@@ -16613,7 +16616,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         },
                   child: Text(
                     isSaving ? 'Saving...' : 'Save Student',
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: null),
                   ),
                 ),
               ],
@@ -16627,12 +16630,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle:  TextStyle(
-        color: WindowsAppearance.resolve(Colors.white30),
+      hintStyle:  TextStyle(fontFamily: 'Segoe UI', 
+        color: WindowsAppearance.foreground(Colors.white30),
         fontSize: 11.5,
       ),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF0D171C)),
+      fillColor: WindowsAppearance.background(const Color(0xFF0D171C)),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: 13,
         vertical: 13,
@@ -16640,13 +16643,13 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
         borderSide: BorderSide(
-          color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055),
+          color: WindowsAppearance.outline(Colors.white).withOpacity(0.055),
         ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
-        borderSide: const BorderSide(
-          color: Color(0xFF00A884),
+        borderSide: BorderSide(
+          color: WindowsAppearance.outline(Color(0xFF00A884)),
           width: 1.15,
         ),
       ),
@@ -16933,13 +16936,13 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {WindowsAppearance.watch(context);
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title:  Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+                  Icon(Icons.warning_amber_rounded, color: WindowsAppearance.foreground(Colors.redAccent)),
                   SizedBox(width: 10),
-                  Text('Delete Student?', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text('Delete Student?', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 18, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: Column(
@@ -16948,40 +16951,40 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                 children: [
                    Text(
                     'Kya aap sach mein is student ka record hamesha ke liye delete karna chahte hain? Yeh wapas nahi aayega.',
-                    style: TextStyle(color: WindowsAppearance.resolve(Colors.white70), fontSize: 13),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                   Text('App Lock Password daalein:', style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 12)),
+                   Text('App Lock Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: InputDecoration(
                       hintText: 'Enter App Lock Password',
-                      hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.grey), fontSize: 13),
+                      hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 13),
                       filled: true,
-                      fillColor: WindowsAppearance.resolve(const Color(0xFF121B22)),
+                      fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
                       suffixIcon: IconButton(
-                        icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility, color: WindowsAppearance.resolve(Colors.grey), size: 18),
+                        icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility, color: WindowsAppearance.foreground(Colors.grey), size: 18),
                         onPressed: () => setDialogState(() => obscureText = !obscureText),
                       ),
                     ),
                   ),
                   if (errorMessage != null) ...[
                     const SizedBox(height: 8),
-                    Text(errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                    Text(errorMessage!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent), fontSize: 12)),
                   ]
                 ],
               ),
               actions: [
                 TextButton(
                   onPressed: isLoading ? null : () => Navigator.pop(ctx, false),
-                  child:  Text('Cancel', style: TextStyle(color: WindowsAppearance.resolve(Colors.grey))),
+                  child:  Text('Cancel', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey))),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                  style: ElevatedButton.styleFrom(backgroundColor: WindowsAppearance.primary),
                   onPressed: isLoading
                       ? null
                       : () async {
@@ -17009,8 +17012,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           }
                         },
                   child: isLoading
-                      ?  SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: WindowsAppearance.resolve(Colors.white), strokeWidth: 2))
-                      :  Text('Delete Now', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+                      ?  SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: WindowsAppearance.foreground(Colors.white), strokeWidth: 2))
+                      :  Text('Delete Now', style: TextStyle(fontFamily: 'Segoe UI', color: null)),
                 ),
               ],
             );
@@ -17141,14 +17144,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            backgroundColor: Colors.redAccent,
+          SnackBar(
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text('Student removed on this PC. Background school sync queued.'),
           ),
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('Delete error: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Delete error: $e')));
     }
   }
 
@@ -17194,32 +17197,32 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                   height: double.infinity,
                   fit: BoxFit.cover,
 errorBuilder: (_, __, ___) =>  ColoredBox(
-                    color: WindowsAppearance.resolve(Color(0xFF121B22)),
+                    color: WindowsAppearance.background(Color(0xFF121B22)),
                     child: Icon(
                       Icons.person_rounded,
                       size: 38,
-                      color: Color(0xFF00A884),
+                      color: WindowsAppearance.foreground(Color(0xFF00A884)),
                     ),
                   ),
                 );
               }
 
               return  ColoredBox(
-                color: WindowsAppearance.resolve(Color(0xFF121B22)),
+                color: WindowsAppearance.background(Color(0xFF121B22)),
                 child: Icon(
                   Icons.person_rounded,
                   size: 38,
-                  color: Color(0xFF00A884),
+                  color: WindowsAppearance.foreground(Color(0xFF00A884)),
                 ),
               );
             }
 
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
               title: Text(
                 'Edit Student (${data['class'] ?? ''} - Roll ${data['rollNo'] ?? ''})',
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white),
                   fontSize: 16,
                 ),
               ),
@@ -17239,7 +17242,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                               border: Border.all(
                                 color: selectedPhotoBytes != null
                                     ? const Color(0xFF00A884)
-                                    : WindowsAppearance.resolve(Colors.white24),
+                                    : WindowsAppearance.outline(Colors.white24),
                                 width: 2,
                               ),
                             ),
@@ -17253,7 +17256,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 side: BorderSide(
                                   color: selectedPhotoBytes != null
                                       ? const Color(0xFF00A884)
-                                      : WindowsAppearance.resolve(Colors.white24),
+                                      : WindowsAppearance.outline(Colors.white24),
                                 ),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
@@ -17275,8 +17278,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                       if (bytes.length > 700000) {
                                         if (!mounted) return;
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            backgroundColor: Colors.redAccent,
+                                          SnackBar(
+                                            backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                             content: Text(
                                               'Photo size zyada hai. Chhota photo select karein.',
                                             ),
@@ -17303,16 +17306,16 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     : Icons.add_a_photo_outlined,
                                 color: selectedPhotoBytes != null
                                     ? const Color(0xFF00A884)
-                                    : WindowsAppearance.resolve(Colors.white70),
+                                    : WindowsAppearance.foreground(Colors.white70),
                               ),
                               label: Text(
                                 selectedPhotoBytes != null
                                     ? 'New Photo Ready'
                                     : 'Change Student Photo',
-                                style: TextStyle(
+                                style: TextStyle(fontFamily: 'Segoe UI', 
                                   color: selectedPhotoBytes != null
                                       ? const Color(0xFF00A884)
-                                      : WindowsAppearance.resolve(Colors.white70),
+                                      : WindowsAppearance.foreground(Colors.white70),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -17323,27 +17326,27 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Full Name'),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: parentCtrl,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput("Parent's Name"),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: contactCtrl,
                         keyboardType: TextInputType.phone,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Contact No'),
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
                         value: hostelFacility,
                         dropdownColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Hostel Facility'),
                         items: const [
                           DropdownMenuItem(
@@ -17366,7 +17369,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       const SizedBox(height: 8),
                       TextField(
                         controller: addressCtrl,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Address'),
                       ),
                       const SizedBox(height: 8),
@@ -17375,19 +17378,19 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       TextField(
                         controller: pinCtrl,
                         keyboardType: TextInputType.number,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('PIN Code'),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: admissionCtrl,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Admission Date'),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: dobCtrl,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Date of Birth'),
                       ),
                     ],
@@ -17403,14 +17406,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                           Navigator.pop(ctx);
                           _deleteStudent(docId);
                         },
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.delete_outline,
-                    color: Colors.redAccent,
+                    color: WindowsAppearance.foreground(Colors.redAccent),
                     size: 18,
                   ),
-                  label: const Text(
+                  label: Text(
                     'Delete Student',
-                    style: TextStyle(color: Colors.redAccent),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)),
                   ),
                 ),
                 Row(
@@ -17420,13 +17423,13 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       onPressed: saving ? null : () => Navigator.pop(ctx),
                       child:  Text(
                         'Cancel',
-                        style: TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                       ),
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00A884),
+                        backgroundColor: WindowsAppearance.primary,
                       ),
                       onPressed: saving
                           ? null
@@ -17521,7 +17524,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 Navigator.pop(ctx);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    backgroundColor: const Color(0xFF00A884),
+                                    backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
                                     content: Text(
                                       selectedPhotoBytes == null
                                           ? 'Student saved on this PC. Background school sync queued.'
@@ -17534,7 +17537,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 setDialogState(() => saving = false);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    backgroundColor: Colors.redAccent,
+                                    backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                     content: Text('Update error: $e'),
                                   ),
                                 );
@@ -17546,12 +17549,12 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                               height: 17,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: WindowsAppearance.resolve(Colors.white),
+                                color: WindowsAppearance.foreground(Colors.white),
                               ),
                             )
                           :  Text(
                               'Save Changes',
-                              style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                              style: TextStyle(fontFamily: 'Segoe UI', color: null),
                             ),
                     ),
                   ],
@@ -17567,15 +17570,15 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF121B22)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF121B22)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title: const Text('Student Directory Records'),
         actions: [TextButton.icon(
             onPressed: _openAddStudentDialog,
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF00D9A5),
-              backgroundColor: const Color(0xFF00A884).withOpacity(0.09),
+              foregroundColor: WindowsAppearance.onPrimary,
+              backgroundColor: WindowsAppearance.primary,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -17584,14 +17587,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
             icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
             label: const Text(
               'Add Student',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 11, fontWeight: FontWeight.w700),
             ),
           ), TextButton.icon(onPressed:_exportingExcel?null:_exportExcel,icon:const Icon(Icons.table_view_outlined),label:Text(_exportingExcel?_exportProgress:'Export Excel')),const SizedBox(width:12)],
       ),
       body: Column(
         children: [
           Container(
-            color: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+            color: WindowsAppearance.background(const Color(0xFF1F2C34)),
             height: 52,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
@@ -17606,11 +17609,11 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   child: ChoiceChip(
                     label: Text(
                       currentClass,
-                      style: TextStyle(color: selected ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.resolve(Colors.grey), fontWeight: FontWeight.bold, fontSize: 12),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: selected ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.resolve(Colors.grey), fontWeight: FontWeight.bold, fontSize: 12),
                     ),
                     selected: selected,
-                    selectedColor: const Color(0xFF00A884),
-                    backgroundColor: WindowsAppearance.resolve(const Color(0xFF121B22)),
+                    selectedColor: WindowsAppearance.background(const Color(0xFF00A884)),
+                    backgroundColor: WindowsAppearance.background(const Color(0xFF121B22)),
                     onSelected: (_) => setState(() => _selectedClassFilter = currentClass),
                   ),
                 );
@@ -17629,9 +17632,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       .snapshots(),
               builder: (context, snapshot) {WindowsAppearance.watch(context);
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
+                  return Center(
                     child: CircularProgressIndicator(
-                      color: Color(0xFF00A884),
+                      color: WindowsAppearance.foreground(Color(0xFF00A884)),
                     ),
                   );
                 }
@@ -17642,7 +17645,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       _selectedClassFilter == 'All Classes'
                           ? 'Abhi koi student registered nahi hai.'
                           : '$_selectedClassFilter me koi student registered nahi hai.',
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                     ),
                   );
                 }
@@ -17727,7 +17730,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: WindowsAppearance.resolve(const Color(0xFF1F2C34)), borderRadius: BorderRadius.circular(12)),
+                      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF1F2C34)), borderRadius: BorderRadius.circular(12)),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -17739,9 +17742,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   ? schoolNetworkImage(
                                       photoUrl,
                                       fit: BoxFit.cover,
-errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearance.resolve(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: Color(0xFF00A884))),
+errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearance.background(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: WindowsAppearance.foreground(Color(0xFF00A884)))),
                                     )
-                                  :  ColoredBox(color: WindowsAppearance.resolve(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: Color(0xFF00A884))),
+                                  :  ColoredBox(color: WindowsAppearance.background(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: WindowsAppearance.foreground(Color(0xFF00A884)))),
                             ),
                           ),
                           const SizedBox(width: 14),
@@ -17753,8 +17756,8 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                   children: [
                                     Expanded(
                                       child: Text(student['name']?.toString() ?? '', translate: false,
-                                        style:  TextStyle(
-                                          color: WindowsAppearance.resolve(Colors.white),
+                                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                                          color: WindowsAppearance.foreground(Colors.white),
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
                                         ),
@@ -17768,13 +17771,13 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                         vertical: 3,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: Colors.blueAccent.withOpacity(0.12),
+                                        color: WindowsAppearance.background(Colors.blueAccent.withOpacity(0.12)),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: Text(
                                         student['class']?.toString() ?? 'N/A',
-                                        style: const TextStyle(
-                                          color: Colors.blueAccent,
+                                        style: TextStyle(fontFamily: 'Segoe UI', 
+                                          color: WindowsAppearance.foreground(Colors.blueAccent),
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -17787,14 +17790,14 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                         vertical: 3,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF00A884)
+                                        color: WindowsAppearance.background(const Color(0xFF00A884))
                                             .withOpacity(0.18),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: Text(
                                         'Roll: ${student['rollNo'] ?? 'N/A'}',
-                                        style: const TextStyle(
-                                          color: Color(0xFF00A884),
+                                        style: TextStyle(fontFamily: 'Segoe UI', 
+                                          color: WindowsAppearance.foreground(Color(0xFF00A884)),
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -17803,16 +17806,16 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                   ],
                                 ),
                                 const SizedBox(height: 5),
-                                Text('Parent: ${student['parentName'] ?? 'N/A'} • Contact: ${student['parentContact'] ?? 'N/A'}', style:  TextStyle(color: WindowsAppearance.resolve(Colors.grey), fontSize: 12)),
+                                Text('Parent: ${student['parentName'] ?? 'N/A'} • Contact: ${student['parentContact'] ?? 'N/A'}', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 12)),
                                 const SizedBox(height: 3),
-                                Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style:  TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11)),
+                                Text('Address: ${student['address'] ?? ''}, ${student['district'] ?? ''}, ${student['state'] ?? ''} - ${student['pinCode'] ?? ''}', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11)),
                                 const SizedBox(height: 3),
                                 Text(
                                   'Hostel: ${student['hostelFacility'] ?? 'No'} • '
                                   'Admission: ${_studentDirectoryDate(student['joiningDate'])} • '
                                   'DOB: ${_studentDirectoryDate(student['dateOfBirth'])}',
-                                  style:  TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.grey),
+                                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.grey),
                                     fontSize: 11,
                                   ),
                                 ),
@@ -17844,7 +17847,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                               : resultStatus == 'FAIL'
                                                   ? Colors.redAccent
                                                       .withOpacity(0.28)
-                                                  : WindowsAppearance.resolve(Colors.white12),
+                                                  : WindowsAppearance.outline(Colors.white12),
                                         ),
                                       ),
                                       child: Row(
@@ -17860,7 +17863,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                                 ? const Color(0xFF00D9A5)
                                                 : resultStatus == 'FAIL'
                                                     ? Colors.redAccent
-                                                    : WindowsAppearance.resolve(Colors.white38),
+                                                    : WindowsAppearance.foreground(Colors.white38),
                                             size: 15,
                                           ),
                                           const SizedBox(width: 5),
@@ -17872,12 +17875,12 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                                     ? 'Result: Not entered'
                                                     : '${resultExamName.isEmpty ? 'Latest' : resultExamName}: $resultStatus'
                                                         '${resultPercentage == null ? '' : ' • ${resultPercentage.toStringAsFixed(1)}%'}',
-                                            style: TextStyle(
+                                            style: TextStyle(fontFamily: 'Segoe UI', 
                                               color: resultStatus == 'PASS'
                                                   ? const Color(0xFF00D9A5)
                                                   : resultStatus == 'FAIL'
                                                       ? Colors.redAccent
-                                                      : WindowsAppearance.resolve(Colors.white54),
+                                                      : WindowsAppearance.foreground(Colors.white54),
                                               fontSize: 9.8,
                                               fontWeight: FontWeight.w800,
                                             ),
@@ -17888,9 +17891,9 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                     OutlinedButton.icon(
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor:
-                                            const Color(0xFF00D9A5),
+                                            WindowsAppearance.primary,
                                         side: BorderSide(
-                                          color: const Color(0xFF00A884)
+                                          color: WindowsAppearance.outline(const Color(0xFF00A884))
                                               .withOpacity(0.38),
                                         ),
                                         padding: const EdgeInsets.symmetric(
@@ -17922,7 +17925,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                             ),
                                       label: const Text(
                                         'Promote',
-                                        style: TextStyle(
+                                        style: TextStyle(fontFamily: 'Segoe UI', 
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w800,
                                         ),
@@ -17930,9 +17933,9 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                     ),
                                     OutlinedButton.icon(
                                       style: OutlinedButton.styleFrom(
-                                        foregroundColor: Colors.orangeAccent,
+                                        foregroundColor: WindowsAppearance.primary,
                                         side: BorderSide(
-                                          color: Colors.orangeAccent
+                                          color: WindowsAppearance.outline(Colors.orangeAccent)
                                               .withOpacity(0.34),
                                         ),
                                         padding: const EdgeInsets.symmetric(
@@ -17956,7 +17959,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                       ),
                                       label: const Text(
                                         'Retain',
-                                        style: TextStyle(
+                                        style: TextStyle(fontFamily: 'Segoe UI', 
                                           fontSize: 10.5,
                                           fontWeight: FontWeight.w800,
                                         ),
@@ -17969,9 +17972,9 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                   alignment: Alignment.centerLeft,
                                   child: OutlinedButton.icon(
                                     style: OutlinedButton.styleFrom(
-                                      foregroundColor: const Color(0xFF7CB9FF),
+                                      foregroundColor: WindowsAppearance.primary,
                                       side: BorderSide(
-                                        color: const Color(0xFF7CB9FF).withOpacity(0.32),
+                                        color: WindowsAppearance.outline(const Color(0xFF7CB9FF).withOpacity(0.32)),
                                       ),
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 10,
@@ -17998,7 +18001,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                     ),
                                     label: const Text(
                                       'Student Inventory',
-                                      style: TextStyle(
+                                      style: TextStyle(fontFamily: 'Segoe UI', 
                                         fontSize: 10.5,
                                         fontWeight: FontWeight.w700,
                                       ),
@@ -18013,15 +18016,15 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                             children: [
                               Container(
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF25D366).withOpacity(0.12),
+                                  color: WindowsAppearance.background(const Color(0xFF25D366).withOpacity(0.12)),
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: const Color(0xFF25D366).withOpacity(0.30)),
+                                  border: Border.all(color: WindowsAppearance.outline(const Color(0xFF25D366).withOpacity(0.30))),
                                 ),
                                 child: IconButton(
                                   tooltip: WindowsUiLanguage.translate('WhatsApp Parent'),
-                                  icon: const FaIcon(
+                                  icon: FaIcon(
                                     FontAwesomeIcons.whatsapp,
-                                    color: Color(0xFF25D366),
+                                    color: WindowsAppearance.foreground(Color(0xFF25D366)),
                                     size: 22,
                                   ),
                                   onPressed: () {
@@ -18032,7 +18035,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                       html.window.open('https://wa.me/$waNum', '_blank');
                                     } else {
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(backgroundColor: Colors.redAccent, content: Text('Student ka valid contact number nahi hai!')),
+                                        SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('Student ka valid contact number nahi hai!')),
                                       );
                                     }
                                   },
@@ -18041,12 +18044,12 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                               const SizedBox(height: 8),
                               Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.blueAccent.withOpacity(0.10),
+                                  color: WindowsAppearance.background(Colors.blueAccent.withOpacity(0.10)),
                                   shape: BoxShape.circle,
                                 ),
                                 child: IconButton(
                                   tooltip: WindowsUiLanguage.translate('Edit Record'),
-                                  icon: const Icon(Icons.edit_rounded, color: Colors.blueAccent, size: 18),
+                                  icon: Icon(Icons.edit_rounded, color: WindowsAppearance.foreground(Colors.blueAccent), size: 18),
                                   onPressed: () => _editStudent(doc.id, student),
                                 ),
                               ),
@@ -18068,9 +18071,9 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
   InputDecoration _dialogInput(String hint) {
     return InputDecoration(
       labelText: hint,
-      labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.grey), fontSize: 13),
+      labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 13),
       filled: true,
-      fillColor: WindowsAppearance.resolve(const Color(0xFF121B22)),
+      fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
     );
@@ -18086,9 +18089,9 @@ class PasswordManagementScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         title: const Text('Password Management'),
       ),
       body: SingleChildScrollView(
@@ -18209,8 +18212,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     final managedSession=await CentralSchoolCloud.saved();
     if (managedSession['managed']!=true && (email.isEmpty || !email.toLowerCase().endsWith('@gmail.com'))) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Valid School Gmail ID daalein.'),
         ),
       );
@@ -18218,8 +18221,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     }
     if (!url.startsWith('https://script.google.com/')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Colors.redAccent,
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Valid Google Apps Script /exec URL daalein.'),
         ),
       );
@@ -18249,8 +18252,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         _verifyDrive(url),
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF00A884),
+        SnackBar(
+          backgroundColor: WindowsAppearance.background(Color(0xFF00A884)),
           content: Text('Google Drive configuration save ho gayi.'),
         ),
       );
@@ -18259,7 +18262,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Save error: $e'),
         ),
       );
@@ -18286,14 +18289,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         title:  Text(
           'Are you sure?',
-          style: TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         ),
         content:  Text(
           'Change the saved Drive connection? Your existing files remain preserved. A 30-second delay and App Lock verification are required.',
-          style: TextStyle(color: WindowsAppearance.resolve(Colors.white70)),
+          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70)),
         ),
         actions: [
           TextButton(
@@ -18302,8 +18305,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent,
-              foregroundColor: Colors.black,
+              backgroundColor: WindowsAppearance.primary,
+              foregroundColor: WindowsAppearance.onPrimary,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Continue'),
@@ -18326,10 +18329,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
         hintText: text,
-        hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white30)),
-        prefixIcon: Icon(icon, color: Colors.orangeAccent),
+        hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30)),
+        prefixIcon: Icon(icon, color: WindowsAppearance.foreground(Colors.orangeAccent)),
         filled: true,
-        fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -18340,25 +18343,25 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-          color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+          color: WindowsAppearance.background(const Color(0xFF0F191F)),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            Icon(icon, color: const Color(0xFF4DA3FF)),
+            Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF4DA3FF))),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
-                      style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white38), fontSize: 10)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white38), fontSize: 10)),
                   const SizedBox(height: 3),
                   SelectableText(
                     value,
-                    style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white70), fontSize: 11.5),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white70), fontSize: 11.5),
                   ),
                 ],
               ),
@@ -18370,14 +18373,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         title: const Text('Advanced Settings'),
       ),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          ? Center(
+              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(18),
               child: Center(
@@ -18394,18 +18397,18 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                           ),
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                              color: Colors.orangeAccent.withOpacity(0.20)),
+                              color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.20))),
                         ),
                         child:  Row(
                           children: [
                             Icon(Icons.security_rounded,
-                                color: Colors.orangeAccent, size: 30),
+                                color: WindowsAppearance.foreground(Colors.orangeAccent), size: 30),
                             SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 'Protected settings: Google Drive, Local Data aur Student UID yahan manage karein.',
-                                style: TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white70), height: 1.4),
+                                style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white70), height: 1.4),
                               ),
                             ),
                           ],
@@ -18416,23 +18419,23 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                          color: WindowsAppearance.background(const Color(0xFF172229)),
                           borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
                               children: [
-                                const Icon(Icons.add_to_drive_rounded,
-                                    color: Color(0xFF4DA3FF)),
+                                Icon(Icons.add_to_drive_rounded,
+                                    color: WindowsAppearance.foreground(Color(0xFF4DA3FF))),
                                 const SizedBox(width: 10),
                                  Expanded(
                                   child: Text(
                                     'Google Drive Integration',
-                                    style: TextStyle(
-                                      color: WindowsAppearance.resolve(Colors.white),
+                                    style: TextStyle(fontFamily: 'Segoe UI', 
+                                      color: WindowsAppearance.foreground(Colors.white),
                                       fontSize: 16,
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -18451,10 +18454,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                               _info('Google Apps Script URL',
                                   _linkedScript ?? '', Icons.link_rounded),
                               const SizedBox(height: 14),
-                              const Text(
+                              Text(
                                 'Student documents, fee history, exam data aur report cards linked Google backend me save honge.',
-                                style: TextStyle(
-                                    color: Color(0xFF00D9A5),
+                                style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                     fontSize: 11,
                                     height: 1.4),
                               ),
@@ -18467,9 +18470,9 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                   icon: const Icon(Icons.sync_alt_rounded),
                                   label: const Text('Change'),
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.orangeAccent,
+                                    foregroundColor: WindowsAppearance.primary,
                                     side: BorderSide(
-                                        color: Colors.orangeAccent
+                                        color: WindowsAppearance.outline(Colors.orangeAccent)
                                             .withOpacity(0.5)),
                                   ),
                                 ),
@@ -18477,14 +18480,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                             ] else ...[
                               TextField(
                                 controller: _gmail,
-                                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                 decoration:
                                     _input('School Gmail ID', Icons.mail_outline),
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _script,
-                                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                 decoration: _input(
                                     'Google Apps Script /exec URL',
                                     Icons.link_rounded),
@@ -18496,7 +18499,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                   onPressed: _saving ? null : _save,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor:
-                                        const Color(0xFF00A884),
+                                        WindowsAppearance.primary,
                                   ),
                                   icon: _saving
                                       ?  SizedBox(
@@ -18504,14 +18507,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                                           height: 17,
                                           child: CircularProgressIndicator(
                                               strokeWidth: 2,
-                                              color: WindowsAppearance.resolve(Colors.white)),
+                                              color: WindowsAppearance.foreground(Colors.white)),
                                         )
                                       :  Icon(Icons.cloud_done_rounded,
-                                          color: WindowsAppearance.resolve(Colors.white)),
+                                          color: null),
                                   label: Text(
                                     _saving ? 'Saving...' : 'Connect Google Drive',
                                     style:
-                                         TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                         TextStyle(fontFamily: 'Segoe UI', color: null),
                                   ),
                                 ),
                               ),
@@ -18669,10 +18672,10 @@ class _WindowsSectionPasswordLocksPanelState
             InputDecoration field(String label) {
               return InputDecoration(
                 labelText: label,
-                labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-                prefixIcon: const Icon(
+                labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+                prefixIcon: Icon(
                   Icons.password_rounded,
-                  color: Color(0xFF00A884),
+                  color: WindowsAppearance.foreground(Color(0xFF00A884)),
                 ),
                 suffixIcon: IconButton(
                   onPressed: saving
@@ -18682,11 +18685,11 @@ class _WindowsSectionPasswordLocksPanelState
                     obscure
                         ? Icons.visibility_off_rounded
                         : Icons.visibility_rounded,
-                    color: WindowsAppearance.resolve(Colors.white54),
+                    color: WindowsAppearance.foreground(Colors.white54),
                   ),
                 ),
                 filled: true,
-                fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -18695,7 +18698,7 @@ class _WindowsSectionPasswordLocksPanelState
             }
 
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
@@ -18708,8 +18711,8 @@ class _WindowsSectionPasswordLocksPanelState
                       isChange
                           ? 'Change ${definition.title} Password'
                           : 'Add ${definition.title} Password',
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
                       ),
@@ -18727,7 +18730,7 @@ class _WindowsSectionPasswordLocksPanelState
                         controller: current,
                         obscureText: obscure,
                         enabled: !saving,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: field('Current Password'),
                       ),
                       const SizedBox(height: 10),
@@ -18736,7 +18739,7 @@ class _WindowsSectionPasswordLocksPanelState
                       controller: next,
                       obscureText: obscure,
                       enabled: !saving,
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                       decoration: field('New Password'),
                     ),
                     const SizedBox(height: 10),
@@ -18744,7 +18747,7 @@ class _WindowsSectionPasswordLocksPanelState
                       controller: confirm,
                       obscureText: obscure,
                       enabled: !saving,
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                       decoration: field('Confirm Password'),
                     ),
                     if (error != null) ...[
@@ -18753,8 +18756,8 @@ class _WindowsSectionPasswordLocksPanelState
                         alignment: Alignment.centerLeft,
                         child: Text(
                           error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.redAccent),
                             fontSize: 11,
                           ),
                         ),
@@ -18778,7 +18781,7 @@ class _WindowsSectionPasswordLocksPanelState
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: WindowsAppearance.resolve(Colors.white),
+                            color: WindowsAppearance.foreground(Colors.white),
                           ),
                         )
                       : const Icon(Icons.save_rounded, size: 17),
@@ -18800,7 +18803,7 @@ class _WindowsSectionPasswordLocksPanelState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             '${definition.title} password save ho gaya aur lock ON hai.',
           ),
@@ -18832,7 +18835,7 @@ class _WindowsSectionPasswordLocksPanelState
       setState(() => _busyKey = null);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Lock update error: $e'),
         ),
       );
@@ -18840,7 +18843,7 @@ class _WindowsSectionPasswordLocksPanelState
   }
 
   Widget _status(bool enabled) {
-    final color = enabled ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white38);
+    final color = enabled ? const Color(0xFF00D9A5) : WindowsAppearance.foreground(Colors.white38);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -18850,8 +18853,8 @@ class _WindowsSectionPasswordLocksPanelState
       ),
       child: Text(
         enabled ? 'ON' : 'OFF',
-        style: TextStyle(
-          color: color,
+        style: TextStyle(fontFamily: 'Segoe UI', 
+          color: WindowsAppearance.foreground(color),
           fontSize: 9,
           fontWeight: FontWeight.w900,
         ),
@@ -18869,7 +18872,7 @@ class _WindowsSectionPasswordLocksPanelState
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: definition.color.withOpacity(0.16)),
       ),
@@ -18894,8 +18897,8 @@ class _WindowsSectionPasswordLocksPanelState
                   children: [
                     Text(
                       definition.title,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 13,
                         fontWeight: FontWeight.w800,
                       ),
@@ -18903,8 +18906,8 @@ class _WindowsSectionPasswordLocksPanelState
                     const SizedBox(height: 3),
                     Text(
                       definition.subtitle,
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white38),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white38),
                         fontSize: 10,
                         height: 1.35,
                       ),
@@ -18949,7 +18952,7 @@ class _WindowsSectionPasswordLocksPanelState
               if (!configured)
                  Text(
                   'Password not set',
-                  style: TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 10),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 10),
                 ),
             ],
           ),
@@ -18964,22 +18967,22 @@ class _WindowsSectionPasswordLocksPanelState
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
            Row(
             children: [
-              Icon(Icons.lock_rounded, color: Colors.orangeAccent),
+              Icon(Icons.lock_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
               SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Section Password Locks',
-                  style: TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
                   ),
@@ -18990,18 +18993,18 @@ class _WindowsSectionPasswordLocksPanelState
           const SizedBox(height: 7),
            Text(
             'App Lock protects app opening. Other section passwords remain independent and keep their existing values.',
-            style: TextStyle(
-              color: WindowsAppearance.resolve(Colors.white54),
+            style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(Colors.white54),
               fontSize: 10.5,
               height: 1.45,
             ),
           ),
           const WindowsSettingsPanel(lockRowOnly:true),
           if (_loading)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 18),
               child: Center(
-                child: CircularProgressIndicator(color: Color(0xFF00D9A5)),
+                child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00D9A5))),
               ),
             )
           else
@@ -19116,18 +19119,18 @@ class _AdvancedStudentUidSettingsPanelState
             }
 
             return AlertDialog(
-              backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+              backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
               title:  Row(
                 children: [
-                  Icon(Icons.badge_rounded, color: Color(0xFF00D9A5)),
+                  Icon(Icons.badge_rounded, color: WindowsAppearance.foreground(Color(0xFF00D9A5))),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Activate TEST Student UID?',
-                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white), fontSize: 17),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 17),
                     ),
                   ),
                 ],
@@ -19142,8 +19145,8 @@ class _AdvancedStudentUidSettingsPanelState
                       'Kya school ke sabhi existing students Student Directory me add ho chuke hain?\n\n'
                       'TEST UID activate hone par existing students ko Class 1 → Class 12 aur Roll No order me permanent TEST UID assign hoga. '
                       'Delete hone ke baad purana UID dobara issue nahi hoga. Final production UID baad me alag se activate kiya jayega.',
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white70),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white70),
                         fontSize: 12,
                         height: 1.5,
                       ),
@@ -19153,17 +19156,17 @@ class _AdvancedStudentUidSettingsPanelState
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.orangeAccent.withOpacity(0.08),
+                        color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.08)),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: Colors.orangeAccent.withOpacity(0.25),
+                          color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.25)),
                         ),
                       ),
                       child: Text(
                         secondsLeft > 0
                             ? 'Student Directory verify karein... Password option $secondsLeft sec baad unlock hoga.'
                             : 'Verification time complete. Ab App Lock Password enter karein.',
-                        style: TextStyle(
+                        style: TextStyle(fontFamily: 'Segoe UI', 
                           color: secondsLeft > 0
                               ? Colors.orangeAccent
                               : const Color(0xFF00D9A5),
@@ -19177,17 +19180,17 @@ class _AdvancedStudentUidSettingsPanelState
                       controller: passwordController,
                       enabled: secondsLeft == 0,
                       obscureText: true,
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
                         labelText: 'App Lock Password',
-                        labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-                        prefixIcon: const Icon(
+                        labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+                        prefixIcon: Icon(
                           Icons.lock_outline_rounded,
-                          color: Color(0xFF00A884),
+                          color: WindowsAppearance.foreground(Color(0xFF00A884)),
                         ),
                         filled: true,
-                        fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                        fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
@@ -19202,13 +19205,13 @@ class _AdvancedStudentUidSettingsPanelState
                   onPressed: () => Navigator.pop(dialogContext),
                   child:  Text(
                     'Cancel',
-                    style: TextStyle(color: WindowsAppearance.resolve(Colors.grey)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey)),
                   ),
                 ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00A884),
-                    foregroundColor: WindowsAppearance.resolve(Colors.white),
+                    backgroundColor: WindowsAppearance.primary,
+                    foregroundColor: WindowsAppearance.onPrimary,
                   ),
                   onPressed: secondsLeft == 0 &&
                           passwordController.text.trim().isNotEmpty
@@ -19258,7 +19261,7 @@ class _AdvancedStudentUidSettingsPanelState
       } on FormatException catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            backgroundColor: Colors.redAccent,
+            backgroundColor: WindowsAppearance.background(Colors.redAccent),
             content: Text(e.message.toString()),
           ),
         );
@@ -19385,7 +19388,7 @@ class _AdvancedStudentUidSettingsPanelState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             missing.isEmpty
                 ? 'TEST Student UID ON ho gaya. Sab existing students ke UID pehle se assigned hain.'
@@ -19398,7 +19401,7 @@ class _AdvancedStudentUidSettingsPanelState
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(
             e.code == 'wrong-password' || e.code == 'invalid-credential'
                 ? 'App Lock Password galat hai.'
@@ -19411,7 +19414,7 @@ class _AdvancedStudentUidSettingsPanelState
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID activation error: $e'),
         ),
       );
@@ -19442,7 +19445,7 @@ class _AdvancedStudentUidSettingsPanelState
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID OFF error: $e'),
         ),
       );
@@ -19467,7 +19470,7 @@ class _AdvancedStudentUidSettingsPanelState
       setState(() => _uidSettingsLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('TEST UID setting save error: $e'),
         ),
       );
@@ -19476,21 +19479,21 @@ class _AdvancedStudentUidSettingsPanelState
 
   InputDecoration _uidInput(String hint, IconData icon) => InputDecoration(
         hintText: hint,
-        hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 12),
-        prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 19),
+        hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 12),
+        prefixIcon: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00A884)), size: 19),
         filled: true,
-        fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.06)),
+          borderSide: BorderSide(color: WindowsAppearance.outline(Colors.white).withOpacity(0.06)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF00A884)),
+          borderSide: BorderSide(color: WindowsAppearance.outline(Color(0xFF00A884))),
         ),
         disabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.04)),
+          borderSide: BorderSide(color: WindowsAppearance.outline(Colors.white).withOpacity(0.04)),
         ),
       );
 
@@ -19505,9 +19508,9 @@ class _AdvancedStudentUidSettingsPanelState
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
       ),
       child: Row(
         children: [
@@ -19517,8 +19520,8 @@ class _AdvancedStudentUidSettingsPanelState
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    color: enabled ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.resolve(Colors.white30),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: enabled ? WindowsAppearance.resolve(Colors.white) : WindowsAppearance.foreground(Colors.white30),
                     fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -19526,8 +19529,8 @@ class _AdvancedStudentUidSettingsPanelState
                 const SizedBox(height: 3),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    color: enabled ? WindowsAppearance.resolve(Colors.white38) : WindowsAppearance.resolve(Colors.white24),
+                  style: TextStyle(fontFamily: 'Segoe UI', 
+                    color: enabled ? WindowsAppearance.foreground(Colors.white38) : WindowsAppearance.foreground(Colors.white24),
                     fontSize: 10,
                     height: 1.35,
                   ),
@@ -19538,7 +19541,7 @@ class _AdvancedStudentUidSettingsPanelState
           const SizedBox(width: 12),
           Switch(
             value: value,
-            activeColor: const Color(0xFF00D9A5),
+            activeColor: WindowsAppearance.primary,
             onChanged: enabled ? onChanged : null,
           ),
         ],
@@ -19555,9 +19558,9 @@ class _AdvancedStudentUidSettingsPanelState
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF00D9A5).withOpacity(0.14)),
+        border: Border.all(color: WindowsAppearance.outline(const Color(0xFF00D9A5).withOpacity(0.14))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -19568,12 +19571,12 @@ class _AdvancedStudentUidSettingsPanelState
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF00A884).withOpacity(0.11),
+                  color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.11)),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.badge_rounded,
-                  color: Color(0xFF00D9A5),
+                  color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                   size: 21,
                 ),
               ),
@@ -19584,8 +19587,8 @@ class _AdvancedStudentUidSettingsPanelState
                   children: [
                     Text(
                       'Student UID — TEST MODE',
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
@@ -19593,7 +19596,7 @@ class _AdvancedStudentUidSettingsPanelState
                     SizedBox(height: 3),
                     Text(
                       'Fees identity + optional ID Card UID preview',
-                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                   ],
                 ),
@@ -19606,7 +19609,7 @@ class _AdvancedStudentUidSettingsPanelState
                 ),
                 child: Text(
                   _uidMasterEnabled ? 'TEST ON' : 'TEST OFF',
-                  style: TextStyle(
+                  style: TextStyle(fontFamily: 'Segoe UI', 
                     color: statusColor,
                     fontSize: 9,
                     fontWeight: FontWeight.w900,
@@ -19616,13 +19619,13 @@ class _AdvancedStudentUidSettingsPanelState
             ],
           ),
           const SizedBox(height: 15),
-          Container(height: 1, color: WindowsAppearance.resolve(Colors.white).withOpacity(0.055)),
+          Container(height: 1, color: WindowsAppearance.background(Colors.white).withOpacity(0.055)),
           const SizedBox(height: 15),
           if (_uidSettingsLoading)
-            const Center(
+            Center(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
               ),
             )
           else ...[
@@ -19630,20 +19633,20 @@ class _AdvancedStudentUidSettingsPanelState
               width: double.infinity,
               padding: const EdgeInsets.all(13),
               decoration: BoxDecoration(
-                color: Colors.orangeAccent.withOpacity(0.07),
+                color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.07)),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orangeAccent.withOpacity(0.18)),
+                border: Border.all(color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.18))),
               ),
               child:  Text(
                 'Abhi TEST mode hai. Default example TEST-000001 hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
-                style: TextStyle(color: WindowsAppearance.resolve(Colors.white60), fontSize: 11, height: 1.45),
+                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11, height: 1.45),
               ),
             ),
             const SizedBox(height: 14),
             TextField(
               controller: _uidStartController,
               enabled: !_uidEverActivated && !_uidMasterEnabled,
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
               decoration: _uidInput(
                 'Starting UID — Example: TEST-000001',
                 Icons.tag_rounded,
@@ -19654,14 +19657,14 @@ class _AdvancedStudentUidSettingsPanelState
               _uidEverActivated
                   ? 'Sequence locked. Next UID: ${_formatTestStudentUid(_uidPrefix, _uidPadding, _uidNextNumber)}'
                   : 'Class 1 Roll 1 se numbering start hogi, phir Class/Roll order me aage badegi.',
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
             ),
             if (_uidLastIssued.isNotEmpty) ...[
               const SizedBox(height: 5),
               Text(
                 'Last issued TEST UID: $_uidLastIssued',
-                style: const TextStyle(
-                  color: Color(0xFF00D9A5),
+                style: TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                   fontSize: 10.5,
                   fontWeight: FontWeight.w700,
                 ),
@@ -19780,10 +19783,10 @@ class _DriveUnlinkSecurityDialogState
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final waiting = _seconds > 0;
     return AlertDialog(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
       title: Text(
         waiting ? 'Security Waiting Period' : 'App Lock Verification',
-        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
       ),
       content: SizedBox(
         width: 420,
@@ -19793,21 +19796,21 @@ class _DriveUnlinkSecurityDialogState
                 children: [
                   Text(
                     '$_seconds',
-                    style: const TextStyle(
-                      color: Colors.orangeAccent,
+                    style: TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.orangeAccent),
                       fontSize: 52,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                    Text(
                     'seconds remaining',
-                    style: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                   ),
                   const SizedBox(height: 12),
                    Text(
                     'Countdown complete hone ke baad App Lock Password maanga jayega.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: WindowsAppearance.resolve(Colors.white60)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60)),
                   ),
                 ],
               )
@@ -19818,12 +19821,12 @@ class _DriveUnlinkSecurityDialogState
                     controller: _password,
                     autofocus: true,
                     obscureText: _obscure,
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: InputDecoration(
                       hintText: 'App Lock Password',
-                      hintStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white30)),
+                      hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30)),
                       filled: true,
-                      fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                      fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(11),
                         borderSide: BorderSide.none,
@@ -19833,7 +19836,7 @@ class _DriveUnlinkSecurityDialogState
                             setState(() => _obscure = !_obscure),
                         icon: Icon(
                           _obscure ? Icons.visibility_off : Icons.visibility,
-                          color: WindowsAppearance.resolve(Colors.white38),
+                          color: WindowsAppearance.foreground(Colors.white38),
                         ),
                       ),
                     ),
@@ -19844,8 +19847,8 @@ class _DriveUnlinkSecurityDialogState
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(_error!,
-                          style: const TextStyle(
-                              color: Colors.redAccent, fontSize: 11)),
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.redAccent), fontSize: 11)),
                     ),
                   ],
                 ],
@@ -19860,11 +19863,11 @@ class _DriveUnlinkSecurityDialogState
           ElevatedButton(
             onPressed: _busy ? null : _verify,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF00A884),
+              backgroundColor: WindowsAppearance.primary,
             ),
             child: Text(
               _busy ? 'Verifying...' : 'Verify & Continue',
-              style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+              style:  TextStyle(fontFamily: 'Segoe UI', color: null),
             ),
           ),
       ],
@@ -20040,7 +20043,7 @@ class _StudentDocumentsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(saved['cloudSyncPending']==true ? 'Saved locally • Sync pending. Original preserved.' : saved['windowsLocalFallback']==true ? 'Saved locally • Cloud upload not confirmed.' : 'Document upload confirmed.'),
         ),
       );
@@ -20048,7 +20051,7 @@ class _StudentDocumentsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Document upload error: $e'),
         ),
       );
@@ -20061,12 +20064,12 @@ class _StudentDocumentsScreenState
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
         title:  Text('Delete Document?',
-            style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
         content: Text(
           'Remove ${document['documentName'] ?? 'Document'} from the document list? Original files are retained for recovery.',
-          style:  TextStyle(color: WindowsAppearance.resolve(Colors.white70)),
+          style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70)),
         ),
         actions: [
           TextButton(
@@ -20075,9 +20078,9 @@ class _StudentDocumentsScreenState
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: WindowsAppearance.primary),
             child:  Text('Delete',
-                style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+                style: TextStyle(fontFamily: 'Segoe UI', color: null)),
           ),
         ],
       ); },
@@ -20094,7 +20097,7 @@ class _StudentDocumentsScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text('Delete error: $e'),
         ),
       );
@@ -20132,22 +20135,22 @@ class _StudentDocumentsScreenState
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final ratio = (_totalBytes / (300*1024)).clamp(0.0, 1.0).toDouble();
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title: const Text('Student Inventory'),
       ),
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('student-document-upload'),
         onPressed: _uploading ? null : () => _upload(),
-        backgroundColor: const Color(0xFF00A884),
-        foregroundColor: WindowsAppearance.resolve(Colors.white),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
+        foregroundColor: WindowsAppearance.onContainer,
         icon: _uploading
             ?  SizedBox(
                 width: 17,
                 height: 17,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: WindowsAppearance.resolve(Colors.white)),
+                    strokeWidth: 2, color: WindowsAppearance.foreground(Colors.white)),
               )
             : const Icon(Icons.upload_file_rounded),
         label: Text(_uploading ? 'Uploading...' : 'Upload Document'),
@@ -20167,21 +20170,21 @@ class _StudentDocumentsScreenState
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.folder_copy_rounded,
-                      color: Color(0xFF00D9A5), size: 32),
+                  Icon(Icons.folder_copy_rounded,
+                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 32),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(_name,
-                            style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white),
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white),
                                 fontSize: 16,
                                 fontWeight: FontWeight.w800)),
                         Text('$_studentClass • Roll $_roll',
-                            style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white54), fontSize: 11)),
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white54), fontSize: 11)),
                       ],
                     ),
                   ),
@@ -20192,7 +20195,7 @@ class _StudentDocumentsScreenState
             Container(
               padding: const EdgeInsets.all(13),
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                color: WindowsAppearance.background(const Color(0xFF172229)),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: Column(
@@ -20200,21 +20203,21 @@ class _StudentDocumentsScreenState
                   Row(
                     children: [
                        Text('Storage',
-                          style: TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white),
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white),
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
                       Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • image target ~80 KB; quality protected • ${_uploading ? 'Optimizing / pending' : _totalBytes > 640*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
                           textAlign:TextAlign.right,maxLines:3,
-                          style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white54), fontSize: 10.5))),
+                          style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white54), fontSize: 10.5))),
                     ],
                   ),
                   const SizedBox(height: 8),
                   LinearProgressIndicator(
                     value: ratio,
                     minHeight: 7,
-                    backgroundColor: WindowsAppearance.resolve(Colors.white10),
+                    backgroundColor: WindowsAppearance.background(Colors.white10),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       _uploading ? Colors.amber : _totalBytes > 640*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
@@ -20224,7 +20227,7 @@ class _StudentDocumentsScreenState
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 80 KB per image where readable; quality takes priority. Preview uses original. Actual optimized sizes shown.',
-                      style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10),
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                     ),
                   ),
                 ],
@@ -20232,22 +20235,22 @@ class _StudentDocumentsScreenState
             ),
             const SizedBox(height: 12),
             if (_error != null)
-              Text(_documents.isEmpty ? _error! : 'Offline / Sync pending. Showing saved documents.', style: const TextStyle(color: Colors.orange)),
+              Text(_documents.isEmpty ? _error! : 'Offline / Sync pending. Showing saved documents.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orange))),
             if (_loading)
-              const Center(
+              Center(
                   child:
-                      CircularProgressIndicator(color: Color(0xFF00A884)))
+                      CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))))
             else if (_documents.isEmpty)
               Container(
                 padding: const EdgeInsets.all(28),
                 decoration: BoxDecoration(
-                  color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                  color: WindowsAppearance.background(const Color(0xFF172229)),
                   borderRadius: BorderRadius.circular(13),
                 ),
                 child:  Text(
                   'Abhi koi document upload nahi hai.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                 ),
               )
             else
@@ -20260,9 +20263,9 @@ class _StudentDocumentsScreenState
                   margin: const EdgeInsets.only(bottom: 9),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                    color: WindowsAppearance.background(const Color(0xFF172229)),
                     borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                    border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                   ),
                   child: Row(
                     children: [
@@ -20282,16 +20285,16 @@ class _StudentDocumentsScreenState
                           children: [
                             Text(document['documentName']?.toString() ??
                                 'Document',
-                                style:  TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white),
+                                style:  TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white),
                                     fontWeight: FontWeight.w800)),
                             Text(
                               'Original: ${document['sourceBytes'] is num ? _formatBytes((document['sourceBytes'] as num).toInt()) : 'Not recorded'} • Optimized: ${_formatBytes(size)} • Savings: ${document['sourceBytes'] is num && (document['sourceBytes'] as num)>0 ? (100*(1-size/(document['sourceBytes'] as num))).toStringAsFixed(1)+'%' : 'Not recorded'} • ${document['syncState']??'Cloud copy'}',
                               maxLines: 3,
-                              style:  TextStyle(
-                                  color: WindowsAppearance.resolve(Colors.white38), fontSize: 9.5),
+                              style:  TextStyle(fontFamily: 'Segoe UI', 
+                                  color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
                             ),
-                            if(document['cleanupStatus']!=null) Text('${document['cleanupStatus']} • ${document['targetMet']==true?'Within per-document target':'Quality preserved; target may be exceeded'}',style: TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:10)),
+                            if(document['cleanupStatus']!=null) Text('${document['cleanupStatus']} • ${document['targetMet']==true?'Within per-document target':'Quality preserved; target may be exceeded'}',style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10)),
                           ],
                         ),
                       ),
@@ -20310,8 +20313,8 @@ class _StudentDocumentsScreenState
                         tooltip: WindowsUiLanguage.translate('Delete'),
                         onPressed:
                             _uploading ? null : () => _delete(document),
-                        icon: const Icon(Icons.delete_outline_rounded,
-                            color: Colors.redAccent, size: 19),
+                        icon: Icon(Icons.delete_outline_rounded,
+                            color: WindowsAppearance.foreground(Colors.redAccent), size: 19),
                       ),
                     ],
                   ),
@@ -20449,26 +20452,26 @@ class _FeeTransactionHistoryScreenState
       width: 190,
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: color.withOpacity(.25)),
       ),
       child: Row(
         children: [
-          Icon(icon, color: color),
+          Icon(icon, color: WindowsAppearance.foreground(color)),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(value,
-                    style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 16,
                         fontWeight: FontWeight.w900)),
                 Text(title,
-                    style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white38), fontSize: 9.5)),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5)),
               ],
             ),
           ),
@@ -20491,9 +20494,9 @@ class _FeeTransactionHistoryScreenState
             0, (sum, p) => sum + _n(p['installmentAmount']));
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title: const Text('Transaction History'),
         actions: [
           IconButton(
@@ -20503,12 +20506,12 @@ class _FeeTransactionHistoryScreenState
         ],
       ),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)))
+          ? Center(
+              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))))
           : _error != null
               ? Center(
                   child: Text(_error!,
-                      style: const TextStyle(color: Colors.redAccent)))
+                      style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))))
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -20540,16 +20543,16 @@ class _FeeTransactionHistoryScreenState
                           final compact = c.maxWidth < 760;
                           final search = TextField(
                             controller: _search,
-                            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                             decoration: InputDecoration(
                               hintText:
                                   'Search student / receipt / roll / mode',
                               hintStyle:
-                                   TextStyle(color: WindowsAppearance.resolve(Colors.white30)),
-                              prefixIcon: const Icon(Icons.search_rounded,
-                                  color: Color(0xFF00A884)),
+                                   TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30)),
+                              prefixIcon: Icon(Icons.search_rounded,
+                                  color: WindowsAppearance.foreground(Color(0xFF00A884))),
                               filled: true,
-                              fillColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+                              fillColor: WindowsAppearance.background(const Color(0xFF172229)),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(11),
                                 borderSide: BorderSide.none,
@@ -20560,12 +20563,12 @@ class _FeeTransactionHistoryScreenState
                           final cls = DropdownButtonFormField<String>(
                             value: _classFilter,
                             dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
-                            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                             decoration:  InputDecoration(
                               labelText: 'Class',
-                              labelStyle: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                              labelStyle: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                               filled: true,
-                              fillColor: WindowsAppearance.resolve(Color(0xFF172229)),
+                              fillColor: WindowsAppearance.background(Color(0xFF172229)),
                               border: OutlineInputBorder(
                                   borderSide: BorderSide.none),
                             ),
@@ -20588,12 +20591,12 @@ class _FeeTransactionHistoryScreenState
                                 ? _monthFilter
                                 : 'All Months',
                             dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
-                            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                             decoration:  InputDecoration(
                               labelText: 'Month',
-                              labelStyle: TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                              labelStyle: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                               filled: true,
-                              fillColor: WindowsAppearance.resolve(Color(0xFF172229)),
+                              fillColor: WindowsAppearance.background(Color(0xFF172229)),
                               border: OutlineInputBorder(
                                   borderSide: BorderSide.none),
                             ),
@@ -20634,7 +20637,7 @@ class _FeeTransactionHistoryScreenState
                          Padding(
                           padding: EdgeInsets.all(30),
                           child: Text('Matching transaction nahi mila.',
-                              style: TextStyle(color: WindowsAppearance.resolve(Colors.white54))),
+                              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
                         )
                       else
                         ...data.map((p) {
@@ -20645,14 +20648,14 @@ class _FeeTransactionHistoryScreenState
                             margin: const EdgeInsets.only(bottom: 9),
                             padding: const EdgeInsets.all(13),
                             decoration: BoxDecoration(
-                              color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                              color: WindowsAppearance.background(const Color(0xFF172229)),
                               borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                              border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.receipt_rounded,
-                                    color: Color(0xFFB388FF), size: 28),
+                                Icon(Icons.receipt_rounded,
+                                    color: WindowsAppearance.foreground(Color(0xFFB388FF)), size: 28),
                                 const SizedBox(width: 11),
                                 Expanded(
                                   child: Column(
@@ -20662,20 +20665,20 @@ class _FeeTransactionHistoryScreenState
                                       Text(
                                         p['studentName']?.toString() ??
                                             'Student',
-                                        style:  TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white),
+                                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white),
                                             fontWeight: FontWeight.w800),
                                       ),
                                       Text(
                                         '${p['studentClass'] ?? ''} • Roll ${p['rollNo'] ?? ''} • ${p['month'] ?? ''}',
-                                        style:  TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white54),
+                                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white54),
                                             fontSize: 10),
                                       ),
                                       Text(
                                         'Receipt ${p['receiptNo'] ?? ''} • ${p['dateText'] ?? ''} ${p['timeText'] ?? ''} • ${p['paymentMode'] ?? ''}',
-                                        style:  TextStyle(
-                                            color: WindowsAppearance.resolve(Colors.white30),
+                                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                                            color: WindowsAppearance.foreground(Colors.white30),
                                             fontSize: 9.5),
                                       ),
                                     ],
@@ -20693,7 +20696,7 @@ class _FeeTransactionHistoryScreenState
                                   ),
                                   child: Text(
                                     status.isEmpty ? 'PAYMENT' : status,
-                                    style: TextStyle(
+                                    style: TextStyle(fontFamily: 'Segoe UI', 
                                       color: paid
                                           ? const Color(0xFF00D9A5)
                                           : Colors.orangeAccent,
@@ -20708,8 +20711,8 @@ class _FeeTransactionHistoryScreenState
                                   children: [
                                     Text(
                                       _money(p['installmentAmount']),
-                                      style: const TextStyle(
-                                          color: Color(0xFF00D9A5),
+                                      style: TextStyle(fontFamily: 'Segoe UI', 
+                                          color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                           fontSize: 16,
                                           fontWeight: FontWeight.w900),
                                     ),
@@ -20981,7 +20984,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             ..sort((a, b) => _classNumber(a).compareTo(_classNumber(b)));
 
           return AlertDialog(
-            backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B22)),
+            backgroundColor: WindowsAppearance.background(const Color(0xFF111B22)),
             insetPadding: const EdgeInsets.all(18),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
@@ -20992,12 +20995,12 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: Colors.orangeAccent.withOpacity(0.12),
+                    color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.12)),
                     borderRadius: BorderRadius.circular(13),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.add_task_rounded,
-                    color: Colors.orangeAccent,
+                    color: WindowsAppearance.foreground(Colors.orangeAccent),
                   ),
                 ),
                 const SizedBox(width: 11),
@@ -21007,8 +21010,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     children: [
                       Text(
                         'Create Exam',
-                        style: TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
                         ),
@@ -21016,14 +21019,14 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       SizedBox(height: 2),
                       Text(
                         'One exam • multiple classes • class-wise custom settings',
-                        style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10),
+                        style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                       ),
                     ],
                   ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  icon:  Icon(Icons.close_rounded, color: WindowsAppearance.resolve(Colors.white54)),
+                  icon:  Icon(Icons.close_rounded, color: WindowsAppearance.foreground(Colors.white54)),
                 ),
               ],
             ),
@@ -21035,7 +21038,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                   children: [
                     TextField(
                       controller: examName,
-                      style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                      style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                       decoration: _dialogInput(
                         'Exam Name — Example: Final Exam 2026',
                         Icons.edit_note_rounded,
@@ -21045,8 +21048,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     const SizedBox(height: 16),
                      Text(
                       'SELECT CLASSES',
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white54),
+                      style: TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white54),
                         fontSize: 10,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.1,
@@ -21062,18 +21065,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           selected: selected,
                           label: Text(className),
                           selectedColor:
-                              const Color(0xFF00A884).withOpacity(0.28),
-                          checkmarkColor: const Color(0xFF00D9A5),
-                          backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+                              WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.28)),
+                          checkmarkColor: WindowsAppearance.primary,
+                          backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
                           side: BorderSide(
                             color: selected
                                 ? const Color(0xFF00D9A5)
-                                : WindowsAppearance.resolve(Colors.white12),
+                                : WindowsAppearance.outline(Colors.white12),
                           ),
-                          labelStyle: TextStyle(
+                          labelStyle: TextStyle(fontFamily: 'Segoe UI', 
                             color: selected
                                 ? const Color(0xFF00D9A5)
-                                : WindowsAppearance.resolve(Colors.white70),
+                                : WindowsAppearance.foreground(Colors.white70),
                             fontWeight: FontWeight.w700,
                           ),
                           onSelected: (value) {
@@ -21094,17 +21097,17 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: WindowsAppearance.resolve(const Color(0xFF0D171D)),
+                        color: WindowsAppearance.background(const Color(0xFF0D171D)),
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                            Text(
                             'DEFAULT CLASS SETTINGS',
-                            style: TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white54),
+                            style: TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white54),
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 1.0,
@@ -21115,7 +21118,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             controller: defaultSubjects,
                             minLines: 1,
                             maxLines: 2,
-                            style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                            style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                             decoration: _dialogInput(
                               'Default Subjects — comma separated',
                               Icons.menu_book_rounded,
@@ -21128,7 +21131,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 child: TextField(
                                   controller: defaultFull,
                                   keyboardType: TextInputType.number,
-                                  style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                  style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
                                     'Full Marks / Subject',
                                     Icons.score_rounded,
@@ -21140,7 +21143,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 child: TextField(
                                   controller: defaultPass,
                                   keyboardType: TextInputType.number,
-                                  style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                  style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                   decoration: _dialogInput(
                                     'Pass Marks / Subject',
                                     Icons.task_alt_rounded,
@@ -21181,8 +21184,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     if (selectedSorted.isNotEmpty) ...[
                        Text(
                         'CLASS-WISE CUSTOMIZATION',
-                        style: TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white54),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                           letterSpacing: 1.1,
@@ -21194,9 +21197,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
                           decoration: BoxDecoration(
-                            color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                            color: WindowsAppearance.background(const Color(0xFF172229)),
                             borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                            border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                           ),
                           child: ExpansionTile(
                             tilePadding: const EdgeInsets.symmetric(
@@ -21205,19 +21208,19 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             ),
                             childrenPadding:
                                 const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                            iconColor: const Color(0xFF00D9A5),
-                            collapsedIconColor: WindowsAppearance.resolve(Colors.white38),
+                            iconColor: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
+                            collapsedIconColor: WindowsAppearance.foreground(Colors.white38),
                             title: Text(
                               className,
-                              style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white),
+                              style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white),
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                             subtitle:  Text(
                               'Subjects / Full marks / Pass marks customize karein',
-                              style: TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white38),
+                              style: TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white38),
                                 fontSize: 10,
                               ),
                             ),
@@ -21226,7 +21229,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 controller: subjectsByClass[className],
                                 minLines: 1,
                                 maxLines: 3,
-                                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                 decoration: _dialogInput(
                                   'Subjects — comma separated',
                                   Icons.menu_book_rounded,
@@ -21240,7 +21243,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                       controller: fullByClass[className],
                                       keyboardType: TextInputType.number,
                                       style:
-                                           TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                           TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                       decoration: _dialogInput(
                                         'Full Marks',
                                         Icons.score_rounded,
@@ -21253,7 +21256,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                       controller: passByClass[className],
                                       keyboardType: TextInputType.number,
                                       style:
-                                           TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                                           TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                                       decoration: _dialogInput(
                                         'Pass Marks',
                                         Icons.task_alt_rounded,
@@ -21273,13 +21276,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(11),
                         decoration: BoxDecoration(
-                          color: Colors.redAccent.withOpacity(0.08),
+                          color: WindowsAppearance.background(Colors.redAccent.withOpacity(0.08)),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
                           dialogError!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
+                          style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.redAccent),
                             fontSize: 11,
                           ),
                         ),
@@ -21296,8 +21299,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               ),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884),
-                  foregroundColor: WindowsAppearance.resolve(Colors.white),
+                  backgroundColor: WindowsAppearance.primary,
+                  foregroundColor: WindowsAppearance.onPrimary,
                 ),
                 onPressed: () {
                   final name = examName.text.trim();
@@ -21386,7 +21389,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
             '${payloads.first['examName']} $created class configuration ke saath create ho gaya.',
           ),
@@ -21396,7 +21399,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.redAccent,
+          backgroundColor: WindowsAppearance.background(Colors.redAccent),
           content: Text(
             created > 0
                 ? '$created class save hui, baaki save nahi ho payi: $e'
@@ -21411,17 +21414,17 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
   InputDecoration _dialogInput(String label, IconData icon) => InputDecoration(
         labelText: label,
-        labelStyle:  TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
-        prefixIcon: Icon(icon, color: Colors.orangeAccent),
+        labelStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
+        prefixIcon: Icon(icon, color: WindowsAppearance.foreground(Colors.orangeAccent)),
         filled: true,
-        fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+        fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: WindowsAppearance.resolve(Colors.white).withOpacity(0.07)),
+          borderSide: BorderSide(color: WindowsAppearance.outline(Colors.white).withOpacity(0.07)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
-          borderSide: const BorderSide(color: Colors.orangeAccent),
+          borderSide: BorderSide(color: WindowsAppearance.outline(Colors.orangeAccent)),
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(11),
@@ -21440,7 +21443,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       width: 205,
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withOpacity(0.18)),
       ),
@@ -21453,7 +21456,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               color: color.withOpacity(0.11),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, color: color, size: 22),
+            child: Icon(icon, color: WindowsAppearance.foreground(color), size: 22),
           ),
           const SizedBox(width: 11),
           Expanded(
@@ -21462,16 +21465,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               children: [
                 Text(
                   value,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 21,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
                 Text(
                   title,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white70),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white70),
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -21481,7 +21484,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(color: WindowsAppearance.resolve(Colors.white30), fontSize: 8.5),
+                  style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white30), fontSize: 8.5),
                 ),
               ],
             ),
@@ -21500,8 +21503,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ),
         child: Text(
           text,
-          style: TextStyle(
-            color: color,
+          style: TextStyle(fontFamily: 'Segoe UI', 
+            color: WindowsAppearance.foreground(color),
             fontSize: 9,
             fontWeight: FontWeight.w800,
           ),
@@ -21514,10 +21517,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: const Color(0xFF00A884).withOpacity(0.10),
+              color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.10)),
               borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(icon, color: const Color(0xFF00D9A5), size: 19),
+            child: Icon(icon, color: WindowsAppearance.foreground(const Color(0xFF00D9A5)), size: 19),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -21526,15 +21529,15 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               children: [
                 Text(
                   title,
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white),
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
                 Text(
                   subtitle,
-                  style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 9.5),
+                  style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
                 ),
               ],
             ),
@@ -21549,7 +21552,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) { WindowsAppearance.watch(dialogContext); return  AlertDialog(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B22)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF111B22)),
         insetPadding: const EdgeInsets.all(18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
@@ -21558,10 +21561,10 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: Colors.orangeAccent.withOpacity(0.10),
+                color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(0.10)),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.school_rounded, color: Colors.orangeAccent),
+              child: Icon(Icons.school_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -21570,22 +21573,22 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                 children: [
                   Text(
                     examName,
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 17,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                   Text(
                     '${group.length} class configuration${group.length == 1 ? '' : 's'}',
-                    style:  TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10),
+                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                   ),
                 ],
               ),
             ),
             IconButton(
               onPressed: () => Navigator.pop(dialogContext),
-              icon:  Icon(Icons.close_rounded, color: WindowsAppearance.resolve(Colors.white54)),
+              icon:  Icon(Icons.close_rounded, color: WindowsAppearance.foreground(Colors.white54)),
             ),
           ],
         ),
@@ -21611,9 +21614,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                      color: WindowsAppearance.background(const Color(0xFF172229)),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                      border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                     ),
                     child: Column(
                       children: [
@@ -21623,14 +21626,14 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               width: 42,
                               height: 42,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00A884).withOpacity(0.10),
+                                color: WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.10)),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Center(
                                 child: Text(
                                   className.replaceAll('Class ', ''),
-                                  style: const TextStyle(
-                                    color: Color(0xFF00D9A5),
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                                     fontSize: 16,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -21644,16 +21647,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 children: [
                                   Text(
                                     className,
-                                    style:  TextStyle(
-                                      color: WindowsAppearance.resolve(Colors.white),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                                      color: WindowsAppearance.foreground(Colors.white),
                                       fontSize: 13,
                                       fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                   Text(
                                     '${subjects.length} subjects • Full ${exam['fullMarks'] ?? 0} • Pass ${exam['passMarks'] ?? 0}',
-                                    style:  TextStyle(
-                                      color: WindowsAppearance.resolve(Colors.white38),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                                      color: WindowsAppearance.foreground(Colors.white38),
                                       fontSize: 9.5,
                                     ),
                                   ),
@@ -21662,8 +21665,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             ),
                             ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF00A884),
-                                foregroundColor: WindowsAppearance.resolve(Colors.white),
+                                backgroundColor: WindowsAppearance.primary,
+                                foregroundColor: WindowsAppearance.onPrimary,
                               ),
                               onPressed: () {
                                 Navigator.pop(dialogContext);
@@ -21683,8 +21686,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 child: LinearProgressIndicator(
                                   minHeight: 7,
                                   value: progress,
-                                  backgroundColor: WindowsAppearance.resolve(Colors.white10),
-                                  color: const Color(0xFF00D9A5),
+                                  backgroundColor: WindowsAppearance.background(Colors.white10),
+                                  color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
                                 ),
                               ),
                             ),
@@ -21693,8 +21696,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               expected <= 0
                                   ? '${results.length} entered'
                                   : '${results.length}/$expected',
-                              style:  TextStyle(
-                                color: WindowsAppearance.resolve(Colors.white54),
+                              style:  TextStyle(fontFamily: 'Segoe UI', 
+                                color: WindowsAppearance.foreground(Colors.white54),
                                 fontSize: 9.5,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -21753,9 +21756,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       child: Ink(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: WindowsAppearance.resolve(const Color(0xFF172229)),
+          color: WindowsAppearance.background(const Color(0xFF172229)),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.orangeAccent.withOpacity(0.15)),
+          border: Border.all(color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.15))),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -21767,16 +21770,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFFFA726), Color(0xFFFF7043)],
+                    gradient: LinearGradient(
+                      colors: WindowsAppearance.gradientColors([Color(0xFFFFA726), Color(0xFFFF7043)]),
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.fact_check_rounded,
-                    color: Colors.black,
+                    color: WindowsAppearance.foreground(Colors.black),
                     size: 25,
                   ),
                 ),
@@ -21787,8 +21790,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     children: [
                       Text(
                         examName,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white),
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
                         ),
@@ -21796,8 +21799,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       const SizedBox(height: 3),
                       Text(
                         '${group.length} class${group.length == 1 ? '' : 'es'} • ${subjectSet.length} unique subjects',
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white38),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white38),
                           fontSize: 10,
                         ),
                       ),
@@ -21830,14 +21833,14 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                         vertical: 5,
                       ),
                       decoration: BoxDecoration(
-                        color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                        color: WindowsAppearance.background(const Color(0xFF0F191F)),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                       ),
                       child: Text(
                         className,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white60),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white60),
                           fontSize: 8.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -21855,16 +21858,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     child: LinearProgressIndicator(
                       minHeight: 8,
                       value: progress,
-                      backgroundColor: WindowsAppearance.resolve(Colors.white10),
-                      color: const Color(0xFF00D9A5),
+                      backgroundColor: WindowsAppearance.background(Colors.white10),
+                      color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Text(
                   expected <= 0 ? '$completed results' : '$completed/$expected',
-                  style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white54),
+                  style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white54),
                     fontSize: 9.5,
                     fontWeight: FontWeight.w800,
                   ),
@@ -21892,8 +21895,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                 'Subjects: ${subjectSet.take(8).join(' • ')}${subjectSet.length > 8 ? ' • +${subjectSet.length - 8}' : ''}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white30),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white30),
                   fontSize: 9.2,
                   height: 1.35,
                 ),
@@ -21904,8 +21907,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               alignment: Alignment.centerRight,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884),
-                  foregroundColor: WindowsAppearance.resolve(Colors.white),
+                  backgroundColor: WindowsAppearance.primary,
+                  foregroundColor: WindowsAppearance.onPrimary,
                 ),
                 onPressed: () => _openExamGroup(group),
                 icon: const Icon(Icons.dashboard_customize_rounded, size: 17),
@@ -21933,9 +21936,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -21953,7 +21956,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                 child: Text(
                   'Marks save hone ke baad class performance yahan dikhega.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                 ),
               ),
             )
@@ -21974,8 +21977,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       width: 58,
                       child: Text(
                         className,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white60),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white60),
                           fontSize: 9.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -21988,7 +21991,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             Container(
                               height: 8,
                               decoration: BoxDecoration(
-                                color: WindowsAppearance.resolve(Colors.white10),
+                                color: WindowsAppearance.background(Colors.white10),
                                 borderRadius: BorderRadius.circular(20),
                               ),
                             ),
@@ -21996,7 +21999,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               width: constraints.maxWidth * factor,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00D9A5),
+                                color: WindowsAppearance.background(const Color(0xFF00D9A5)),
                                 borderRadius: BorderRadius.circular(20),
                               ),
                             ),
@@ -22010,8 +22013,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       child: Text(
                         '${average.toStringAsFixed(1)}%',
                         textAlign: TextAlign.right,
-                        style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white70),
+                        style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white70),
                           fontSize: 9.5,
                           fontWeight: FontWeight.w800,
                         ),
@@ -22035,9 +22038,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: WindowsAppearance.resolve(const Color(0xFF172229)),
+        color: WindowsAppearance.background(const Color(0xFF172229)),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -22054,7 +22057,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               child: Center(
                 child: Text(
                   'Abhi koi result save nahi hua.',
-                  style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                 ),
               ),
             )
@@ -22068,7 +22071,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.all(11),
                 decoration: BoxDecoration(
-                  color: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                  color: WindowsAppearance.background(const Color(0xFF0F191F)),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -22089,8 +22092,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             result['studentName']?.toString() ?? 'Student',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white),
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white),
                               fontSize: 11.5,
                               fontWeight: FontWeight.w800,
                             ),
@@ -22099,8 +22102,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             '${result['studentClass'] ?? ''} • ${result['examName'] ?? 'Exam'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:  TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white38),
+                            style:  TextStyle(fontFamily: 'Segoe UI', 
+                              color: WindowsAppearance.foreground(Colors.white38),
                               fontSize: 9,
                             ),
                           ),
@@ -22109,8 +22112,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     ),
                     Text(
                       '${_number(result['percentage']).toStringAsFixed(1)}%',
-                      style:  TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white70),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                        color: WindowsAppearance.foreground(Colors.white70),
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
                       ),
@@ -22119,9 +22122,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       IconButton(
                         tooltip: WindowsUiLanguage.translate('Open Report Card'),
                         onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');},
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.picture_as_pdf_rounded,
-                          color: Colors.orangeAccent,
+                          color: WindowsAppearance.foreground(Colors.orangeAccent),
                           size: 18,
                         ),
                       ),
@@ -22138,22 +22141,22 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 42),
         decoration: BoxDecoration(
-          color: WindowsAppearance.resolve(const Color(0xFF172229)),
+          color: WindowsAppearance.background(const Color(0xFF172229)),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
         ),
         child: Column(
           children: [
-            const Icon(
+            Icon(
               Icons.add_task_rounded,
-              color: Colors.orangeAccent,
+              color: WindowsAppearance.foreground(Colors.orangeAccent),
               size: 46,
             ),
             const SizedBox(height: 13),
              Text(
               'Create your first exam',
-              style: TextStyle(
-                color: WindowsAppearance.resolve(Colors.white),
+              style: TextStyle(fontFamily: 'Segoe UI', 
+                color: WindowsAppearance.foreground(Colors.white),
                 fontSize: 17,
                 fontWeight: FontWeight.w900,
               ),
@@ -22162,13 +22165,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
              Text(
               'Final Exam, Half Yearly, Unit Test — ek exam ke andar Class 1–10 customize karein.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: WindowsAppearance.resolve(Colors.white38), fontSize: 10.5),
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00A884),
-                foregroundColor: WindowsAppearance.resolve(Colors.white),
+                backgroundColor: WindowsAppearance.primary,
+                foregroundColor: WindowsAppearance.onPrimary,
               ),
               onPressed: _saving ? null : _createExam,
               icon: const Icon(Icons.add_rounded),
@@ -22189,13 +22192,13 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         _exams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF111B22)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF111B22)),
         elevation: 0,
         title: const Text(
           'Exam Center',
-          style: TextStyle(fontWeight: FontWeight.w800),
+          style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
         ),
         actions: [
           TextButton.icon(
@@ -22210,22 +22213,22 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
               decoration: BoxDecoration(
-                color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                color: WindowsAppearance.background(const Color(0xFF172229)),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
               ),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.calendar_month_rounded,
-                    color: Color(0xFF00D9A5),
+                    color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
                     size: 15,
                   ),
                   const SizedBox(width: 6),
                   Text(
                     _academicYear(),
-                    style:  TextStyle(
-                      color: WindowsAppearance.resolve(Colors.white70),
+                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                      color: WindowsAppearance.foreground(Colors.white70),
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                     ),
@@ -22242,18 +22245,18 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ],
       ),
       body: _loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00A884)),
+          ? Center(
+              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
             )
           : RefreshIndicator(
                   onRefresh: _load,
-                  color: const Color(0xFF00A884),
+                  color: WindowsAppearance.foreground(const Color(0xFF00A884)),
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 100),
                     children: [
-                      if (_error != null) ListTile(leading: const Icon(Icons.cloud_off, color: Colors.orange), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
-                       Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(color: WindowsAppearance.resolve(Colors.white60))),
+                      if (_error != null) ListTile(leading: Icon(Icons.cloud_off, color: WindowsAppearance.foreground(Colors.orange)), title: Text(_error!), trailing: TextButton(onPressed: _load, child: const Text('Retry'))),
+                       Text('Exam records save durably on this PC. Cloud changes sync automatically; offline changes stay pending until acknowledged.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60))),
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(20),
@@ -22269,7 +22272,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           ),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: Colors.orangeAccent.withOpacity(0.18),
+                            color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.18)),
                           ),
                         ),
                         child: LayoutBuilder(
@@ -22280,8 +22283,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               children: [
                                  Text(
                                   'Examination Dashboard',
-                                  style: TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white),
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white),
                                     fontSize: 21,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -22289,16 +22292,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                 const SizedBox(height: 3),
                                  Text(
                                   'Plan • Conduct • Evaluate • Generate Report Cards',
-                                  style: TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white54),
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white54),
                                     fontSize: 10.5,
                                   ),
                                 ),
                                 const SizedBox(height: 11),
                                  Text(
                                   'Ek Final Exam create karke Class 1–10 ko ek hi exam card ke andar class-wise subjects, full marks aur pass marks ke saath customize karein.',
-                                  style: TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white60),
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
+                                    color: WindowsAppearance.foreground(Colors.white60),
                                     fontSize: 11,
                                     height: 1.45,
                                   ),
@@ -22319,28 +22322,28 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                             value: '${groups.length}',
                             subtitle: '${_exams.length} class configurations',
                             icon: Icons.assignment_rounded,
-                            color: Colors.orangeAccent,
+                            color: WindowsAppearance.foreground(Colors.orangeAccent),
                           ),
                           _metricCard(
                             title: 'Results Entered',
                             value: '${_results.length}',
                             subtitle: 'Student result records',
                             icon: Icons.edit_note_rounded,
-                            color: const Color(0xFF38A8FF),
+                            color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
                           ),
                           _metricCard(
                             title: 'Pass Rate',
                             value: '${passRate.toStringAsFixed(1)}%',
                             subtitle: '$passTotal pass • $failTotal fail',
                             icon: Icons.trending_up_rounded,
-                            color: const Color(0xFF00D9A5),
+                            color: WindowsAppearance.foreground(const Color(0xFF00D9A5)),
                           ),
                           _metricCard(
                             title: 'Pending Marks',
                             value: '$pendingMarks',
                             subtitle: 'Student results remaining',
                             icon: Icons.pending_actions_rounded,
-                            color: Colors.purpleAccent,
+                            color: WindowsAppearance.foreground(Colors.purpleAccent),
                           ),
                         ],
                       ),
@@ -22352,9 +22355,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           final main = Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: WindowsAppearance.resolve(const Color(0xFF111B22)),
+                              color: WindowsAppearance.background(const Color(0xFF111B22)),
                               borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                              border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -22373,8 +22376,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                       ElevatedButton.icon(
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor:
-                                              const Color(0xFF00A884),
-                                          foregroundColor: WindowsAppearance.resolve(Colors.white),
+                                              WindowsAppearance.primary,
+                                          foregroundColor: WindowsAppearance.onPrimary,
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 14,
                                             vertical: 11,
@@ -22388,7 +22391,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                                         ),
                                         label: const Text(
                                           'Create Exam',
-                                          style: TextStyle(
+                                          style: TextStyle(fontFamily: 'Segoe UI', 
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
@@ -22568,21 +22571,21 @@ class _ExamMarksEntryScreenState
       barrierDismissible: false,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
         builder: (context, setDialogState) { WindowsAppearance.watch(context); return  AlertDialog(
-          backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(student['name']?.toString() ?? 'Student', translate: false,
-                style:  TextStyle(
-                  color: WindowsAppearance.resolve(Colors.white),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                  color: WindowsAppearance.foreground(Colors.white),
                   fontSize: 17,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               Text(
                 '$_studentClass • Roll ${student['rollNo'] ?? ''} • $_examName',
-                style:  TextStyle(
-                    color: WindowsAppearance.resolve(Colors.white38), fontSize: 10),
+                style:  TextStyle(fontFamily: 'Segoe UI', 
+                    color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
               ),
             ],
           ),
@@ -22598,17 +22601,17 @@ class _ExamMarksEntryScreenState
                       child: TextField(
                         controller: controllers[subject],
                         keyboardType: TextInputType.number,
-                        style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                        style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: InputDecoration(
                           labelText:
                               '$subject (0-${_fullMarks.toStringAsFixed(0)})',
                           labelStyle:
-                               TextStyle(color: WindowsAppearance.resolve(Colors.white54)),
+                               TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54)),
                           suffixText: '/ ${_fullMarks.toStringAsFixed(0)}',
                           suffixStyle:
-                               TextStyle(color: WindowsAppearance.resolve(Colors.white38)),
+                               TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38)),
                           filled: true,
-                          fillColor: WindowsAppearance.resolve(const Color(0xFF0F191F)),
+                          fillColor: WindowsAppearance.background(const Color(0xFF0F191F)),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(11),
                             borderSide: BorderSide.none,
@@ -22621,13 +22624,13 @@ class _ExamMarksEntryScreenState
                     width: double.infinity,
                     padding: const EdgeInsets.all(11),
                     decoration: BoxDecoration(
-                      color: Colors.orangeAccent.withOpacity(.07),
+                      color: WindowsAppearance.background(Colors.orangeAccent.withOpacity(.07)),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save ke baad total, %, grade, PASS/FAIL aur Report Card PDF automatic generate hoga.',
-                      style:  TextStyle(
-                          color: WindowsAppearance.resolve(Colors.white54),
+                      style:  TextStyle(fontFamily: 'Segoe UI', 
+                          color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10,
                           height: 1.4),
                     ),
@@ -22638,8 +22641,8 @@ class _ExamMarksEntryScreenState
                       alignment: Alignment.centerLeft,
                       child: Text(
                         dialogError!,
-                        style: const TextStyle(
-                            color: Colors.redAccent, fontSize: 11),
+                        style: TextStyle(fontFamily: 'Segoe UI', 
+                            color: WindowsAppearance.foreground(Colors.redAccent), fontSize: 11),
                       ),
                     ),
                   ],
@@ -22654,7 +22657,7 @@ class _ExamMarksEntryScreenState
             ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884)),
+                  backgroundColor: WindowsAppearance.primary),
               onPressed: saving
                   ? null
                   : () async {
@@ -22723,13 +22726,13 @@ class _ExamMarksEntryScreenState
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: WindowsAppearance.resolve(Colors.white)),
+                          strokeWidth: 2, color: WindowsAppearance.foreground(Colors.white)),
                     )
                   :  Icon(Icons.save_rounded,
-                      color: WindowsAppearance.resolve(Colors.white), size: 17),
+                      color: null, size: 17),
               label: Text(
                 saving ? 'Saving...' : 'Save & Generate Report Card',
-                style:  TextStyle(color: WindowsAppearance.resolve(Colors.white)),
+                style:  TextStyle(fontFamily: 'Segoe UI', color: null),
               ),
             ),
           ],
@@ -22746,7 +22749,7 @@ class _ExamMarksEntryScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF00A884),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
               savedOffline ? 'Marks saved offline. Google report card generation is pending school connection.' : 'Marks saved aur report card Google Drive me generate ho gaya.'),
         ),
@@ -22763,8 +22766,8 @@ class _ExamMarksEntryScreenState
         ),
         child: Text(
           '$label: $value',
-          style: TextStyle(
-              color: color, fontSize: 10, fontWeight: FontWeight.w800),
+          style: TextStyle(fontFamily: 'Segoe UI', 
+              color: WindowsAppearance.foreground(color), fontSize: 10, fontWeight: FontWeight.w800),
         ),
       );
 
@@ -22785,9 +22788,9 @@ class _ExamMarksEntryScreenState
             _results.length;
 
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.resolve(const Color(0xFF1F2C34)),
+        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
         title: Text('$_examName • $_studentClass'),
         actions: [
           IconButton(
@@ -22799,7 +22802,7 @@ class _ExamMarksEntryScreenState
         children: [
           Container(
             width: double.infinity,
-            color: WindowsAppearance.resolve(const Color(0xFF121F26)),
+            color: WindowsAppearance.background(const Color(0xFF121F26)),
             padding: const EdgeInsets.all(11),
             child: Wrap(
               spacing: 9,
@@ -22815,16 +22818,16 @@ class _ExamMarksEntryScreenState
             ),
           ),
           if (_loading)
-            const Expanded(
+            Expanded(
               child: Center(
                   child: CircularProgressIndicator(
-                      color: Color(0xFF00A884))),
+                      color: WindowsAppearance.foreground(Color(0xFF00A884)))),
             )
           else if (_error != null)
             Expanded(
               child: Center(
                 child: Text(_error!,
-                    style: const TextStyle(color: Colors.redAccent)),
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))),
               ),
             )
           else
@@ -22839,9 +22842,9 @@ class _ExamMarksEntryScreenState
                   if (snapshot.connectionState ==
                           ConnectionState.waiting &&
                       !snapshot.hasData) {
-                    return const Center(
+                    return Center(
                       child: CircularProgressIndicator(
-                          color: Color(0xFF00A884)),
+                          color: WindowsAppearance.foreground(Color(0xFF00A884))),
                     );
                   }
 
@@ -22859,7 +22862,7 @@ class _ExamMarksEntryScreenState
                   if (students.isEmpty) {
                     return  Center(
                       child: Text('Is class me koi student nahi mila.',
-                          style: TextStyle(color: WindowsAppearance.resolve(Colors.white54))),
+                          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
                     );
                   }
 
@@ -22880,16 +22883,16 @@ class _ExamMarksEntryScreenState
                       return Container(
                         padding: const EdgeInsets.all(13),
                         decoration: BoxDecoration(
-                          color: WindowsAppearance.resolve(const Color(0xFF172229)),
+                          color: WindowsAppearance.background(const Color(0xFF172229)),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: WindowsAppearance.resolve(Colors.white10)),
+                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
                         ),
                         child: Row(
                           children: [
                             CircleAvatar(
                               backgroundColor:
-                                  const Color(0xFF00A884).withOpacity(.13),
-                              foregroundColor: const Color(0xFF00D9A5),
+                                  WindowsAppearance.background(const Color(0xFF00A884).withOpacity(.13)),
+                              foregroundColor: WindowsAppearance.onPrimary,
                               child: Text(
                                 student['name']
                                             ?.toString()
@@ -22911,15 +22914,15 @@ class _ExamMarksEntryScreenState
                                   Text(
                                     student['name']?.toString() ??
                                         'Student',
-                                    style:  TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white),
                                         fontWeight: FontWeight.w800),
                                   ),
                                   Text(
                                     'Roll ${student['rollNo'] ?? ''}'
                                     '${result == null ? ' • Marks pending' : ' • ${result['total'] ?? 0}/${result['maximum'] ?? 0} • ${result['percentage'] ?? 0}% • Grade ${result['grade'] ?? ''}'}',
-                                    style:  TextStyle(
-                                        color: WindowsAppearance.resolve(Colors.white38),
+                                    style:  TextStyle(fontFamily: 'Segoe UI', 
+                                        color: WindowsAppearance.foreground(Colors.white38),
                                         fontSize: 10),
                                   ),
                                 ],
@@ -22938,7 +22941,7 @@ class _ExamMarksEntryScreenState
                                 ),
                                 child: Text(
                                   result['result']?.toString() ?? '',
-                                  style: TextStyle(
+                                  style: TextStyle(fontFamily: 'Segoe UI', 
                                       color: passed
                                           ? const Color(0xFF00D9A5)
                                           : Colors.redAccent,
@@ -22950,28 +22953,28 @@ class _ExamMarksEntryScreenState
                               IconButton(
                                 tooltip: WindowsUiLanguage.translate('Report Card PDF'),
                                 onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');},
-                                icon: const Icon(
+                                icon: Icon(
                                     Icons.picture_as_pdf_rounded,
-                                    color: Colors.orangeAccent),
+                                    color: WindowsAppearance.foreground(Colors.orangeAccent)),
                               ),
                             ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                   backgroundColor:
-                                      const Color(0xFF00A884)),
+                                      WindowsAppearance.primary),
                               onPressed: () => _enterMarks(doc),
                               icon: Icon(
                                 result == null
                                     ? Icons.add_rounded
                                     : Icons.edit_rounded,
-                                color: WindowsAppearance.resolve(Colors.white),
+                                color: null,
                                 size: 16,
                               ),
                               label: Text(
                                 result == null
                                     ? 'Enter Marks'
                                     : 'Edit Marks',
-                                style:  TextStyle(
-                                    color: WindowsAppearance.resolve(Colors.white)),
+                                style:  TextStyle(fontFamily: 'Segoe UI', 
+                                    color: null),
                               ),
                             ),
                           ],
@@ -23096,8 +23099,8 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       barrierDismissible: false,
       builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(
         builder: (context, setDlg) { WindowsAppearance.watch(context); return  AlertDialog(
-          backgroundColor: WindowsAppearance.resolve(const Color(0xFF172229)),
-          title:  Text('Add School Expense', style: TextStyle(color: WindowsAppearance.resolve(Colors.white))),
+          backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
+          title:  Text('Add School Expense', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
           content: SizedBox(
             width: 520,
             child: Column(
@@ -23137,7 +23140,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                   if (ctx.mounted) Navigator.pop(ctx, true);
                 } catch (e) {
                   if (ctx.mounted) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(backgroundColor: Colors.redAccent, content: Text('$e')));
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('$e')));
                     setDlg(() => saving = false);
                   }
                 }
@@ -23174,7 +23177,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       query: widget.history ? _historyQuery : '');
     final total = items.fold<double>(0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '') ?? 0));
     return Scaffold(
-      backgroundColor: WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
         title: Text(widget.history ? 'School Expense History' : windowsTr('expenses')),
         actions:[
@@ -23195,11 +23198,11 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
               child: Column(
                 children:[
                   Row(children:[
-                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:Colors.amberAccent),
+                    _WindowsMetricCard(icon:Icons.account_balance_wallet_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Expenses' : 'Total Expenses', value:'₹${total.toStringAsFixed(2)}', color:WindowsAppearance.foreground(Colors.amberAccent)),
                     const SizedBox(width:12),
-                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:const Color(0xFF69C2FF)),
+                    _WindowsMetricCard(icon:Icons.receipt_long_rounded, label:widget.history && _historyQuery.trim().isNotEmpty ? 'Matching Entries' : 'Entries', value:'${items.length}', color:WindowsAppearance.foreground(const Color(0xFF69C2FF))),
                   ]),
-                  if (_error != null) Padding(padding:const EdgeInsets.all(10), child:Text(_error!, style:const TextStyle(color:Colors.redAccent))),
+                  if (_error != null) Padding(padding:const EdgeInsets.all(10), child:Text(_error!, style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.redAccent)))),
                   const SizedBox(height:14),
                   if (widget.history) Padding(
                     padding: const EdgeInsets.only(bottom: 14),
@@ -23211,7 +23214,7 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                   ),
                   Expanded(
                     child: items.isEmpty
-                        ?  Center(child:Text(widget.history ? (_historyQuery.trim().isEmpty ? 'No saved expenses in this school yet.' : 'No expenses match your search.') : 'Abhi koi school expense entry nahi hai.', style:TextStyle(color:WindowsAppearance.resolve(Colors.white38))))
+                        ?  Center(child:Text(widget.history ? (_historyQuery.trim().isEmpty ? 'No saved expenses in this school yet.' : 'No expenses match your search.') : 'Abhi koi school expense entry nahi hai.', style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white38))))
                         : ListView.separated(
                             itemCount:items.length,
                             separatorBuilder:(_,__)=>const SizedBox(height:8),
@@ -23219,18 +23222,18 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                               final e=items[index];
                               return Container(
                                 padding:const EdgeInsets.all(14),
-                                decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xFF111B21)), borderRadius:BorderRadius.circular(14), border:Border.all(color:WindowsAppearance.resolve(Colors.white10))),
+                                decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF111B21)), borderRadius:BorderRadius.circular(14), border:Border.all(color:WindowsAppearance.outline(Colors.white10))),
                                 child:Row(children:[
-                                  const CircleAvatar(backgroundColor:Color(0x3321C98B), child:Icon(Icons.payments_rounded,color:Color(0xFF00D9A5))),
+                                  CircleAvatar(backgroundColor:WindowsAppearance.background(Color(0x3321C98B)), child:Icon(Icons.payments_rounded,color:WindowsAppearance.foreground(Color(0xFF00D9A5)))),
                                   const SizedBox(width:12),
                                   Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                                    Text(e['title']?.toString() ?? 'Expense', style: TextStyle(color:WindowsAppearance.resolve(Colors.white),fontWeight:FontWeight.w800)),
+                                    Text(e['title']?.toString() ?? 'Expense', style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white),fontWeight:FontWeight.w800)),
                                     const SizedBox(height:4),
-                                    Text('${e['category'] ?? 'General'} • ${e['dateText'] ?? ''}${(e['paidTo']?.toString().trim().isNotEmpty ?? false) ? ' • ${e['paidTo']}' : ''}', style: TextStyle(color:WindowsAppearance.resolve(Colors.white38),fontSize:10.5)),
-                                    if (e['note']?.toString().trim().isNotEmpty == true) Text(e['note'].toString(), style: TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:10.5)),
+                                    Text('${e['category'] ?? 'General'} • ${e['dateText'] ?? ''}${(e['paidTo']?.toString().trim().isNotEmpty ?? false) ? ' • ${e['paidTo']}' : ''}', style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white38),fontSize:10.5)),
+                                    if (e['note']?.toString().trim().isNotEmpty == true) Text(e['note'].toString(), style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10.5)),
                                   ])),
-                                  Text('₹${(double.tryParse(e['amount']?.toString() ?? '') ?? 0).toStringAsFixed(2)}', style:const TextStyle(color:Colors.amberAccent,fontSize:16,fontWeight:FontWeight.w900)),
-                                  if (!widget.history) IconButton(onPressed:()=>_delete(e), icon:const Icon(Icons.delete_outline_rounded,color:Colors.redAccent)),
+                                  Text('₹${(double.tryParse(e['amount']?.toString() ?? '') ?? 0).toStringAsFixed(2)}', style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.amberAccent),fontSize:16,fontWeight:FontWeight.w900)),
+                                  if (!widget.history) IconButton(onPressed:()=>_delete(e), icon:Icon(Icons.delete_outline_rounded,color:WindowsAppearance.foreground(Colors.redAccent))),
                                 ]),
                               );
                             },
@@ -23387,7 +23390,7 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   @override
   Widget build(BuildContext context){WindowsAppearance.watch(context);
     return Scaffold(
-      backgroundColor:WindowsAppearance.resolve(const Color(0xFF0B141A)),
+      backgroundColor:WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar:AppBar(title:Text(windowsTr('attendance'))),
       body:Center(
         child:ConstrainedBox(
@@ -23397,11 +23400,11 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
             children:[
               Container(
                 padding:const EdgeInsets.all(18),
-                decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(18),border:Border.all(color:const Color(0xFF69C2FF).withOpacity(.2))),
+                decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(18),border:Border.all(color:WindowsAppearance.outline(const Color(0xFF69C2FF).withOpacity(.2)))),
                 child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                   Text('Student / Teacher QR Attendance',style:TextStyle(color:WindowsAppearance.resolve(Colors.white),fontSize:20,fontWeight:FontWeight.w900)),
+                   Text('Student / Teacher QR Attendance',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white),fontSize:20,fontWeight:FontWeight.w900)),
                   const SizedBox(height:6),
-                   Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS school ki saved attendance range verify karega.',style:TextStyle(color:WindowsAppearance.resolve(Colors.white54),height:1.4)),
+                   Text('USB QR scanner se scan karein ya QR text paste karein. Active school identity + Windows GPS school ki saved attendance range verify karega.',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),height:1.4)),
                   const SizedBox(height:16),
                   SegmentedButton<String>(
                     segments: const [
@@ -23421,18 +23424,18 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
                     onSubmitted:(_)=>_mark(),
                   ),
                   const SizedBox(height:12),
-                  SizedBox(width:double.infinity,child:FilledButton.icon(onPressed:_busy?null:_mark,icon:_busy? SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2,color:WindowsAppearance.resolve(Colors.white))):const Icon(Icons.verified_rounded),label:Text(_busy?'Verifying...':'Verify Location & Mark Attendance'))),
+                  SizedBox(width:double.infinity,child:FilledButton.icon(onPressed:_busy?null:_mark,icon:_busy? SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2,color:WindowsAppearance.foreground(Colors.white))):const Icon(Icons.verified_rounded),label:Text(_busy?'Verifying...':'Verify Location & Mark Attendance'))),
                   const SizedBox(height:12),
                   Container(
                     width:double.infinity,
                     padding:const EdgeInsets.all(12),
-                    decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xFF0F191F)),borderRadius:BorderRadius.circular(12)),
-                    child:Text(_status,style:TextStyle(color:_status.toLowerCase().contains('blocked')||_status.toLowerCase().contains('invalid')?Colors.redAccent:const Color(0xFF00D9A5))),
+                    decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF0F191F)),borderRadius:BorderRadius.circular(12)),
+                    child:Text(_status,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(_status.toLowerCase().contains('blocked')||_status.toLowerCase().contains('invalid')?Colors.redAccent:const Color(0xFF00D9A5)))),
                   ),
                 ]),
               ),
               const SizedBox(height:14),
-               Text('Security: QR ke andar location hone se attendance approve nahi hoti. Actual Windows device GPS school location se distance calculate karta hai.',style:TextStyle(color:WindowsAppearance.resolve(Colors.white38),fontSize:10.5)),
+               Text('Security: QR ke andar location hone se attendance approve nahi hoti. Actual Windows device GPS school location se distance calculate karta hai.',style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white38),fontSize:10.5)),
             ],
           ),
         ),
@@ -23451,5 +23454,5 @@ class _WindowsMetricCard extends StatelessWidget{
   const _WindowsMetricCard({required this.icon,required this.label,required this.value,required this.color});
   final IconData icon; final String label; final String value; final Color color;
   @override
-  Widget build(BuildContext context){ WindowsAppearance.watch(context); return Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:WindowsAppearance.resolve(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color:color,size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style: TextStyle(color:WindowsAppearance.resolve(Colors.white54),fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(color:color,fontSize:18,fontWeight:FontWeight.w900))])]))); }
+  Widget build(BuildContext context){ WindowsAppearance.watch(context); return Expanded(child:Container(padding:const EdgeInsets.all(16),decoration:BoxDecoration(color:WindowsAppearance.background(const Color(0xFF111B21)),borderRadius:BorderRadius.circular(14),border:Border.all(color:color.withOpacity(.18))),child:Row(children:[Icon(icon,color: WindowsAppearance.foreground(color),size:28),const SizedBox(width:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10)),const SizedBox(height:3),Text(value,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(color),fontSize:18,fontWeight:FontWeight.w900))])]))); }
 }

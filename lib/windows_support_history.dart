@@ -197,7 +197,7 @@ class _WindowsComplaintHistoryState extends State<WindowsComplaintHistory> {
         children: [
           if (busy) const LinearProgressIndicator(),
           if (error != null)
-            Text(error!, style: const TextStyle(color: Colors.orangeAccent)),
+            Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))),
           if (items.isEmpty && !busy)
             const Text('No complaints found for this school.'),
           for (final r in items)
@@ -369,7 +369,7 @@ class _ComplaintThreadState extends State<_ComplaintThread> {
             ),
           if (busy) const LinearProgressIndicator(),
           if (error != null)
-            Text(error!, style: const TextStyle(color: Colors.orangeAccent)),
+            Text(error!, style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))),
           TextField(
             controller: message,
             maxLength: 3000,

@@ -24,21 +24,21 @@ class MobileScanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     return Container(
-      color: WindowsAppearance.resolve(const Color(0xFF0C171D)),
+      color: WindowsAppearance.background(const Color(0xFF0C171D)),
       alignment: Alignment.center,
       child:  Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             Icons.qr_code_scanner_rounded,
-            color: Color(0xFF00D9A5),
+            color: WindowsAppearance.foreground(Color(0xFF00D9A5)),
             size: 38,
           ),
           SizedBox(height: 10),
           Text(
             'Student scanner Windows Admin app me disabled hai.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: WindowsAppearance.resolve(Colors.white54), fontSize: 11),
+            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54), fontSize: 11),
           ),
         ],
       ),

@@ -1,3 +1,4 @@
+import 'windows_appearance.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -71,7 +72,7 @@ Future<void> exportWindowsSchoolBackup(BuildContext context) async {
                       ),
                     ),
                     if (error != null)
-                      Text(error!, style: const TextStyle(color: Colors.red)),
+                      Text(error!, style:       TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.red))),
                   ],
                 ),
               ),
