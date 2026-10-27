@@ -100,6 +100,28 @@ test('idle attendance worker backs off; committed submissions wake it without du
  assert.equal(delay,0);await scheduled();assert.equal(calls,1);assert.equal(delay,240000);
  worker.wake();worker.wake();assert.equal(delay,0);await scheduled();assert.equal(calls,2);assert.equal(delay,240000);assert(clears>0);worker.stop();
 });
+test('early empty scan preserves known retry deadline instead of deferring four minutes',async()=>{
+ let time=1000,scheduled,delay,calls=0;
+ const worker=createAttendanceWorker({now:()=>time,drain:async()=>{
+  calls++;return calls===1?{processed:1,nextRetryAt:11000}:{processed:0,nextRetryAt:null};
+ },setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
+ await scheduled();assert.equal(delay,2000);
+ time=3000;await scheduled();assert.equal(delay,8000,'keep 10s retry after early empty scan');
+ time=11000;await scheduled();assert.equal(delay,240000,'resume idle only after due deadline was scanned');
+ assert.equal(calls,3);worker.stop();
+});
+
+test('unrelated wake and later retry cannot erase an earlier deadline',async()=>{
+ let time=1000,scheduled,delay,calls=0;
+ const worker=createAttendanceWorker({now:()=>time,drain:async()=>{
+  calls++;return calls===1?{processed:1,nextRetryAt:15000}:calls===2?{processed:1,nextRetryAt:30000}:{processed:0,nextRetryAt:null};
+ },setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});
+ await scheduled();assert.equal(delay,2000);
+ time=3000;worker.wake();await scheduled();assert.equal(delay,2000);
+ time=5000;await scheduled();assert.equal(delay,10000,'keep original earlier deadline');
+ worker.stop();
+});
+
 test('active worker respects retry deadline and retains a wake arriving during upload',async()=>{
  let scheduled,delay,release,calls=0;const wait=new Promise(r=>release=r);
  const worker=createAttendanceWorker({now:()=>1000,drain:async()=>{calls++;if(calls===1)await wait;return {processed:1,nextRetryAt:9000};},setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return 1;},clearTimer:()=>{}});

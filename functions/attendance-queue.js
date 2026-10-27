@@ -107,12 +107,21 @@ function firestoreAttendanceStore(db,{schoolId=null,collectionName='attendance_o
 }
 // Wake on committed submissions; only restart/recovery scans poll while idle.
 function createAttendanceWorker({drain,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now,onError=()=>{}}){
- let timer=null,running=false,woken=false,stopped=false;
+ // Keep a known retry deadline across empty due-queue scans: a short scan
+ // must not turn a 10-second retry into a four-minute idle wait.
+ // No extra Firestore reads and no queue mutation are introduced.
+ let timer=null,running=false,woken=false,stopped=false,earliestRetryAt=null;
  function schedule(delay){if(stopped)return;if(timer!==null)clearTimer(timer);timer=setTimer(run,delay);timer?.unref?.();}
  async function run(){timer=null;if(running){woken=true;return;}running=true;let delay=240000;
-  try{const result=await drain();if(result?.processed>0)delay=2000;
-   if(result?.nextRetryAt!==null&&result?.nextRetryAt!==undefined)delay=Math.min(delay,Math.max(1000,result.nextRetryAt-now()));
-  }catch(e){onError(e);delay=30000;}finally{running=false;const urgent=woken;woken=false;schedule(urgent?0:delay);}
+  try{
+   if(earliestRetryAt!==null&&earliestRetryAt<=now())earliestRetryAt=null;
+   const result=await drain();if(result?.processed>0)delay=2000;
+   if(Number.isSafeInteger(result?.nextRetryAt)&&result.nextRetryAt>0)
+    earliestRetryAt=earliestRetryAt===null?result.nextRetryAt:Math.min(earliestRetryAt,result.nextRetryAt);
+   if(earliestRetryAt!==null)delay=Math.min(delay,Math.max(1000,earliestRetryAt-now()));
+  }catch(e){onError(e);delay=30000;
+   if(earliestRetryAt!==null)delay=Math.min(delay,Math.max(1000,earliestRetryAt-now()));
+  }finally{running=false;const urgent=woken;woken=false;schedule(urgent?0:delay);}
  }
  function wake(){if(running){woken=true;return;}schedule(0);}
  schedule(0);
