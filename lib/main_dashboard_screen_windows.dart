@@ -3249,7 +3249,7 @@ if (!passwordMatched) {
                   backgroundColor: WindowsAppearance.primary,
                   foregroundColor: WindowsAppearance.onPrimary,
                   elevation: 0,
-                  shadowColor: const Color(0xFF00D9A5).withOpacity(0.35),
+                  shadowColor: WindowsAppearance.primary,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(13),
                   ),
@@ -4148,7 +4148,7 @@ errorBuilder: (context, error, stackTrace) {
         const SizedBox(height: 9),
         _profileInfoTile(icon: Icons.hotel_outlined, label: 'Hostel Facility', value: hostel.isEmpty ? 'No' : hostel),
         const SizedBox(height: 9),
-        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: const Color(0xFF00A884)),
+        _profileInfoTile(icon: Icons.verified_user_outlined, label: 'Status', value: 'Active', valueColor: WindowsAppearance.primary),
         const SizedBox(height: 14),
         SizedBox(
           width: double.infinity,
@@ -4156,7 +4156,7 @@ errorBuilder: (context, error, stackTrace) {
             onPressed: _showMobileUpdateDialog,
             style: OutlinedButton.styleFrom(
               side: BorderSide(color: WindowsAppearance.foreground(Color(0xFF00A884))),
-              foregroundColor: WindowsAppearance.onPrimary,
+              foregroundColor: WindowsAppearance.primary,
               padding: const EdgeInsets.symmetric(vertical: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -6344,7 +6344,7 @@ Widget _buildOverviewCards() {
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: WindowsAppearance.primary,
-                    disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.35),
+                    disabledBackgroundColor: WindowsAppearance.primary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -6925,7 +6925,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: WindowsAppearance.primary,
-          disabledBackgroundColor: const Color(0xFF00A884).withOpacity(0.30),
+          disabledBackgroundColor: WindowsAppearance.primary,
           foregroundColor: WindowsAppearance.onPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
           shape: RoundedRectangleBorder(
@@ -8540,7 +8540,7 @@ class _AnalyticsPassFailChart extends StatelessWidget {
 
 abstract class _AnalyticsPainterBase extends CustomPainter {
   static const Color gridColor = Color(0x263A7B86);
-  static const TextStyle axisStyle = TextStyle(
+  static TextStyle get axisStyle => TextStyle(
     color: WindowsAppearance.foreground(Colors.white54),
     fontSize: 8,
   );
@@ -10284,7 +10284,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           const SizedBox(width: 12),
           Switch(
             value: value,
-            activeColor: const Color(0xFF00D9A5),
+            activeColor: WindowsAppearance.primary,
             onChanged: enabled ? onChanged : null,
           ),
         ],
@@ -11277,7 +11277,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     height: 30,
                     child: Checkbox(
                       value: allSelected,
-                      activeColor: const Color(0xFF00A884),
+                      activeColor: WindowsAppearance.primary,
                       visualDensity: VisualDensity.compact,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       onChanged: canSelectAll
@@ -11391,7 +11391,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                         width: 44,
                         child: Checkbox(
                           value: checked,
-                          activeColor: const Color(0xFF00A884),
+                          activeColor: WindowsAppearance.primary,
                           side: BorderSide(color: configured ? WindowsAppearance.resolve(Colors.white54) : WindowsAppearance.resolve(Colors.white12)),
                           onChanged: canToggle
                               ? (value) {
@@ -17888,7 +17888,7 @@ errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearan
                                     OutlinedButton.icon(
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor:
-                                            WindowsAppearance.onPrimary,
+                                            WindowsAppearance.primary,
                                         side: BorderSide(
                                           color: WindowsAppearance.foreground(const Color(0xFF00A884))
                                               .withOpacity(0.38),
@@ -19538,7 +19538,7 @@ class _AdvancedStudentUidSettingsPanelState
           const SizedBox(width: 12),
           Switch(
             value: value,
-            activeColor: const Color(0xFF00D9A5),
+            activeColor: WindowsAppearance.primary,
             onChanged: enabled ? onChanged : null,
           ),
         ],
@@ -21063,7 +21063,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           label: Text(className),
                           selectedColor:
                               WindowsAppearance.background(const Color(0xFF00A884).withOpacity(0.28)),
-                          checkmarkColor: const Color(0xFF00D9A5),
+                          checkmarkColor: WindowsAppearance.primary,
                           backgroundColor: WindowsAppearance.background(const Color(0xFF172229)),
                           side: BorderSide(
                             color: selected

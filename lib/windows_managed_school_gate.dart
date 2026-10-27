@@ -227,7 +227,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
       children: [
         if (s['status'] == 'trial')
           Material(
-            color: WindowsAppearance.foreground(Colors.red).shade900,
+            color: WindowsAppearance.background(Colors.red.shade900),
             child: ListTile(
               title: Text(
                 'Five-day trial • Ends ${DateTime.fromMillisecondsSinceEpoch((s['expiresAt'] as num).toInt()).toLocal()}',
