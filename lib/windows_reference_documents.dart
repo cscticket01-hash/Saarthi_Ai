@@ -390,7 +390,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
             ),
           ),
-          at(23, 296, 264, 88, table(details, firstHeader: false, font: 9)),
+          at(23, 296, 264, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
           at(234, 76, 45, 45, asset(logo, 'LOGO')),
           at(
             12,
@@ -421,7 +421,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             58,
             label('TEACHER', size: 48, color: white, heavy: true),
           ),
-          at(31, 335, 244, 88, table(details, firstHeader: false, font: 9)),
+          at(31, 335, 244, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
           at(35, 432, 45, 40, asset(logo, 'LOGO')),
           at(
             86,
@@ -574,7 +574,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
           table(
             details.skip(1).toList(),
             firstHeader: false,
-            font: 10,
+            font: 9,
+            rowHeight: 18,
           ),
         ),
         at(
@@ -738,7 +739,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
           table(
             details.skip(1).toList(),
             firstHeader: false,
-            font: 11,
+            font: 9,
+            rowHeight: 16.5,
           ),
         ),
         at(

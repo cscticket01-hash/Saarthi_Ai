@@ -28,7 +28,7 @@ void main() {
       'schoolContactNo': '9876543210',
       'schoolEmail': 'office@school.example',
       'schoolAddress': 'School Road, Silchar, Assam 788001',
-      'address': 'School Road, Silchar',
+      'address': 'Teacher Home, Sribhumi',
       'academicYear': '2026-2027',
       'class': 'Class VI',
       'rollNo': '12',

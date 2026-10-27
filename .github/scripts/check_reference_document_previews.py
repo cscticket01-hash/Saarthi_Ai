@@ -18,7 +18,7 @@ for index in range(4):
     assert abs(width-(((85.6 if index==2 else 54)*2+8)*72/25.4))<0.02
     assert abs(height-((54 if index==2 else 85.6)*72/25.4))<0.02
     assert 'ananyasharma' in text and 't-001' not in text
-    for value in ['ranjitsharma', '12/03/1988', 'mathematics', 'schoolroad,silchar']:
+    for value in ['ranjitsharma', '12/03/1988', 'mathematics', 'teacherhome,sribhumi']:
         assert value in text, f'Missing teacher identity field: {value}'
     assert 'idnumber' not in text and 'idno.' not in text
     assert 'principalsignature' in text
