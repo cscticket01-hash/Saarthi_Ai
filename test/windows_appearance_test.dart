@@ -116,9 +116,10 @@ void main() {
             expect(find.byKey(const ValueKey('salary-history')),findsOneWidget);
             // Exercise the enabled bulk action as well as the initial disabled state.
             await tester.tap(find.byType(Checkbox).last);await tester.pump();
-            final action=tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Mark Selected as Paid'));
+            final actionFinder=find.ancestor(of:find.text('Mark Selected as Paid'),matching:find.byWidgetPredicate((w)=>w is FilledButton));
+            final action=tester.widget<FilledButton>(actionFinder);
             expect(action.onPressed,isNotNull);
-            final palette=Theme.of(tester.element(find.widgetWithText(FilledButton,'Mark Selected as Paid'))).colorScheme;
+            final palette=Theme.of(tester.element(actionFinder)).colorScheme;
             final bg=action.style?.backgroundColor?.resolve({})??palette.primary;
             final fg=action.style?.foregroundColor?.resolve({})??palette.onPrimary;
             expect(WindowsAppearance.contrast(fg,bg),greaterThanOrEqualTo(4.5));
