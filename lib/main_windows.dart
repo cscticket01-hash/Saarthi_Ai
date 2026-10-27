@@ -70,6 +70,7 @@ Future<void> main() async {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
   await WindowsLocalSession.initialize();
+  ManagedSchoolSession.startAppearanceControl();
   try {
     await FirebaseAuth.instance.bootstrapLocalUser();
   } catch (_) {
@@ -383,6 +384,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
         _schoolName = profile?['schoolName']?.toString().trim() ?? _schoolName;
       }
       if (!mounted) return;
+      if (shouldLock) unawaited(ManagedSchoolSession.reportAppearanceLock(true));
       setState(() {
         _locked = shouldLock;
         _loading = false;
@@ -416,7 +418,6 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           await WindowsLocalSession.markLoggedIn();
           own();
           await FirebaseAuth.instance.bootstrapLocalUser();
-          await ManagedSchoolSession.refreshAppearanceAtUnlock();
         }
         own();
         if (!mounted) return;
@@ -588,6 +589,7 @@ class _WindowsAdminSessionDashboardState
   void initState() {
     super.initState();
     final storage = windows_html.window.localStorage;
+    unawaited(ManagedSchoolSession.reportAppearanceLock(false));
     storage['saarthi_portal_role_v1'] = 'admin';
     storage['saarthi_portal_expiry_v1'] = DateTime.now()
         .add(windowsIdleTimeout)
@@ -620,6 +622,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(ManagedSchoolSession.reportAppearanceLock(true));
     _adminId.text = WindowsLocalSecurity.adminId;
   }
 

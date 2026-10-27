@@ -5,6 +5,7 @@ class WindowsLocalSession {
   WindowsLocalSession._();
 
   static bool _loggedOut = false;
+  static Future<void> Function(bool locked)? onLockChanged;
 
   static File get _file {
     final base = Platform.environment['APPDATA'] ??
@@ -35,11 +36,13 @@ class WindowsLocalSession {
   static Future<void> markLoggedIn() async {
     _loggedOut = false;
     await _write();
+    await onLockChanged?.call(_loggedOut);
   }
 
   static Future<void> logout() async {
     _loggedOut = true;
     await _write();
+    await onLockChanged?.call(_loggedOut);
   }
 
   static Future<void> _write() async {
