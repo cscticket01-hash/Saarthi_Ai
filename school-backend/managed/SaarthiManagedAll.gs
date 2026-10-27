@@ -8128,23 +8128,26 @@ function VS_syncStateSheet(create,collection,readContext){
   if(readContext)readContext.syncStateBook={id:id,school:school,book:book};
   let sheet=book.getSheetByName(collection||'Record Heads');if(!sheet&&create&&collection){sheet=book.insertSheet(collection);sheet.getRange(1,1,1,2).setValues([['Record key hash','Verified sync metadata']]);}if(!sheet&&collection)return null;if(!sheet)throw new Error('Sync state unavailable; recovery requires review');return sheet;
 }
-function VS_recordHead(collection,id){
-  const sheet=VS_syncStateSheet(false,collection);if(!sheet||sheet.getLastRow()<2)return null;
-  const key=VS_layoutHash([collection,id]),matches=sheet.getRange(2,1,sheet.getLastRow()-1,1).createTextFinder(key).matchEntireCell(true).matchCase(true).findAll();
+function VS_recordHead(collection,id,readContext){
+  const sheet=VS_syncStateSheet(false,collection,readContext),last=sheet?sheet.getLastRow():0;if(last<2)return null;
+  const key=VS_layoutHash([collection,id]),matches=sheet.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).matchCase(true).findAll();
   if(matches.length>1)throw new Error('Duplicate sync state; review required');
   if(!matches.length)return null;const row=matches[0].getRow(),head=JSON.parse(sheet.getRange(row,2,1,1).getValues()[0][0]);
   if(head.schoolId!==PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID')||head.collection!==collection||head.id!==id)throw new Error('Sync state identity mismatch');return {row:row,head:head};
 }
 function VS_saveRecordHead(store,item){
   if(!VS_sheetLifecycleEnabled()||store.json||store.backup)return;
-  const d=item.data,sheet=VS_syncStateSheet(true,store.collection),old=VS_recordHead(store.collection,item.id);
+  // Reuse only the workbook verified within this locked save. Head contents
+  // are never cached: duplicate detection and post-flush readback remain fresh.
+  // This context cannot survive this call or cross a school/workbook identity.
+  const context={},d=item.data,sheet=VS_syncStateSheet(true,store.collection,context),old=VS_recordHead(store.collection,item.id,context);
   const head={schoolId:store.school,collection:store.collection,id:item.id,revision:d._syncRevision||'',operationId:d._syncOperationId||'',requestHash:d._syncRequestHash||'',deleted:d._syncDeleted===true,generation:d.mobileStableId||d._syncDeletedOwner||'',retiredGenerations:d._syncRetiredStudentGenerations||[],payloadHash:VS_layoutHash(d)};
   // A verified identical head already is the receipt after a lost ACK.
   // Avoid rewriting the sync-state row and flushing on every safe retry.
   if(old&&VS_layoutHash(old.head)===VS_layoutHash(head))return;
   const row=old?old.row:Math.max(2,sheet.getLastRow()+1);if(row>sheet.getMaxRows())sheet.insertRowsAfter(sheet.getMaxRows(),100);
   sheet.getRange(row,1,1,2).setValues([[VS_layoutHash([store.collection,item.id]),JSON.stringify(head)]]);SpreadsheetApp.flush();
-  if(VS_layoutHash(VS_recordHead(store.collection,item.id).head)!==VS_layoutHash(head))throw new Error('Sync state verification failed');
+  if(VS_layoutHash(VS_recordHead(store.collection,item.id,context).head)!==VS_layoutHash(head))throw new Error('Sync state verification failed');
 }
 function VS_missingRecordHeads(store,records,readContext){
   if(!VS_sheetLifecycleEnabled())return [];
