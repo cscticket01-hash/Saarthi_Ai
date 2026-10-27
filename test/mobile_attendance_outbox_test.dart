@@ -26,18 +26,24 @@ void main() {
   test('fresh processing confirmations stay short only within a bounded server-created window', () {
     const created = 100000;
     for (final state in ['pending', 'processing']) {
+      expect(attendanceUsesFastConfirmation(state: state, createdAt: created,
+        now: created + 29999), true);
       for (final attempts in [2, 3, 4, 20]) {
         expect(attendanceConfirmationDelay(state: state, createdAt: created,
           attempts: attempts, now: created + 29999), const Duration(seconds: 5));
       }
       expect(attendanceConfirmationDelay(state: state, createdAt: created,
         attempts: 4, now: created + 30000), const Duration(seconds: 20));
+      expect(attendanceUsesFastConfirmation(state: state, createdAt: created,
+        now: created + 30000), false);
       expect(attendanceConfirmationDelay(state: state, createdAt: created,
         attempts: 20, now: created + 60000), const Duration(seconds: 30));
     }
   });
   test('retry, unknown and untrusted timestamps retain existing confirmation backoff', () {
     for (final state in ['retry', 'unknown', null]) {
+      expect(attendanceUsesFastConfirmation(state: state, createdAt: 100000,
+        now: 100001), false);
       for (var attempts = 2; attempts <= 6; attempts++) {
         expect(attendanceConfirmationDelay(state: state, createdAt: 100000,
           attempts: attempts, now: 100001).inSeconds,
@@ -45,6 +51,8 @@ void main() {
       }
     }
     for (final created in <Object?>[null, '100000', 100000.0, 0, -1, 100002]) {
+      expect(attendanceUsesFastConfirmation(state: 'processing', createdAt: created,
+        now: 100001), false);
       expect(attendanceConfirmationDelay(state: 'processing', createdAt: created,
         attempts: 5, now: 100001), const Duration(seconds: 30));
     }
@@ -463,13 +471,25 @@ void main() {
     final processing = (await (await store.database).query('attendance')).single;
     expect(processing['state'], 'accepted');
     expect(processing['operationId'], operation);
+    expect(processing['attempts'], accepted['attempts']);
     expect(processing['nextAt'] as int, greaterThanOrEqualTo(statusResponseAt + 5000));
     await session.flushAttendance();
     expect(statuses, 1, reason: 'No eager loop before the confirmation deadline');
+    for (var check = 0; check < 3; check++) {
+      await (await store.database).update('attendance', {'nextAt': 0});
+      await session.flushAttendance();
+      expect((await (await store.database).query('attendance')).single['attempts'],
+          accepted['attempts'], reason: 'Healthy checks do not inflate failure backoff');
+    }
+    expect(statuses, 4);
+    await (await store.database).update('attendance', {'nextAt': 0, 'attempts': 7});
+    await session.flushAttendance();
+    expect((await (await store.database).query('attendance')).single['attempts'], 7,
+        reason: 'Fast confirmation never resets retained retry history');
     completed = true;
     await (await store.database).update('attendance', {'nextAt': 0});
     await session.flushAttendance();
-    expect(statuses, 2);
+    expect(statuses, 6);
     expect(marks, 1, reason: 'Status confirmation never resubmits the capture');
     expect(session.attendancePending, 0);
     expect(

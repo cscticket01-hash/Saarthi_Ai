@@ -680,17 +680,25 @@ class SchoolSession {
               'Attendance needs school review; capture retained.',
             );
           final confirmedAt = DateTime.now().millisecondsSinceEpoch;
+          final confirmationState = operation['state'] is String
+              ? operation['state'] as String
+              : null;
+          final fastConfirmation = attendanceUsesFastConfirmation(
+            state: confirmationState,
+            createdAt: operation['createdAt'],
+            now: confirmedAt,
+          );
           final confirmationDelay = attendanceConfirmationDelay(
-            state: operation['state'] is String
-                ? operation['state'] as String
-                : null,
+            state: confirmationState,
             createdAt: operation['createdAt'],
             attempts: attempts,
             now: confirmedAt,
           );
           await _attendanceStore.finish(owner, id, lease, {
             'state': completed ? 'completed' : 'accepted',
-            'attempts': attempts,
+            // Extra healthy processing checks must not inflate the retained
+            // failure/retry history. Never reset attempts from prior failures.
+            'attempts': fastConfirmation ? row['attempts'] : attempts,
             // Start the wait after the response, so a slow status request
             // cannot leave a past deadline and spin through the drain loop.
             'nextAt': confirmedAt + confirmationDelay.inMilliseconds,

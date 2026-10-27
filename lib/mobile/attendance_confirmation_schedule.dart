@@ -7,11 +7,11 @@ Duration attendanceConfirmationDelay({
   required int attempts,
   required int now,
 }) {
-  if ((state == 'pending' || state == 'processing') &&
-      createdAt is int &&
-      createdAt > 0 &&
-      createdAt <= now &&
-      now - createdAt < 30000) {
+  if (attendanceUsesFastConfirmation(
+    state: state,
+    createdAt: createdAt,
+    now: now,
+  )) {
     return const Duration(seconds: 5);
   }
   final exponent = (attempts - 2).clamp(0, 3).toInt();
@@ -19,3 +19,14 @@ Duration attendanceConfirmationDelay({
     milliseconds: (5000 * (1 << exponent)).clamp(5000, 30000).toInt(),
   );
 }
+
+bool attendanceUsesFastConfirmation({
+  required String? state,
+  required Object? createdAt,
+  required int now,
+}) =>
+    (state == 'pending' || state == 'processing') &&
+    createdAt is int &&
+    createdAt > 0 &&
+    createdAt <= now &&
+    now - createdAt < 30000;
