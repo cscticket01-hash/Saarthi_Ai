@@ -7,3 +7,5 @@ Windows UI colours are mapped to shared surface, text and accent roles. Screen-s
 The shared staff payslip renderer uses opaque white paper, black ink, earning/deduction rows and exact paise payment totals. Templates and staff salary share the renderer. Viewing or printing does not record a payment.
 
 Validation must include developer authorization/CAS, session-delayed colour delivery, extreme RGB contrast, both-mode screen captures, all route/dialog/form regressions and rendered payslip checks. Physical device coverage and any unreviewed screen must be reported explicitly; automated contrast checks are not a claim that every pixel has been certified.
+
+Local developer theme and managed-session regression suite: 63 tests passed. Hosted Windows build and screen verification must pass on the final source commit before release.
