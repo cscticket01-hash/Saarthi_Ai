@@ -70,6 +70,7 @@ Future<void> main() async {
     await WindowsUpdateManager.cleanupOldInstallers();
   } catch (_) {}
   await WindowsLocalSession.initialize();
+  ManagedSchoolSession.startAppearanceControl();
   try {
     await FirebaseAuth.instance.bootstrapLocalUser();
   } catch (_) {
@@ -383,6 +384,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
         _schoolName = profile?['schoolName']?.toString().trim() ?? _schoolName;
       }
       if (!mounted) return;
+      if (shouldLock) unawaited(ManagedSchoolSession.reportAppearanceLock(true));
       setState(() {
         _locked = shouldLock;
         _loading = false;
@@ -416,7 +418,6 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           await WindowsLocalSession.markLoggedIn();
           own();
           await FirebaseAuth.instance.bootstrapLocalUser();
-          await ManagedSchoolSession.refreshAppearanceAtUnlock();
         }
         own();
         if (!mounted) return;

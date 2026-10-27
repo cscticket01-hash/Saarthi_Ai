@@ -1,4 +1,6 @@
 import '../windows_appearance.dart';
+import '../windows_local_session.dart';
+import 'dart:async';
 import '../windows_profile_image_policy.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -48,7 +50,7 @@ class ManagedSchoolSession {
       final metadata = action=='managed/session' || action=='managed/device/list'
           ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
-      final visibleTransfer=action!='managed/events'; // A quiet event subscription is not data transfer.
+      final visibleTransfer=action!='managed/events' && action!='managed/theme/state'; // A quiet event subscription is not data transfer.
       if(visibleTransfer)activeTransfers.value++;
       late final Map<String,dynamic> result;
       try {
@@ -127,18 +129,45 @@ class ManagedSchoolSession {
       await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId']),'verifiedAccess':session}));
       await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       WindowsAppearance.applyBrand(session['windowsTheme']);
+      startAppearanceControl();
       changed.value++;return session;
     }finally{cloud.close();}
   }
-  static Future<void> refreshAppearanceAtUnlock() async {
-    try {
-      final before=await CentralSchoolCloud.saved();
-      if(before['managed']!=true)return;
-      final result=await call('managed/session',{'appearance':true}).timeout(const Duration(seconds:4));
-      final after=await CentralSchoolCloud.saved();
-      if(before['uid']==after['uid'] && before['schoolId']==after['schoolId'] && result['schoolId']==before['schoolId']) WindowsAppearance.applyBrand(result['windowsTheme']);
-    } catch (_) {/* Offline unlock retains the last verified brand and local mode. */}
+  static Timer? _appearanceTimer;
+  static bool _appearanceLocked = true;
+  static bool _appearanceNeedsReport = true;
+  static Future<void> _appearanceQueue = Future<void>.value();
+  static void startAppearanceControl() {
+    if(kIsWeb || !enabled)return;
+    WindowsLocalSession.onLockChanged = (locked) => reportAppearanceLock(locked, applyAtUnlock: !locked);
+    _appearanceTimer ??= Timer.periodic(const Duration(seconds:30), (_) {
+      if(_appearanceLocked || _appearanceNeedsReport)unawaited(reportAppearanceLock(_appearanceLocked));
+    });
+    unawaited(reportAppearanceLock(true));
   }
+  static Future<void> reportAppearanceLock(bool locked, {bool applyAtUnlock=false}) {
+    if(_appearanceLocked!=locked)_appearanceNeedsReport=true;
+    _appearanceLocked=locked;
+    final deadline=Stopwatch()..start();
+    final next=_appearanceQueue.then((_) async {
+      // Coalesce queued heartbeats; never replay a stale unlocked/locked state.
+      if(locked!=_appearanceLocked)return;
+      try {
+        final before=await CentralSchoolCloud.saved();
+        if(before['managed']!=true)return;
+        final result=await callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked});
+        if(locked==_appearanceLocked)_appearanceNeedsReport=false;
+        final after=await CentralSchoolCloud.saved();
+        // New colour is visible only on a verified unlock, never mid-session.
+        if(applyAtUnlock && deadline.elapsed < const Duration(seconds:4) && !locked && !_appearanceLocked && before['uid']==after['uid'] && before['schoolId']==after['schoolId'] && result['schoolId']==before['schoolId']) {
+          WindowsAppearance.applyBrand(result['windowsTheme']);
+        }
+      } catch (_) {/* Offline/unknown PCs never count as confirmed locked. */}
+    });
+    _appearanceQueue=next.catchError((Object _) {});
+    return next.timeout(const Duration(seconds:4),onTimeout:(){});
+  }
+  static Future<void> refreshAppearanceAtUnlock() => reportAppearanceLock(false, applyAtUnlock:true);
   static void verifyDeviceRegistration(Map<String,dynamic> result, String deviceIdentity) {
     final device=result['device'];
     if(result['success']!=true || (result['deviceEnforced']!=true && !(result['deviceManaged']==true && result['deviceEnforced']==false)) || !validSchoolId(result['schoolId']?.toString()??'') ||
@@ -172,6 +201,7 @@ class ManagedSchoolSession {
     await logout(); // Password change revokes old Firebase tokens; require fresh login.
   }
   static Future<void> logout() async {
+    await reportAppearanceLock(true);
     CentralSchoolCloud.clearFirebaseToken();
     try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
 
