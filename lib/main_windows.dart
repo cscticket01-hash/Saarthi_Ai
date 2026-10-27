@@ -27,7 +27,6 @@ import 'windows_local_storage.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connection_center.dart';
 import 'windows_admin_setup.dart';
-import 'windows_update_service.dart' as update_service;
 import 'windows_update_manager.dart';
 
 final _schoolNavigatorKey = GlobalKey<NavigatorState>();
@@ -123,13 +122,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
           darkTheme: WindowsAppearance.theme(Brightness.dark),
           builder: (context, child) {
             final content = WindowsActivityMonitor(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(child: child ?? const SizedBox.shrink()),
-                  const _WindowsGlobalUpdateProgress(),
-                ],
-              ),
+              child: child ?? const SizedBox.shrink(),
             );
             return WindowsManagedSchoolGate(
               child: content,
@@ -565,101 +558,6 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _WindowsGlobalUpdateProgress extends StatelessWidget {
-  const _WindowsGlobalUpdateProgress();
-
-  @override
-  Widget build(BuildContext context) {
-    WindowsAppearance.watch(context);
-    return ValueListenableBuilder<update_service.WindowsUpdateRuntimeState>(
-      valueListenable: update_service.WindowsUpdateService.state,
-      builder: (context, state, _) {
-        if (!state.downloading && !state.launching) {
-          return const SizedBox.shrink();
-        }
-
-        final percent = state.progress == null
-            ? null
-            : (state.progress! * 100).clamp(0, 100).toStringAsFixed(0);
-
-        return IgnorePointer(
-          child: Align(
-            alignment: Alignment.topRight,
-            child: SafeArea(
-              child: Container(
-                width: 310,
-                margin: const EdgeInsets.all(12),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: WindowsAppearance.resolve(const Color(0xFF172229)),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: WindowsAppearance.resolve(Colors.white10),
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black38,
-                      blurRadius: 16,
-                      offset: Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.system_update_alt_rounded,
-                          color: Color(0xFF4DA3FF),
-                          size: 19,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            state.launching
-                                ? 'Update ready'
-                                : 'App update downloading${percent == null ? '' : ' • $percent%'}',
-                            style: TextStyle(
-                              color: WindowsAppearance.resolve(Colors.white),
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: state.launching ? 1 : state.progress,
-                      minHeight: 5,
-                      color: const Color(0xFF4DA3FF),
-                      backgroundColor: WindowsAppearance.resolve(
-                        Colors.white10,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      state.message,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: WindowsAppearance.resolve(Colors.white54),
-                        fontSize: 9.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

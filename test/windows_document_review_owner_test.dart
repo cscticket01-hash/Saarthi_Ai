@@ -429,15 +429,17 @@ void main() {
       await db.collection('students_directory').doc('S1').update({'photoUrl':'https://drive.google.com/file/d/changed-photo/view'});
       await WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
         {'schoolId':school,'syncProtocol':2,'records':{cardId:published}});
-      final reviews = await WindowsIdCardReviews.pending(school);
-      expect(reviews, hasLength(1));
-      expect(reviews.single['documentId'], cardId);
-      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:() async => throw StateError('Held review must not regenerate or read cloud'));
-      await expectLater(WindowsIdCardReviews.keepPublished(db.activeProfileId, reviews.single,
-        read: () async => {'schoolId': 'foreign', 'syncProtocol': 2, 'records': {cardId: published}}), throwsStateError);
+      expect(await WindowsIdCardReviews.pending(school), isEmpty);
+      final repaired = (await db.collection(WindowsIdCardReviews.collection).doc(cardId).get()).data()!;
+      expect(repaired['status'], 'autoRetained');
+      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:() async => throw StateError('Automatically retained card must not regenerate'));
+      // Previous manual-review version upgrades to automatic retry/recovery.
+      await db.collection(WindowsIdCardReviews.collection).doc(cardId).update({'status': 'needsReview'});
+      await WindowsIdCardReviews.repairPending(school,
+        read: () async => {'schoolId': 'foreign', 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), hasLength(1));
       final receiptsBefore = (await db.collection('_windows_sync_receipts').get()).docs.length;
-      await WindowsIdCardReviews.keepPublished(db.activeProfileId, reviews.single,
+      await WindowsIdCardReviews.repairPending(school,
         read: () async => {'schoolId': school, 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), isEmpty);
       expect((await db.collection('_windows_sync_receipts').get()).docs.length, receiptsBefore);

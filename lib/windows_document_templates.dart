@@ -205,6 +205,7 @@ class WindowsDocumentTemplates {
       images[i]==null?null:sha256.convert(images[i]!).toString();
     return sha256
         .convert(utf8.encode(jsonEncode(clean([inputs(data), inputs(profile), template, qr,
+          if (SchoolLink.parse(qr).role == 'teacher') 'teacher-personal-details-v2',
           for (var i=0;i<images.length;i++) imageIdentity(i)]))))
         .toString();
   }
@@ -274,6 +275,7 @@ class WindowsDocumentTemplates {
   static Future<void> publishChangedIdCards({
     Future<Map<String, dynamic>> Function()? readInventory,
     Map<String, Set<String>>? affectedPeople,
+    void Function(Map<String, dynamic>)? onCardRepair,
   }) async {
     if (affectedPeople != null && affectedPeople.values.every((ids) => ids.isEmpty)) return;
     final db = FirebaseFirestore.instance, origin = db.activeProfileId;
@@ -399,6 +401,7 @@ class WindowsDocumentTemplates {
         } catch (error, stack) {
           if (error is PublishedIdInputConflict && db.activeProfileId == origin) {
             await WindowsIdCardReviews.retain(error, doc.data()?['name']?.toString() ?? doc.id);
+            await WindowsIdCardReviews.repairPending(identity['schoolId'] as String, read: readPublished, onRepair: onCardRepair);
             continue;
           }
           // One unavailable photo, renderer or owner conflict must not starve

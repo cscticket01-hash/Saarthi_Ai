@@ -13133,6 +13133,8 @@ errorBuilder: (
       text: data['name']?.toString() ?? '',
     );
 
+    final fatherCtrl = TextEditingController(text: data['fatherName']?.toString() ?? data['parentName']?.toString() ?? '');
+
     final designationCtrl = TextEditingController(
       text: data['designation']?.toString() ??
           'Teacher',
@@ -13415,6 +13417,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           Icons.person_outline_rounded,
                         ),
                       ),
+                      const SizedBox(height: 10),
+                      TextField(controller: fatherCtrl, decoration: input('Father Name', Icons.person_outline_rounded)),
                       const SizedBox(height: 10),
                       TextField(
                         controller:
@@ -13813,6 +13817,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                               'oldPhone':
                                   oldPhone,
                               'name': name,
+                              'fatherName': fatherCtrl.text.trim(),
                               'designation':
                                   designationCtrl
                                       .text
@@ -13869,6 +13874,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 'action':
                                     'add_teacher',
                                 'name': name,
+                              'fatherName': fatherCtrl.text.trim(),
                                 'designation':
                                     designationCtrl
                                         .text
@@ -13927,6 +13933,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             final updateData =
                                 <String, dynamic>{
                               'name': name,
+                              'fatherName': fatherCtrl.text.trim(),
                               'designation':
                                   designationCtrl
                                       .text
@@ -14069,6 +14076,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     );
 
     nameCtrl.dispose();
+    fatherCtrl.dispose();
     designationCtrl.dispose();
     subjectCtrl.dispose();
     qualificationCtrl.dispose();
@@ -15187,6 +15195,8 @@ class _AddTeacherScreenState
   final _nameCtrl =
       TextEditingController();
 
+  final _fatherCtrl = TextEditingController();
+
   final _designationCtrl =
       TextEditingController(
     text: 'Teacher',
@@ -15246,6 +15256,7 @@ class _AddTeacherScreenState
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _fatherCtrl.dispose();
     _designationCtrl.dispose();
     _subjectCtrl.dispose();
     _qualificationCtrl.dispose();
@@ -15495,6 +15506,7 @@ class _AddTeacherScreenState
           await _callTeacherApi({
         'action': 'add_teacher',
         'name': name,
+        'fatherName': _fatherCtrl.text.trim(),
         'designation':
             _designationCtrl
                 .text
@@ -15577,6 +15589,7 @@ class _AddTeacherScreenState
         'teacherId':
             createdTeacherId,
         'name': name,
+        'fatherName': _fatherCtrl.text.trim(),
         'designation':
             _designationCtrl
                 .text
@@ -15816,7 +15829,10 @@ class _AddTeacherScreenState
                     height: 11,
                   ),
 
-                  // EMPLOYEE ID REMOVED
+                  TextField(controller: _fatherCtrl, decoration: _field('Father Name', Icons.person_outline_rounded)),
+                  const SizedBox(height: 11),
+
+                  // Internal record identity is generated automatically.
                   TextField(
                     controller:
                         _designationCtrl,

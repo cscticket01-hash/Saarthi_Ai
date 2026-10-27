@@ -1,15 +1,14 @@
-import 'package:flutter/material.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_recovery.dart';
 
-/// Local review evidence only. This is never an upload receipt or cloud ACK.
+/// Durable automatic repair evidence. Never an upload receipt or cloud ACK.
 class WindowsIdCardReviews {
   static const collection = '_windows_id_card_reviews';
   static void guard(String profile, String school) {
     final db = FirebaseFirestore.instance;
     if (db.activeProfileId != profile || db.activeProfileIdentity['schoolSyncId'] != school) {
-      throw StateError('School changed. Reopen ID-card review.');
+      throw StateError('School changed during automatic card repair.');
     }
   }
   static Future<void> retain(PublishedIdInputConflict error, String name) async {
@@ -31,7 +30,7 @@ class WindowsIdCardReviews {
     final row = (await db.collection(collection).doc(id).get()).data();
     guard(profile, school);
     return row?['schoolId'] == school && row?['documentId'] == id &&
-      row?['inputRevision'] == inputRevision && {'needsReview', 'keepPublished'}.contains(row?['status']) &&
+      row?['inputRevision'] == inputRevision && {'keepPublished', 'autoRetained'}.contains(row?['status']) &&
       (cachedRevision == null || row?['cloudRevision'] == cachedRevision);
   }
   static Future<List<Map<String, dynamic>>> pending(String school) async {
@@ -58,6 +57,38 @@ class WindowsIdCardReviews {
     guard(profile, school);
     if (row?['schoolId'] == school) await ref.update({'status': 'superseded'});
   }
+  /// Adopt only signed, same-school, same-owner published evidence. A mismatch
+  /// on a receiving PC is not authority to overwrite an existing cloud card.
+  /// Failed verification remains durable and retries on the next sync cycle.
+  static Future<void> repairPending(String school,
+      {Future<Map<String, dynamic>> Function()? read, void Function(Map<String, dynamic>)? onRepair}) async {
+    final db = FirebaseFirestore.instance, profile = db.activeProfileId;
+    final items = await pending(school);
+    items.sort((a,b) => ((a['lastRepairAttempt'] as num?)?.toInt() ?? 0).compareTo((b['lastRepairAttempt'] as num?)?.toInt() ?? 0));
+    Future<Map<String, dynamic>>? inventory;
+    for (final item in items.take(20)) {
+      guard(profile, school);
+      try {
+        await keepPublished(profile, item, read: () => inventory ??= read?.call() ??
+          ManagedSchoolSession.callForSchool(school, 'managed/records',
+            {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2}));
+        onRepair?.call({'schoolId': school, 'stage': 'repairDiagnosed',
+          'failureCategory': 'idCardInputs', 'outcome': 'verified_published_card_retained',
+          'collection': 'documents', 'documentId': item['documentId']});
+      } catch (error) {
+        guard(profile, school);
+        final ref = db.collection(collection).doc(item['documentId'] as String);
+        final current = (await ref.get()).data();
+        guard(profile, school);
+        if (current?['status'] == 'needsReview' &&
+            current?['inputRevision'] == item['inputRevision'] &&
+            current?['cloudRevision'] == item['cloudRevision']) {
+          await ref.update({'lastRepairAttempt': DateTime.now().millisecondsSinceEpoch,
+            'repair': 'Published evidence unavailable or changed; automatic retry pending.'});
+        }
+      }
+    }
+  }
   static Future<void> keepPublished(String profile, Map<String, dynamic> captured,
       {Future<Map<String, dynamic>> Function()? read}) async {
     final school = captured['schoolId'] as String, id = captured['documentId'] as String;
@@ -79,44 +110,10 @@ class WindowsIdCardReviews {
     guard(profile, school);
     if (current?['schoolId'] != school || current?['inputRevision'] != captured['inputRevision'] ||
         current?['cloudRevision'] != captured['cloudRevision'] || current?['status'] != 'needsReview') {
-      throw StateError('ID-card review changed. Reopen this page.');
+      throw StateError('Card repair evidence changed; retry with the current revision.');
     }
-    await ref.update({'status': 'keepPublished', 'reviewedAt': DateTime.now().millisecondsSinceEpoch});
+    await ref.update({'status': 'autoRetained', 'repairedAt': DateTime.now().millisecondsSinceEpoch,
+      'repair': 'Verified published card retained; no new generation or cloud write.'});
     guard(profile, school);
   }
-}
-
-class WindowsIdCardReviewScreen extends StatefulWidget {
-  const WindowsIdCardReviewScreen({super.key, required this.school, required this.profile});
-  final String school, profile;
-  @override
-  State<WindowsIdCardReviewScreen> createState() => _WindowsIdCardReviewScreenState();
-}
-class _WindowsIdCardReviewScreenState extends State<WindowsIdCardReviewScreen> {
-  late Future<List<Map<String, dynamic>>> rows;
-  String? error, busy;
-  @override
-  void initState() {super.initState(); rows = WindowsIdCardReviews.pending(widget.school);}
-  @override
-  Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('ID-card review')),
-    body: FutureBuilder<List<Map<String, dynamic>>>(future: rows, builder: (context, snapshot) {
-      if (FirebaseFirestore.instance.activeProfileId != widget.profile) return const Center(child: Text('School changed. Reopen review.'));
-      if (snapshot.hasError) return const Center(child: Text('Review could not be loaded. Reopen this page.'));
-      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-      return ListView(padding: const EdgeInsets.all(20), children: [
-        const Text('These cards are already published. Local preparation inputs differ; the published cards and all pending changes remain protected. Other school records continue syncing.'),
-        if (error != null) Text(error!, style: const TextStyle(color: Colors.orange)),
-        if (snapshot.data!.isEmpty) const Text('No ID-card reviews pending.'),
-        for (final row in snapshot.data!) Card(child: ListTile(title: Text(row['name']?.toString() ?? 'ID card'),
-          subtitle: Text('${row['ownerRole']} • ${row['personDocId']}'),
-          trailing: TextButton(onPressed: busy != null ? null : () async {
-            setState(() {busy = row['documentId']; error = null;});
-            try {
-              await WindowsIdCardReviews.keepPublished(widget.profile, row);
-              if (mounted) setState(() => rows = WindowsIdCardReviews.pending(widget.school));
-            } catch (e) {if (mounted) setState(() => error = '$e');}
-            finally {if (mounted) setState(() => busy = null);}
-          }, child: Text(busy == row['documentId'] ? 'Verifying…' : 'Keep published ID')))),
-      ]);
-    }));
 }

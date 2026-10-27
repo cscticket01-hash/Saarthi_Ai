@@ -1,4 +1,3 @@
-import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
 import 'package:flutter/material.dart' as material show Text;
 import 'windows_settings_design.dart';
@@ -990,12 +989,11 @@ class WindowsSyncStatusCard extends StatelessWidget {
     return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_){ WindowsAppearance.watch(context); return
       ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {WindowsAppearance.watch(context);
         final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
-        final cardReviews = (details['idCardReviewCount'] as num? ?? 0).toInt();
         final label=engine.isPaused?'Paused':state==SchoolCloudState.offline?'Offline':
           state==SchoolCloudState.authRequired?'Sign-in required':state==SchoolCloudState.driveDisconnected?'Drive disconnected':
           state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
-          pending>0?'$pending items pending':cardReviews>0?'Records synced • $cardReviews ID-card review(s)':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
-        final success = state == SchoolCloudState.synced && pending == 0 && attention == 0 && cardReviews == 0 &&
+          pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
+        final success = state == SchoolCloudState.synced && pending == 0 && attention == 0 &&
           !engine.isPaused && engine.lastError == null && engine.lastSuccessfulSync != null;
         return WindowsSettingsCard(icon:Icons.sync_rounded, sync:true, success:success,
           title:'Sync',subtitle:'Sync Status • $label',
@@ -1010,12 +1008,6 @@ class WindowsSyncStatusCard extends StatelessWidget {
                 children:[TextSpan(text:'$pending',style:TextStyle(
                   color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
               )); }),
-            if(cardReviews>0) TextButton.icon(icon: const Icon(Icons.badge_outlined), label: Text('Review $cardReviews published ID card(s)'),
-              onPressed: () async {
-                await Navigator.push<void>(context, MaterialPageRoute(builder: (_) => WindowsIdCardReviewScreen(
-                  school: engine.activeSchoolSyncId, profile: engine.activeProfileId)));
-                await engine.refreshDetails();
-              }),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
               child:Text(engine.lastError!,style:const TextStyle(color:Colors.orangeAccent,fontSize:14))),
           ]),

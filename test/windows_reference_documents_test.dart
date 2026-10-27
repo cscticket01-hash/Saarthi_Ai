@@ -16,6 +16,8 @@ void main() {
       'name': 'Ananya Sharma',
       'studentName': 'Arup Das',
       'teacherId': 'T-001',
+      'fatherName': 'Ranjit Sharma',
+      'dateOfBirth': '12/03/1988',
       'studentId': 'S-012',
       'qualification': 'M.Sc (Physics)',
       'joiningDate': '01/06/2024',
