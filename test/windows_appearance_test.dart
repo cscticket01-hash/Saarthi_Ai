@@ -77,6 +77,9 @@ void main() {
     },
   );
   testWidgets('Windows route atlas retains visible content in both modes', (tester) async {
+    final originalErrorHandler=FlutterError.onError;
+    FlutterError.onError=(details){FlutterError.dumpErrorToConsole(details,forceReport:true);originalErrorHandler?.call(details);};
+    addTearDown(()=>FlutterError.onError=originalErrorHandler);
     addTearDown(() {WindowsSyncEngine.instance.dispose();WindowsPlatformClient.instance.dispose();tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
     await tester.runAsync(() async {
       debugPrint('THEME_ATLAS loading fonts');

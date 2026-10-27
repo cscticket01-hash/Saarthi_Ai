@@ -11738,7 +11738,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {WindowsAppearance.watch(context);
-              final wide = constraints.maxWidth >= 850;
+              final wide = constraints.maxWidth >= 1100;
               final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
               final feePanel = _feeStructurePanel(
                 studentSelected: studentSelected,
@@ -11773,7 +11773,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
               return Column(
                 children: [
-                  feePanel,
+                  SizedBox(height: panelHeight, child: feePanel),
                   const SizedBox(height: 12),
                   SizedBox(height: panelHeight, child: paymentPanel),
                 ],
@@ -12141,6 +12141,7 @@ child: Row(
     Expanded(
       flex: 2,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _selectedMonth,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -12173,6 +12174,7 @@ child: Row(
     Expanded(
       flex: 2,
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         value: _selectedClass,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
