@@ -45,6 +45,7 @@ void main() {
       for(final mode in [ThemeMode.dark,ThemeMode.light]) {
         WindowsAppearance.mode.value=mode;
         final scheme=WindowsAppearance.theme(mode==ThemeMode.dark?Brightness.dark:Brightness.light).colorScheme;
+        expect(WindowsAppearance.resolve(scheme.primary),scheme.primary, reason:'Generated RGB brand must survive legacy role mapping');
         expect(WindowsAppearance.contrast(scheme.primary,scheme.onPrimary),greaterThanOrEqualTo(4.5));
         expect(WindowsAppearance.contrast(scheme.onSurface,scheme.surface),greaterThanOrEqualTo(4.5));
         for(final old in [Colors.white38,Colors.purpleAccent,Colors.blueAccent,Colors.redAccent,Colors.orangeAccent,Colors.greenAccent]) {
