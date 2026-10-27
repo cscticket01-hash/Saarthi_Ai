@@ -111,7 +111,7 @@ class ManagedSchoolSession {
           verifyDeviceRegistration(await authenticated.api(deviceRegistrationBody(),token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
         } else if(e.status!=503 || e.diagnosticCode!='DEVICE_ROLLOUT_DISABLED') rethrow;
       }
-      final session=await authenticated.api({'action':'managed/session'},token:auth['idToken']);
+      final session=await authenticated.api({'action':'managed/session','appearance':true},token:auth['idToken']);
       if(session['uid']!=auth['localId']||!validSchoolId(session['schoolId']?.toString()??''))throw StateError('School account mapping is invalid');
       final configuration = managedSessionConfiguration(session, session['schoolId'], auth['localId']);
       Map<String,dynamic> googleProfile={};
@@ -134,7 +134,7 @@ class ManagedSchoolSession {
     try {
       final before=await CentralSchoolCloud.saved();
       if(before['managed']!=true)return;
-      final result=await call('managed/session',{}).timeout(const Duration(seconds:4));
+      final result=await call('managed/session',{'appearance':true}).timeout(const Duration(seconds:4));
       final after=await CentralSchoolCloud.saved();
       if(before['uid']==after['uid'] && before['schoolId']==after['schoolId'] && result['schoolId']==before['schoolId']) WindowsAppearance.applyBrand(result['windowsTheme']);
     } catch (_) {/* Offline unlock retains the last verified brand and local mode. */}
