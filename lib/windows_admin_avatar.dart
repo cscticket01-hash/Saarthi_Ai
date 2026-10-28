@@ -223,40 +223,51 @@ class OriginalGoogleProfilePhoto extends StatelessWidget {
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
           : TextButton(
               onPressed: onConnect,
-              style: TextButton.styleFrom(padding: EdgeInsets.zero),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.add_a_photo_outlined, size: 20),
-                  Text(
-                    'Connect\nGmail photo',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 10),
-                  ),
-                ],
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add_a_photo_outlined, size: 20),
+                    Text(
+                      'Connect\nGmail photo',
+                      softWrap: false,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10),
+                    ),
+                  ],
+                ),
               ),
             ),
     );
     return Semantics(
       image: true,
       label: 'Google account profile photo',
-      child: Tooltip(
-        message: 'Connect the original Gmail profile photo',
-        child: InkWell(
-          onTap: connecting ? null : onConnect,
-          customBorder: const CircleBorder(),
-          child: bytes == null
-              ? empty
-              : ClipOval(
-                  child: Image.memory(
-                    bytes!,
-                    width: 68,
-                    height: 68,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    errorBuilder: (_, __, ___) => empty,
+      child: Material(
+        type: MaterialType.transparency,
+        child: Tooltip(
+          message: 'Connect the original Gmail profile photo',
+          child: InkWell(
+            onTap: connecting ? null : onConnect,
+            customBorder: const CircleBorder(),
+            child: bytes == null
+                ? empty
+                : ClipOval(
+                    child: Image.memory(
+                      bytes!,
+                      width: 68,
+                      height: 68,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => empty,
+                    ),
                   ),
-                ),
+          ),
         ),
       ),
     );
