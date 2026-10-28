@@ -222,6 +222,11 @@ jobs:
       # =========================================================
       # VERIFY BUILD
       # =========================================================
+      - name: Version Flutter scripts to prevent stale website layouts
+        run: |
+          python -m unittest discover -s scripts -p "test_version_web_entrypoints.py"
+          python scripts/version-web-entrypoints.py
+
       - name: Verify Built Assets
         run: |
           test -f build/web/index.html
