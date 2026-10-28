@@ -4,7 +4,7 @@ import {createHmac,createHash} from 'node:crypto';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const key='development-only-not-a-production-secret-0000';
 const school='vs-'+'f'.repeat(32),other='vs-'+'e'.repeat(32);
-const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:"sync",modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:async()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:"sync",modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:async request=>{let body={};try{body=await request.json();}catch{}if(body.action==='managed/mobile'&&body.request?.action==='mobile_attendance_status'&&body.request?.attendancePermit==='synthetic-legacy-permit')return Response.json({success:true,schoolId:body.schoolId,projectId:body.schoolId,syncProtocol:2,operations:body.request.operationIds.map(operationId=>({operationId,state:'completed',createdAt:1,completedAt:2}))});return new Response('{}',{status:503});},durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
 after(async()=>{await mf.dispose();});
 async function rpc(command,data={},lane='notices',s=school){const body=JSON.stringify({...data,command,schoolId:s,lane});const time=String(Date.now());const r=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{'content-type':'application/json','x-vidya-time':time,'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+body).digest('hex')},body});return {status:r.status,...await r.json()};}
 test('unsigned clients cannot create/read scoped school operations',async()=>{const r=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',body:JSON.stringify({schoolId:school,lane:'notices',command:'snapshot'})});assert.equal(r.status,401);});
@@ -52,6 +52,7 @@ test('direct mobile grants enforce school, session, QR, geofence and expiry befo
  assert.equal(JSON.stringify(stored).includes('qr-secret'),false);assert.equal(JSON.stringify(stored).includes('sessionToken'),false);
  const status=await send({...body,request:{...body.request,action:'mobile_attendance_status',operationIds:[ack.operationId]}});assert.equal(status.operations[0].state,'pending');
  assert.equal((await send({...body,request:{...body.request,action:'mobile_attendance_status',operationIds:['f'.repeat(64)]}})).status,400);
+ const legacyId=sha(JSON.stringify([school,p.role,p.personId,p.day,'exit']));const legacy=await send({...body,request:{...body.request,action:'mobile_attendance_status',operationIds:[legacyId],attendancePermit:'synthetic-legacy-permit'}});assert.equal(legacy.operations[0].state,'completed');assert.equal(legacy.operations[0].operationId,legacyId);
 });
 
 test('broker integration seeds existing Drive notices, acknowledges Cloudflare first and delivers edits in exact revision order',async()=>{

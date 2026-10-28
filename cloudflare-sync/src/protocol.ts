@@ -3,7 +3,7 @@ export const operationPattern = /^[a-f0-9]{64}$/;
 export function demand(ok: unknown, message='Invalid sync request', status=400): asserts ok {
  if(!ok) throw Object.assign(new Error(message),{status});
 }
-export async function boundedBody(request: Request, limit=400_000): Promise<string> {
+export async function boundedBody(request: Pick<Request, 'headers' | 'body'>, limit=400_000): Promise<string> {
  demand(Number(request.headers.get('content-length')||0)<=limit,'Request too large',413);
  const reader=request.body?.getReader(); if(!reader)return '';
  const chunks:Uint8Array[]=[];let size=0;
