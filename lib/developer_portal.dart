@@ -1089,7 +1089,38 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               ),
             );
             final main = Expanded(
-              child: ListView(
+              child: _page == 6
+                  ? Padding(
+                      padding: EdgeInsets.all(narrow ? 12 : 20),
+                      child: Column(
+                        children: [
+                          if (narrow)
+                            SizedBox(
+                              height: 42,
+                              child: Row(
+                                children: [
+                                  const Expanded(child: Text('Vidya Saarthi')),
+                                  PopupMenuButton<int>(
+                                    tooltip: 'Navigation',
+                                    initialValue: _page,
+                                    onSelected: (value) =>
+                                        setState(() => _page = value),
+                                    itemBuilder: (_) => List.generate(
+                                      titles.length,
+                                      (i) => PopupMenuItem(
+                                        value: i,
+                                        child: Text(titles[i]),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          const Expanded(child: DeveloperWindowsTheme()),
+                        ],
+                      ),
+                    )
+                  : ListView(
                 padding: EdgeInsets.all(narrow ? 20 : 36),
                 children: [
                   if (narrow)
@@ -1170,7 +1201,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 ],
               ),
             );
-            return Row(children: [if (!narrow) nav, main]);
+            return Row(children: [
+              if (!narrow) _page==6 ? SizedBox(width:230,child:FittedBox(
+                fit:BoxFit.contain,alignment:Alignment.topCenter,
+                child:SizedBox(width:230,height:c.maxHeight<700?700:c.maxHeight,child:nav),
+              )) : nav,
+              main,
+            ]);
           },
         ),
       ),

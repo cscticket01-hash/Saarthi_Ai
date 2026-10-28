@@ -5,6 +5,7 @@ import 'dart:js_util' as js;
 import 'package:flutter/material.dart';
 import 'main_dashboard_screen_windows.dart' as screens;
 import 'windows_appearance.dart';
+import 'windows_theme_presets.dart';
 import 'windows_local_firestore.dart';
 import 'windows_local_auth.dart' as auth;
 import 'windows_html_shim.dart' as shim;
@@ -61,7 +62,8 @@ class _PreviewState extends State<WindowsPreviewApp>{
    if(data['mode']!='dark'&&data['mode']!='light')return;
    if(data['page'] is! String||!windowsThemePreviewPages.containsKey(data['page'])||data['navigation'] is! int)return;
    if(!['red','green','blue'].every((k)=>data[k] is int&&data[k]>=0&&data[k]<=255))return;
-   WindowsAppearance.applyBrand({'schemaVersion':1,'red':data['red'],'green':data['green'],'blue':data['blue'],'revision':'preview'},persist:false);
+   if(data['presetId']!=null&&windowsThemePreset(data['presetId'] is String?data['presetId']:null)==null)return;
+   WindowsAppearance.applyBrand({'presetId':data['presetId'],'schemaVersion':1,'red':data['red'],'green':data['green'],'blue':data['blue'],'revision':'preview'},persist:false);
    WindowsAppearance.mode.value=data['mode']=='light'?ThemeMode.light:ThemeMode.dark;
    final page=data['page'];if(page is String&&windowsThemePreviewPages.containsKey(page)&&data['navigation']!=lastNavigation){lastNavigation=data['navigation'] is int?data['navigation']:0;current=page;navigator.currentState?.pushNamedAndRemoveUntil('/$page',(_)=>false);}
    WidgetsBinding.instance.addPostFrameCallback((_){html.window.parent?.postMessage(jsonEncode({'type':'vidya-preview-applied','page':current,'mode':WindowsAppearance.mode.value==ThemeMode.light?'light':'dark','red':WindowsAppearance.brandData['red'],'green':WindowsAppearance.brandData['green'],'blue':WindowsAppearance.brandData['blue'],'navigation':lastNavigation}),html.window.location.origin);});
