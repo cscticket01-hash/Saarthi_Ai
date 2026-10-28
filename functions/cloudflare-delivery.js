@@ -12,7 +12,9 @@ function createCloudflareDelivery({edge,now=Date.now}){
   if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...row.response.result,cloudflareAccepted:true,driveState:'verified'};
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
-  return pending(school,lane,id);
+  return {...pending(school,lane,id),deliveryStatus:{state:row.state,
+   ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
+   ...(/^[A-Z_]{1,80}$/.test(row.response?.failureCode||'')?{failureCode:row.response.failureCode}:{})}};
  }
  async function record(school,request){
   const identity=request.action==='managed_records_batch'?request.operations.map(op=>[op.collection,op.id,op.operationId]):[request.collection,request.id,request.operationId];
