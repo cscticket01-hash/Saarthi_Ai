@@ -1,7 +1,7 @@
 """Build actual Windows widgets as a separate demo, without changing production sources.
 The generated tree has RAM-only data/credentials, no sync scheduler or network API.
 """
-import argparse, pathlib, shutil, subprocess, tempfile
+import argparse, pathlib, shutil, subprocess, tempfile, tarfile
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 def prepare(target):
     target=pathlib.Path(target).resolve()
@@ -30,6 +30,8 @@ def prepare(target):
     replace('windows_platform_client.dart','Future<void> initialize() async {','Future<void> initialize() async { return; /* PREVIEW ONLY */')
     replace('windows_platform_client.dart','Future<void> refresh() async {','Future<void> refresh() async { return; /* PREVIEW ONLY */')
     replace('main_dashboard_screen_windows.dart','void _startPortalInactivityTimer() {','void _startPortalInactivityTimer() { return; /* PREVIEW ONLY */')
+    replace('windows_local_firestore.dart','Future<void> ensureDurableSchoolRecords() async {','Future<void> ensureDurableSchoolRecords() async { return; /* PREVIEW ONLY */')
+    replace('windows_local_storage.dart','static Future<String> currentPath() async => (await dataDirectory()).path;',"static Future<String> currentPath() async => '/Demo preview (RAM only)';")
     return target
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--prepare-only');parser.add_argument('--flutter',default='flutter');args=parser.parse_args()
@@ -39,5 +41,12 @@ if __name__=='__main__':
             target=prepare(work)
             subprocess.run([args.flutter,'create','--platforms=web','--project-name=saarthi_ai','.'],cwd=target,check=True)
             subprocess.run([args.flutter,'pub','get'],cwd=target,check=True)
+            # Printing's documented override keeps document raster previews local.
+            archive=subprocess.run(['npm','pack','--ignore-scripts','pdfjs-dist@3.2.146'],cwd=target,check=True,text=True,stdout=subprocess.PIPE).stdout.strip().splitlines()[-1]
+            pdfjs=target/'web/pdfjs';pdfjs.mkdir(exist_ok=True)
+            with tarfile.open(target/pathlib.Path(archive).name) as bundle:
+                for name in ['pdf.min.js','pdf.worker.min.js']:
+                    (pdfjs/name).write_bytes(bundle.extractfile('package/build/'+name).read())
+            index=target/'web/index.html';html=index.read_text();index.write_text(html.replace('</head>','<script>window.dartPdfJsBaseUrl="/windows-preview/pdfjs/";</script></head>'))
             subprocess.run([args.flutter,'build','web','--release','--no-web-resources-cdn','--base-href=/windows-preview/','--dart-define=SAARTHI_THEME_PREVIEW=true','-t','lib/windows_theme_preview_main.dart'],cwd=target,check=True)
             dest=ROOT/'build/web/windows-preview';shutil.rmtree(dest,ignore_errors=True);shutil.copytree(target/'build/web',dest)
