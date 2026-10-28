@@ -50,7 +50,10 @@ Before publishing opt-in clients, run the retained synthetic TEST-school
 acceptance workflow with the exact deployed broker commit pinned in
 `.github/acceptance/cloudflare-delivery-runtime.json` on the dedicated
 `verify/cloudflare-delivery-live` branch. Its target school and endpoint are
-fixed in source; it must not create, edit or delete real-school fixtures.
+fixed to the isolated TEST broker in source; it must not create, edit or delete
+real-school fixtures. Its separate `vidya-saarthi-sync-test` Worker, key and
+Durable Object namespace must never be substituted for the production key or
+namespace. Use `wrangler.test.jsonc` for its source configuration.
 
 This upgrade does not create provider quota, enable the optional shared quota
 journal, certify production load, or certify physical devices. Provider
