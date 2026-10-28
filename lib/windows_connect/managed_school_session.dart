@@ -128,7 +128,6 @@ class ManagedSchoolSession {
       if(old.isNotEmpty&&old['managed']!=true)await const WindowsSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
       await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId']),'verifiedAccess':session}));
       await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
-      WindowsAppearance.applyBrand(session['windowsTheme']);
       startAppearanceControl();
       changed.value++;return session;
     }finally{cloud.close();}
@@ -141,11 +140,11 @@ class ManagedSchoolSession {
   static Future<void> _appearanceQueue = Future<void>.value();
   static void startAppearanceControl() {
     if(kIsWeb || !enabled)return;
-    WindowsLocalSession.onLockChanged = (locked) => reportAppearanceLock(locked, applyAtUnlock: !locked);
+    WindowsLocalSession.onLockChanged = (locked) => reportAppearanceLock(locked);
     _appearanceTimer ??= Timer.periodic(const Duration(seconds:30), (_) {
       if(_appearanceLocked || _appearanceNeedsReport)unawaited(reportAppearanceLock(_appearanceLocked));
     });
-    unawaited(reportAppearanceLock(true));
+    unawaited(reportAppearanceLock(WindowsLocalSession.loggedOut));
   }
   static Future<void> reportAppearanceLock(bool locked, {bool applyAtUnlock=false}) {
     if(kIsWeb || (!enabled && appearanceRequestForTesting==null))return Future<void>.value();

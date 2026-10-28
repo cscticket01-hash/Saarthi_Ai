@@ -1,9 +1,11 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
 const DEFAULT_THEME=Object.freeze({schemaVersion:1,red:0,green:140,blue:120,revision:'default'});
+const PRESET_IDS=new Set(["neon-teal", "electric-blue", "mint-light", "sunset-ember", "aurora-violet", "emerald-gold"]);
 function theme(value){
  if(!value||value.schemaVersion!==1||!['red','green','blue'].every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=255))throw Object.assign(Error('Use whole RGB values from 0 to 255'),{status:400,publicMessage:true});
- return {schemaVersion:1,red:value.red,green:value.green,blue:value.blue,revision:typeof value.revision==='string'?value.revision:'default'};
+ if(value.presetId!=null&&!PRESET_IDS.has(value.presetId))throw Object.assign(Error('Unknown Windows theme preset'),{status:400,publicMessage:true});
+ return {...(value.presetId?{presetId:value.presetId}:{}),schemaVersion:1,red:value.red,green:value.green,blue:value.blue,revision:typeof value.revision==='string'?value.revision:'default'};
 }
 function createWindowsTheme({db,now=Date.now}){
  const ref=()=>db.doc('platform_configuration/windows_theme');
