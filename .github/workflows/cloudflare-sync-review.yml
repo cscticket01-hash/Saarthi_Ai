@@ -64,4 +64,6 @@ jobs:
       - run: dart --disable-dart-dev .github/tests/sync3_diagnostics_adaptive.dart
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart
-      - run: flutter test test/central_school_cloud_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_local_first_save_test.dart test/windows_school_profile_restore_test.dart test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart test/sync_recovery_policy_test.dart test/windows_sync_control_cleanup_test.dart
+      - env:
+          APPDATA: ${{ runner.temp }}/cloudflare-apps
+        run: flutter test --concurrency=1 --timeout 90s test/central_school_cloud_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_local_first_save_test.dart test/windows_school_profile_restore_test.dart test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart test/sync_recovery_policy_test.dart test/windows_sync_control_cleanup_test.dart

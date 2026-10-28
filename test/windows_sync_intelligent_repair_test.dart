@@ -438,7 +438,9 @@ void main() {
     WindowsFirebaseRemote.recordWriteBatchSupported = true;
     WindowsFirebaseRemote.edgeDeliverySupported = true;
     await db.collection('school_notices').doc('dedicated').set({'title': 'Keep queued'});
-    await db.collection('school_expenses').doc('expense').set({'amount': 12});
+    for (var i = 0; i < 2; i++) {
+      await db.collection('school_expenses').doc('expense-$i').set({'amount': 12});
+    }
     var submitted = false;
     await WindowsFirebaseRemote.prepareManagedBatch(
       school, canAdmit: () => true,
