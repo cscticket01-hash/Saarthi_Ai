@@ -108,3 +108,11 @@ test('enrollment rollout is separately opt-in without changing access enforcemen
   {deviceAccessEnforced:false,studentImportEnabled:false,deviceEnrollmentEnabled:true});
  for(const value of ['TRUE','1',''])assert.throws(()=>managedFeatureOptions({SAARTHI_DEVICE_ENROLLMENT_ENABLED:value},null));
 });
+
+test('quota replies carry bounded Retry-After without leaking provider text',async()=>{
+ const r=await request(Object.assign(Error('NEVER_LOG_THIS'),{status:429,code:'FIREBASE_QUOTA_EXCEEDED',retryAfterMs:120001}));
+ assert.equal(r.headers['Retry-After'],'121');assert.equal(r.body.retryAfterMs,120001);
+ assert.equal(r.body.code,'FIREBASE_QUOTA_EXCEEDED');assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ const other=await request(Object.assign(Error('private'),{status:403,retryAfterMs:120000}));
+ assert.equal(other.headers['Retry-After'],undefined);assert.equal(other.body.retryAfterMs,undefined);
+});
