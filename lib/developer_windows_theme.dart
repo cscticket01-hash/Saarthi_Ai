@@ -393,7 +393,8 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
         const SizedBox(height: 8),
         Row(
           children: [
-            Expanded(
+            SizedBox(
+              width: 86,
               child: OutlinedButton(
                 onPressed: busy || !loaded
                     ? null
@@ -409,7 +410,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                     ? null
                     : save,
                 icon: const Icon(Icons.save, size: 16),
-                label: const Text('Save Theme'),
+                label: const Text('Save Theme', maxLines: 1),
               ),
             ),
           ],

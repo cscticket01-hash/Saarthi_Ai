@@ -1201,7 +1201,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 ],
               ),
             );
-            return Row(children: [if (!narrow) nav, main]);
+            return Row(children: [
+              if (!narrow) _page==6 ? SizedBox(width:230,child:FittedBox(
+                fit:BoxFit.contain,alignment:Alignment.topCenter,
+                child:SizedBox(width:230,height:c.maxHeight<700?700:c.maxHeight,child:nav),
+              )) : nav,
+              main,
+            ]);
           },
         ),
       ),

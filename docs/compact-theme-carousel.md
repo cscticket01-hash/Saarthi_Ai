@@ -7,3 +7,5 @@ The bounded Theme route replaces its outer ListView with a viewport-sized worksp
 Each of the six presets has four static screenshots generated from the actual isolated Windows widgets (Dashboard, Student Records, Fees, Settings), using the same native appearance implementation and preset identity. Custom RGB uses a hue preview of the baseline screenshots. No school data or live backend is contacted by the screenshot generator. There is no interactive Windows app embedded in the developer page.
 
 The existing backend publication protocol and Windows App Lock password-unlock activation are unchanged. This update needs only a hosting release; no Windows installer or backend redeploy is required.
+
+Screenshot generation and compact layout were verified in workflow run 40673777194: 24 screenshots, no external requests or rendering errors, 22 Flutter tests passed with one existing skip. Screenshots use the production Windows appearance source from c3e63e8.

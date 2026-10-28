@@ -42,13 +42,16 @@ jobs:
       - run: flutter create --platforms=web --project-name=saarthi_ai .
       - run: flutter pub get
       - name: Build isolated native-widget screenshot source
+        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
         run: python3 .github/scripts/build_windows_theme_preview.py
       - name: Install local screenshot verifier
+        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
         run: |
           npm install --no-save playwright@1.58.2
           npx playwright install --with-deps chromium
           python -m pip install pillow
       - name: Capture four actual app screenshots for every preset
+        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
         run: |
           node .github/scripts/capture_theme_carousel.cjs
           python - <<'PYTHON'
