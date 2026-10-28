@@ -1,6 +1,5 @@
 import 'windows_appearance.dart';
 import 'windows_google_profile.dart';
-import 'windows_connect/google_authorization.dart';
 import 'windows_profile_image_policy.dart';
 
 import 'dart:typed_data';
@@ -30,73 +29,29 @@ class WindowsAdminAvatar extends StatefulWidget {
 
 class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
   Uint8List? bytes;
-  bool _connecting = false;
   int _generation = 0;
-  GoogleAuthorization? _authorization;
 
   @override
   void dispose() {
     _generation++;
-    _authorization?.close();
     super.dispose();
-  }
-
-  Future<void> _connect() async {
-    if (_connecting) return;
-    setState(() => _connecting = true);
-    _generation++;
-    final profile = FirebaseFirestore.instance.activeProfileId;
-    try {
-      final saved = await CentralSchoolCloud.saved();
-      final uid = saved['uid']?.toString() ?? '';
-      final school = saved['schoolId']?.toString() ?? '';
-      final email = saved['email']?.toString() ?? '';
-      _authorization = GoogleAuthorization();
-      final account = await _authorization!.authorize(
-        script: false,
-        profileOnly: true,
-      );
-      await WindowsGoogleProfileStore().save(
-        account,
-        uid: uid,
-        school: school,
-        email: email,
-        isCurrent: () async {
-          final current = await CentralSchoolCloud.saved();
-          return mounted &&
-              FirebaseFirestore.instance.activeProfileId == profile &&
-              current['uid'] == uid &&
-              current['schoolId'] == school &&
-              current['email'] == saved['email'];
-        },
-      );
-      if (mounted && FirebaseFirestore.instance.activeProfileId == profile)
-        await _load();
-    } on SetupCancelled {
-      // Keep the existing original on cancellation.
-    } catch (error) {
-      if (mounted && FirebaseFirestore.instance.activeProfileId == profile) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(
-            content: Text(
-              error is StateError
-                  ? error.message.toString()
-                  : 'Gmail photo could not connect. Please retry.',
-            ),
-          ),
-        );
-      }
-    } finally {
-      _authorization?.close();
-      _authorization = null;
-      if (mounted) setState(() => _connecting = false);
-    }
   }
 
   @override
   void initState() {
     super.initState();
     _load().catchError((Object _) {});
+  }
+
+  @override
+  void didUpdateWidget(covariant WindowsAdminAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initial != widget.initial) {
+      // Never carry an old account's avatar into a newly signed-in profile.
+      _generation++;
+      bytes = null;
+      _load().catchError((Object _) {});
+    }
   }
 
   Future<void> _load() async {
@@ -197,79 +152,57 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
     WindowsAppearance.watch(context);
     return OriginalGoogleProfilePhoto(
       bytes: bytes,
-      onConnect: _connect,
-      connecting: _connecting,
+      initial: widget.initial,
     );
   }
 }
 
-/// Render downloaded bytes directly, including animated image codecs.
+/// Render the previously authorised Google account image as-is, including
+/// animated GIF frames. An email/password login cannot silently grant Google
+/// profile access: show a passive initial until a verified image is available.
 class OriginalGoogleProfilePhoto extends StatelessWidget {
   const OriginalGoogleProfilePhoto({
     super.key,
     required this.bytes,
-    this.onConnect,
-    this.connecting = false,
+    this.initial = '',
   });
-  final VoidCallback? onConnect;
-  final bool connecting;
+
   final Uint8List? bytes;
+  final String initial;
+
   @override
   Widget build(BuildContext context) {
-    final empty = SizedBox(
+    final normalized = initial.trim();
+    final letter = normalized.isEmpty ? '?' : normalized.substring(0, 1).toUpperCase();
+    final fallback = SizedBox(
       width: 68,
       height: 68,
-      child: connecting
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-          : TextButton(
-              onPressed: onConnect,
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add_a_photo_outlined, size: 20),
-                    Text(
-                      'Connect\nGmail photo',
-                      softWrap: false,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 10),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-    );
-    return Semantics(
-      image: true,
-      label: 'Google account profile photo',
-      child: Material(
-        type: MaterialType.transparency,
-        child: Tooltip(
-          message: 'Connect the original Gmail profile photo',
-          child: InkWell(
-            onTap: connecting ? null : onConnect,
-            customBorder: const CircleBorder(),
-            child: bytes == null
-                ? empty
-                : ClipOval(
-                    child: Image.memory(
-                      bytes!,
-                      width: 68,
-                      height: 68,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => empty,
-                    ),
-                  ),
+      child: Center(
+        child: Text(
+          letter,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
+    );
+    return Semantics(
+      image: true,
+      label: bytes == null ? 'Google account avatar unavailable' : 'Google account profile photo',
+      child: bytes == null
+          ? fallback
+          : ClipOval(
+              child: Image.memory(
+                bytes!,
+                width: 68,
+                height: 68,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => fallback,
+              ),
+            ),
     );
   }
 }
