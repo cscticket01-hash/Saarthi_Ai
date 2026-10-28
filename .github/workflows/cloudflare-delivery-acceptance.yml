@@ -1,0 +1,50 @@
+name: Cloudflare delivery isolated synthetic acceptance
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/cloudflare_delivery_acceptance*'
+      - '.github/workflows/cloudflare-delivery-acceptance.yml'
+  push:
+    branches: [verify/cloudflare-delivery-live]
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-delivery-isolated-acceptance
+  cancel-in-progress: false
+jobs:
+  harness-safeguards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
+  isolated-live-delivery:
+    if: github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/verify/cloudflare-delivery-live'
+    needs: harness-safeguards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require exact reviewed deployment pin
+        run: node -e "const r=require('./.github/acceptance/cloudflare-delivery-runtime.json'); if(!/^[a-f0-9]{40}$/.test(r.commit))process.exit(1);require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_RUNTIME='+r.commit+'\n');"
+      - name: Verify only retained synthetic TEST-school records and document bytes
+        env:
+          VS_CF_DELIVERY_ACCEPTANCE: '1'
+          VS_CF_DELIVERY_RUN_ID: cf-delivery-20261028-v1
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/cloudflare_delivery_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloudflare-delivery-isolated-acceptance
+          path: build/cloud-prerequisites/cloudflare-delivery.json
+          if-no-files-found: warn
+          retention-days: 7
