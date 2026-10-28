@@ -47,6 +47,7 @@ async function acceptance({env=process.env,request=transport}={}){
    requireCheck(!result.fileId&&!result.recordRevision);
    for(let attempt=0;attempt<24;attempt++){
     result=await call({action:'managed/cloudflare/operation',...ticket,waitMillis:20000});
+    if(result.deliveryStatus)report.lastDeliveryStatus=result.deliveryStatus;
     if(!result.delivery){requireCheck(result.driveState==='verified');return result;}
     requireCheck(result.delivery.id===ticket.id&&result.delivery.lane===ticket.lane);
    }

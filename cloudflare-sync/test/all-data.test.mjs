@@ -117,6 +117,22 @@ test('batch ACK for another record is rejected before recording partial success'
  const row=await edge.rpc(school,'records',{command:'status',id:accepted.delivery.id});
  assert.equal(row.state,'retry');assert.deepEqual(row.response.partial,{});
 });
+test('real Sheet lifecycle saved.data ACK binds an omitted wrapper ID through the exact operation ID',async()=>{
+ const school=tenant('9'),request={...write('teachers_directory','saved-data'),data:{schoolId:school,name:'Synthetic teacher'}};
+ const accepted=await delivery.record(school,request);
+ await delivery.drain(school,'records',async op=>({success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-saved-data',
+  record:{...op.data,_syncRevision:'drive-saved-data',_syncOperationId:op.operationId}}));
+ const result=await delivery.status(school,'records',accepted.delivery.id);
+ assert.equal(result.driveState,'verified');assert.equal(result.recordRevision,'drive-saved-data');
+ for(const suffix of ['8','7']){
+  const foreignSchool=tenant(suffix),op={...request,id:'wrong-'+suffix,data:{schoolId:foreignSchool}};
+  const receipt=await delivery.record(foreignSchool,op);
+  await delivery.drain(foreignSchool,'records',async()=>({success:true,schoolId:foreignSchool,syncProtocol:2,recordRevision:'drive-real',
+   record:{schoolId:foreignSchool,_syncOperationId:suffix==='8'?'another-operation':op.operationId,_syncRevision:suffix==='7'?'another-revision':'drive-real'}}));
+  const row=await edge.rpc(foreignSchool,'records',{command:'status',id:receipt.delivery.id});
+  assert.equal(row.state,'retry');assert.equal(row.response.failureCode,'ACK_UNVERIFIED');
+ }
+});
 test('authenticated broker drain commits real record ACK and pending jobs drain after admission rollback',async()=>{
  let writes=0;
  const fetch=async(_,options)=>{const outer=JSON.parse(options.body),request=JSON.parse(outer.payload);writes++;
