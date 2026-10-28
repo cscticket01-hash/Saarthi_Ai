@@ -15,4 +15,8 @@ test('retired Android telemetry action is rejected before attendance/session rou
 });
 test('ordinary signed storage checks still work after engine removal',async()=>{
  const f=fixture();const r=await f.call({action:'managed/storage/check',schoolId:A});assert.equal(r.success,true);assert.equal(r.storageReady,true);assert.equal(f.sent.length,1);assert.equal(JSON.parse(JSON.parse(f.sent[0].opt.body).payload).action,'managed_health');
+ const photo=await f.call({action:'managed/storage/check',schoolId:A,profilePhoto:true});
+ assert.equal(photo.success,true);
+ assert.equal(f.sent.length,2);
+ assert.equal(JSON.parse(JSON.parse(f.sent[1].opt.body).payload).profilePhoto,true);
 });

@@ -83,7 +83,9 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
             ['request','redirect','response'].includes(context.scriptStage)&&['timeout','socket','dns','connection','other'].includes(context.transportKind)
             ?{scriptStage:context.scriptStage,transportKind:context.transportKind}:{})}:{};
       logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,...diagnostic});
-      return send(status,{success:false,code,...diagnostic,message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
+      const retryAfterMs=status===429&&Number.isFinite(e.retryAfterMs)?Math.max(1000,Math.min(86400000,Math.ceil(e.retryAfterMs))):0;
+      if(retryAfterMs)res.setHeader('Retry-After',String(Math.ceil(retryAfterMs/1000)));
+      return send(status,{success:false,code,...diagnostic,...(retryAfterMs?{retryAfterMs}:{}),message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
     }
   };
 }
@@ -123,7 +125,10 @@ function fromEnvironment(env) {
     const legacy=getApps().find(a=>a.name===name) || initializeApp({projectId},name);
     return getAuth(legacy).verifyIdToken(String(token || '')); 
   }});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
+    ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
+  const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
