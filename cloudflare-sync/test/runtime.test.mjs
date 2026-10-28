@@ -79,3 +79,15 @@ test('broker integration seeds existing Drive notices, acknowledges Cloudflare f
  await assert.rejects(f.call({...request,expectedRecordRevision:'stale'}),e=>e.status===409);
  await assert.rejects(f.call({...request,schoolId:other}),e=>e.status===403);
 });
+
+
+test('a rejected attendance receipt remains visible to school transfer status instead of reporting Drive complete',async()=>{
+ const id='d1'+'c'.repeat(62),lane='attendance-d1',tenant='vs-'+'9'.repeat(32);
+ await rpc('create',{id,row:{operationId:id,schoolId:tenant,createdAt:Date.now(),payload:{encrypted:'synthetic'}}},lane,tenant);
+ await rpc('claim',{id,claim:'review',expires:Date.now()+10000},lane,tenant);
+ await rpc('finish',{id,claim:'review',values:{state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,lastError:'School review required'}},lane,tenant);
+ let summary;
+ for(let n=0;n<30;n++){await new Promise(r=>setTimeout(r,100));summary=(await rpc('stats',{},'delivery',tenant)).value;if(summary.needsAttention===1)break;}
+ assert.equal(summary.needsAttention,1);assert.equal(summary.pendingPartitions,1);
+ assert.equal((await rpc('get',{id},lane,tenant)).value.state,'needsAttention');
+});

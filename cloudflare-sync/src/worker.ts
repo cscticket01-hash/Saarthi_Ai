@@ -9,7 +9,8 @@ export class SyncLane extends DurableObject<Env>{
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT \'\',claim_until INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,response TEXT,revision TEXT)');
   ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS due_jobs ON jobs(state,due,seq)');
   ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS revision_jobs ON jobs(revision)');
-  ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS lanes (name TEXT PRIMARY KEY,due INTEGER NOT NULL)');
+  ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS lanes (name TEXT PRIMARY KEY,due INTEGER NOT NULL,attention INTEGER NOT NULL DEFAULT 0)');
+  if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='attention'))ctx.storage.sql.exec('ALTER TABLE lanes ADD COLUMN attention INTEGER NOT NULL DEFAULT 0');
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY,body TEXT NOT NULL)');
  });}
  private meta(key:string):string|undefined{return this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM metadata WHERE key=?',key).toArray()[0]?.value;}
@@ -20,7 +21,7 @@ export class SyncLane extends DurableObject<Env>{
   const identity=school+'/'+lane;demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);
   const action=String(b.command||''),id=String(b.id||'');
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
-  if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number}>('SELECT count(*) AS pendingPartitions FROM lanes').toArray()[0];
+  if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
   if(action==='get'){demand(operationPattern.test(id));return this.job(id)||null;}
   if(action==='pending'){
@@ -85,17 +86,17 @@ export class SyncLane extends DurableObject<Env>{
  async alarm(){
   const identity=this.meta('identity');if(!identity)return;const [school,lane]=identity.split('/');
   if(lane!=='delivery'){await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;}
-  const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes ORDER BY due,name LIMIT 1').toArray()[0];
+  const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes WHERE due < 9007199254740991 ORDER BY due,name LIMIT 1').toArray()[0];
   const backoff=Number(this.meta('deliveryBackoff')||0);if(backoff>Date.now()){await this.ctx.storage.setAlarm(backoff);return;}
   if(!next)return;if(next.due>Date.now()){await this.ctx.storage.setAlarm(next.due);return;}
   const raw=JSON.stringify({action:'managed/cloudflare/drain',schoolId:school,lane:next.name}),time=String(Date.now());
   let delay=30_000;
   try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});if(response.ok)delay=250;await response.body?.cancel();}catch{ /* Durable rows remain; retry after broker outage. */ }
   if(delay>=30000)this.setMeta('deliveryBackoff',String(Date.now()+delay));else this.setMeta('deliveryBackoff','0');
-  const stats=await this.env.LANES.getByName(school+'/'+next.name).command(school,next.name,{command:'stats'}) as {pending:number;due:number};
-  if(stats.pending===0)this.ctx.storage.sql.exec('DELETE FROM lanes WHERE name=?',next.name);
-  else this.ctx.storage.sql.exec('UPDATE lanes SET due=? WHERE name=?',Math.max(Date.now()+delay,stats.due),next.name);
-  const due=this.ctx.storage.sql.exec<{due:number}>('SELECT min(due) AS due FROM lanes').toArray()[0]?.due;
+  const stats=await this.env.LANES.getByName(school+'/'+next.name).command(school,next.name,{command:'stats'}) as {pending:number;due:number;needsAttention:number};
+  if(stats.pending===0&&stats.needsAttention===0)this.ctx.storage.sql.exec('DELETE FROM lanes WHERE name=?',next.name);
+  else this.ctx.storage.sql.exec('UPDATE lanes SET due=?,attention=? WHERE name=?',stats.pending===0?Number.MAX_SAFE_INTEGER:Math.max(Date.now()+delay,stats.due),stats.needsAttention,next.name);
+  const due=this.ctx.storage.sql.exec<{due:number}>('SELECT min(due) AS due FROM lanes WHERE due < 9007199254740991').toArray()[0]?.due;
   if(due!==null&&due!==undefined)await this.ctx.storage.setAlarm(Math.max(Date.now()+100,due));
  }
 
