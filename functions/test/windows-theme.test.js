@@ -93,3 +93,37 @@ test('all six presets survive publication, school barrier and unlock; invalid pr
  const custom=await t.save({schemaVersion:1,red:1,green:2,blue:3,presetId:null,expectedRevision:revision},'dev');
  assert.equal(custom.presetId,undefined);
 });
+
+test('verified PC unlock adopts latest preset independently and preserves other PC/legacy state',async()=>{
+ const f=fixture(),t=createWindowsTheme({db:f.db}),ids=['a','b'];
+ for(const id of ids)await t.schoolState('school',id,false,ids);
+ const saved=await t.save({schemaVersion:1,red:255,green:112,blue:91,presetId:'sunset-ember',expectedRevision:'default'},'dev');
+ assert.equal((await t.unlock('school','a',ids)).revision,saved.revision);
+ assert.equal((await t.readSchool('school')).revision,'default');
+ const state=f.docs.get('school_theme_state/school');assert.equal(state.pcThemes.a.theme.presetId,'sunset-ember');assert.equal(state.pcThemes.b,undefined);
+ await t.schoolState('school','b',false,ids);
+ assert.equal(f.docs.get('school_theme_state/school').pcThemes.a.theme.revision,saved.revision);
+ const next=await t.save({...saved,red:0,expectedRevision:saved.revision},'dev');
+ assert.equal((await t.unlock('school','b',ids)).revision,next.revision);
+ assert.equal(f.docs.get('school_theme_state/school').pcThemes.a.theme.revision,saved.revision);
+ await assert.rejects(t.unlock('school','foreign',ids),e=>e.status===403);
+ f.docs.set('managed_pc_registries/school',{devices:{a:{deviceIdentity:'a',status:'revoked',os:'Windows'},b:{deviceIdentity:'b',status:'active',os:'Windows'}}});
+ await assert.rejects(t.unlock('school','a',ids),e=>e.status===403);
+});
+test('first PC unlock initializes legacy state without applying it to another school',async()=>{
+ const f=fixture(),t=createWindowsTheme({db:f.db});
+ await t.save({schemaVersion:1,red:1,green:2,blue:3,presetId:'mint-light',expectedRevision:'default'},'dev');
+ assert.equal((await t.unlock('school','a',['a'])).presetId,'mint-light');
+ assert.equal((await t.readSchool('school')).revision,'default');assert.equal((await t.readSchool('other')).revision,'default');
+});
+test('unlock API requires registered Windows PC proof and same-school identity',async()=>{
+ const rows=new Map();let tail=Promise.resolve();const deviceStore={transaction(school,work){const result=tail.then(async()=>{const change=await work(rows.has(school)?structuredClone(rows.get(school)):null);rows.set(school,structuredClone(change.state));return change.result;});tail=result.catch(()=>{});return result;}};
+ const f=fixture(undefined,{deviceManagementEnabled:true,deviceStore});
+ const headers={authorization:'Bearer A','x-vidya-device-id':'1'.repeat(32),'x-vidya-device-credential':require('node:crypto').randomBytes(32).toString('base64url')};
+ const call=body=>f.handle({method:'POST',headers,body});
+ await call({action:'managed/device/register',deviceName:'Test PC',deviceOs:'Windows'});
+ await assert.rejects(f.call({action:'managed/theme/unlock'}),e=>e.code==='DEVICE_PROOF_REQUIRED');
+ await assert.rejects(call({action:'managed/theme/unlock',schoolId:require('./helpers/managed-school-broker').B}),e=>e.status===403);
+ const saved=await f.call({action:'developer/managed/theme/save',theme:{schemaVersion:1,red:255,green:112,blue:91,presetId:'sunset-ember',expectedRevision:'default'}},'developer');
+ const result=await call({action:'managed/theme/unlock'});assert.equal(result.activation,'app-lock-unlock-v2');assert.equal(result.windowsTheme.revision,saved.theme.revision);assert.equal(result.windowsTheme.presetId,'sunset-ember');assert.equal(f.sent.length,0);
+});

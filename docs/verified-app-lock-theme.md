@@ -1,0 +1,7 @@
+# Apply saved themes at the verified App Lock boundary
+
+Windows v2.1.187+ calls the authenticated managed/theme/unlock action only after the actual App Lock password succeeds and before the dashboard opens. The server verifies school identity, entitlement and registered active Windows PC proof, then returns the latest published theme and records an acknowledgement for that PC. It does not wait for other PCs to be locked and does not change their applied theme. The legacy theme-state route retains its existing behavior for older clients.
+
+The native unlock fetch is independent of background lock-report queues and has a 15-second bounded wait. A queued/stalled heartbeat cannot discard the unlock fetch. Timeout or invalid responses preserve the previous appearance and produce a visible deferred message; a late response never changes an already-open dashboard. Relock epochs, concurrent-attempt IDs and account/school/endpoint checks reject stale replies. General account login, setup and heartbeats do not apply themes.
+
+The App Lock screen disables duplicate submissions and displays Checking saved theme while the request is in progress. Presentation failure does not deny a valid local unlock. Backend tests cover per-PC isolation, legacy compatibility, revoked/foreign PC rejection and first-state initialization. Native tests exercise the exact password screen, blocked heartbeat queues, timeout/late replies and switched schools.

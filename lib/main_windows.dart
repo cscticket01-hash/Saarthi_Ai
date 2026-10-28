@@ -403,7 +403,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
     if (_unlocking) return;
     final password = _password.text;
     if (WindowsLocalSecurity.verifyPassword(password)) {
-      _unlocking = true;
+      setState(()=>_unlocking = true);
       final origin = FirebaseFirestore.instance.activeProfileId;
       void own() {
         if (FirebaseFirestore.instance.activeProfileId != origin)
@@ -420,7 +420,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           await FirebaseAuth.instance.bootstrapLocalUser();
         }
         own();
-        await ManagedSchoolSession.refreshAppearanceAtUnlock();
+        final themeOutcome=await ManagedSchoolSession.refreshAppearanceAtUnlock();
         own();
         if (!mounted) return;
         setState(() {
@@ -436,6 +436,12 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
             _success = false;
             _unlocking = false;
           });
+        if(mounted&&(themeOutcome==ThemeUnlockOutcome.deferred||themeOutcome==ThemeUnlockOutcome.applied)){
+          WidgetsBinding.instance.addPostFrameCallback((_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            duration:const Duration(seconds:6),content:Text(themeOutcome==ThemeUnlockOutcome.applied
+              ?'Saved theme applied.'
+              :'App unlocked with the previous theme. Theme update could not be confirmed; it will retry at the next App Lock unlock.')));});
+        }
       } catch (e) {
         if (mounted)
           setState(() {
@@ -526,6 +532,7 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   const SizedBox(height: 20),
                   TextField(
                     controller: _password,
+                    enabled: !_unlocking,
                     autofocus: true,
                     obscureText: true,
                     onSubmitted: (_) => _unlock(),
@@ -548,9 +555,9 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
                   ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
-                    onPressed: _unlock,
-                    icon: const Icon(Icons.login_rounded),
-                    label: const Text('Unlock App'),
+                    onPressed: _unlocking?null:_unlock,
+                    icon: _unlocking?const SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2)):const Icon(Icons.login_rounded),
+                    label: Text(_unlocking?'Checking saved theme…':'Unlock App'),
                     style: FilledButton.styleFrom(
                       backgroundColor: WindowsAppearance.primary,
                       padding: const EdgeInsets.symmetric(vertical: 14),

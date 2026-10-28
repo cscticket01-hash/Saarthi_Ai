@@ -1,4 +1,5 @@
 import '../windows_appearance.dart';
+import '../windows_theme_presets.dart';
 import '../windows_local_session.dart';
 import 'dart:async';
 import '../windows_profile_image_policy.dart';
@@ -11,6 +12,7 @@ import '../platform/platform_config.dart';
 import 'central_school_cloud.dart';
 import 'managed_device_credentials.dart';
 export 'managed_device_credentials.dart';
+enum ThemeUnlockOutcome { applied, unchanged, deferred, interrupted, notManaged }
 class ManagedSchoolSession {
   static http.Client? _transport;
   static String? _transportScope;
@@ -50,7 +52,7 @@ class ManagedSchoolSession {
       final metadata = action=='managed/session' || action=='managed/device/list'
           ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
-      final visibleTransfer=action!='managed/events' && action!='managed/theme/state'; // A quiet event subscription is not data transfer.
+      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock'; // A quiet event subscription is not data transfer.
       if(visibleTransfer)activeTransfers.value++;
       late final Map<String,dynamic> result;
       try {
@@ -134,6 +136,9 @@ class ManagedSchoolSession {
   }
   @visibleForTesting
   static Future<Map<String,dynamic>> Function(String schoolId, bool locked)? appearanceRequestForTesting;
+  @visibleForTesting
+  static Future<Map<String,dynamic>> Function(String schoolId)? appearanceUnlockRequestForTesting;
+  static int _appearanceEpoch=0, _appearanceAttempt=0;
   static Timer? _appearanceTimer;
   static bool _appearanceLocked = true;
   static bool _appearanceNeedsReport = true;
@@ -146,30 +151,85 @@ class ManagedSchoolSession {
     });
     unawaited(reportAppearanceLock(WindowsLocalSession.loggedOut));
   }
-  static Future<void> reportAppearanceLock(bool locked, {bool applyAtUnlock=false}) {
+  static Future<void> reportAppearanceLock(bool locked) {
     if(kIsWeb || (!enabled && appearanceRequestForTesting==null))return Future<void>.value();
+    if(locked&&!_appearanceLocked)_appearanceEpoch++;
     if(_appearanceLocked!=locked)_appearanceNeedsReport=true;
     _appearanceLocked=locked;
-    final deadline=Stopwatch()..start();
     final next=_appearanceQueue.then((_) async {
       // Coalesce queued heartbeats; never replay a stale unlocked/locked state.
       if(locked!=_appearanceLocked)return;
       try {
         final before=await CentralSchoolCloud.saved();
         if(before['managed']!=true)return;
-        final result=await (appearanceRequestForTesting?.call(before['schoolId'].toString(),locked) ?? callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked}));
+        await (appearanceRequestForTesting?.call(before['schoolId'].toString(),locked) ?? callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked}));
         if(locked==_appearanceLocked)_appearanceNeedsReport=false;
-        final after=await CentralSchoolCloud.saved();
-        // New colour is visible only on a verified unlock, never mid-session.
-        if(applyAtUnlock && deadline.elapsed < const Duration(seconds:4) && !locked && !_appearanceLocked && before['uid']==after['uid'] && before['schoolId']==after['schoolId'] && result['schoolId']==before['schoolId']) {
-          WindowsAppearance.applyBrand(result['windowsTheme']);
-        }
       } catch (_) {/* Offline/unknown PCs never count as confirmed locked. */}
     });
     _appearanceQueue=next.catchError((Object _) {});
     return next.timeout(const Duration(seconds:4),onTimeout:(){});
   }
-  static Future<void> refreshAppearanceAtUnlock() => reportAppearanceLock(false, applyAtUnlock:true);
+  /// Invoked after a verified App Lock password, before the dashboard opens.
+  /// Independent of heartbeat queues: an old/stalled report cannot discard it.
+  static Future<ThemeUnlockOutcome> refreshAppearanceAtUnlock({
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    if (kIsWeb ||
+        (!enabled &&
+            appearanceRequestForTesting == null &&
+            appearanceUnlockRequestForTesting == null))
+      return ThemeUnlockOutcome.notManaged;
+    final attempt = ++_appearanceAttempt, epoch = _appearanceEpoch;
+    _appearanceLocked = false;
+    try {
+      final before = await CentralSchoolCloud.saved();
+      if (before['managed'] != true) return ThemeUnlockOutcome.notManaged;
+      final request =
+          appearanceUnlockRequestForTesting?.call(
+            before['schoolId'].toString(),
+          ) ??
+          appearanceRequestForTesting?.call(
+            before['schoolId'].toString(),
+            false,
+          ) ??
+          callForSchool(before['schoolId'], 'managed/theme/unlock', {});
+      final result = await request.timeout(timeout);
+      final after = await CentralSchoolCloud.saved();
+      if (attempt != _appearanceAttempt ||
+          epoch != _appearanceEpoch ||
+          _appearanceLocked ||
+          before['uid'] != after['uid'] ||
+          before['schoolId'] != after['schoolId'] ||
+          before['endpoint'] != after['endpoint'])
+        return ThemeUnlockOutcome.interrupted;
+      final theme = result['windowsTheme'];
+      if (result['schoolId'] != before['schoolId'] ||
+          result['activation'] != 'app-lock-unlock-v2' ||
+          theme is! Map ||
+          theme['schemaVersion'] != 1 ||
+          theme['revision'] is! String ||
+          ![
+            'red',
+            'green',
+            'blue',
+          ].every((k) => theme[k] is int && theme[k] >= 0 && theme[k] <= 255) ||
+          (theme['presetId'] != null &&
+              (theme['presetId'] is! String ||
+                  windowsThemePreset(theme['presetId']) == null)))
+        return ThemeUnlockOutcome.deferred;
+      final previous = WindowsAppearance.brandData;
+      WindowsAppearance.applyBrand(theme);
+      return previous['revision'] == theme['revision'] &&
+              previous['presetId'] == theme['presetId'] &&
+              ['red', 'green', 'blue'].every((k) => previous[k] == theme[k])
+          ? ThemeUnlockOutcome.unchanged
+          : ThemeUnlockOutcome.applied;
+    } catch (_) {
+      // A missing network/theme must not block access or change an open session.
+      return ThemeUnlockOutcome.deferred;
+    }
+  }
+
   static void verifyDeviceRegistration(Map<String,dynamic> result, String deviceIdentity) {
     final device=result['device'];
     if(result['success']!=true || (result['deviceEnforced']!=true && !(result['deviceManaged']==true && result['deviceEnforced']==false)) || !validSchoolId(result['schoolId']?.toString()??'') ||

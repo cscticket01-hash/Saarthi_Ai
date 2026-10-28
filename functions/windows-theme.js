@@ -34,8 +34,29 @@ function createWindowsTheme({db,now=Date.now}){
     if(devices.every(id=>locks[id].locked===true && now()-locks[id].at<=65000 && now()>=locks[id].at))active=latest;
     locks[deviceId]={locked,at:now()};
     if(devices.every(id=>locks[id].locked===true && now()-locks[id].at<=65000 && now()>=locks[id].at))active=latest;
-    tx.set(stateRef,{active,locks,updatedAt:now()});
+    tx.set(stateRef,{...old,active,locks,updatedAt:now()});
     return active;
+   });
+  },
+  // Called only by the native client after its local App Lock password succeeds.
+  // Device authentication and school access are still verified by the API. This
+  // acknowledges presentation for this PC; it grants no school/data access.
+  async unlock(schoolId,deviceId,devices){
+   if(!devices.includes(deviceId)||devices.length>5)throw Object.assign(Error('Verified Windows PC required'),{status:403});
+   const stateRef=db.doc('school_theme_state/'+schoolId);
+   return db.runTransaction(async tx=>{
+    const [published,stored,registry]=await Promise.all([tx.get(ref()),tx.get(stateRef),tx.get(db.doc('managed_pc_registries/'+schoolId))]);
+    if(registry.exists){
+     devices=Object.values(registry.data().devices||{}).filter(d=>d.status==='active'&&d.os==='Windows').map(d=>d.deviceIdentity);
+     if(!devices.includes(deviceId))throw Object.assign(Error('Active Windows PC required'),{status:403});
+    }
+    const latest=published.exists?theme(published.data()):{...DEFAULT_THEME};
+    const old=stored.exists?stored.data():{};
+    const pcThemes=Object.fromEntries(devices.filter(id=>old.pcThemes?.[id]).map(id=>[id,old.pcThemes[id]]));
+    pcThemes[deviceId]={theme:latest,appliedAt:now()};
+    const active=old.active?theme(old.active):published.exists?theme(published.data().activationBase||published.data()):{...DEFAULT_THEME};
+    tx.set(stateRef,{...old,active,locks:old.locks||{},pcThemes,updatedAt:now()});
+    return latest;
    });
   },
   async save(input,uid){const next=theme(input);if(typeof input.expectedRevision!=='string')throw Object.assign(Error('Reload theme before saving'),{status:400,publicMessage:true});

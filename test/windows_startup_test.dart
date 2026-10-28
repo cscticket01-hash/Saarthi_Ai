@@ -396,7 +396,7 @@ void main() {
     FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
     final original=WindowsAppearance.brandData;
     var revision='first';
-    Map<String,dynamic> response() => {'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    Map<String,dynamic> response() => {'activation':'app-lock-unlock-v2','schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       'windowsTheme':{'schemaVersion':1,'red':20,'green':100,'blue':180,'revision':revision}};
     ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async => response();
     try {
@@ -426,4 +426,172 @@ void main() {
     }
   });
 
+  Map<String, dynamic> unlockTheme(String revision) => {
+    'activation': 'app-lock-unlock-v2',
+    'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'windowsTheme': {
+      'schemaVersion': 1,
+      'red': 255,
+      'green': 112,
+      'blue': 91,
+      'presetId': 'sunset-ember',
+      'revision': revision,
+    },
+  };
+  test('verified unlock bypasses a stalled heartbeat queue', () async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    final original = WindowsAppearance.brandData,
+        entered = Completer<void>(),
+        pending = Completer<Map<String, dynamic>>();
+    ManagedSchoolSession.appearanceRequestForTesting = (_, locked) async {
+      if (locked) {
+        entered.complete();
+        return pending.future;
+      }
+      return unlockTheme('heartbeat');
+    };
+    ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) async =>
+        unlockTheme('independent');
+    try {
+      final heartbeat = ManagedSchoolSession.reportAppearanceLock(true);
+      await entered.future;
+      expect(
+        await ManagedSchoolSession.refreshAppearanceAtUnlock(),
+        ThemeUnlockOutcome.applied,
+      );
+      expect(WindowsAppearance.brandRevision, 'independent');
+      pending.complete(unlockTheme('late-heartbeat'));
+      await heartbeat;
+      expect(WindowsAppearance.brandRevision, 'independent');
+    } finally {
+      ManagedSchoolSession.appearanceRequestForTesting = null;
+      ManagedSchoolSession.appearanceUnlockRequestForTesting = null;
+      WindowsAppearance.applyBrand(original, persist: false);
+    }
+  });
+  test(
+    'timeout is reported and a late theme cannot recolour the open dashboard',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+      final original = WindowsAppearance.brandData;
+      final reply = Completer<Map<String, dynamic>>();
+      ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) =>
+          reply.future;
+      try {
+        expect(
+          await ManagedSchoolSession.refreshAppearanceAtUnlock(
+            timeout: const Duration(milliseconds: 10),
+          ),
+          ThemeUnlockOutcome.deferred,
+        );
+        reply.complete(unlockTheme('too-late'));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(WindowsAppearance.brandRevision, original['revision']);
+        ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) async =>
+            unlockTheme('retry');
+        expect(
+          await ManagedSchoolSession.refreshAppearanceAtUnlock(),
+          ThemeUnlockOutcome.applied,
+        );
+        expect(WindowsAppearance.brandRevision, 'retry');
+      } finally {
+        ManagedSchoolSession.appearanceUnlockRequestForTesting = null;
+        WindowsAppearance.applyBrand(original, persist: false);
+      }
+    },
+  );
+  test(
+    'invalid response or changed school preserves the current theme',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+      final original = WindowsAppearance.brandData;
+      ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) async => {
+        'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'windowsTheme': {'schemaVersion': 1},
+      };
+      try {
+        expect(
+          await ManagedSchoolSession.refreshAppearanceAtUnlock(),
+          ThemeUnlockOutcome.deferred,
+        );
+        final entered = Completer<void>(),
+            reply = Completer<Map<String, dynamic>>();
+        ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) {
+          entered.complete();
+          return reply.future;
+        };
+        final operation = ManagedSchoolSession.refreshAppearanceAtUnlock();
+        await entered.future;
+        FlutterSecureStorage.setMockInitialValues({
+          CentralSchoolCloud.key: jsonEncode({
+            'managed': true,
+            'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            'uid': 'other',
+            'endpoint': 'https://school.example/school-cloud',
+          }),
+        });
+        reply.complete(unlockTheme('foreign'));
+        expect(await operation, ThemeUnlockOutcome.interrupted);
+        expect(WindowsAppearance.brandRevision, original['revision']);
+      } finally {
+        ManagedSchoolSession.appearanceUnlockRequestForTesting = null;
+        WindowsAppearance.applyBrand(original, persist: false);
+      }
+    },
+  );
+  testWidgets(
+    'exact App Lock screen checks theme only after correct password and waits before dashboard',
+    (tester) async {
+      FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+      final original = WindowsAppearance.brandData;
+      await WindowsLocalSecurity.initialize();
+      await WindowsLocalSecurity.clearAppLock();
+      await WindowsLocalSecurity.create(
+        adminId: 'School app',
+        password: 'local-password',
+      );
+      var requests = 0;
+      final reply = Completer<Map<String, dynamic>>();
+      ManagedSchoolSession.appearanceUnlockRequestForTesting = (_) {
+        requests++;
+        return reply.future;
+      };
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: WindowsStartupGate(
+              prepareLock: () async => true,
+              completeUnlock: () async {},
+              child: const Scaffold(body: Text('Unlocked test dashboard')),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'wrong');
+        await tester.tap(find.text('Unlock App'));
+        await tester.pumpAndSettle();
+        expect(requests, 0);
+        await tester.enterText(find.byType(TextField), 'local-password');
+        await tester.tap(find.text('Unlock App'));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Checking saved theme…'), findsOneWidget);
+        expect(find.text('Unlocked test dashboard'), findsNothing);
+        reply.complete(unlockTheme('password-verified'));
+        await tester.pump();
+        for(var i=0;i<12 && find.text('Unlocked test dashboard').evaluate().isEmpty;i++) {
+          await tester.pump(const Duration(milliseconds:300));
+        }
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(WindowsAppearance.brandRevision, 'password-verified');
+        expect(find.text('Unlocked test dashboard'), findsOneWidget);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        ManagedSchoolSession.appearanceUnlockRequestForTesting = null;
+        await WindowsLocalSecurity.clearAppLock();
+        WindowsAppearance.applyBrand(original, persist: false);
+      }
+    },
+  );
 }
