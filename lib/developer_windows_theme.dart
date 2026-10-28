@@ -396,10 +396,13 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
             SizedBox(
               width: 86,
               child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
                 onPressed: busy || !loaded
                     ? null
                     : () => change(saved, presetId: savedPreset),
-                child: const Text('Reset'),
+                child: const Text('Reset', maxLines: 1),
               ),
             ),
             const SizedBox(width: 8),

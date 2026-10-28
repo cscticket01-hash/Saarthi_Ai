@@ -192,6 +192,8 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('theme-preset-mint-light')));
         await tester.pumpAndSettle();
         expect(find.byType(ListView), findsNothing);
+        expect(tester.getSize(find.text('Reset')).height, lessThan(24));
+        expect(tester.getSize(find.text('Save Theme')).height, lessThan(24));
         for (final name in [
           'theme-save',
           'theme-next',
