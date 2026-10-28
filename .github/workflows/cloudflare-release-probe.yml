@@ -1,0 +1,26 @@
+name: Verify released school sync downloads and live services
+on:
+  push:
+    branches: [verify/cloudflare-release-probe]
+permissions:
+  contents: read
+jobs:
+  public-release-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify exact releases, ranged download and live health
+        run: node .github/scripts/cloudflare_release_probe.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloudflare-release-public-proof
+          path: build/cloud-prerequisites/release-public-proof.json
+          if-no-files-found: warn
+          retention-days: 7

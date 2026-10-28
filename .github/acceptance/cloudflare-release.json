@@ -1,0 +1,12 @@
+{
+  "windows": {
+    "tag": "windows-v2.1.195",
+    "size": 19432675,
+    "digest": "sha256:ed7b1c4f8783eacb21c0f18d47a67495d373aa97fa779bdd80f33bbf05f07cd4"
+  },
+  "android": {
+    "tag": "android-v1.0.631",
+    "size": 70962001,
+    "digest": "sha256:d6b91be7ab28b308a82f02001b12819ba7b8ff681fafc7d87ad1c5e53e6ca33e"
+  }
+}
