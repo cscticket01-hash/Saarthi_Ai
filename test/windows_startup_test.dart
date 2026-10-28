@@ -524,6 +524,7 @@ void main() {
         await entered.future;
         FlutterSecureStorage.setMockInitialValues({
           CentralSchoolCloud.key: jsonEncode({
+            ...jsonDecode(trialSchoolIdentity()[CentralSchoolCloud.key]!) as Map,
             'managed': true,
             'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             'uid': 'other',
