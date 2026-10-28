@@ -107,6 +107,9 @@ jobs:
       # =========================================================
       # BLOCK COMMON INSPECT / VIEW SOURCE SHORTCUTS
       # =========================================================
+      - name: Build isolated full Windows theme preview
+        run: python3 .github/scripts/build_windows_theme_preview.py
+
       - name: Add Browser Inspect Protection
         run: |
           python3 <<'PY'

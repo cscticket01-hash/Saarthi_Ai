@@ -24,6 +24,21 @@
         "destination": "https://saarthi-oauth-staging.onrender.com/downloads/android.apk",
         "type": 302
       }
+    ],
+    "headers": [
+      {
+        "source": "/windows-preview/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; frame-ancestors 'self'; form-action 'none'; object-src 'none'; base-uri 'self'"
+          }
+        ]
+      }
     ]
   },
   "firestore": {
