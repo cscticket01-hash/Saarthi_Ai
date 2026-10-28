@@ -1,18 +1,22 @@
 'use strict';
 const {createHmac,timingSafeEqual,createHash,createDecipheriv}=require('node:crypto');
+const {createProviderPressure,retryAfterMillis,quotaError}=require('./provider-pressure');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
-function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now}) {
+function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,providerPressureJournal=null}) {
  if(!url&&!key)return null;
  const endpoint=new URL(url);if(endpoint.protocol!=='https:'||endpoint.username||endpoint.password||endpoint.pathname!=='/'||endpoint.search||endpoint.hash||!key||key.length<32)throw Error('Invalid Cloudflare sync configuration');
  const scope=new Set(schools);if([...scope].some(s=>s!=='*'&&!SCHOOL.test(s)))throw Error('Invalid Cloudflare rollout school');
  const enabled=school=>SCHOOL.test(school)&&(scope.has(school)||scope.has('*'));
  const sign=raw=>{const timestamp=String(now());return {'X-Vidya-Time':timestamp,'X-Vidya-Signature':createHmac('sha256',key).update(timestamp+'\n'+raw).digest('hex')};};
  const verify=(body,headers)=>{const raw=JSON.stringify(body),timestamp=String(headers['x-vidya-time']||''),sig=String(headers['x-vidya-signature']||'');return /^\d{13}$/.test(timestamp)&&Math.abs(now()-Number(timestamp))<=60000&&/^[a-f0-9]{64}$/.test(sig)&&timingSafeEqual(createHmac('sha256',key).update(timestamp+'\n'+raw).digest(),Buffer.from(sig,'hex'));};
- async function rpc(school,lane,body){
+ const pressure=createProviderPressure({now,journal:providerPressureJournal});
+ async function rpc(school,lane,body){if(!enabled(school))throw Error('Cloudflare school not enabled');return pressure.run(endpoint.origin,'CLOUDFLARE_QUOTA_EXCEEDED',()=>rpcRaw(school,lane,body));}
+ async function rpcRaw(school,lane,body){
   if(!enabled(school))throw Error('Cloudflare school not enabled');
   const raw=JSON.stringify({...body,schoolId:school,lane});
   if(Buffer.byteLength(raw)>400000)throw Object.assign(Error('Sync request too large'),{status:413});
   const r=await fetchImpl(new URL('/internal',endpoint),{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'Vidya-Saarthi-Sync/1',...sign(raw)},body:raw,signal:AbortSignal.timeout(15000)});
+  if(r.status===429){await r.body?.cancel();throw quotaError('CLOUDFLARE_QUOTA_EXCEEDED',retryAfterMillis(r.headers?.get('retry-after'),now())||60000);}
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
@@ -41,7 +45,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now})
    const ack=await deliver({...request,action:'managed_records',collection:'school_notices'});
    if(ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Verified Drive receipt required');
    await rpc(school,'notices',{command:'finish',id:job.id,claim,values:{state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,completedAt:now(),driveRevision:ack.recordRevision}});return {processed:1};
-  }catch(e){const attention=e.code==='RECORD_REVISION_CONFLICT';await rpc(school,'notices',{command:'finish',id:job.id,claim,values:{state:attention?'needsAttention':'retry',nextAttemptAt:attention?Number.MAX_SAFE_INTEGER:now()+30000,lastError:attention?'Drive notice changed; school review required':'Drive delivery pending'}});return {processed:0};}
+  }catch(e){const attention=e.code==='RECORD_REVISION_CONFLICT';await rpc(school,'notices',{command:'finish',id:job.id,claim,values:{state:attention?'needsAttention':'retry',nextAttemptAt:attention?Number.MAX_SAFE_INTEGER:now()+Math.max(30000,Math.min(86400000,Number(e.retryAfterMs)||0)),lastError:attention?'Drive notice changed; school review required':'Drive delivery pending'}});return {processed:0};}
  }
  function grant(policy){if(!enabled(policy.schoolId)||!Number.isSafeInteger(policy.expiresAt)||policy.expiresAt<=now())return undefined;const expiresAt=Math.min(policy.expiresAt,now()+900000);const value=Buffer.from(JSON.stringify({...policy,expiresAt})).toString('base64url');return {endpoint:new URL('/mobile',endpoint).href,schoolId:policy.schoolId,expiresAt,grant:value+'.'+createHmac('sha256',key).update(value).digest('hex')};}
  function decryptAttendance(payload){const cipher=Buffer.from(payload.body,'base64'),iv=Buffer.from(payload.iv,'base64');if(iv.length!==12||cipher.length<17||cipher.length>20000)throw Error('Invalid edge attendance envelope');const decoder=createDecipheriv('aes-256-gcm',createHash('sha256').update(key).digest(),iv);decoder.setAuthTag(cipher.subarray(-16));return JSON.parse(Buffer.concat([decoder.update(cipher.subarray(0,-16)),decoder.final()]).toString('utf8'));}

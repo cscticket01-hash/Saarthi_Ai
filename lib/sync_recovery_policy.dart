@@ -31,10 +31,27 @@ int managedBatchWindow({
   if (!complete || requestMicros >= 8000000) {
     return (bounded ~/ 2).clamp(2, 10).toInt();
   }
+  if (requestMicros >= 5000000) return (bounded - 1).clamp(2, 10).toInt();
   if (requestMicros > 0 && requestMicros <= 2000000) {
     return (bounded + 1).clamp(2, 10).toInt();
   }
   return bounded;
+}
+
+/// A newer provider minimum must never be shortened by an older retry timer.
+DateTime syncRetryDeadline({required DateTime now, required Duration delay, DateTime? previous}) {
+  final requiredAt = now.add(delay);
+  return previous != null && previous.isAfter(requiredAt) ? previous : requiredAt;
+}
+
+/// Only same-school, bounded local quota evidence can close admission.
+DateTime? restoredProviderDeadline(Map<String, dynamic>? row, String school, DateTime now) {
+  final start = row?['observedAtMillis'], end = row?['retryAtMillis'];
+  if (row?['schoolId'] != school || row?['version'] != 1 ||
+      start is! int || end is! int || start > now.millisecondsSinceEpoch ||
+      end <= start || end - start > const Duration(days: 1).inMilliseconds ||
+      end <= now.millisecondsSinceEpoch) return null;
+  return DateTime.fromMillisecondsSinceEpoch(end);
 }
 
 /// Deterministic recovery decisions. A decision never deletes or acknowledges data.
@@ -42,11 +59,13 @@ class SyncRecoveryDecision {
   const SyncRecoveryDecision(
     this.kind, {
     this.retry = false,
+    this.retryAfterMs = 0,
     this.review = false,
     this.independentRecords = false,
     this.timeoutStage = SyncTimeoutStage.unknown,
   });
   final SyncFailureKind kind;
+  final int retryAfterMs;
   final bool retry, review, independentRecords;
   // Fixed local diagnostic metadata; never changes retry/ACK authority.
   final SyncTimeoutStage timeoutStage;
@@ -68,15 +87,20 @@ class SyncRecoveryDecision {
     SyncFailureKind.unknown =>
       'Sync needs diagnosis. Pending data is retained.',
   };
-  Duration delay(int attempts, {double? jitter}) => schoolRetryDelay(
-    attempts,
-    jitter: jitter,
-    quota: kind == SyncFailureKind.quota,
-  );
+  Duration delay(int attempts, {double? jitter}) {
+    final local = schoolRetryDelay(
+      attempts,
+      jitter: jitter,
+      quota: kind == SyncFailureKind.quota,
+    );
+    final minimum = Duration(milliseconds: retryAfterMs.clamp(0, 86400000).toInt());
+    return local < minimum ? minimum : local;
+  }
 
   static SyncRecoveryDecision classify({
     int? status,
     String code = '',
+    int retryAfterMs = 0,
     bool timedOut = false,
     bool networkPathFailed = false,
     bool recordConflict = false,
@@ -98,6 +122,11 @@ class SyncRecoveryDecision {
         SyncFailureKind.authorization,
         review: true,
       );
+    }
+    if (status == 429 || {'SCRIPT_QUOTA_EXCEEDED', 'CLOUDFLARE_QUOTA_EXCEEDED',
+      'FIREBASE_QUOTA_EXCEEDED', 'RESOURCE_EXHAUSTED', 'resource-exhausted',
+      'firestore/resource-exhausted'}.contains(code)) {
+      return SyncRecoveryDecision(SyncFailureKind.quota, retry: true, retryAfterMs: retryAfterMs);
     }
     if ({
       'SCRIPT_SYNC_STATE_IDENTITY',

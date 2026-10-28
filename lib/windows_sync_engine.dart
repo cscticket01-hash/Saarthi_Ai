@@ -52,6 +52,43 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
   static final WindowsSyncEngine instance = WindowsSyncEngine._();
 
+  // Read-only transfer diagnostics share the owner's school and quota admission.
+  // These responses never acknowledge queued records or Drive delivery.
+  String? _transferProfile;
+  Map<String, dynamic>? _transferStatus;
+  DateTime? _transferReadAfter;
+  bool _transferReadBusy = false;
+  Future<Map<String, dynamic>?> refreshTransferStatus() async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    if (_transferProfile != origin) {
+      _transferProfile = origin;
+      _transferStatus = null;
+      _transferReadAfter = null;
+    }
+    if (!ManagedSchoolSession.enabled) return null;
+    if (_transferReadBusy || (_transferReadAfter?.isAfter(DateTime.now()) ?? false)) {
+      return _transferStatus;
+    }
+    _transferReadBusy = true;
+    _transferReadAfter = DateTime.now().add(const Duration(seconds: 30));
+    try {
+      final value = await ManagedSchoolSession.call('managed/cloudflare/status', {});
+      if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
+      _transferStatus = value;
+    } catch (error) {
+      if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
+      final recovery = windowsSyncRecovery(error);
+      if (recovery.kind == SyncFailureKind.quota) {
+        _transferReadAfter = DateTime.now().add(recovery.delay(1));
+      }
+      _transferStatus = {...?_transferStatus, 'unavailable': true};
+    } finally {
+      _transferReadBusy = false;
+    }
+    return _transferStatus;
+  }
+
+
   static const List<String> _firebaseCollections = <String>[
     'students_directory',
     'school_notices',
@@ -202,6 +239,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool automaticSyncEnabled = true;
   final recoveryHistory = <Map<String, dynamic>>[];
   DateTime? get nextRetryAt => _nextRetry;
+  DateTime? get providerQuotaRetryAt => _quotaRetryAt;
   bool get isSyncing => _syncing;
   String? _protocolIdentity;
   DateTime? _protocolVerifiedAt;
@@ -560,6 +598,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         .doc('backup')
         .get();
     final downloads = await db.collection('_windows_sync_downloads').get();
+    final providerPressure = (await db.collection('_windows_sync_status').doc('provider-pressure').get()).data();
     final downloadCheckpoint =
         (await db
                 .collection('_windows_sync_status')
@@ -613,9 +652,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             .map((row) => row['retryAtMillis'] as int)
             .toList()
           ..sort();
-    _quotaRetryAt = quotaDeadlines.isEmpty
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(quotaDeadlines.last);
+    if (_quotaRetryAt != null && _quotaRetryAt!.millisecondsSinceEpoch <= nowMillis) _quotaRetryAt = null;
+    final savedQuota = restoredProviderDeadline(providerPressure, db.activeProfileIdentity['schoolSyncId']?.toString() ?? '', DateTime.now());
+    if (savedQuota != null && (_quotaRetryAt == null || savedQuota.isAfter(_quotaRetryAt!))) _quotaRetryAt = savedQuota;
+    if (quotaDeadlines.isNotEmpty) {
+      final rowDeadline = DateTime.fromMillisecondsSinceEpoch(quotaDeadlines.last);
+      if (_quotaRetryAt == null || rowDeadline.isAfter(_quotaRetryAt!)) _quotaRetryAt = rowDeadline;
+    }
     if (outbound.isNotEmpty &&
         outbound.every(
           (row) => !pendingRecordBackoffDue(row, DateTime.now()),
@@ -624,6 +667,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           outbound.map((row) => row['retryAtMillis'] as int).toList()..sort();
       _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadlines.first);
     }
+    if (_quotaRetryAt != null && (_nextRetry == null || _quotaRetryAt!.isAfter(_nextRetry!))) _nextRetry = _quotaRetryAt;
     final liveQueue = <Map<String, dynamic>>[
       for (final d in general.docs)
         {
@@ -1801,6 +1845,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
       return;
 
+    if (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) {
+      _nextRetry = _quotaRetryAt;
+      state.value = SchoolCloudState.syncPending;
+      return;
+    }
     _syncing = true;
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
@@ -2333,10 +2382,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       recoveryDecision = windowsSyncRecovery(e);
       _failures++;
       _nextRetry = recoveryDecision!.retry
-          ? (_nextRetry != null && _nextRetry!.isAfter(DateTime.now())
-                ? _nextRetry
-                : DateTime.now().add(recoveryDecision!.delay(_failures)))
+          ? syncRetryDeadline(now: DateTime.now(), previous: _nextRetry,
+              delay: recoveryDecision!.delay(_failures))
           : null;
+      if (recoveryDecision!.kind == SyncFailureKind.quota) {
+        _quotaRetryAt = _nextRetry;
+        try {
+          await FirebaseFirestore.instance.collection('_windows_sync_status').doc('provider-pressure').set({
+            'version': 1, 'schoolId': _activeSchoolSyncId,
+            'observedAtMillis': DateTime.now().millisecondsSinceEpoch,
+            'retryAtMillis': _nextRetry!.millisecondsSinceEpoch,
+          });
+        } catch (_) { /* In-memory admission stays closed if diagnostic persistence fails. */ }
+      }
+      if (_activeProfileId != syncOrigin) return;
       if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
       recoveryHistory.add({
         'atUtc': DateTime.now().toUtc().toIso8601String(),

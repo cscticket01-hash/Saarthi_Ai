@@ -727,10 +727,12 @@ class SchoolSession {
             error is SchoolAccessDenied ||
             (error is SchoolApiFailure && !error.retryable) ||
             error is StateError && error.message.contains('school review');
-        final delay = min(3600000, 5000 * pow(2, min(attempts, 9)).toInt());
+        final quota = error is SchoolApiFailure && error.status == 429;
+        final delay = min(3600000, (quota ? 60000 : 5000) * pow(2, min(attempts, 9)).toInt());
         await _attendanceStore.finish(owner, id, lease, {
           'attempts': attempts,
-          'nextAt': at + delay + Random.secure().nextInt(max(1, delay ~/ 2)),
+          'nextAt': DateTime.now().millisecondsSinceEpoch + max(delay + Random.secure().nextInt(max(1, delay ~/ 2)),
+              error is SchoolApiFailure ? error.retryAfterMs.clamp(0, 86400000).toInt() : 0),
           if (review) 'state': 'needsAttention',
           'error': error is AttendanceRejected
               ? error.retainedMessage
@@ -941,6 +943,7 @@ class SchoolSession {
         throw SchoolApiFailure(
           r.statusCode,
           code: safe['code']?.toString() ?? '',
+          retryAfterMs: safe['retryAfterMs'] is num ? (safe['retryAfterMs'] as num).toInt().clamp(0, 86400000).toInt() : 0,
           requestId: safe['requestId']?.toString() ?? '',
         );
       }

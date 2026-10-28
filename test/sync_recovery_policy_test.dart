@@ -7,6 +7,19 @@ import 'package:fake_async/fake_async.dart';
 import '../lib/windows_sync_schedule.dart';
 
 void main() {
+  test('provider quota codes retain provider minimum wait and remain distinct from access denial', () {
+    for (final code in ['SCRIPT_QUOTA_EXCEEDED', 'CLOUDFLARE_QUOTA_EXCEEDED', 'FIREBASE_QUOTA_EXCEEDED', 'RESOURCE_EXHAUSTED']) {
+      final decision = SyncRecoveryDecision.classify(status: 503, code: code, retryAfterMs: 120000);
+      expect(decision.kind, SyncFailureKind.quota);
+      expect(decision.delay(1, jitter: 0), const Duration(minutes: 2));
+      expect(decision.review, false);
+    }
+    expect(SyncRecoveryDecision.classify(status: 403).kind, SyncFailureKind.authorization);
+    final decision = windowsSyncRecovery(CentralCloudException(429, 'school_cloud', 'quota',
+        diagnosticCode: 'FIREBASE_QUOTA_EXCEEDED', retryAfterMs: 900000));
+    expect(decision.delay(1, jitter: 0), const Duration(minutes: 15));
+  });
+
   test('notice delete after wrapped card conflict dispatches automatically; idle and shared failures do not', () {
     fakeAsync((clock) {
       var runs = 0;
@@ -128,6 +141,7 @@ void main() {
     expect(managedBatchWindow(current: 10, requestMicros: 500000, complete: false), 5);
     expect(managedBatchWindow(current: 4, requestMicros: 0, complete: true), 4);
     expect(managedBatchWindow(current: 4, requestMicros: 4000000, complete: true), 4);
+    expect(managedBatchWindow(current: 10, requestMicros: 6000000, complete: true), 9);
     for (var i = 0; i < 20; i++) {
       limit = managedBatchWindow(current: limit, requestMicros: 500000, complete: true);
     }
