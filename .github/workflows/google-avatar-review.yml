@@ -1,0 +1,23 @@
+name: Original Google avatar review
+on:
+  pull_request:
+    paths:
+      - lib/windows_admin_avatar.dart
+      - lib/windows_profile_image_policy.dart
+      - test/windows_google_avatar_test.dart
+      - .github/workflows/google-avatar-review.yml
+permissions:
+  contents: read
+jobs:
+  avatar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_admin_avatar.dart lib/windows_profile_image_policy.dart
+      - run: flutter test test/windows_google_avatar_test.dart test/central_school_cloud_test.dart
