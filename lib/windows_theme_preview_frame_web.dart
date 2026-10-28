@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:js_util' as js;
 import 'dart:ui_web' as ui;
 import 'package:flutter/material.dart';
 class WindowsThemePreviewFrame extends StatefulWidget {
@@ -21,7 +22,7 @@ class _PreviewFrameState extends State<WindowsThemePreviewFrame>{
   frame.setAttribute('referrerpolicy','no-referrer');
   ui.platformViewRegistry.registerViewFactory(view,(_)=>frame);
   events=html.window.onMessage.listen((event){
-   if(event.origin!=Uri.base.origin||event.source!=frame.contentWindow||event.data is! String)return;
+   if(event.origin!=Uri.base.origin||!identical(js.getProperty(event,'source'),js.getProperty(frame,'contentWindow'))||event.data is! String)return;
    try{final data=jsonDecode(event.data as String);if(data is Map&&data['type']=='vidya-preview-ready'){
     timeout?.cancel();if(mounted)setState((){ready=true;failed=false;});send();
    }}catch(_){}

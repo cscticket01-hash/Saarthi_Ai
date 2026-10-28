@@ -1,6 +1,7 @@
 // Built ONLY as a separate, network-isolated browser preview, never as the portal.
 import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:js_util' as js;
 import 'package:flutter/material.dart';
 import 'main_dashboard_screen_windows.dart' as screens;
 import 'windows_appearance.dart';
@@ -18,8 +19,10 @@ import 'windows_device_management.dart';
 import 'windows_recycle_bin.dart';
 import 'windows_sync_control_center.dart';
 
+final previewSemanticsHandles=<Object>[];
 Future<void> main() async {
  WidgetsFlutterBinding.ensureInitialized();
+ previewSemanticsHandles.add(WidgetsBinding.instance.ensureSemantics());
  const preview=bool.fromEnvironment('SAARTHI_THEME_PREVIEW');
  if(!preview)throw StateError('This entry point requires the isolated preview build');
  final db=FirebaseFirestore.instance;
@@ -53,12 +56,15 @@ class _PreviewState extends State<WindowsPreviewApp>{
   'salary-history':(_)=>StaffSalaryHistoryScreen(profile:FirebaseFirestore.instance.activeProfileId),
  };
  @override void initState(){super.initState();html.window.onMessage.listen((event){
-  if(event.source!=html.window.parent||event.origin!=html.window.location.origin||event.data is! String)return;
+  if(!identical(js.getProperty(event,'source'),js.getProperty(html.window,'parent'))||event.origin!=html.window.location.origin||event.data is! String)return;
   try{final data=jsonDecode(event.data as String);if(data is! Map||data['type']!='vidya-preview-theme')return;
+   if(data['mode']!='dark'&&data['mode']!='light')return;
+   if(data['page'] is! String||!windowsThemePreviewPages.containsKey(data['page'])||data['navigation'] is! int)return;
    if(!['red','green','blue'].every((k)=>data[k] is int&&data[k]>=0&&data[k]<=255))return;
    WindowsAppearance.applyBrand({'schemaVersion':1,'red':data['red'],'green':data['green'],'blue':data['blue'],'revision':'preview'},persist:false);
    WindowsAppearance.mode.value=data['mode']=='light'?ThemeMode.light:ThemeMode.dark;
    final page=data['page'];if(page is String&&windowsThemePreviewPages.containsKey(page)&&data['navigation']!=lastNavigation){lastNavigation=data['navigation'] is int?data['navigation']:0;current=page;navigator.currentState?.pushNamedAndRemoveUntil('/$page',(_)=>false);}
+   WidgetsBinding.instance.addPostFrameCallback((_){html.window.parent?.postMessage(jsonEncode({'type':'vidya-preview-applied','page':current,'mode':WindowsAppearance.mode.value==ThemeMode.light?'light':'dark','red':WindowsAppearance.brandData['red'],'green':WindowsAppearance.brandData['green'],'blue':WindowsAppearance.brandData['blue'],'navigation':lastNavigation}),html.window.location.origin);});
   }catch(_){}
  });WidgetsBinding.instance.addPostFrameCallback((_){html.window.parent?.postMessage(jsonEncode({'type':'vidya-preview-ready'}),html.window.location.origin);});}
  @override Widget build(BuildContext context)=>ValueListenableBuilder<Color>(valueListenable:WindowsAppearance.brand,builder:(_,__,___)=>ValueListenableBuilder<ThemeMode>(valueListenable:WindowsAppearance.mode,builder:(_,mode,___)=>MaterialApp(navigatorKey:navigator,debugShowCheckedModeBanner:false,theme:WindowsAppearance.theme(Brightness.light),darkTheme:WindowsAppearance.theme(Brightness.dark),themeMode:mode,home:const screens.AdminDashboardScreen(),routes:{for(final e in pages.entries)'/${e.key}':e.value},builder:(c,child)=>Column(children:[Material(color:Theme.of(c).colorScheme.primaryContainer,child:Padding(padding:const EdgeInsets.all(6),child:Row(children:[const Icon(Icons.science_outlined,size:18),const SizedBox(width:8),const Expanded(child:Text('DEMO PREVIEW • Actual Windows screens • No real school data • Native storage, cloud and device actions are unavailable',style:TextStyle(fontSize:12))),TextButton(onPressed:()=>navigator.currentState?.pushNamedAndRemoveUntil('/dashboard',(_)=>false),child:const Text('Dashboard'))]))),Expanded(child:child??const SizedBox())]))));

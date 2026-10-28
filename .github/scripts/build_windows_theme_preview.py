@@ -32,7 +32,7 @@ def prepare(target):
     replace('windows_admin_setup.dart','static Future<Map<String, dynamic>> read() async {',"static Future<Map<String, dynamic>> read() async { return {'schoolName':'Demo Public School','principalName':'Demo Principal'}; /* PREVIEW ONLY */")
     replace('windows_platform_client.dart','Future<void> initialize() async {','Future<void> initialize() async { return; /* PREVIEW ONLY */')
     replace('windows_platform_client.dart','Future<void> refresh() async {','Future<void> refresh() async { return; /* PREVIEW ONLY */')
-    replace('main_dashboard_screen_windows.dart','void _startPortalInactivityTimer() {','void _startPortalInactivityTimer() { return; /* PREVIEW ONLY */')
+    path=target/'lib/main_dashboard_screen_windows.dart';text=path.read_text();text=text.replace('void _startPortalInactivityTimer() {','void _startPortalInactivityTimer() { return; /* PREVIEW ONLY */');path.write_text(text)
     replace('windows_local_firestore.dart','Future<void> ensureDurableSchoolRecords() async {','Future<void> ensureDurableSchoolRecords() async { return; /* PREVIEW ONLY */')
     replace('windows_local_storage.dart','static Future<String> currentPath() async => (await dataDirectory()).path;',"static Future<String> currentPath() async => '/Demo preview (RAM only)';")
     # Preserve the native hash math using BigInt where JS cannot represent 64-bit literals.
