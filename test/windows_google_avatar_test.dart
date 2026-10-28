@@ -165,6 +165,34 @@ void main() {
       }
     },
   );
+  test('signed Drive owner profile photo requires same Gmail and school', () {
+    final response = <String, dynamic>{
+      'success': true,
+      'storageReady': true,
+      'schoolId': 'school-a',
+      'profilePhotoEmail': 'ADMIN@gmail.com',
+      'profilePhotoUrl': 'https://lh3.googleusercontent.com/a/photo.gif',
+    };
+    expect(verifiedSchoolDriveOwnerPhoto(
+      response, schoolId: 'school-a', email: 'admin@gmail.com'),
+      'https://lh3.googleusercontent.com/a/photo.gif');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      response, schoolId: 'school-b', email: 'admin@gmail.com'), '');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      response, schoolId: 'school-a', email: 'other@gmail.com'), '');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      {...response, 'success': false},
+      schoolId: 'school-a', email: 'admin@gmail.com'), '');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      {...response, 'storageReady': false},
+      schoolId: 'school-a', email: 'admin@gmail.com'), '');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      {...response, 'profilePhotoUrl': 'https://evil.example/photo.gif'},
+      schoolId: 'school-a', email: 'admin@gmail.com'), '');
+    expect(verifiedSchoolDriveOwnerPhoto(
+      {...response, 'profilePhotoEmail': null},
+      schoolId: 'school-a', email: 'admin@gmail.com'), '');
+  });
   test('linked Google photo takes priority over Firebase thumbnail', () {
     expect(
       verifiedGoogleAccountPhoto({

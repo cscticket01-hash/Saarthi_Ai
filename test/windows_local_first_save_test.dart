@@ -94,6 +94,52 @@ void main() {
         ),
         isEmpty,
       );
+      // Password-managed school UIDs differ from the old OAuth connection.
+      // Only a previously verified Google subject plus the exact account
+      // email permits carrying the existing profile photo into that login.
+      final legacyOAuth = {
+        ...old,
+        'accountSub': 'verified-google-subject',
+        'email': 'School@gmail.com',
+        'managed': false,
+      };
+      expect(
+        retainedAdminGoogleProfile(
+          previous: legacyOAuth,
+          verified: {},
+          uid: 'managed-firebase-uid',
+          schoolId: 'new-managed-school',
+          verifiedEmail: 'school@gmail.com',
+        )['photoUrl'],
+        old['photoUrl'],
+      );
+      for (final invalid in [
+        {...legacyOAuth, 'accountSub': ''},
+        {...legacyOAuth, 'managed': true},
+        {...legacyOAuth, 'email': 'another@gmail.com'},
+        {...legacyOAuth, 'photoUrl': 'https://attacker.example/file.gif'},
+      ]) {
+        expect(
+          retainedAdminGoogleProfile(
+            previous: invalid,
+            verified: {},
+            uid: 'managed-firebase-uid',
+            schoolId: 'new-managed-school',
+            verifiedEmail: 'school@gmail.com',
+          ),
+          isEmpty,
+        );
+      }
+      expect(
+        retainedAdminGoogleProfile(
+          previous: legacyOAuth,
+          verified: {'photoUrl': 'https://lh3.googleusercontent.com/new.gif'},
+          uid: 'managed-firebase-uid',
+          schoolId: 'new-managed-school',
+          verifiedEmail: 'school@gmail.com',
+        )['photoUrl'],
+        'https://lh3.googleusercontent.com/new.gif',
+      );
       expect(
         verifiedGoogleProfileImageUrl(
           'https://googleusercontent.com.attacker.example/image',

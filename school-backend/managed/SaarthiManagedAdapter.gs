@@ -57,6 +57,27 @@ function VS_managedRoot() {
   if (!school || root.getDescription() !== 'VIDYA_MANAGED_SCHOOL:' + school) throw new Error('School Drive root mismatch');
   return root;
 }
+/**
+ * Read only metadata from the ALREADY authorized school Drive owner.
+ * No Google login, extra OAuth scopes, public email lookup, or Drive writes.
+ * The Windows client must additionally match the returned owner email to its
+ * currently authenticated school admin before displaying the image.
+ */
+function VS_managedOwnerProfilePhoto(root) {
+  try {
+    if (!root || typeof root.getOwner !== 'function') return {};
+    const owner = root.getOwner();
+    if (!owner || typeof owner.getEmail !== 'function' || typeof owner.getPhotoUrl !== 'function') return {};
+    const email = String(owner.getEmail() || '').trim().toLowerCase();
+    const url = String(owner.getPhotoUrl() || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return {};
+    if (!/^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com\//i.test(url)) return {};
+    return {profilePhotoEmail:email, profilePhotoUrl:url};
+  } catch (_) {
+    // Missing Drive photo permission/owner never affects signed storage health.
+    return {};
+  }
+}
 /** Owner-editor inventory only. Never routed through the signed web API.
  * Reads existing IDs/metadata without creating folders, backfilling Sheets,
  * reading record contents, returning connection secrets or moving files.
@@ -978,7 +999,7 @@ function VS_managedHandle(e) {
     }else if(b.action==='managed_storage_quota'){
       result=VS_managedStorageQuota(b);
     }else if(b.action==='managed_health'){
-      VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
+      const root=VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
       if(VS_testBackupRecoveryEnabled()&&!VS_jsonEnabled()){
         const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');
         if(collection){const store=VS_managedSheet(collection),parts=store.partitions||[store];parts.forEach(part=>{
@@ -987,7 +1008,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,scriptBundleVersion:'2026-10-27.1',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,scriptBundleVersion:'2026-10-27.1',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
