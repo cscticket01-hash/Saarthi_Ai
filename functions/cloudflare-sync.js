@@ -14,7 +14,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
  async function rpcRaw(school,lane,body){
   if(!enabled(school))throw Error('Cloudflare school not enabled');
   const raw=JSON.stringify({...body,schoolId:school,lane});
-  if(Buffer.byteLength(raw)>400000)throw Object.assign(Error('Sync request too large'),{status:413});
+  if(Buffer.byteLength(raw)>(/^file-[a-f0-9]{64}$/.test(lane)?800000:400000))throw Object.assign(Error('Sync request too large'),{status:413});
   const r=await fetchImpl(new URL('/internal',endpoint),{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'Vidya-Saarthi-Sync/1',...sign(raw)},body:raw,signal:AbortSignal.timeout(15000)});
   if(r.status===429){await r.body?.cancel();throw quotaError('CLOUDFLARE_QUOTA_EXCEEDED',retryAfterMillis(r.headers?.get('retry-after'),now())||60000);}
   const reader=r.body?.getReader();let length=0;const parts=[];

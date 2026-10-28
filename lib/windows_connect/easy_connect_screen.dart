@@ -68,7 +68,7 @@ class _EasySchoolConnectScreenState extends State<EasySchoolConnectScreen> {
           final source=initialProfile['${prefix}Url']?.toString() ?? '';
           if (source.startsWith('data:image/')) {
             final mime=source.substring(5,source.indexOf(';'));
-            final file=await cloud.upload('$prefix.png',mime,source);
+            final file=await cloud.upload('$prefix.png',mime,source,uploadKey:CentralSchoolCloud.uploadIdentity(connection['schoolId'].toString(),'school_profile',prefix,source));
             profile['${prefix}Url']=file['fileUrl'];profile['${prefix}FileId']=file['fileId'];
           }
         }

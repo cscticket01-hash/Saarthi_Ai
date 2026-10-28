@@ -12,8 +12,11 @@ String? cloudTransferMessage(Map<String, dynamic>? status) {
       !count(delivery['pendingPartitions'])) {
     return 'Cloudflare transfer status not verified; saved work retained.';
   }
-  final attention = (notices['needsAttention'] as num).toInt();
-  if (attention > 0) return 'Cloudflare saved · $attention notice transfers need school review.';
+  if (delivery['needsAttention'] != null && !count(delivery['needsAttention'])) return 'Cloudflare transfer status not verified; saved work retained.';
+  final noticeAttention = (notices['needsAttention'] as num).toInt();
+  final allAttention = (delivery['needsAttention'] as num? ?? 0).toInt();
+  final attention = noticeAttention > allAttention ? noticeAttention : allAttention;
+  if (attention > 0) return 'Cloudflare saved · $attention transfers need school review.';
   if ((notices['pending'] as num) > 0 || (delivery['pendingPartitions'] as num) > 0) {
     return 'Cloudflare saved · Google Drive transfer pending.';
   }

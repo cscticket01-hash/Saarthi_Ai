@@ -1,3 +1,4 @@
+import 'package:crypto/crypto.dart' as edge_crypto;
 import 'managed_resumable_upload.dart';
 import '../school_timestamp.dart' show Timestamp;
 
@@ -464,6 +465,13 @@ class CentralSchoolCloud {
     return Map<String, dynamic>.from(value);
   }
 
+  static String uploadIdentity(String school, String owner, String slot, String raw) {
+    if (school.isEmpty || owner.isEmpty || slot.isEmpty) throw StateError('Stable school/file owner required.');
+    final encoded = raw.contains(',') ? raw.split(',').last : raw;
+    return edge_crypto.sha256.convert(utf8.encode(jsonEncode([school, owner, slot,
+      edge_crypto.sha256.convert(base64Decode(encoded)).toString()]))).toString();
+  }
+
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
@@ -475,7 +483,44 @@ class CentralSchoolCloud {
       throw StateError(
         'Developer must configure the central school cloud service. Schools do not need Firebase configuration.',
       );
-    return send('POST', Uri.parse(endpoint), token: token, body: body);
+    final action=body['action'];
+    final staged = action=='managed/records' && body['operation']!='read' && body['syncProtocol']==2
+        || action=='managed/records/batch'
+        || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String;
+    final origin = expectedSchoolId != null ? await saved() : null;
+    var result=await send('POST', Uri.parse(endpoint), token: token,
+        body: {...body, if(staged) 'edgeDeliveryVersion': 1});
+    final deadline=DateTime.now().add(const Duration(seconds: 90));
+    Map<String, dynamic>? acceptedTicket;
+    while(result['edgeDeliveryVersion']==1 && result['delivery'] is Map) {
+      final ticket=Map<String,dynamic>.from(result['delivery'] as Map);
+      if(result['success']!=true || result['schoolId']!=body['schoolId'] ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(ticket['id']?.toString()??'') ||
+          !RegExp(r'^(records|file-[a-f0-9]{64})$').hasMatch(ticket['lane']?.toString()??'')) {
+        throw StateError('Unverified Cloudflare delivery receipt; local work retained.');
+      }
+      if ((ticket['lane'].toString().startsWith('file-') &&
+              ticket['lane'] != 'file-${ticket['id']}') ||
+          (acceptedTicket != null &&
+              (acceptedTicket['lane'] != ticket['lane'] ||
+               acceptedTicket['id'] != ticket['id']))) {
+        throw StateError('Cloudflare delivery identity changed; local work retained.');
+      }
+      acceptedTicket ??= ticket;
+      check();
+      if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
+      if(DateTime.now().isAfter(deadline))throw CentralCloudException(503,'school_cloud',
+          'Cloudflare retained the request; Google Drive verification is pending.',diagnosticCode:'EDGE_DELIVERY_PENDING');
+      // Long-poll the authenticated owner; never resend a new business operation.
+      result=await send('POST',Uri.parse(endpoint),token:token,body:{'action':'managed/cloudflare/operation',
+        'schoolId':body['schoolId'],'lane':ticket['lane'],'id':ticket['id'],'waitMillis':20000});
+    }
+    if (acceptedTicket != null &&
+        (result['schoolId'] != body['schoolId'] ||
+         result['success'] != true || result['driveState'] != 'verified')) {
+      throw StateError('Google Drive acknowledgement unverified; local work retained.');
+    }
+    return result;
   }
 
   Future<Map<String, dynamic>> connect(

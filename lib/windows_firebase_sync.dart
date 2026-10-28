@@ -445,6 +445,7 @@ class WindowsFirebaseRemote {
   }
 
   static bool recordWriteBatchSupported = false;
+  static bool edgeDeliverySupported = false;
   static Future<Map<String, Object>> prepareManagedBatch(
     String school, {
     required bool Function() canAdmit,
@@ -518,6 +519,7 @@ class WindowsFirebaseRemote {
             'backups',
             'school_config',
           }.contains(item['collection']) ||
+          (edgeDeliverySupported && item['collection'] == 'school_notices') ||
           item['priorDeletion'] != null ||
           item['data'] is! Map ||
           item['operationId'] is! String ||
