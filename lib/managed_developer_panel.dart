@@ -13,7 +13,7 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
  Future<void> changeSchoolPassword(Map<String,dynamic> school) async {
   final password=TextEditingController(),confirm=TextEditingController();
   var submitting=false,hidden=true;String? problem;
-  await showDialog<void>(context:context,barrierDismissible:false,builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>PopScope(canPop:!submitting,child:AlertDialog(
+  final route=DialogRoute<void>(context:context,barrierDismissible:false,builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>PopScope(canPop:!submitting,child:AlertDialog(
    title:const Text('Change school login password'),
    content:SizedBox(width:440,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
     Text('${school['name']??school['id']}',style:Theme.of(dialog).textTheme.titleMedium),
@@ -32,6 +32,8 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
      if(mounted)setState(()=>message='School login password changed. School data is unchanged.');
     }catch(_){if(dialog.mounted)update((){submitting=false;problem='Password change could not be confirmed. Retry with the same password or check school access.';});}
    },child:Text(submitting?'Changing password…':'Change password'))]))));
+  await Navigator.of(context,rootNavigator:true).push(route);
+  await route.completed; // Keep controllers alive until the exit animation removes the fields.
   password.clear();confirm.clear();password.dispose();confirm.dispose();
  }
  Future<void> syncStatus(Map<String,dynamic> school)async{
