@@ -102,7 +102,7 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
     return ListenableBuilder(
-      listenable: Listenable.merge([WindowsAppearance.mode, WindowsAppearance.brand]),
+      listenable: Listenable.merge([WindowsAppearance.mode, WindowsAppearance.brand, WindowsAppearance.changes]),
       builder: (context, _) => ValueListenableBuilder<String>(
         valueListenable: WindowsUiLanguage.changed,
         builder: (context, language, _) => MaterialApp(
@@ -420,6 +420,8 @@ class _WindowsStartupGateState extends State<WindowsStartupGate> {
           await FirebaseAuth.instance.bootstrapLocalUser();
         }
         own();
+        await ManagedSchoolSession.refreshAppearanceAtUnlock();
+        own();
         if (!mounted) return;
         setState(() {
           _success = true;
@@ -639,6 +641,7 @@ class _WindowsLocalLoginScreenState extends State<WindowsLocalLoginScreen> {
         password: _password.text,
       );
       await WindowsLocalSession.markLoggedIn();
+      await ManagedSchoolSession.refreshAppearanceAtUnlock();
       if (!mounted) return;
       final navigator = Navigator.of(context);
       navigator.pushNamedAndRemoveUntil('/dashboard', (route) => false);

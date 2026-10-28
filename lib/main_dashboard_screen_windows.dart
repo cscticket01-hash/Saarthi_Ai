@@ -4318,7 +4318,7 @@ errorBuilder: (context, error, stackTrace) {
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF10181E)), borderRadius: BorderRadius.circular(15), border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055))),
+      decoration: BoxDecoration(color: WindowsAppearance.background(const Color(0xFF10181E)), borderRadius: BorderRadius.circular(15), border: Border.all(color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38))),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4520,7 +4520,7 @@ class _VidyaSaarthiWavePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final teal = WindowsAppearance.primary;
-    final cyan = WindowsAppearance.primary;
+    final cyan = WindowsAppearance.accent;
 
     final softGlow = Paint()
       ..style = PaintingStyle.stroke
@@ -5721,9 +5721,9 @@ Future<void> _printIdCard() async {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              CustomPaint(
-                painter: _VidyaSaarthiWavePainter(),
-              ),
+              if(WindowsAppearance.waveAsset!=null)
+                Image.asset(WindowsAppearance.waveAsset!,fit:BoxFit.fill,excludeFromSemantics:true)
+              else CustomPaint(painter: _VidyaSaarthiWavePainter()),
 
               // Very subtle center glow behind the floating brand card.
               Center(
@@ -6842,7 +6842,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF111B21)),
         borderRadius: BorderRadius.circular(19),
-        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38)),
         boxShadow: [
           BoxShadow(
             color: WindowsAppearance.shadow(Colors.black.withOpacity(0.14)),
@@ -7176,7 +7176,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
         borderSide: BorderSide(
-          color: WindowsAppearance.outline(Colors.white).withOpacity(0.055),
+          color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38),
         ),
       ),
       focusedBorder: OutlineInputBorder(
@@ -10254,7 +10254,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38)),
       ),
       child: Row(
         children: [
@@ -16643,7 +16643,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(11),
         borderSide: BorderSide(
-          color: WindowsAppearance.outline(Colors.white).withOpacity(0.055),
+          color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38),
         ),
       ),
       focusedBorder: OutlineInputBorder(
@@ -19510,7 +19510,7 @@ class _AdvancedStudentUidSettingsPanelState
       decoration: BoxDecoration(
         color: WindowsAppearance.background(const Color(0xFF0F191F)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: WindowsAppearance.outline(Colors.white).withOpacity(0.055)),
+        border: Border.all(color: WindowsAppearance.preset==null?WindowsAppearance.outline(Colors.white).withOpacity(0.055):WindowsAppearance.accent.withValues(alpha:.38)),
       ),
       child: Row(
         children: [

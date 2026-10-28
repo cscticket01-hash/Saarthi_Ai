@@ -4,7 +4,14 @@ on:
     paths:
       - 'lib/developer_windows_theme.dart'
       - 'lib/managed_developer_panel.dart'
-      - 'lib/windows_theme_preview*'
+      - 'lib/windows_theme*'
+      - 'lib/windows_appearance.dart'
+      - 'lib/main_windows.dart'
+      - 'lib/windows_connect/managed_school_session.dart'
+      - 'functions/windows-theme.js'
+      - 'assets/theme_*'
+      - 'assets/app_screenshot_*'
+      - 'test/windows_theme_presets_test.dart'
       - 'functions/managed-schools.js'
       - '.github/preview/**'
       - '.github/scripts/*windows_theme_preview*'
@@ -32,20 +39,7 @@ jobs:
           node-version: '22'
       - run: flutter create --platforms=web --project-name=saarthi_ai .
       - run: flutter pub get
-      - name: Verify draft publishing and school password UI
-        run: flutter test test/developer_windows_theme_test.dart
-      - name: Build actual Windows widget preview with isolated adapters
-        run: python3 .github/scripts/build_windows_theme_preview.py
-      - name: Install local-only browser verifier
-        run: |
-          npm install --no-save playwright@1.58.2
-          npx playwright install --with-deps chromium
-      - name: Verify all preview pages in both modes
-        run: node .github/scripts/test_windows_theme_preview.cjs
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: focused-windows-theme-preview-review
-          path: |
-            build/windows-theme-preview-review
-            build/web/windows-preview
+      - name: Verify RGB editor, image presets, persistence and App Lock gate
+        run: flutter test test/developer_windows_theme_test.dart test/windows_theme_presets_test.dart test/windows_startup_test.dart
+      - name: Verify backend preset validation and multi-PC activation barrier
+        run: node --test functions/test/windows-theme.test.js
