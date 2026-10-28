@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: '24'
       - name: Require exact reviewed deployment pin
-        run: node -e "const r=require('./.github/acceptance/cloudflare-delivery-runtime.json'); if(!/^[a-f0-9]{40}$/.test(r.commit))process.exit(1);require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_RUNTIME='+r.commit+'\n');"
+        run: node -e "const r=require('./.github/acceptance/cloudflare-delivery-runtime.json'); if(!/^[a-f0-9]{40}$/.test(r.commit)||!/^dep-[a-z0-9]+$/.test(r.deployment))process.exit(1);require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_RUNTIME='+r.commit+'\nVS_VERIFIED_RENDER_COMMIT='+r.commit+'\nVS_VERIFIED_RENDER_DEPLOYMENT='+r.deployment+'\n');"
       - name: Verify only retained synthetic TEST-school records and document bytes
         env:
           VS_CF_DELIVERY_ACCEPTANCE: '1'
