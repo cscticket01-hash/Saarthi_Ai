@@ -8,4 +8,4 @@ The preview is a separate browser build of the actual Windows screen widgets, ge
 
 Demo screens use synthetic records. The preview is for layout and colour inspection, not Windows printer, camera, native storage, licensing, OAuth or real-cloud acceptance. Native document rendering and full application checks remain separate. Browser checks capture 24 real application page variants in both modes and reject runtime errors or external requests.
 
-Document raster previews bundle the printing plugin's PDF.js dependency locally. Browser acceptance uses the same CSP as deployment and blocks external requests before testing page navigation.
+The browser preview uses the existing bundled DejaVu fallback fonts for offline text; the installed Windows app retains Segoe UI. This is a colour/layout preview, not a claim of browser/native pixel-identical typography.
