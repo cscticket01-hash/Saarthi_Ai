@@ -12,7 +12,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now})
   if(!enabled(school))throw Error('Cloudflare school not enabled');
   const raw=JSON.stringify({...body,schoolId:school,lane});
   if(Buffer.byteLength(raw)>400000)throw Object.assign(Error('Sync request too large'),{status:413});
-  const r=await fetchImpl(new URL('/internal',endpoint),{method:'POST',headers:{'Content-Type':'application/json',...sign(raw)},body:raw,signal:AbortSignal.timeout(15000)});
+  const r=await fetchImpl(new URL('/internal',endpoint),{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'Vidya-Saarthi-Sync/1',...sign(raw)},body:raw,signal:AbortSignal.timeout(15000)});
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
@@ -35,7 +35,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now})
   const claim=require('node:crypto').randomUUID();if(!await rpc(school,'notices',{command:'claim',id:job.id,claim,expires:now()+120000}))return {processed:0};
   const payload=JSON.parse(job.payload),request={...payload.request};let expected=payload.baseRevision;
   try{
-   if(String(expected).startsWith('cf-')){const parent=await rpc(school,'notices',{command:'receipt',revision:expected});if(parent?.state!=='completed'||typeof parent.response?.driveRevision!=='string')throw Error('Earlier notice delivery pending');expected=parent.response.driveRevision;}
+   if(String(expected).startsWith('cf-')){const parent=await rpc(school,'notices',{command:'receipt',revision:expected});if(parent?.state==='needsAttention')throw Object.assign(Error('Earlier notice requires school review'),{code:'RECORD_REVISION_CONFLICT'});if(parent?.state!=='completed'||typeof parent.response?.driveRevision!=='string')throw Error('Earlier notice delivery pending');expected=parent.response.driveRevision;}
    request.expectedRecordRevision=expected;
    if(request.operation==='write'){request.data=Object.fromEntries(Object.entries(payload.record).filter(([k])=>k!=='id'&&!k.startsWith('_sync')));}
    const ack=await deliver({...request,action:'managed_records',collection:'school_notices'});
