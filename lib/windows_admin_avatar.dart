@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_school_session.dart';
 import 'windows_local_firestore.dart';
 import 'windows_school_image_cache.dart';
 
@@ -115,6 +116,29 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
           }
         }
       } catch (_) {}
+    }
+    // The school's already-linked Apps Script runs under its authorised
+    // Google Drive owner. A signed health read may return that owner's photo
+    // without requiring a second Connect Photo UI or an extra OAuth scope.
+    // Never display a developer's/foreign Drive owner's picture.
+    if (!googleProfileImageUrl(source) && saved['managed'] == true && own()) {
+      try {
+        final response = await ManagedSchoolSession.callForSchool(
+          school,
+          'managed/storage/check',
+          {'profilePhoto': true},
+        ).timeout(const Duration(seconds: 20));
+        if (!own() || (await CentralSchoolCloud.saved())['uid'] != uid) return;
+        final drivePhoto = verifiedSchoolDriveOwnerPhoto(
+          response,
+          schoolId: school,
+          email: saved['email']?.toString() ?? '',
+        );
+        if (drivePhoto.isNotEmpty) source = drivePhoto;
+      } catch (_) {
+        // Old school scripts, offline mode or missing Drive-owner photos
+        // leave the existing cached avatar intact.
+      }
     }
     if (!googleProfileImageUrl(source) || !own()) return;
     source = originalGoogleProfileImageUrl(source);
