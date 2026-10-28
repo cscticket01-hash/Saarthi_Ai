@@ -32,18 +32,32 @@ Map<String, dynamic> retainedAdminGoogleProfile({
   required Map<String, dynamic> verified,
   required String uid,
   required String schoolId,
+  String verifiedEmail = '',
 }) {
   if (verifiedGoogleProfileImageUrl(verified['photoUrl']?.toString() ?? ''))
     return verified;
-  if (previous['uid'] == uid &&
-      previous['schoolId'] == schoolId &&
-      verifiedGoogleProfileImageUrl(previous['photoUrl']?.toString() ?? '')) {
-    return {
-      'photoUrl': previous['photoUrl'],
-      'displayName': previous['displayName'] ?? '',
-    };
-  }
-  return {};
+  final source = previous['photoUrl']?.toString() ?? '';
+  if (!verifiedGoogleProfileImageUrl(source)) return {};
+  // Preserve the same managed Firebase identity's photo across password
+  // sessions, including when the remote provider omits its photo field.
+  final sameIdentity =
+      previous['uid'] == uid && previous['schoolId'] == schoolId;
+  // On the first managed login, the old school-cloud connection may already
+  // have obtained this Gmail photo through explicit Google OAuth. A managed
+  // Firebase password account has a different UID: reuse only this media URL
+  // (never tokens or Drive credentials) when the verified emails are equal.
+  final email = verifiedEmail.trim().toLowerCase();
+  final previouslyGoogleAuthorized =
+      previous['managed'] != true &&
+      previous['accountSub'] is String &&
+      (previous['accountSub'] as String).isNotEmpty &&
+      email.isNotEmpty &&
+      previous['email']?.toString().trim().toLowerCase() == email;
+  if (!sameIdentity && !previouslyGoogleAuthorized) return {};
+  return {
+    'photoUrl': source,
+    'displayName': previous['displayName'] ?? '',
+  };
 }
 
 /// The fixed hash suffix prevents UID-prefix collisions during cache recovery.
