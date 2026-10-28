@@ -346,6 +346,19 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
    }
    return {success:true,schoolId:id,exams:Object.entries(groups.exams).filter(([,row])=>!row._syncDeleted&&!row.deleted).map(([key,row])=>({...row,id:key})),results:Object.entries(results).filter(([key])=>!removed.has(key)).map(([,row])=>row),verifiedAt:now()};
   }
+  if(action==='developer/managed/password/change'){
+   if(data.deletedAt||data.loginDisabled===true)fail(409,'Enable the school login before changing its password');
+   if(typeof b.password!=='string'||b.password.length<12||b.password.length>128)fail(400,'Use a password of 12–128 characters');
+   if(typeof data.authUid!=='string'||!data.authUid||data.authUid===admin.uid)fail(409,'School account mapping is invalid');
+   const membership=await db.doc('school_memberships/'+data.authUid).get();
+   if(!membership.exists||membership.data().managed!==true||membership.data().role!=='school_admin'||membership.data().schoolId!==id)fail(409,'School account mapping is invalid');
+   // Update the SAME Firebase UID. Never recreate an account or touch school data.
+   await auth.updateUser(data.authUid,{password:b.password});
+   await auth.revokeRefreshTokens(data.authUid);
+   await ref.set({sessionValidAfter:Math.floor(now()/1000)},{merge:true});
+   await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:now()});
+   return {success:true,schoolId:id,passwordChanged:true};
+  }
   if(action==='developer/managed/reset')return {success:true,passwordSetupLink:await auth.generatePasswordResetLink(data.loginEmail)};
   if(action==='developer/managed/delete'){
    // Archive the account, never delete its Drive, local or operational data.

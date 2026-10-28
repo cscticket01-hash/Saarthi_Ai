@@ -1,0 +1,51 @@
+name: Developer school credentials and Windows theme preview
+on:
+  pull_request:
+    paths:
+      - 'lib/developer_windows_theme.dart'
+      - 'lib/managed_developer_panel.dart'
+      - 'lib/windows_theme_preview*'
+      - 'functions/managed-schools.js'
+      - '.github/preview/**'
+      - '.github/scripts/*windows_theme_preview*'
+      - '.github/workflows/developer-appearance-review.yml'
+      - 'test/developer_windows_theme_test.dart'
+      - 'firebase.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: developer-appearance-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: flutter create --platforms=web --project-name=saarthi_ai .
+      - run: flutter pub get
+      - name: Verify draft publishing and school password UI
+        run: flutter test test/developer_windows_theme_test.dart
+      - name: Build actual Windows widget preview with isolated adapters
+        run: python3 .github/scripts/build_windows_theme_preview.py
+      - name: Install local-only browser verifier
+        run: |
+          npm install --no-save playwright@1.58.2
+          npx playwright install --with-deps chromium
+      - name: Verify all preview pages in both modes
+        run: node .github/scripts/test_windows_theme_preview.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: focused-windows-theme-preview-review
+          path: |
+            build/windows-theme-preview-review
+            build/web/windows-preview

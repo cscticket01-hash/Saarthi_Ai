@@ -1,48 +1,56 @@
 import 'package:flutter/material.dart';
 import 'platform/managed_developer_service.dart';
+import 'windows_theme_preview_catalog.dart';
+import 'windows_theme_preview_frame.dart';
 
 class DeveloperWindowsTheme extends StatefulWidget {
-  const DeveloperWindowsTheme({super.key});
-  @override State<DeveloperWindowsTheme> createState()=>_DeveloperWindowsThemeState();
+ const DeveloperWindowsTheme({super.key,this.request});
+ final Future<Map<String,dynamic>> Function(String,Map<String,dynamic>)? request;
+ @override State<DeveloperWindowsTheme> createState()=>_DeveloperWindowsThemeState();
 }
-class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
-  final values=<int>[0,140,120];
-  String revision='default';
-  String? error;
-  bool busy=true,loaded=false;
-  @override void initState(){super.initState();load();}
-  void apply(Map theme){for(var i=0;i<3;i++) values[i]=(theme[['red','green','blue'][i]] as num).toInt();revision=theme['revision'] as String;}
-  Future<void> load() async {
-    setState(()=>busy=true);
-    try{final r=await ManagedDeveloperService.call('theme/get',{});if(mounted)setState((){apply(r['theme'] as Map);loaded=true;error=null;});}
-    catch(e){if(mounted)setState(()=>error='$e');}
-    finally{if(mounted)setState(()=>busy=false);}
-  }
-  Future<void> save() async {
-    setState(()=>busy=true);
-    try{final r=await ManagedDeveloperService.call('theme/save',{'theme':{'schemaVersion':1,'red':values[0],'green':values[1],'blue':values[2],'expectedRevision':revision}});
-      if(mounted){setState((){apply(r['theme'] as Map);error=null;});ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Windows theme saved. Each school receives it after all its Windows PCs reach App Lock, then unlock.')));}}
-    catch(e){if(mounted)setState(()=>error='$e');}
-    finally{if(mounted)setState(()=>busy=false);}
-  }
-  @override Widget build(BuildContext context)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-    const Text('Windows app theme',style:TextStyle(fontSize:24,fontWeight:FontWeight.w700)),
-    const Text('One brand colour for every school. Windows users keep their own Dark / Light choice. Saved changes wait until every Windows PC for a school reaches App Lock. Users see the colour when they unlock. An open or unconfirmed PC keeps the previous colour.'),
-    if(busy)const LinearProgressIndicator(),
-    if(error!=null)Text(error!,style:const TextStyle(color:Colors.orangeAccent)),
-    for(var i=0;i<3;i++) Row(children:[SizedBox(width:75,child:Text('${['Red','Green','Blue'][i]} ${values[i]}')),
-      Expanded(child:Slider(min:0,max:255,divisions:255,value:values[i].toDouble(),onChanged:busy||!loaded?null:(v)=>setState(()=>values[i]=v.round())))]),
-    const Text('Preview • readable shades are generated from your RGB colour'),
-    Wrap(spacing:16,runSpacing:16,children:[for(final brightness in [Brightness.dark,Brightness.light])Builder(builder:(context){
-      final scheme=ColorScheme.fromSeed(seedColor:Color.fromARGB(255,values[0],values[1],values[2]),brightness:brightness);
-      return Theme(data:ThemeData(colorScheme:scheme,useMaterial3:true),child:Card(child:SizedBox(width:300,child:Padding(padding:const EdgeInsets.all(20),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-        Text(brightness==Brightness.dark?'Dark mode':'Light mode',style:TextStyle(color:scheme.onSurface,fontWeight:FontWeight.bold)),
-        const SizedBox(height:12),Text('Student records and staff salary',style:TextStyle(color:scheme.onSurface)),const SizedBox(height:12),
-        FilledButton(onPressed:(){},child:const Text('Primary action')),const TextField(decoration:InputDecoration(labelText:'Example field')),const SizedBox(height:12),
-        Chip(label:const Text('Selected item')),Text('Hints, borders and icons share the same palette.',style:TextStyle(color:scheme.onSurfaceVariant)),
-      ])))));
-    })]),
-    const SizedBox(height:20),Wrap(spacing:12,children:[FilledButton.icon(onPressed:busy||!loaded?null:save,icon:const Icon(Icons.save),label:const Text('Save Windows theme')),
-      OutlinedButton(onPressed:busy?null:load,child:const Text('Reload saved theme'))]),
-  ]);
+class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme>{
+ static const presets=<String,Color>{'Teal':Color(0xFF008C78),'Ocean':Color(0xFF2563EB),'Violet':Color(0xFF7C3AED),'Amber':Color(0xFFD97706),'Rose':Color(0xFFE11D48)};
+ final rgb=List.generate(3,(_)=>TextEditingController());final hex=TextEditingController();
+ Color draft=const Color(0xFF008C78),saved=const Color(0xFF008C78);
+ HSVColor hsv=HSVColor.fromColor(const Color(0xFF008C78));
+ int navigation=0;String revision='default',page='dashboard';String? error,inputError;
+ bool busy=true,loaded=false;Brightness brightness=Brightness.dark;
+ Future<Map<String,dynamic>> call(String action,Map<String,dynamic> body)=>(widget.request??ManagedDeveloperService.call)(action,body);
+ bool get dirty=>draft.toARGB32()!=saved.toARGB32();
+ @override void initState(){super.initState();fields();load();}
+ @override void dispose(){for(final c in rgb)c.dispose();hex.dispose();super.dispose();}
+ List<int> channels(Color c)=>[(c.r*255).round(),(c.g*255).round(),(c.b*255).round()];
+ void fields(){final v=channels(draft);for(var i=0;i<3;i++)rgb[i].text='${v[i]}';hex.text='#${draft.toARGB32().toRadixString(16).substring(2).toUpperCase()}';}
+ void change(Color c,{HSVColor? selection}){setState((){draft=c;hsv=selection??HSVColor.fromColor(c);inputError=null;fields();});}
+ void apply(Map theme){final v=['red','green','blue'].map((k)=>theme[k]).toList();if(v.any((x)=>x is! int||x<0||x>255)||theme['revision'] is! String)throw const FormatException('Invalid saved theme');draft=Color.fromARGB(255,v[0] as int,v[1] as int,v[2] as int);saved=draft;hsv=HSVColor.fromColor(draft);revision=theme['revision'];inputError=null;fields();}
+ Future<void> load()async{setState(()=>busy=true);try{final r=await call('theme/get',{});if(mounted)setState((){apply(r['theme'] as Map);loaded=true;error=null;});}catch(_){if(mounted)setState(()=>error='Saved theme could not be loaded. Retry before publishing.');}finally{if(mounted)setState(()=>busy=false);}}
+ Future<void> save()async{if(busy||!loaded||inputError!=null)return;setState(()=>busy=true);final v=channels(draft);try{final r=await call('theme/save',{'theme':{'schemaVersion':1,'red':v[0],'green':v[1],'blue':v[2],'expectedRevision':revision}});if(mounted){setState((){apply(r['theme'] as Map);error=null;});ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Theme saved. Each school receives it after all Windows PCs reach App Lock, then unlock.')));}}catch(_){if(mounted)setState(()=>error='Theme was not confirmed. Your draft is retained. Reload if another developer changed the saved theme.');}finally{if(mounted)setState(()=>busy=false);}}
+ Widget panel(Widget child)=>Card(child:Padding(padding:const EdgeInsets.all(20),child:child));
+ Widget preview({bool fullscreen=false})=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+  Wrap(spacing:12,runSpacing:10,crossAxisAlignment:WrapCrossAlignment.center,children:[const Text('Live Windows Preview',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),SegmentedButton<Brightness>(segments:const [ButtonSegment(value:Brightness.dark,label:Text('Dark'),icon:Icon(Icons.dark_mode)),ButtonSegment(value:Brightness.light,label:Text('Light'),icon:Icon(Icons.light_mode))],selected:{brightness},onSelectionChanged:(v)=>setState(()=>brightness=v.first)),
+   if(!fullscreen)IconButton(tooltip:'Open full app preview',onPressed:()=>showDialog<void>(context:context,builder:(c)=>Dialog.fullscreen(child:StatefulBuilder(builder:(c,update)=>Scaffold(appBar:AppBar(title:const Text('Windows app preview • demo data'),leading:IconButton(icon:const Icon(Icons.close),onPressed:()=>Navigator.pop(c)),actions:[IconButton(tooltip:'Toggle preview mode',onPressed:(){setState(()=>brightness=brightness==Brightness.dark?Brightness.light:Brightness.dark);update((){});},icon:const Icon(Icons.brightness_6))]),body:WindowsThemePreviewFrame(seed:draft,brightness:brightness,page:page,navigation:navigation))))),icon:const Icon(Icons.open_in_full)),
+  ]),const SizedBox(height:12),DropdownButtonFormField<String>(initialValue:page,decoration:const InputDecoration(labelText:'Preview any Windows page',border:OutlineInputBorder()),items:windowsThemePreviewPages.entries.map((e)=>DropdownMenuItem(value:e.key,child:Text(e.value))).toList(),onChanged:(v){if(v!=null)setState((){page=v;navigation++;});}),const SizedBox(height:12),
+  ClipRRect(borderRadius:BorderRadius.circular(12),child:AspectRatio(aspectRatio:1440/1000,child:FittedBox(fit:BoxFit.contain,child:SizedBox(width:1440,height:1000,child:WindowsThemePreviewFrame(seed:draft,brightness:brightness,page:page,navigation:navigation))))),
+  const SizedBox(height:12),Row(children:[for(final b in [Brightness.dark,Brightness.light])Expanded(child:Builder(builder:(c){final scheme=ColorScheme.fromSeed(seedColor:draft,brightness:b,surface:b==Brightness.dark?const Color(0xFF172229):Colors.white);return Container(margin:const EdgeInsets.all(4),padding:const EdgeInsets.all(14),decoration:BoxDecoration(color:scheme.surface,border:Border.all(color:scheme.outlineVariant),borderRadius:BorderRadius.circular(10)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(b==Brightness.dark?'Dark colour sample':'Light colour sample',style:TextStyle(color:scheme.onSurface,fontWeight:FontWeight.bold)),const SizedBox(height:10),Row(children:[Icon(Icons.school,color:scheme.primary),const SizedBox(width:8),Expanded(child:Text('Student records',style:TextStyle(color:scheme.onSurface)))]),const SizedBox(height:8),Container(padding:const EdgeInsets.symmetric(horizontal:12,vertical:6),decoration:BoxDecoration(color:scheme.primary,borderRadius:BorderRadius.circular(8)),child:Text('Primary action',style:TextStyle(color:scheme.onPrimary)))]));}))]),
+  const SizedBox(height:10),const Text('Actual Windows screens with isolated demo data. Open forms and dialogs to inspect colours. Changes here do not affect a real school.'),
+ ]);
+ @override Widget build(BuildContext context)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+  const Text('Windows App Theme',style:TextStyle(fontSize:26,fontWeight:FontWeight.bold)),const SizedBox(height:6),const Text('Choose a preset or create a custom colour. Preview instantly; publish only when you save.'),const SizedBox(height:20),
+  if(busy)const LinearProgressIndicator(),if(error!=null)Padding(padding:const EdgeInsets.symmetric(vertical:10),child:Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error))),
+  Wrap(spacing:12,runSpacing:12,children:presets.entries.map((e)=>SizedBox(width:150,child:OutlinedButton(onPressed:busy||!loaded?null:()=>change(e.value),style:OutlinedButton.styleFrom(padding:const EdgeInsets.all(16),side:BorderSide(color:draft.toARGB32()==e.value.toARGB32()?Theme.of(context).colorScheme.primary:Theme.of(context).dividerColor,width:2)),child:Row(children:[Container(width:26,height:26,decoration:BoxDecoration(color:e.value,borderRadius:BorderRadius.circular(6))),const SizedBox(width:8),Expanded(child:Text(e.key)),if(draft.toARGB32()==e.value.toARGB32())const Icon(Icons.check,size:16)])))).toList()),const SizedBox(height:16),
+  LayoutBuilder(builder:(context,size){final editor=panel(Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[const Text('Custom colour',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),const SizedBox(height:16),
+   AspectRatio(aspectRatio:1.35,child:LayoutBuilder(builder:(c,s)=>GestureDetector(onPanUpdate:busy||!loaded?null:(d)=>pick(d.localPosition,s.maxWidth,s.maxHeight),onTapDown:busy||!loaded?null:(d)=>pick(d.localPosition,s.maxWidth,s.maxHeight),child:CustomPaint(painter:_ColourPad(hsv),child:const SizedBox.expand())))),
+   Row(children:[const Text('Hue'),Expanded(child:Slider(min:0,max:360,value:hsv.hue,onChanged:busy||!loaded?null:(v){final next=hsv.withHue(v);change(next.toColor(),selection:next);}))]),
+   TextField(key:const ValueKey('theme-hex'),controller:hex,enabled:!busy&&loaded,decoration:const InputDecoration(labelText:'HEX',prefixIcon:Icon(Icons.palette_outlined)),onChanged:(v){if(!RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(v)){setState(()=>inputError='Enter a six-digit HEX colour.');return;}final c=Color(0xFF000000|int.parse(v.replaceAll('#',''),radix:16));final text=hex.text;change(c);hex.text=text;hex.selection=TextSelection.collapsed(offset:text.length);}),const SizedBox(height:12),
+   for(var i=0;i<3;i++)Row(children:[SizedBox(width:20,child:Text(['R','G','B'][i])),Expanded(child:Slider(min:0,max:255,divisions:255,value:channels(draft)[i].toDouble(),onChanged:busy||!loaded?null:(v){final ch=channels(draft);ch[i]=v.round();change(Color.fromARGB(255,ch[0],ch[1],ch[2]));})),SizedBox(width:70,child:TextField(key:ValueKey('theme-rgb-$i'),controller:rgb[i],enabled:!busy&&loaded,keyboardType:TextInputType.number,decoration:const InputDecoration(border:OutlineInputBorder()),onChanged:(_){final ch=rgb.map((c)=>int.tryParse(c.text)).toList();if(ch.any((v)=>v==null||v<0||v>255)){setState(()=>inputError='RGB must use whole numbers from 0 to 255.');return;}final text=rgb[i].text;change(Color.fromARGB(255,ch[0]!,ch[1]!,ch[2]!));rgb[i].text=text;rgb[i].selection=TextSelection.collapsed(offset:text.length);} ))]),
+   if(inputError!=null)Text(inputError!,style:TextStyle(color:Theme.of(context).colorScheme.error)),const SizedBox(height:16),
+   Wrap(spacing:10,runSpacing:10,children:[OutlinedButton(onPressed:busy||!loaded?null:()=>change(saved),child:const Text('Reset draft')),FilledButton.icon(onPressed:busy||!loaded||inputError!=null||!dirty?null:save,icon:const Icon(Icons.save),label:const Text('Save Windows Theme')),TextButton(onPressed:busy?null:load,child:const Text('Reload saved theme'))]),const SizedBox(height:16),Text(dirty?'Unsaved preview • schools still use the saved colour':'Saved colour • no unpublished changes'),const SizedBox(height:8),const Text('Windows applies the saved colour after every school PC reaches App Lock, then unlocks. Schools retain their Dark / Light choice.'),
+  ]));final screen=panel(preview());if(size.maxWidth<1100)return Column(children:[editor,screen]);return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[SizedBox(width:370,child:editor),const SizedBox(width:12),Expanded(child:screen)]);}),
+ ]);
+ void pick(Offset position,double width,double height){final next=hsv.withSaturation((position.dx/width).clamp(0,1)).withValue((1-position.dy/height).clamp(0,1));change(next.toColor(),selection:next);}
+}
+class _ColourPad extends CustomPainter{
+ _ColourPad(this.hsv);final HSVColor hsv;
+ @override void paint(Canvas canvas,Size size){final bounds=Offset.zero&size;canvas.drawRect(bounds,Paint()..color=HSVColor.fromAHSV(1,hsv.hue,1,1).toColor());canvas.drawRect(bounds,Paint()..shader=const LinearGradient(colors:[Colors.white,Colors.transparent]).createShader(bounds));canvas.drawRect(bounds,Paint()..shader=const LinearGradient(begin:Alignment.topCenter,end:Alignment.bottomCenter,colors:[Colors.transparent,Colors.black]).createShader(bounds));final point=Offset(hsv.saturation*size.width,(1-hsv.value)*size.height);canvas.drawCircle(point,8,Paint()..color=Colors.black..style=PaintingStyle.stroke..strokeWidth=4);canvas.drawCircle(point,8,Paint()..color=Colors.white..style=PaintingStyle.stroke..strokeWidth=2);}
+ @override bool shouldRepaint(covariant _ColourPad old)=>old.hsv!=hsv;
 }

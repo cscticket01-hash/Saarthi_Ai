@@ -141,10 +141,25 @@ jobs:
       run: |
         python tool/build_school_setup_bundle.py --check
         flutter test test/windows_easy_connect_test.dart --dart-define=SAARTHI_LEGACY_PROVISIONING_TEST_ONLY=true
+    - name: Verify developer theme draft and school password controls
+      run: flutter test test/developer_windows_theme_test.dart
     - name: Build developer website
       env:
         SAARTHI_SCHOOL_CLOUD_URL: ${{ inputs.test_school_cloud_url || ((github.ref_name == 'windows/easy-connect-draft' || github.head_ref == 'windows/easy-connect-draft' || github.ref_name == 'feature/smart-sync-3' || github.head_ref == 'feature/smart-sync-3') && 'https://saarthi-sync-v2-test.onrender.com/school-cloud') || vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
       run: flutter build web --release --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$SAARTHI_SCHOOL_CLOUD_URL
+    - name: Build isolated full Windows theme preview
+      run: python3 .github/scripts/build_windows_theme_preview.py
+    - name: Prepare local-only Windows preview browser checks
+      run: |
+        npm install --no-save playwright@1.58.2
+        npx playwright install --with-deps chromium
+    - name: Verify real Windows pages in isolated browser preview
+      run: node .github/scripts/test_windows_theme_preview.cjs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: windows-theme-preview-review
+        path: build/windows-theme-preview-review
     - uses: actions/upload-artifact@v4
       with:
         name: developer-website-preview
@@ -238,7 +253,7 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-appearance-review
         LOCALAPPDATA: ${{ runner.temp }}/windows-appearance-review
-      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
+      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
     - uses: actions/upload-artifact@v4
       if: always()
       with:
