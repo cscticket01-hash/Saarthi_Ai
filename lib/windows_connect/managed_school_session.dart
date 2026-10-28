@@ -128,7 +128,7 @@ class ManagedSchoolSession {
       }catch(_){}
       final old=await CentralSchoolCloud.saved();
       if(old.isNotEmpty&&old['managed']!=true)await const WindowsSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
-      await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId']),'verifiedAccess':session}));
+      await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId'],verifiedEmail:auth['email']?.toString()??email.trim()),'verifiedAccess':session}));
       await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
       startAppearanceControl();
       changed.value++;return session;
