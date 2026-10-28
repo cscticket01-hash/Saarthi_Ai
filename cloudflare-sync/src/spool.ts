@@ -1,4 +1,5 @@
 import {demand,digest,operationPattern} from './protocol';
+import {Buffer} from 'node:buffer';
 type Json=Record<string,unknown>;
 type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null};
 export const spoolLane=(lane:string)=>lane==='records'||/^file-[a-f0-9]{64}$/.test(lane);
@@ -61,7 +62,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
  if(action==='part'){
   demand(lane==='file-'+id&&Number.isSafeInteger(b.offset)&&Number(b.offset)>=0&&typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=699052&&/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)&&typeof b.chunkSha256==='string'&&operationPattern.test(b.chunkSha256));
-  const bytes=Uint8Array.from(atob(b.base64),c=>c.charCodeAt(0));demand(bytes.length>0&&bytes.length<=512*1024);const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');demand(hash===b.chunkSha256,'Chunk hash mismatch',409);
+  const bytes=new Uint8Array(Buffer.from(b.base64,'base64'));demand(bytes.length>0&&bytes.length<=512*1024&&Buffer.from(bytes).toString('base64')===b.base64);const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');demand(hash===b.chunkSha256,'Chunk hash mismatch',409);
   const m=JSON.parse(get(id).payload) as Json;const offset=Number(b.offset);demand(offset+bytes.length<=Number(m.sizeBytes)&&(offset+bytes.length===m.sizeBytes||bytes.length%(256*1024)===0));
   const prior=storage.sql.exec<{sha256:string;size:number}>('SELECT sha256,size FROM edge_chunks WHERE offset=?',offset).toArray()[0];
   if(prior)demand(prior.sha256===hash&&prior.size===bytes.length,'Chunk replay conflict',409);
@@ -80,7 +81,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    demand(chunk.body.byteLength===chunk.size,'Staged bytes unavailable',409);const from=Math.max(offset,chunk.offset),to=Math.min(end,chunk.offset+chunk.size);const slice=new Uint8Array(chunk.body).subarray(from-chunk.offset,to-chunk.offset);bytes.set(slice,from-offset);copied+=slice.length;
   }
   demand(copied===bytes.length,'Staged file gap',409);const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
-  let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));return {offset,sizeBytes:bytes.length,sha256:hash,base64:btoa(binary)};
+  return {offset,sizeBytes:bytes.length,sha256:hash,base64:Buffer.from(bytes).toString('base64')};
  }
  if(action==='claim'){
   if(!['pending','retry','processing'].includes(row.state)||row.due>Date.now()||row.state==='processing'&&row.claim_until>Date.now())return false;

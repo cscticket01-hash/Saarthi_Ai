@@ -21,8 +21,14 @@ async function acceptance({env=process.env,request=transport}={}){
   const run=env.VS_CF_DELIVERY_RUN_ID;stage='stable synthetic run identity';requireCheck(/^[A-Za-z0-9_-]{1,48}$/.test(run||''));
   stage='TEST login secrets';requireCheck(env.VS_TEST_LOGIN_EMAIL&&env.VS_TEST_LOGIN_PASSWORD);
   stage='deployed broker readiness';let r=await request(ENDPOINT+'/healthz');
-  requireCheck(r.status===200&&r.data.ready===true&&r.data.projectId==='saarthi-ai-df12b'&&r.data.runtimeCommit===env.VS_EXPECTED_RUNTIME);
-  report.runtimeCommit=r.data.runtimeCommit;
+  requireCheck(r.status===200&&r.data.ready===true&&r.data.projectId==='saarthi-ai-df12b');
+  // Production intentionally omits its commit from public health. A deployment
+  // pin comes from the separately verified Render live-deploy API, not a guess.
+  if(r.data.runtimeCommit!==undefined)requireCheck(r.data.runtimeCommit===env.VS_EXPECTED_RUNTIME);
+  else requireCheck(env.VS_VERIFIED_RENDER_COMMIT===env.VS_EXPECTED_RUNTIME&&/^dep-[a-z0-9]+$/.test(env.VS_VERIFIED_RENDER_DEPLOYMENT||''));
+  report.runtimeCommit=env.VS_EXPECTED_RUNTIME;
+  report.runtimeVerification=r.data.runtimeCommit?'health endpoint':'verified Render live-deploy pin';
+  if(!r.data.runtimeCommit)report.deployment=env.VS_VERIFIED_RENDER_DEPLOYMENT;
   stage='Firebase TEST login';r=await request(LOGIN,{email:env.VS_TEST_LOGIN_EMAIL,password:env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
   requireCheck(r.status===200&&typeof r.data.idToken==='string'&&typeof r.data.localId==='string');token=r.data.idToken;
   async function call(body){
