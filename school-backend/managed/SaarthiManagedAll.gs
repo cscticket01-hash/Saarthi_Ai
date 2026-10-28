@@ -6609,6 +6609,27 @@ function VS_managedRoot() {
   if (!school || root.getDescription() !== 'VIDYA_MANAGED_SCHOOL:' + school) throw new Error('School Drive root mismatch');
   return root;
 }
+/**
+ * Read only metadata from the ALREADY authorized school Drive owner.
+ * No Google login, extra OAuth scopes, public email lookup, or Drive writes.
+ * The Windows client must additionally match the returned owner email to its
+ * currently authenticated school admin before displaying the image.
+ */
+function VS_managedOwnerProfilePhoto(root) {
+  try {
+    if (!root || typeof root.getOwner !== 'function') return {};
+    const owner = root.getOwner();
+    if (!owner || typeof owner.getEmail !== 'function' || typeof owner.getPhotoUrl !== 'function') return {};
+    const email = String(owner.getEmail() || '').trim().toLowerCase();
+    const url = String(owner.getPhotoUrl() || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return {};
+    if (!/^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com\//i.test(url)) return {};
+    return {profilePhotoEmail:email, profilePhotoUrl:url};
+  } catch (_) {
+    // Missing Drive photo permission/owner never affects signed storage health.
+    return {};
+  }
+}
 /** Owner-editor inventory only. Never routed through the signed web API.
  * Reads existing IDs/metadata without creating folders, backfilling Sheets,
  * reading record contents, returning connection secrets or moving files.
@@ -7530,7 +7551,7 @@ function VS_managedHandle(e) {
     }else if(b.action==='managed_storage_quota'){
       result=VS_managedStorageQuota(b);
     }else if(b.action==='managed_health'){
-      VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
+      const root=VS_managedRoot();const p=PropertiesService.getScriptProperties();let sheetsVerified=null;
       if(VS_testBackupRecoveryEnabled()&&!VS_jsonEnabled()){
         const properties=p.getProperties(),collection=VS_LAYOUT_COLLECTIONS.find(col=>properties['VS_SHEET_MIGRATED_'+col]==='1');
         if(collection){const store=VS_managedSheet(collection),parts=store.partitions||[store];parts.forEach(part=>{
@@ -7539,7 +7560,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,scriptBundleVersion:'2026-10-26.2',googleEmail:''};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,scriptBundleVersion:'2026-10-27.1',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -8027,6 +8048,7 @@ function VS_recordReadableText(value){
   if(text.length>40000)throw new Error('Readable field exceeds Sheet display limit; canonical record retained');
   return /^[=+\-@]/.test(text)?"'"+text:text;
 }
+function VS_privateTeacherDisplayField(store,key){return store.collection==='teachers_directory'&&['teacherId','idCardNumber','employeeId'].indexOf(key)>=0;}
 function VS_recordReadableHeader(key){return /^[=+\-@]/.test(key)?'Field: '+key:key;}
 function VS_recordViewHeaders(sheet,start,width){
   const available=Math.max(0,Math.min(width,sheet.getMaxColumns()-start+1));
@@ -8044,14 +8066,19 @@ function VS_refreshRecordReadable(store,item,row){
     if(!raw&&store.sheet.getMaxColumns()>33&&last>0&&store.sheet.getRange(1,34,last,store.sheet.getMaxColumns()-33).getValues().some(r=>r.some(v=>v!=='')))throw new Error('Readable columns contain owner data; review required');
     if(!item&&last>=2){const start=Math.max(2,Number(p.getProperty(key+'_cursor')||2)),end=Math.min(last,start+99);if(start<=end){store.sheet.getRange(start,1,end-start+1,33).getValues().forEach((v,n)=>{if(v[0])entries.push({item:VS_sheetDecode(store,v),row:start+n});});nextCursor=end+1;}}
     const oldHeaders=['Record ID'].concat(fields.map(VS_recordReadableHeader)),existing=VS_recordViewHeaders(store.sheet,34,oldHeaders.length);
-    if(raw?existing.some((v,n)=>v!==oldHeaders[n]):existing.some(v=>v!==''))throw new Error('Readable columns contain owner data; review required');
-    const added=[];entries.forEach(e=>Object.keys(e.item.data).sort().forEach(k=>{if(k.indexOf('_sync')!==0&&fields.indexOf(k)<0){fields.push(k);added.push(k);}}));
+    if(raw?existing.some((v,n)=>v!==oldHeaders[n]&&!(n>0&&VS_privateTeacherDisplayField(store,fields[n-1])&&v==='')):existing.some(v=>v!==''))throw new Error('Readable columns contain owner data; review required');
+    const added=[];entries.forEach(e=>Object.keys(e.item.data).sort().forEach(k=>{if(k.indexOf('_sync')!==0&&!VS_privateTeacherDisplayField(store,k)&&fields.indexOf(k)<0){fields.push(k);added.push(k);}}));
     if(fields.length>128)throw new Error('Readable view field capacity exceeded');
-    const headers=['Record ID'].concat(fields.map(VS_recordReadableHeader));
+    const headers=['Record ID'].concat(fields.map(k=>VS_privateTeacherDisplayField(store,k)?'':VS_recordReadableHeader(k)));
     const nextStart=34+oldHeaders.length,available=Math.max(0,Math.min(added.length,store.sheet.getMaxColumns()-nextStart+1));
     if(available&&store.sheet.getRange(1,nextStart,Math.max(last,1),available).getValues().some(r=>r.some(v=>v!=='')))throw new Error('Readable columns contain owner data; review required');
     if(store.sheet.getMaxColumns()<33+headers.length)store.sheet.insertColumnsAfter(store.sheet.getMaxColumns(),33+headers.length-store.sheet.getMaxColumns());
-    if(!raw||added.length){
+    const retireTeacherNumbers=fields.some((k,n)=>VS_privateTeacherDisplayField(store,k)&&existing[n+1]!=='');
+    if(retireTeacherNumbers){
+      // Retire verified generated view columns only; canonical identity stays.
+      fields.forEach((k,n)=>{if(VS_privateTeacherDisplayField(store,k)&&last>1)store.sheet.getRange(2,35+n,last-1,1).setValues(Array.from({length:last-1},()=>['']));});
+    }
+    if(!raw||added.length||retireTeacherNumbers){
       store.sheet.getRange(1,34,1,headers.length).setValues([headers]);SpreadsheetApp.flush();
       if(JSON.stringify(store.sheet.getRange(1,34,1,headers.length).getValues()[0])!==JSON.stringify(headers))throw new Error('Readable view header verification failed');
       p.setProperty(key,JSON.stringify(fields));
@@ -8059,7 +8086,7 @@ function VS_refreshRecordReadable(store,item,row){
     // At most 100 backfill rows; batch adjacent rows without touching gaps or
     // owner cells. Keep readback verification before advancing the cursor.
     const batches=[];
-    entries.forEach(e=>{const d=e.item.data,values=[e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
+    entries.forEach(e=>{const d=e.item.data,values=[e.item.layoutRedirect||d._syncDeleted?'':VS_recordReadableText(e.item.id)].concat(fields.map(k=>e.item.layoutRedirect||d._syncDeleted||VS_privateTeacherDisplayField(store,k)?'':VS_recordReadableText(d[k]))),lastBatch=batches[batches.length-1];
       if(lastBatch&&lastBatch.row+lastBatch.values.length===e.row)lastBatch.values.push(values);
       else batches.push({row:e.row,values:[values]});
     });
@@ -8446,7 +8473,7 @@ function VS_managedIntegrityAudit(b) {
           if(raw){
             const fields=JSON.parse(raw);
             if(!Array.isArray(fields)||fields.length>128||fields.some(key=>typeof key!=='string'))throw new Error('Readable view identity requires review');
-            const empty=item.data._syncDeleted===true,expected=[empty?'':VS_recordReadableText(item.id)].concat(fields.map(key=>empty?'':VS_recordReadableText(item.data[key])));
+            const empty=item.data._syncDeleted===true,expected=[empty?'':VS_recordReadableText(item.id)].concat(fields.map(key=>empty||VS_privateTeacherDisplayField(part,key)?'':VS_recordReadableText(item.data[key])));
             const actual=part.sheet.getRange(item.row,34,1,expected.length).getValues()[0];
             if(actual.some((value,index)=>String(value)!==expected[index]&&String(value)!==expected[index].replace(/^'/,'')))reason='readable_projection_change';
           }

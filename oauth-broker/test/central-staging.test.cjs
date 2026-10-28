@@ -72,3 +72,22 @@ test('isolated health exposes only a valid public deployed commit; production an
   });
  }
 });
+
+test('HTTP ingress admits actual native 256/512 KiB chunks while preserving action-specific bounds',async()=>{
+ const {createHash}=require('node:crypto');const received=[];
+ const handler=createHandler({health:async()=>{},logger:()=>{},handle:async req=>{received.push(req.body);return {success:true};}});
+ await withServer(handler,async base=>{
+  const post=(body,authorized=true)=>fetch(base+'/school-cloud',{method:'POST',headers:{'Content-Type':'application/json',...(authorized?{Authorization:'Bearer fixture'}:{})},body:JSON.stringify(body)});
+  function part(size){const bytes=Buffer.alloc(size,65);return {action:'managed/file/upload/resumable',operation:'part',schoolId:'vs-'+ 'a'.repeat(32),uploadKey:'durable-native-key',name:'native.bin',mime:'application/octet-stream',sha256:'a'.repeat(64),sizeBytes:786432,offset:0,chunkSha256:createHash('sha256').update(bytes).digest('hex'),base64:bytes.toString('base64')};}
+  for(const size of [256*1024,512*1024]){
+   const body=part(size);assert(Buffer.byteLength(JSON.stringify(body))>256*1024);const r=await post(body);assert.equal(r.status,200);assert.equal(received.at(-1).base64,body.base64);
+  }
+  const count=received.length;
+  for(const body of [{...part(512*1024),base64:'A'.repeat(700004)}, {...part(512*1024),padding:'x'.repeat(8192)}, {...part(256*1024),operation:'begin'}, {...part(256*1024),action:'managed/profile'}]){
+   const r=await post(body);assert.equal(r.status,413);const safe=await r.json();assert.equal(safe.code,'REQUEST_TOO_LARGE');assert.match(safe.requestId,/^[a-f0-9-]{36}$/);
+  }
+  assert.equal((await post(part(256*1024),false)).status,413);assert.equal(received.length,count);
+  // The pre-existing full-upload route retains its larger bound.
+  assert.equal((await post({action:'managed/file/upload',base64:'A'.repeat(800000)})).status,200);
+ });
+});
