@@ -68,6 +68,26 @@ bool adminAvatarCacheBelongsTo(String fileId, String uid) {
       RegExp(r'^[a-f0-9]{64}$').hasMatch(fileId.substring(prefix.length));
 }
 
+/// A school's already-connected Drive script may return its owner's profile
+/// picture. It must be the SAME Gmail as the authenticated school admin.
+/// Never use a developer/foreign Drive owner's avatar.
+String verifiedSchoolDriveOwnerPhoto(Map<String, dynamic> reply, {
+  required String schoolId,
+  required String email,
+}) {
+  final expectedEmail = email.trim().toLowerCase();
+  if (reply['success'] != true ||
+      reply['storageReady'] != true ||
+      reply['schoolId'] != schoolId ||
+      schoolId.isEmpty ||
+      expectedEmail.isEmpty ||
+      reply['profilePhotoEmail']?.toString().trim().toLowerCase() != expectedEmail) {
+    return '';
+  }
+  final source = reply['profilePhotoUrl']?.toString() ?? '';
+  return verifiedGoogleProfileImageUrl(source) ? source : '';
+}
+
 /// Prefer the linked Google identity over a Firebase profile thumbnail.
 String verifiedGoogleAccountPhoto(Map account) {
   final providers = account['providerUserInfo'];
