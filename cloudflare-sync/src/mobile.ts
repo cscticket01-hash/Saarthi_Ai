@@ -23,7 +23,16 @@ export async function mobileRequest(request:Request,env:Env):Promise<unknown>{
    const row=await env.LANES.getByName(school+'/attendance-'+id.slice(0,2)).command(school,'attendance-'+id.slice(0,2),{command:'get',id}) as {state:string;created:number;response:string}|null;
    const receipt=row?.response?JSON.parse(row.response) as {completedAt?:number}:{};
    return {operationId:id,state:row?.state||'unknown',createdAt:row?.created??null,...(row?.state==='completed'?{completedAt:receipt.completedAt}:{})};
-  }));return {success:true,schoolId:school,projectId:school,syncProtocol:2,operations};
+  }));
+  if(operations.some(row=>row.state==='unknown')&&typeof b.attendancePermit==='string'){
+   // A pre-cutover Firestore receipt must remain readable after an app update.
+   // Reuse the broker's original permit/session/owner checks, never fabricate ACKs.
+   const response=await fetch(env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'Vidya-Saarthi-Sync/1'},body:JSON.stringify({action:'managed/mobile',schoolId:school,request:b}),signal:AbortSignal.timeout(20000)});
+   const legacy=JSON.parse(await boundedBody(response,256000)) as {success:boolean;schoolId:string;projectId:string};
+   demand(response.ok&&legacy.success===true&&legacy.schoolId===school&&legacy.projectId===school,'Attendance confirmation unavailable; capture retained',503);
+   return legacy;
+  }
+  return {success:true,schoolId:school,projectId:school,syncProtocol:2,operations};
  }
  demand(action==='mobile_mark_attendance');
  demand(p.open===true,'School is closed today. Attendance is disabled for everyone');
