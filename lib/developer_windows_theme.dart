@@ -143,339 +143,460 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
     }
   }
 
+  static const pages = ['dashboard', 'students', 'fees', 'settings'];
+  static const pageNames = [
+    'Dashboard',
+    'Student Records',
+    'Fees Collection',
+    'Settings',
+  ];
+  int slide = 0;
+  String get previewAsset => draftPreset == null
+      ? 'assets/app_screenshot_${pages[slide]}.png'
+      : 'assets/theme_preview_${draftPreset}_${pages[slide]}.webp';
   Widget panel(Widget child) => Card(
-    child: Padding(padding: const EdgeInsets.all(20), child: child),
+    margin: EdgeInsets.zero,
+    child: Padding(padding: const EdgeInsets.all(14), child: child),
   );
-  Widget preview() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        'Windows App Screenshots',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-      ),
-      const SizedBox(height: 8),
-      const Text('App screens • sample data'),
-      const SizedBox(height: 12),
-      for (final entry in const {
-        'dashboard': 'Dashboard',
-        'students': 'Student Records',
-        'fees': 'Fees Collection',
-        'settings': 'Settings',
-      }.entries) ...[
-        Text(entry.value, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        InkWell(
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (c) => Dialog(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: IconButton(
-                      tooltip: 'Close screenshot',
-                      onPressed: () => Navigator.pop(c),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
-                  Flexible(
-                    child: InteractiveViewer(
+  Widget preview() => panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Theme Preview',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+            Text(
+              '${pageNames[slide]}  •  ${slide + 1} / 4',
+              key: const ValueKey('theme-slide-label'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${windowsThemePreset(draftPreset)?.name ?? 'Custom colour'} • sample app screens',
+          key: const ValueKey('theme-preview-name'),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: Row(
+            children: [
+              IconButton(
+                key: const ValueKey('theme-previous'),
+                tooltip: 'Previous screenshot',
+                onPressed: () => setState(() => slide = (slide + 3) % 4),
+                icon: const Icon(Icons.chevron_left, size: 32),
+              ),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: ColorFiltered(
+                      key: ValueKey('$previewAsset:${draft.toARGB32()}'),
+                      colorFilter: ColorFilter.mode(
+                        draft,
+                        draftPreset == null ? BlendMode.hue : BlendMode.dst,
+                      ),
                       child: Image.asset(
-                        'assets/app_screenshot_${entry.key}.png',
+                        previewAsset,
+                        key: const ValueKey('theme-preview-image'),
+                        fit: BoxFit.contain,
+                        semanticLabel:
+                            '${pageNames[slide]} in ${windowsThemePreset(draftPreset)?.name ?? 'custom colour'}',
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+              IconButton(
+                key: const ValueKey('theme-next'),
+                tooltip: 'Next screenshot',
+                onPressed: () => setState(() => slide = (slide + 1) % 4),
+                icon: const Icon(Icons.chevron_right, size: 32),
+              ),
+            ],
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.asset(
-              'assets/app_screenshot_${entry.key}.png',
-              semanticLabel: '${entry.value} app screenshot',
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(
+            4,
+            (i) => IconButton(
+              tooltip: pageNames[i],
+              onPressed: () => setState(() => slide = i),
+              icon: Icon(
+                i == slide ? Icons.circle : Icons.circle_outlined,
+                size: 10,
+              ),
+              visualDensity: VisualDensity.compact,
             ),
           ),
         ),
-        const SizedBox(height: 20),
+        const Text(
+          'Preview only. Save Theme publishes your selection.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12),
+        ),
       ],
-    ],
+    ),
   );
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        'Windows App Theme',
-        style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-      ),
-      const SizedBox(height: 6),
-      const Text(
-        'Select an image preset to activate it for the next App Lock unlock, or save a custom RGB colour.',
-      ),
-      const SizedBox(height: 20),
-      if (busy) const LinearProgressIndicator(),
-      if (error != null)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Text(
-            error!,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
+  Widget editor() => panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Custom colour',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (c, s) => GestureDetector(
+              onPanUpdate: busy || !loaded
+                  ? null
+                  : (d) => pick(d.localPosition, s.maxWidth, s.maxHeight),
+              onTapDown: busy || !loaded
+                  ? null
+                  : (d) => pick(d.localPosition, s.maxWidth, s.maxHeight),
+              child: CustomPaint(
+                painter: _ColourPad(hsv),
+                child: const SizedBox.expand(),
+              ),
+            ),
           ),
         ),
-      const Text(
-        'Preset Themes',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-      ),
-      const SizedBox(height: 12),
-      Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        children: windowsThemePresets
-            .map(
-              (preset) => SizedBox(
-                width: 250,
-                child: OutlinedButton(
-                  onPressed: busy || !loaded
+        SizedBox(
+          height: 34,
+          child: Row(
+            children: [
+              const Text('Hue'),
+              Expanded(
+                child: Slider(
+                  min: 0,
+                  max: 360,
+                  value: hsv.hue,
+                  onChanged: busy || !loaded
                       ? null
-                      : () async {
-                          change(preset.seed, presetId: preset.id);
-                          await save();
+                      : (v) {
+                          final next = hsv.withHue(v);
+                          change(next.toColor(), selection: next);
                         },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.all(8),
-                    side: BorderSide(
-                      color: draftPreset == preset.id
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).dividerColor,
-                      width: 2,
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.asset(
-                          preset.image,
-                          semanticLabel: preset.name,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: Text(preset.name)),
-                          if (savedPreset == preset.id)
-                            const Icon(Icons.check_circle, size: 18),
-                        ],
-                      ),
-                    ],
-                  ),
                 ),
               ),
-            )
-            .toList(),
-      ),
-      const SizedBox(height: 16),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: quickColours.entries
-            .map(
-              (entry) => ActionChip(
-                label: Text(entry.key),
-                avatar: CircleAvatar(backgroundColor: entry.value),
-                onPressed: busy || !loaded ? null : () => change(entry.value),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 40,
+          child: TextField(
+            key: const ValueKey('theme-hex'),
+            controller: hex,
+            enabled: !busy && loaded,
+            decoration: const InputDecoration(
+              labelText: 'HEX',
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
               ),
-            )
-            .toList(),
-      ),
-      const SizedBox(height: 16),
-      LayoutBuilder(
-        builder: (context, size) {
-          final editor = panel(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (v) {
+              if (!RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(v)) {
+                setState(() => inputError = 'Enter a six-digit HEX colour.');
+                return;
+              }
+              final c = Color(
+                0xFF000000 | int.parse(v.replaceAll('#', ''), radix: 16),
+              );
+              final text = hex.text;
+              change(c);
+              hex.text = text;
+              hex.selection = TextSelection.collapsed(offset: text.length);
+            },
+          ),
+        ),
+        const SizedBox(height: 6),
+        for (var i = 0; i < 3; i++)
+          SizedBox(
+            height: 38,
+            child: Row(
               children: [
-                const Text(
-                  'Custom colour',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                AspectRatio(
-                  aspectRatio: 1.35,
-                  child: LayoutBuilder(
-                    builder: (c, s) => GestureDetector(
-                      onPanUpdate: busy || !loaded
-                          ? null
-                          : (d) =>
-                                pick(d.localPosition, s.maxWidth, s.maxHeight),
-                      onTapDown: busy || !loaded
-                          ? null
-                          : (d) =>
-                                pick(d.localPosition, s.maxWidth, s.maxHeight),
-                      child: CustomPaint(
-                        painter: _ColourPad(hsv),
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    const Text('Hue'),
-                    Expanded(
-                      child: Slider(
-                        min: 0,
-                        max: 360,
-                        value: hsv.hue,
-                        onChanged: busy || !loaded
-                            ? null
-                            : (v) {
-                                final next = hsv.withHue(v);
-                                change(next.toColor(), selection: next);
-                              },
-                      ),
-                    ),
-                  ],
-                ),
-                TextField(
-                  key: const ValueKey('theme-hex'),
-                  controller: hex,
-                  enabled: !busy && loaded,
-                  decoration: const InputDecoration(
-                    labelText: 'HEX',
-                    prefixIcon: Icon(Icons.palette_outlined),
-                  ),
-                  onChanged: (v) {
-                    if (!RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(v)) {
-                      setState(
-                        () => inputError = 'Enter a six-digit HEX colour.',
-                      );
-                      return;
-                    }
-                    final c = Color(
-                      0xFF000000 | int.parse(v.replaceAll('#', ''), radix: 16),
-                    );
-                    final text = hex.text;
-                    change(c);
-                    hex.text = text;
-                    hex.selection = TextSelection.collapsed(
-                      offset: text.length,
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                for (var i = 0; i < 3; i++)
-                  Row(
-                    children: [
-                      SizedBox(width: 20, child: Text(['R', 'G', 'B'][i])),
-                      Expanded(
-                        child: Slider(
-                          min: 0,
-                          max: 255,
-                          divisions: 255,
-                          value: channels(draft)[i].toDouble(),
-                          onChanged: busy || !loaded
-                              ? null
-                              : (v) {
-                                  final ch = channels(draft);
-                                  ch[i] = v.round();
-                                  change(
-                                    Color.fromARGB(255, ch[0], ch[1], ch[2]),
-                                  );
-                                },
-                        ),
-                      ),
-                      SizedBox(
-                        width: 70,
-                        child: TextField(
-                          key: ValueKey('theme-rgb-$i'),
-                          controller: rgb[i],
-                          enabled: !busy && loaded,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                          ),
-                          onChanged: (_) {
-                            final ch = rgb
-                                .map((c) => int.tryParse(c.text))
-                                .toList();
-                            if (ch.any((v) => v == null || v < 0 || v > 255)) {
-                              setState(
-                                () => inputError =
-                                    'RGB must use whole numbers from 0 to 255.',
-                              );
-                              return;
-                            }
-                            final text = rgb[i].text;
-                            change(Color.fromARGB(255, ch[0]!, ch[1]!, ch[2]!));
-                            rgb[i].text = text;
-                            rgb[i].selection = TextSelection.collapsed(
-                              offset: text.length,
-                            );
+                SizedBox(width: 16, child: Text(['R', 'G', 'B'][i])),
+                Expanded(
+                  child: Slider(
+                    min: 0,
+                    max: 255,
+                    divisions: 255,
+                    value: channels(draft)[i].toDouble(),
+                    onChanged: busy || !loaded
+                        ? null
+                        : (v) {
+                            final ch = channels(draft);
+                            ch[i] = v.round();
+                            change(Color.fromARGB(255, ch[0], ch[1], ch[2]));
                           },
-                        ),
+                  ),
+                ),
+                SizedBox(
+                  width: 54,
+                  child: TextField(
+                    key: ValueKey('theme-rgb-$i'),
+                    controller: rgb[i],
+                    enabled: !busy && loaded,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
                       ),
-                    ],
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) {
+                      final ch = rgb.map((c) => int.tryParse(c.text)).toList();
+                      if (ch.any((v) => v == null || v < 0 || v > 255)) {
+                        setState(
+                          () => inputError =
+                              'RGB must use whole numbers from 0 to 255.',
+                        );
+                        return;
+                      }
+                      final text = rgb[i].text;
+                      change(Color.fromARGB(255, ch[0]!, ch[1]!, ch[2]!));
+                      rgb[i].text = text;
+                      rgb[i].selection = TextSelection.collapsed(
+                        offset: text.length,
+                      );
+                    },
                   ),
-                if (inputError != null)
-                  Text(
-                    inputError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    OutlinedButton(
-                      onPressed: busy || !loaded
-                          ? null
-                          : () => change(saved, presetId: savedPreset),
-                      child: const Text('Reset draft'),
-                    ),
-                    FilledButton.icon(
-                      onPressed: busy || !loaded || inputError != null || !dirty
-                          ? null
-                          : save,
-                      icon: const Icon(Icons.save),
-                      label: const Text('Save Windows Theme'),
-                    ),
-                    TextButton(
-                      onPressed: busy ? null : load,
-                      child: const Text('Reload saved theme'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  dirty
-                      ? 'Unsaved colour • schools still use the saved theme'
-                      : 'Saved theme • no unpublished changes',
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Windows applies the saved theme only after App Lock password unlock. All registered school PCs must reach App Lock first. Dark / Light remains available in the app.',
                 ),
               ],
             ),
-          );
-          final screen = panel(preview());
-          if (size.maxWidth < 1100) return Column(children: [editor, screen]);
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(width: 370, child: editor),
-              const SizedBox(width: 12),
-              Expanded(child: screen),
-            ],
-          );
-        },
-      ),
-    ],
+          ),
+        if (inputError != null)
+          Text(
+            inputError!,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: busy || !loaded
+                    ? null
+                    : () => change(saved, presetId: savedPreset),
+                child: const Text('Reset'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton.icon(
+                key: const ValueKey('theme-save'),
+                onPressed: busy || !loaded || inputError != null || !dirty
+                    ? null
+                    : save,
+                icon: const Icon(Icons.save, size: 16),
+                label: const Text('Save Theme'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          dirty ? 'Unsaved selection' : 'Saved theme',
+          key: const ValueKey('theme-save-status'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
+    ),
+  );
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, bounds) {
+      // Scale the complete workspace as one canvas on smaller displays. No page
+      // or panel scroll is needed, and Save/arrows are always inside the viewport.
+      final width = bounds.maxWidth < 1100 ? 1100.0 : bounds.maxWidth;
+      final availableHeight = bounds.hasBoundedHeight
+          ? bounds.maxHeight
+          : 650.0;
+      final height = availableHeight < 650 ? 650.0 : availableHeight;
+      return SizedBox(
+        width: bounds.maxWidth,
+        height: availableHeight,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: width,
+            height: height,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Windows Theme',
+                        style: TextStyle(
+                          fontSize: 25,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    if (busy)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    IconButton(
+                      tooltip: 'Reload saved theme',
+                      onPressed: busy ? null : load,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+                const Text(
+                  'Choose a preset or RGB colour, check the preview, then Save Theme.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      error!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                SizedBox(
+                  height: 126,
+                  child: Row(
+                    children: [
+                      for (final preset in windowsThemePresets)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: OutlinedButton(
+                              key: ValueKey('theme-preset-${preset.id}'),
+                              onPressed: busy || !loaded
+                                  ? null
+                                  : () => change(
+                                      preset.seed,
+                                      presetId: preset.id,
+                                    ),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.all(6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                side: BorderSide(
+                                  width: 2,
+                                  color: draftPreset == preset.id
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context).dividerColor,
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(5),
+                                      child: Image.asset(
+                                        preset.image,
+                                        fit: BoxFit.contain,
+                                        semanticLabel: preset.name,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          preset.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                      if (draftPreset == preset.id)
+                                        const Icon(Icons.check, size: 14),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      for (final entry in quickColours.entries)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            visualDensity: VisualDensity.compact,
+                            label: Text(
+                              entry.key,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            avatar: CircleAvatar(backgroundColor: entry.value),
+                            onPressed: busy || !loaded
+                                ? null
+                                : () => change(entry.value),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(width: 300, child: editor()),
+                      const SizedBox(width: 12),
+                      Expanded(child: preview()),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Saved theme applies after App Lock password unlock. All registered school PCs must reach App Lock first.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
   );
   void pick(Offset position, double width, double height) {
     final next = hsv
