@@ -1,0 +1,14 @@
+{
+  "scope": "local workerd only; not a live Cloudflare capacity guarantee",
+  "count": 100000,
+  "concurrency": 256,
+  "accepted": 100000,
+  "failed": 0,
+  "elapsedMs": 191028.938081,
+  "requestsPerSecond": 523.4808977349707,
+  "p50Ms": 135.43281099999876,
+  "p95Ms": 293.09070000000065,
+  "p99Ms": 14240.396162000005,
+  "driveDelivery": "not benchmarked; broker.invalid is deliberately unreachable",
+  "generatedAt": "2026-10-28T16:07:13.604Z"
+}

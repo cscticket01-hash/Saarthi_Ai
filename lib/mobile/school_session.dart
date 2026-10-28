@@ -1,3 +1,4 @@
+import 'cloudflare_lane.dart';
 import 'session_cache_store.dart';
 import 'school_request_deadlines.dart';
 import '../qr_authentication_engine.dart';
@@ -719,6 +720,7 @@ class SchoolSession {
             error is TimeoutException ||
             error is SchoolApiFailure && error.retryable)) {
           _cachedAttendancePermit = null;
+    _cloudflareLane = null;
         }
         final review =
             error is AttendanceRejected ||
@@ -840,6 +842,7 @@ class SchoolSession {
           _attendanceHistoryCache = Map<String, dynamic>.from(
             d['attendanceHistory'] as Map? ?? {},
           );
+        if (d['cloudflareLane'] is Map && link != null) _cloudflareLane = CloudflareLane.parse(Map<String, dynamic>.from(d['cloudflareLane'] as Map), link!.schoolId, schoolToken);
         if (d['lastDashboardVerifiedAt'] is num)
           lastDashboardVerifiedAt = DateTime.fromMillisecondsSinceEpoch(
             (d['lastDashboardVerifiedAt'] as num).toInt(),
@@ -862,6 +865,8 @@ class SchoolSession {
     );
   }
 
+  CloudflareLane? _cloudflareLane;
+
   Future<Map<String, dynamic>> schoolCall(
     String action,
     Map<String, dynamic> body,
@@ -883,7 +888,23 @@ class SchoolSession {
 
     if (current.managed) {
       final requestTimeout = managedSchoolRequestTimeout(action);
-      final r = await _client
+      http.Response? edgeResponse;
+      final lane = _cloudflareLane;
+      if (lane != null && lane.validFor(current.schoolId, schoolToken) &&
+          {'mobile_mark_attendance', 'mobile_attendance_status', 'mobile_notice'}.contains(action)) {
+        edgeResponse = await lane.send(_client, action, {
+          ...body, 'role': current.role, 'personId': current.personId,
+          'linkToken': current.linkToken, 'sessionToken': schoolToken, 'deviceId': deviceId,
+        });
+        unchanged();
+        // Expired edge grants renew through the original authenticated broker.
+        // A transport failure remains durable retry work, not a fresh submission.
+        if (edgeResponse.statusCode == 409 &&
+            _decodeSchoolResponse(edgeResponse.body)['message'] == 'Refresh attendance approval') {
+          _cloudflareLane = null; edgeResponse = null;
+        }
+      }
+      final r = edgeResponse ?? await _client
           .post(
             Uri.parse(current.endpoint),
             headers: {'Content-Type': 'application/json'},
@@ -951,6 +972,9 @@ class SchoolSession {
           d['projectId'] != current.schoolId) {
         await clear();
         throw SchoolAccessDenied('School identity mismatch');
+      }
+      if (d['cloudflareLane'] is Map) {
+        _cloudflareLane = CloudflareLane.parse(Map<String, dynamic>.from(d['cloudflareLane'] as Map), current.schoolId, schoolToken);
       }
       if (action != 'mobile_login') {
         await _adoptCardAuthorization(Map<String, dynamic>.from(d));
@@ -1129,6 +1153,7 @@ class SchoolSession {
     final value = jsonEncode({
       'qr': link!.rawQr,
       'schoolToken': schoolToken,
+      if (_cloudflareLane != null) 'cloudflareLane': _cloudflareLane!.toJson(),
       'messaging': messaging,
       'person': person,
       'schoolName': schoolName,
@@ -1314,6 +1339,22 @@ class SchoolSession {
     await _adoptSharedSnapshot();
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
+    final lane = _cloudflareLane, currentLink = link;
+    if (lane != null && currentLink != null && lane.validFor(currentLink.schoolId, schoolToken)) {
+      try {
+        final reply = await lane.send(_client, 'mobile_notice_list', {
+          'role': currentLink.role, 'personId': currentLink.personId,
+          'linkToken': currentLink.linkToken, 'sessionToken': schoolToken,
+        });
+        final data = _decodeSchoolResponse(reply.body);
+        if (generation == _generation && reply.statusCode == 200 && data['success'] == true &&
+            data['schoolId'] == currentLink.schoolId && data['notices'] is List) {
+          dashboard = {...dashboard, 'notices': data['notices']};
+          connectionChanges.value++;
+          await _persist();
+        }
+      } catch (_) { /* Keep verified cached notices during an edge outage. */ }
+    }
     // Legacy responses can leave list metadata (notably noticeIds: []) in
     // the retained cache. Empty lists vacuously pass the row checks below,
     // but are not Script data groups and must never become checkpoints.
@@ -1669,6 +1710,7 @@ class SchoolSession {
     _dashboardQuotaRetryAt = 0;_dashboardQuotaAttempts = 0;
     syncPaused = false;
     _cachedAttendancePermit = null;
+    _cloudflareLane = null;
     _attendanceStatusDay = '';
     _capturedToday = false;
     _exitedToday = false;
