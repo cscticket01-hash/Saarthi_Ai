@@ -442,6 +442,11 @@ function createManagedSchools({changeFeedIdleGraceMillis=0,deviceAccessEnforced=
  // directory admission is background metadata, never a new school-data gate.
  if(action==='managed/session'&&deviceEnrollmentEnabled&&!deviceManagementEnabled&&!deviceAccessEnforced)
   scheduleHint(()=>deviceAccess.observeSession(req,b,m,lease(m)).catch(()=>{}));
+ if(action==='managed/theme/unlock'){
+  if(!lease(m).allowed)fail(403,'School licence is inactive');
+  const devices=await deviceAccess.themeDevices(req,m);
+  return {success:true,schoolId:m.schoolId,activation:'app-lock-unlock-v2',windowsTheme:await windowsTheme.unlock(m.schoolId,devices.deviceId,devices.devices)};
+ }
  if(action==='managed/theme/state'){
   if(!lease(m).allowed)fail(403,'School licence is inactive');
   const devices=await deviceAccess.themeDevices(req,m);

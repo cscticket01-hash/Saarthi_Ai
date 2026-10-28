@@ -591,7 +591,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Saved theme applies after App Lock password unlock. All registered school PCs must reach App Lock first.',
+                  'Each Windows PC applies the saved theme after its own App Lock password unlock (v2.1.187+).',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 11),
                 ),

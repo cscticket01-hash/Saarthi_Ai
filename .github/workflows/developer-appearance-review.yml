@@ -63,6 +63,8 @@ jobs:
           PYTHON
       - name: Verify compact layout, explicit Save and screenshot arrows
         run: flutter test test/developer_windows_theme_test.dart test/windows_theme_presets_test.dart test/windows_startup_test.dart
+      - name: Verify authenticated per-PC theme unlock
+        run: node --test functions/test/windows-theme.test.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:
