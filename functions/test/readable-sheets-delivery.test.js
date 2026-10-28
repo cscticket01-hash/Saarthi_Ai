@@ -35,3 +35,24 @@ test('signed deletes clear the entire visible row and repair old ID-only project
   assert.deepEqual(after,before);
  }
 });
+
+test('teacher readable view omits card numbers but preserves canonical identity and personal details',()=>{
+ for(const bundle of [false,true]){
+  const s=storage({bundle});
+  ok(write(s,'teachers_directory','t1',{teacherId:'INTERNAL-1',name:'Teacher',fatherName:'Father',dateOfBirth:'02/03/1988',subject:'Maths',address:'Silchar'}));
+  const d=display(s,'teachers_directory');
+  assert.equal(d.teacherId,undefined);assert.equal(d.fatherName,'Father');assert.equal(d.dateOfBirth,'02/03/1988');assert.equal(d.subject,'Maths');assert.equal(d.address,'Silchar');
+  assert.equal(s.call({action:'managed_records',operation:'read',collection:'teachers_directory'}).records.t1.teacherId,'INTERNAL-1');
+  // Simulate the generated visible column from the previous bundle.
+  const tab=s.context.VS_managedSheet('teachers_directory').sheet;
+  const key=[...s.props.keys()].find(k=>k.startsWith('VS_RECORD_VIEW_FIELDS_')&&k.endsWith(':teachers_directory'));
+  const fields=JSON.parse(s.props.get(key)),column=35+fields.length;fields.push('teacherId');s.props.set(key,JSON.stringify(fields));
+  if(tab.getMaxColumns()<column)tab.insertColumnsAfter(tab.getMaxColumns(),column-tab.getMaxColumns());
+  tab.getRange(1,column,2,1).setValues([['teacherId'],['INTERNAL-1']]);
+  const before=s.call({action:'managed_records',operation:'read',collection:'teachers_directory'}).records.t1;
+  assert.deepEqual(tab.getRange(1,column,2,1).getValues(),[[''],['']]);
+  const after=s.call({action:'managed_records',operation:'read',collection:'teachers_directory'}).records.t1;
+  assert.deepEqual(after,before);assert.equal(after.teacherId,'INTERNAL-1');
+  assert.equal(display(s,'teachers_directory').fatherName,'Father');
+ }
+});
