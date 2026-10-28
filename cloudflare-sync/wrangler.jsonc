@@ -1,0 +1,11 @@
+{
+ "$schema":"node_modules/wrangler/config-schema.json",
+ "name":"vidya-saarthi-sync",
+ "main":"src/worker.ts",
+ "compatibility_date":"2026-10-28",
+ "compatibility_flags":["nodejs_compat"],
+ "durable_objects":{"bindings":[{"name":"LANES","class_name":"SyncLane"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["SyncLane"]}],
+ "vars":{"BROKER_URL":"https://saarthi-oauth-staging.onrender.com/school-cloud"},
+ "observability":{"enabled":true,"head_sampling_rate":0.01}
+}

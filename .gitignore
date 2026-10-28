@@ -1,1 +1,6 @@
-(empty)
+cloudflare-sync/node_modules/
+cloudflare-sync/.wrangler/
+cloudflare-sync/.dev.vars
+cloudflare-sync/dist/
+cloudflare-sync/worker-configuration.d.ts
+cloudflare-sync/build/

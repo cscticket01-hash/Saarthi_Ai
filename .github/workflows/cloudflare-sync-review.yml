@@ -1,0 +1,43 @@
+name: Cloudflare notice and attendance review
+on:
+  pull_request:
+    paths:
+      - 'cloudflare-sync/**'
+      - 'functions/cloudflare-sync.js'
+      - 'functions/managed-schools.js'
+      - 'lib/mobile/cloudflare_lane.dart'
+      - 'lib/mobile/school_session.dart'
+      - 'lib/windows_settings_panel.dart'
+      - '.github/workflows/cloudflare-sync-review.yml'
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-sync-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+        working-directory: cloudflare-sync
+      - run: cp .dev.vars.example .dev.vars && npm run types && npm run check && npm run build && npm test
+        working-directory: cloudflare-sync
+      - run: npm ci --ignore-scripts && npm test
+        working-directory: functions
+  apps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart
+      - run: flutter test test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart

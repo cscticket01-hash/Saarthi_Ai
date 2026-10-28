@@ -1008,6 +1008,7 @@ class WindowsSyncStatusCard extends StatelessWidget {
                 children:[TextSpan(text:'$pending',style:TextStyle(fontFamily: 'Segoe UI', 
                   color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
               )); }),
+            const CloudflareTransferStatus(),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
               child:Text(engine.lastError!,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.orangeAccent),fontSize:14))),
           ]),
@@ -1016,5 +1017,47 @@ class WindowsSyncStatusCard extends StatelessWidget {
             icon: const Icon(Icons.grid_view_rounded,size:19), label: 'Open Sync & Backup Control Center'),
         );
       }); });
+  }
+}
+
+
+/// Cloudflare acceptance and final Google Drive delivery are separate receipts.
+class CloudflareTransferStatus extends StatefulWidget {
+  const CloudflareTransferStatus({super.key});
+  @override State<CloudflareTransferStatus> createState() => _CloudflareTransferStatusState();
+}
+class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
+  Timer? _timer;
+  Map<String, dynamic>? _status;
+  String? _profile;
+  bool _busy = false;
+  @override void initState() { super.initState(); if (ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
+  @override void dispose() { _timer?.cancel(); super.dispose(); }
+  Future<void> _refresh() async {
+    if (_busy) return;
+    _busy = true;
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    try {
+      final status = await ManagedSchoolSession.call('managed/cloudflare/status', {});
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
+      if (status['enabled'] != true) _timer?.cancel();
+      setState(() { _status = status; _profile = origin; });
+    } catch (_) { if (mounted && _status?['enabled'] == true) setState(() => _status = {..._status!, 'unavailable': true}); }
+    finally { _busy = false; }
+  }
+  @override Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
+    final status = _status;
+    if (status == null || status['enabled'] != true || _profile != FirebaseFirestore.instance.activeProfileId) return const SizedBox.shrink();
+    final notices = Map<String, dynamic>.from(status['notices'] as Map? ?? {});
+    final delivery = Map<String, dynamic>.from(status['delivery'] as Map? ?? {});
+    final pending = (notices['pending'] as num? ?? 0) > 0 || (delivery['pendingPartitions'] as num? ?? 0) > 0;
+    final attention = (notices['needsAttention'] as num? ?? 0).toInt();
+    final message = status['unavailable'] == true ? 'Cloudflare transfer status unavailable; saved work retained.'
+      : attention > 0 ? 'Cloudflare saved · $attention notice transfers need school review.'
+      : pending ? 'Cloudflare saved · Google Drive transfer pending.'
+      : 'Cloudflare saved · Google Drive transfers complete.';
+    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(message,
+      style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14, color: WindowsAppearance.foreground(pending || attention > 0 ? Colors.orangeAccent : const Color(0xFF43DBAA)))));
   }
 }
