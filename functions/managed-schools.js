@@ -37,7 +37,7 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
  }
  const readCard=(schoolId,request)=>cardReader.authorizeOnline({schoolId,deviceId:request.deviceId,sessionToken:request.sessionToken,cardAuthorizationToken:request.cardAuthorizationToken,role:request.role,personId:request.personId,linkToken:request.linkToken,cardIssueId:request.cardIssueId});
  if(!['attendance_outbox','attendance_test_outbox'].includes(attendanceCollection))throw Error('Invalid attendance collection');
- const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map();
+ const mobileStates=new Map(),storageStates=new Map(),developerViews=new Map(),readViews=new Map(),uploadCapabilities=new Map();
  let readBytes=0,viewHits=0,viewMisses=0;
  function evictRead(key){const entry=readViews.get(key);if(entry){readBytes-=entry.bytes;readViews.delete(key);}}
  function invalidate(id){mobileStates.delete(id);storageStates.delete(id);developerViews.delete(id);for(const [key,entry]of readViews)if(entry.schoolId===id)evictRead(key);}
@@ -241,8 +241,13 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1){
    if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return edgeDelivery.record(m.schoolId,body);
    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body);
-   if(body.action==='managed_upload_resumable')return edgeDelivery.file(m.schoolId,body);
-   if(body.action==='managed_upload')return edgeDelivery.wholeFile(m.schoolId,body);
+   if(['managed_upload_resumable','managed_upload'].includes(body.action)){
+    const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
+    // Older protocol-2 Scripts can still support only verified full uploads.
+    // Do not accept bytes into a delivery lane they cannot drain.
+    if(capability.storageReady===true&&capability.uploadResumableVersion===1)
+     return body.action==='managed_upload_resumable'?edgeDelivery.file(m.schoolId,body):edgeDelivery.wholeFile(m.schoolId,body);
+   }
   }
 
   if(edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.operation!=='read'&&(body.syncProtocol!==2||!['write','delete'].includes(body.operation)))fail(409,'Cloudflare notice writes require versioned sync','SYNC_PROTOCOL_REQUIRED');
@@ -252,6 +257,10 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
   }
   const ticket=await deliveryBudget(syncDelivery.prepare(m.schoolId,body));
   try{const result=await signedRequest(m,body);
+   if(body.action==='managed_health'){
+    if(uploadCapabilities.size>=5000)uploadCapabilities.delete(uploadCapabilities.keys().next().value);
+    uploadCapabilities.set(m.schoolId,{promise:Promise.resolve(result),until:now()+30000});
+   }
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
@@ -572,7 +581,7 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
   return {success:true,schoolId:m.schoolId,registrationState,profile:recovered,storageReady:storage.exists&&storage.data().ready===true};
  }
  if(action==='managed/storage/connect'){
- invalidate(m.schoolId);
+ uploadCapabilities.delete(m.schoolId);invalidate(m.schoolId);
   const url=scriptUrl(b.scriptUrl),ref=db.doc('school_storage_private/'+m.schoolId),old=await ref.get();
   if(old.exists&&old.data().ready===true){
    if(old.data().url!==url){if(b.replace!==true||b.expectedScriptUrl!==old.data().url)fail(409,'Existing storage retained. Confirm the current school Drive connection before replacement');}
