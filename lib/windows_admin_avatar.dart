@@ -1,4 +1,6 @@
 import 'windows_appearance.dart';
+import 'windows_google_profile.dart';
+import 'windows_connect/google_authorization.dart';
 import 'windows_profile_image_policy.dart';
 
 import 'dart:typed_data';
@@ -28,21 +30,92 @@ class WindowsAdminAvatar extends StatefulWidget {
 
 class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
   Uint8List? bytes;
+  bool _connecting = false;
+  int _generation = 0;
+  GoogleAuthorization? _authorization;
+
+  @override
+  void dispose() {
+    _generation++;
+    _authorization?.close();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    if (_connecting) return;
+    setState(() => _connecting = true);
+    _generation++;
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    try {
+      final saved = await CentralSchoolCloud.saved();
+      final uid = saved['uid']?.toString() ?? '';
+      final school = saved['schoolId']?.toString() ?? '';
+      final email = saved['email']?.toString() ?? '';
+      _authorization = GoogleAuthorization();
+      final account = await _authorization!.authorize(
+        script: false,
+        profileOnly: true,
+      );
+      await WindowsGoogleProfileStore().save(
+        account,
+        uid: uid,
+        school: school,
+        email: email,
+        isCurrent: () async {
+          final current = await CentralSchoolCloud.saved();
+          return mounted &&
+              FirebaseFirestore.instance.activeProfileId == profile &&
+              current['uid'] == uid &&
+              current['schoolId'] == school &&
+              current['email'] == saved['email'];
+        },
+      );
+      if (mounted && FirebaseFirestore.instance.activeProfileId == profile)
+        await _load();
+    } on SetupCancelled {
+      // Keep the existing original on cancellation.
+    } catch (error) {
+      if (mounted && FirebaseFirestore.instance.activeProfileId == profile) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text(
+              error is StateError
+                  ? error.message.toString()
+                  : 'Gmail photo could not connect. Please retry.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      _authorization?.close();
+      _authorization = null;
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _load();
+    _load().catchError((Object _) {});
   }
 
   Future<void> _load() async {
+    final generation = ++_generation;
     final profile = FirebaseFirestore.instance.activeProfileId;
     final saved = await CentralSchoolCloud.saved();
     final school = saved['schoolId']?.toString() ?? '',
         uid = saved['uid']?.toString() ?? '';
     var source = saved['photoUrl']?.toString() ?? '';
     if (uid.isEmpty) return;
+    final connectedPhoto = await WindowsGoogleProfileStore().photo(
+      uid: uid,
+      school: school,
+      email: saved['email']?.toString() ?? '',
+    );
+    if (connectedPhoto.isNotEmpty) source = connectedPhoto;
     bool own() =>
         mounted &&
+        generation == _generation &&
         FirebaseFirestore.instance.activeProfileId == profile &&
         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] ==
             school;
@@ -64,26 +137,30 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
       }
     }
     // Refresh only metadata from the authenticated Firebase account itself.
-    try {
-      final token = await CentralSchoolCloud.firebaseToken();
-      final response = await http
-          .post(
-            Uri.https('identitytoolkit.googleapis.com', '/v1/accounts:lookup', {
-              'key': platformApiKey,
-            }),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'idToken': token}),
-          )
-          .timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200) {
-        final users =
-            (jsonDecode(response.body) as Map)['users'] as List? ?? [];
-        if (users.length == 1 && users.first['localId'] == uid) {
-          final photo = verifiedGoogleAccountPhoto(users.first as Map);
-          if (photo.isNotEmpty) source = photo;
+    if (connectedPhoto.isEmpty) {
+      try {
+        final token = await CentralSchoolCloud.firebaseToken();
+        final response = await http
+            .post(
+              Uri.https(
+                'identitytoolkit.googleapis.com',
+                '/v1/accounts:lookup',
+                {'key': platformApiKey},
+              ),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'idToken': token}),
+            )
+            .timeout(const Duration(seconds: 5));
+        if (response.statusCode == 200) {
+          final users =
+              (jsonDecode(response.body) as Map)['users'] as List? ?? [];
+          if (users.length == 1 && users.first['localId'] == uid) {
+            final photo = verifiedGoogleAccountPhoto(users.first as Map);
+            if (photo.isNotEmpty) source = photo;
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
     if (!googleProfileImageUrl(source) || !own()) return;
     source = originalGoogleProfileImageUrl(source);
     final key = 'admin-profile-$uid-${sha256.convert(utf8.encode(source))}';
@@ -118,32 +195,70 @@ class _WindowsAdminAvatarState extends State<WindowsAdminAvatar> {
   @override
   Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    return OriginalGoogleProfilePhoto(bytes: bytes);
+    return OriginalGoogleProfilePhoto(
+      bytes: bytes,
+      onConnect: _connect,
+      connecting: _connecting,
+    );
   }
 }
 
 /// Render downloaded bytes directly, including animated image codecs.
 class OriginalGoogleProfilePhoto extends StatelessWidget {
-  const OriginalGoogleProfilePhoto({super.key, required this.bytes});
+  const OriginalGoogleProfilePhoto({
+    super.key,
+    required this.bytes,
+    this.onConnect,
+    this.connecting = false,
+  });
+  final VoidCallback? onConnect;
+  final bool connecting;
   final Uint8List? bytes;
   @override
   Widget build(BuildContext context) {
-    const empty = SizedBox(width: 68, height: 68);
+    final empty = SizedBox(
+      width: 68,
+      height: 68,
+      child: connecting
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : TextButton(
+              onPressed: onConnect,
+              style: TextButton.styleFrom(padding: EdgeInsets.zero),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_a_photo_outlined, size: 20),
+                  Text(
+                    'Connect\nGmail photo',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 10),
+                  ),
+                ],
+              ),
+            ),
+    );
     return Semantics(
       image: true,
       label: 'Google account profile photo',
-      child: bytes == null
-          ? empty
-          : ClipOval(
-              child: Image.memory(
-                bytes!,
-                width: 68,
-                height: 68,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => empty,
-              ),
-            ),
+      child: Tooltip(
+        message: 'Connect the original Gmail profile photo',
+        child: InkWell(
+          onTap: connecting ? null : onConnect,
+          customBorder: const CircleBorder(),
+          child: bytes == null
+              ? empty
+              : ClipOval(
+                  child: Image.memory(
+                    bytes!,
+                    width: 68,
+                    height: 68,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => empty,
+                  ),
+                ),
+        ),
+      ),
     );
   }
 }
