@@ -155,14 +155,14 @@ void main() {
         expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
         final boundary =
             key.currentContext!.findRenderObject() as RenderRepaintBoundary;
-        final shot = await boundary.toImage();
-        final png = await shot.toByteData(format: ui.ImageByteFormat.png);
         await tester.runAsync(() async {
+          final shot = await boundary.toImage();
+          final png = await shot.toByteData(format: ui.ImageByteFormat.png);
           final file = File('build/google-profile-review/${preset.id}.png');
           await file.parent.create(recursive: true);
           await file.writeAsBytes(png!.buffer.asUint8List());
+          shot.dispose();
         });
-        shot.dispose();
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
       }
