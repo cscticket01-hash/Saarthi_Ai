@@ -205,3 +205,55 @@ test('a failed parallel store write cannot release the drain guard while another
  assert.equal([...s.rows.values()].find(r=>r.schoolId===B).state,'completed');
  assert.equal([...s.rows.values()].find(r=>r.schoolId===A&&r.state==='processing').state,'processing');
 });
+
+test('quota delivery preserves durable original operation and provider deadline',async()=>{
+ const storage=store();let at=1000,calls=0;
+ const q=createAttendanceQueue({store:storage,now:()=>at,random:()=>0,deliver:async()=>{
+   calls++;throw Object.assign(Error('quota'),{status:429,retryAfterMs:120000});
+ }});
+ await q.enqueue(event());const before=[...storage.rows.keys()];await q.drain();
+ const row=storage.rows.get(before[0]);assert.equal(row.state,'retry');assert.equal(row.nextAttemptAt,121000);
+ assert.deepEqual([...storage.rows.keys()],before);assert.equal(row.completedAt,undefined);
+ await q.drain();assert.equal(calls,1);
+});
+
+test('quota stops remaining school claims while another school continues and deadline survives next drain',async()=>{
+ const s=store();let at=1000;const calls=[],claimed=[];const originalClaim=s.claim;
+ s.claim=async(id,...rest)=>{claimed.push(s.rows.get(id).schoolId);return originalClaim(id,...rest);};
+ const q=createAttendanceQueue({store:s,now:()=>at,random:()=>0,batchSize:100,deliver:async(school,items)=>{
+  calls.push(school);if(school===A)throw Object.assign(Error('quota'),{status:429,retryAfterMs:120000});
+  return items.map(i=>({operationId:i.operationId,success:true}));
+ }});
+ for(let n=0;n<75;n++)await q.enqueue(event(A,'a'+n));
+ for(let n=0;n<25;n++)await q.enqueue(event(B,'b'+n));
+ await q.drain();assert.deepEqual(calls,[A,B]);assert.equal(claimed.filter(x=>x===A).length,25);
+ assert.equal([...s.rows.values()].filter(x=>x.schoolId===A&&x.state==='pending').length,50);
+ assert.equal([...s.rows.values()].filter(x=>x.schoolId===B&&x.state==='completed').length,25);
+ const before=claimed.length;const result=await q.drain();assert.equal(claimed.length,before);assert.equal(result.nextRetryAt,121000);
+ at=121000;await q.drain();assert.equal(calls.filter(x=>x===A).length,2);
+});
+test('single worker alternates school batches without reordering either school',async()=>{
+ const s=store(),turns=[],seen={[A]:[],[B]:[]};
+ const q=createAttendanceQueue({store:s,now:()=>1000,batchSize:100,maxConcurrency:1,deliver:async(school,items)=>{
+  turns.push(school);seen[school].push(...items.map(x=>x.operationId));return items.map(x=>({operationId:x.operationId,success:true}));
+ }});
+ const expected={[A]:[],[B]:[]};
+ for(const school of [A,B])for(let n=0;n<50;n++)expected[school].push((await q.enqueue(event(school,'p'+n))).operationId);
+ await q.drain();assert.deepEqual(turns,[A,B,A,B]);assert.deepEqual(seen,expected);assert.equal(q.metrics.completed,100);
+});
+
+test('worker wake cannot bypass a shared provider quota deadline',async()=>{
+ let at=1000,scheduled,delay,drains=0;
+ const worker=createAttendanceWorker({now:()=>at,drain:async()=>{drains++;throw Object.assign(Error('Firebase quota'),{status:429,retryAfterMs:120000});},
+  setTimer:(fn,ms)=>{scheduled=fn;delay=ms;return {unref(){}};},clearTimer:()=>{}});
+ await scheduled();assert.equal(drains,1);assert.equal(delay,120000);
+ at+=1000;worker.wake();assert.equal(delay,119000);assert.equal(drains,1);worker.stop();
+});
+
+test('known shared owner cooldown stops claims even in a newly constructed queue',async()=>{
+ const s=store();let claims=0,deliveries=0;const original=s.claim;
+ s.claim=async(...args)=>{claims++;return original(...args);};
+ const q=createAttendanceQueue({store:s,now:()=>1000,retryAtForSchool:()=>121000,deliver:async()=>{deliveries++;return [];}});
+ await q.enqueue(event());const result=await q.drain();assert.equal(claims,0);assert.equal(deliveries,0);
+ assert.equal(result.nextRetryAt,121000);assert.equal([...s.rows.values()][0].state,'pending');
+});

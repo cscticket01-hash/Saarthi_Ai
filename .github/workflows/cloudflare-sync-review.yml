@@ -4,6 +4,23 @@ on:
     paths:
       - 'cloudflare-sync/**'
       - 'functions/cloudflare-sync.js'
+      - 'functions/provider-pressure.js'
+      - 'functions/provider-pressure-journal.js'
+      - 'functions/test/provider-pressure-journal.test.js'
+      - 'lib/cloud_transfer_status.dart'
+      - 'lib/sync_pending_diagnostics.dart'
+      - 'lib/windows_firebase_sync.dart'
+      - '.github/tests/sync3_diagnostics_adaptive.dart'
+      - '.github/tests/sync3_pressure_policy.dart'
+      - 'functions/attendance-queue.js'
+      - 'functions/test/provider-pressure.test.js'
+      - 'lib/sync_recovery_policy.dart'
+      - 'lib/school_backend_transport.dart'
+      - 'lib/windows_sync_engine.dart'
+      - 'lib/windows_sync_recovery.dart'
+      - 'lib/windows_sync_control_center.dart'
+      - 'lib/windows_connect/central_school_cloud.dart'
+      - 'staging-school-cloud/server.cjs'
       - 'functions/managed-schools.js'
       - 'lib/mobile/cloudflare_lane.dart'
       - 'lib/mobile/school_session.dart'
@@ -38,6 +55,8 @@ jobs:
         with:
           channel: stable
           cache: true
+      - run: dart --disable-dart-dev .github/tests/sync3_pressure_policy.dart
+      - run: dart --disable-dart-dev .github/tests/sync3_diagnostics_adaptive.dart
       - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart
-      - run: flutter test test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart
+      - run: flutter test test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart test/sync_recovery_policy_test.dart test/windows_sync_control_cleanup_test.dart

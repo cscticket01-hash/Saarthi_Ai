@@ -486,17 +486,21 @@ class WindowsFirebaseRemote {
     final ready = <Map<String, dynamic>>[], operations = <Map<String, dynamic>>[];
     Future<void> recordHealth(int micros, int successful, bool complete, {String? category}) async {
       requireBatchScope();
-      await healthRef.set({
+      final next = managedBatchWindow(current: limit, requestMicros: micros, complete: complete);
+      try { await healthRef.set({
         'schoolId': school,
         'measurementScope': 'broker_request_only',
         'requestMicros': micros,
         'submitted': operations.length,
         'successfulReceipts': successful,
         'complete': complete,
-        'nextLimit': managedBatchWindow(current: limit, requestMicros: micros, complete: complete),
+        'nextLimit': next,
+        'previousLimit': limit,
+        'adjustmentReason': !complete ? 'reduce_error'
+            : next < limit ? 'reduce_slow' : next > limit ? 'grow_fast' : 'hold',
         'observedAt': DateTime.now().millisecondsSinceEpoch,
         if (category != null) 'failureCategory': category,
-      });
+      }); } catch (_) { /* Tuning metadata is never a business ACK requirement. */ }
       requireBatchScope();
     }
     for (final row in rows) {
@@ -557,6 +561,7 @@ class WindowsFirebaseRemote {
     requestWatch.stop();
     if (db.activeProfileId != profile)
       throw StateError('School changed during batch.');
+    try {
     if (reply['schoolId'] != school ||
         reply['syncProtocol'] != 2 ||
         reply['recordWriteBatchVersion'] != 1 ||
@@ -610,6 +615,11 @@ class WindowsFirebaseRemote {
     await recordHealth(requestWatch.elapsedMicroseconds, successful,
         results.length == operations.length && successful == operations.length);
     return results;
+    } catch (error) {
+      await recordHealth(requestWatch.elapsedMicroseconds, 0, false,
+          category: windowsSyncRecovery(error).kind.name);
+      rethrow;
+    }
   }
 
   static bool recordFieldPatchSupported = false;

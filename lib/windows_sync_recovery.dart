@@ -154,12 +154,14 @@ SyncRecoveryDecision windowsSyncRecovery(Object error) {
     return SyncRecoveryDecision.classify(
       status: error.status,
       code: error.diagnosticCode,
+      retryAfterMs: error.retryAfterMs,
       recordConflict: error.recordConflict,
     );
   if (error is SchoolApiFailure)
     return SyncRecoveryDecision.classify(
       status: error.status,
       code: error.code,
+      retryAfterMs: error.retryAfterMs,
     );
   if (error is CentralRequestTimeout) {
     return SyncRecoveryDecision(SyncFailureKind.timeout, retry: true,

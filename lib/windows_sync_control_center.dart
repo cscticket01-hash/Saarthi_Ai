@@ -1,3 +1,5 @@
+import 'sync_pending_diagnostics.dart';
+import 'cloud_transfer_status.dart';
 import 'windows_appearance.dart';
 import 'sync_recovery_policy.dart' as failure_policy;
 
@@ -420,7 +422,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     unawaited(_measureDisk());
     pauseDisplayTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted &&
-          (engine.isPaused ||
+          (engine.isPaused || engine.nextRetryAt != null ||
+              (engine.details.value['pending'] as num? ?? 0) > 0 ||
               (engine.details.value['activity'] as List? ?? const []).any(
                 (row) => row is Map && row['retryAt'] is int,
               )))
@@ -783,6 +786,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
               ),
             ),
+            metric('Adaptive Sync', adaptiveSyncCard(details['batchTransport'] is Map
+                ? details['batchTransport'] as Map : null)),
             if (other['pending'] is num && other['pending'] > 0)
               metric('Restore & legacy work',
                 "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
@@ -1317,6 +1322,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orange)),
                         ),
                       if (ownSchool) ...[
+                        const CloudflareTransferStatus(),
                         _navigation(active),
                         const SizedBox(height: 12),
                         if (showHistory) ...[
@@ -1418,7 +1424,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                         '${item['collection'] ?? item['_queueCollection'] ?? 'documents'} • ${item['documentId'] ?? item['id']}',
                                       ),
                                       subtitle: Text(
-                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['failureCode'] == null ? '' : '\nCode: ${item['failureCode']}'}${item['retryAtMillis'] is num ? '\nNext retry: ${stamp(item['retryAtMillis'])}' : ''}\nNext step: ${decision['action']}\n${decision['reason']}',
+                                        'Status: ${item['syncState'] ?? item['state'] ?? 'pending'} • Attempts: ${item['retryCount'] ?? 0} • ${item['failureCategory'] ?? 'No classified failure'}${item['lastError'] == null ? '' : '\n${syncFailureReason(item)}'}${item['failureCode'] == null ? '' : '\nCode: ${item['failureCode']}'}\n${pendingSyncDiagnostic(item, now: DateTime.now(), providerRetry: engine.providerQuotaRetryAt, pausedUntil: engine.pausedUntil, automatic: engine.automaticSyncEnabled, syncing: engine.isSyncing)}\nNext step: ${decision['action']}\n${decision['reason']}',
                                       ),
                                       trailing:
                                           (item['syncState'] ??
@@ -1860,4 +1866,40 @@ String syncFailureReason(Map item) {
   return failure_policy.SyncRecoveryDecision(
     kind.isEmpty ? failure_policy.SyncFailureKind.unknown : kind.first,
   ).message;
+}
+
+/// Cloudflare acceptance and final Google Drive delivery are separate receipts.
+class CloudflareTransferStatus extends StatefulWidget {
+  const CloudflareTransferStatus({super.key});
+  @override State<CloudflareTransferStatus> createState() => _CloudflareTransferStatusState();
+}
+class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
+  Timer? _timer;
+  Map<String, dynamic>? _status;
+  String? _profile;
+  bool _busy = false;
+  @override void initState() { super.initState(); if (ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
+  @override void dispose() { _timer?.cancel(); super.dispose(); }
+  Future<void> _refresh() async {
+    if (_busy) return;
+    _busy = true;
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    try {
+      final status = await WindowsSyncEngine.instance.refreshTransferStatus();
+      if (status == null) return;
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
+      if (status['enabled'] == false && status['unavailable'] != true) _timer?.cancel();
+      setState(() { _status = status; _profile = origin; });
+    } catch (_) { if (mounted && _status?['enabled'] == true) setState(() => _status = {..._status!, 'unavailable': true}); }
+    finally { _busy = false; }
+  }
+  @override Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
+    if (_profile != FirebaseFirestore.instance.activeProfileId) return const SizedBox.shrink();
+    final message = cloudTransferMessage(_status);
+    if (message == null) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(message,
+      style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
+        color: WindowsAppearance.foreground(Colors.orangeAccent))));
+  }
 }

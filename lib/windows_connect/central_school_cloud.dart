@@ -444,6 +444,8 @@ class CentralSchoolCloud {
         stage,
         '$endpointLabel failed (HTTP ${response.statusCode}).$detail $help$ref',
         diagnosticCode: diagnosticCode,
+        retryAfterMs: body is Map && body['retryAfterMs'] is num
+            ? (body['retryAfterMs'] as num).toInt().clamp(0, 86400000).toInt() : 0,
         invalidRefresh:
             stage == 'firebase_refresh' &&
             response.statusCode == 400 &&
@@ -927,8 +929,10 @@ class CentralCloudException extends StateError {
     String message, {
     this.invalidRefresh = false,
     this.diagnosticCode = '',
+    this.retryAfterMs = 0,
   }) : super(message);
   final int status;
+  final int retryAfterMs;
   final String stage;
   final bool invalidRefresh;
   final String diagnosticCode;

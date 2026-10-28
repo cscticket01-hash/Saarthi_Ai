@@ -18,10 +18,11 @@ void requireSchoolProjectId(String project) {
 
 /// Safe, typed transport evidence. Never includes raw server response text.
 class SchoolApiFailure implements Exception {
-  SchoolApiFailure(this.status, {String code = '', String requestId = ''})
+  SchoolApiFailure(this.status, {String code = '', String requestId = '', this.retryAfterMs = 0})
       : code = RegExp(r'^[A-Z_]{1,80}$').hasMatch(code) ? code : '',
         requestId = RegExp(r'^[a-f0-9-]{36}$').hasMatch(requestId) ? requestId : '';
   final int status;
+  final int retryAfterMs;
   final String code, requestId;
   bool get retryable => {429, 502, 503, 504}.contains(status) &&
       !{'SCRIPT_TYPE_ERROR', 'SCRIPT_PARSE_ERROR', 'SCRIPT_DOCUMENT_REVISION_REQUIRED',

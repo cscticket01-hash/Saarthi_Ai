@@ -433,6 +433,27 @@ void main() {
     });
   }
 
+  test('invalid batch receipt contracts pressure while preserving original queued operations', () async {
+    WindowsFirebaseRemote.recordWriteBatchSupported = true;
+    for (var i = 0; i < 4; i++) {
+      await db.collection('school_notices').doc('invalid-batch-$i').set({'title': 'Synthetic $i'});
+    }
+    final before = (await db.collection('_windows_firebase_outbox').get()).docs
+        .map((r) => r.data()['operationId']).toSet();
+    await expectLater(WindowsFirebaseRemote.prepareManagedBatch(
+      school, canAdmit: () => true,
+      prepareRecord: (ref, item, school) => db.bindOutboxWireData(
+        ref, item, Map<String, dynamic>.from(item['data'] as Map), 'snapshot2'),
+      send: (_, ops) async => {'schoolId': school, 'syncProtocol': 2,
+        'recordWriteBatchVersion': 1, 'acknowledgements': [{'operationId': 'unknown-operation', 'success': true}]},
+    ), throwsA(isA<StateError>()));
+    final health = (await db.collection('_windows_sync_status').doc('managed-batch-window').get()).data()!;
+    expect(health['nextLimit'], 5);
+    expect(health['adjustmentReason'], 'reduce_error');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs
+        .map((r) => r.data()['operationId']).toSet(), before);
+  });
+
   test('adaptive batch pressure survives restart and never clears unconsumed receipts', () async {
     WindowsFirebaseRemote.recordWriteBatchSupported = true;
     for (var i = 0; i < 12; i++) {
