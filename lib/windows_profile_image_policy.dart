@@ -53,3 +53,37 @@ bool adminAvatarCacheBelongsTo(String fileId, String uid) {
   return fileId.startsWith(prefix) &&
       RegExp(r'^[a-f0-9]{64}$').hasMatch(fileId.substring(prefix.length));
 }
+
+/// Prefer the linked Google identity over a Firebase profile thumbnail.
+String verifiedGoogleAccountPhoto(Map account) {
+  final providers = account['providerUserInfo'];
+  if (providers is List) {
+    for (final provider in providers) {
+      if (provider is Map && provider['providerId'] == 'google.com') {
+        final photo = provider['photoUrl']?.toString() ?? '';
+        if (verifiedGoogleProfileImageUrl(photo)) return photo;
+      }
+    }
+  }
+  final photo = account['photoUrl']?.toString() ?? '';
+  return verifiedGoogleProfileImageUrl(photo) ? photo : '';
+}
+
+/// Google's thumbnail suffix can request a cropped/static rendition. Request
+/// the source rendition instead; never encode, recolour or flatten its bytes.
+String originalGoogleProfileImageUrl(String source) {
+  if (!verifiedGoogleProfileImageUrl(source)) return '';
+  final uri = Uri.parse(source);
+  final path = uri.path
+      .replaceFirst(RegExp(r'=[swh]\d+[^/]*$'), '=s0')
+      .replaceFirst(RegExp(r'/s\d+(?:-[^/]+)?/'), '/s0/');
+  final query = Map<String, String>.from(uri.queryParameters)..remove('sz');
+  return Uri(
+    scheme: uri.scheme,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: path,
+    queryParameters: query.isEmpty ? null : query,
+    fragment: uri.hasFragment ? uri.fragment : null,
+  ).toString();
+}

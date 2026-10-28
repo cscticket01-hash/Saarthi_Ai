@@ -122,8 +122,8 @@ class ManagedSchoolSession {
       try {
         final lookup=await cloud.send('POST',Uri.https('identitytoolkit.googleapis.com','/v1/accounts:lookup',{'key':platformApiKey}),body:{'idToken':auth['idToken']});
         final accounts=lookup['users'] as List? ?? [];
-        if(accounts.length==1 && accounts.first['localId']==auth['localId'] && verifiedGoogleProfileImageUrl(accounts.first['photoUrl']?.toString() ?? '')) {
-          googleProfile={'photoUrl':accounts.first['photoUrl']??'','displayName':accounts.first['displayName']??''};
+        if(accounts.length==1 && accounts.first['localId']==auth['localId'] && verifiedGoogleAccountPhoto(accounts.first as Map).isNotEmpty) {
+          googleProfile={'photoUrl':verifiedGoogleAccountPhoto(accounts.first as Map),'displayName':accounts.first['displayName']??''};
         }
       }catch(_){}
       final old=await CentralSchoolCloud.saved();
