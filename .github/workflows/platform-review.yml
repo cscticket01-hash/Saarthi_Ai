@@ -253,7 +253,7 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-appearance-review
         LOCALAPPDATA: ${{ runner.temp }}/windows-appearance-review
-      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144
+      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
     - uses: actions/upload-artifact@v4
       if: always()
       with:
