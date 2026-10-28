@@ -30,6 +30,58 @@ class _StreamClient extends http.BaseClient {
   void close() { closes++; }
 }
 void main() {
+  test('Cloudflare acceptance polls one immutable ticket until real Drive ACK', () async {
+    final calls = <Map<String, dynamic>>[];
+    final id = List.filled(64, 'a').join();
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+      client: MockClient((request) async {
+        calls.add(Map<String, dynamic>.from(jsonDecode(request.body)));
+        return http.Response(jsonEncode(calls.length < 3 ? {
+          'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+          'driveState': 'pending', 'delivery': {'lane': 'records', 'id': id},
+        } : {
+          'success': true, 'schoolId': school, 'driveState': 'verified',
+          'syncProtocol': 2, 'recordRevision': 'drive-verified',
+        }), 200);
+      }));
+    final result = await cloud.api({'action': 'managed/records', 'schoolId': school,
+      'syncProtocol': 2, 'operation': 'write', 'operationId': 'original-operation-id'});
+    expect(result['recordRevision'], 'drive-verified');
+    expect(calls.first['edgeDeliveryVersion'], 1);
+    expect(calls.skip(1).map((c) => c['action']),
+      everyElement('managed/cloudflare/operation'));
+    expect(calls.skip(1).map((c) => c['id']), everyElement(id));
+    expect(calls.where((c) => c.containsKey('operationId')), hasLength(1));
+    cloud.close();
+  });
+  for (final invalid in ['foreign-school', 'changed-ticket', 'unverified-final']) {
+    test('Cloudflare $invalid never clears original local work', () async {
+      var calls = 0;
+      final id = List.filled(64, 'a').join();
+      final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode(calls == 1 || invalid == 'changed-ticket' ? {
+            'success': true,
+            'schoolId': invalid == 'foreign-school' ? 'another-school' : school,
+            'edgeDeliveryVersion': 1, 'driveState': 'pending',
+            'delivery': {'lane': 'records', 'id': calls == 1 ? id : List.filled(64, 'b').join()},
+          } : {'success': true, 'schoolId': school, 'driveState': 'pending'}), 200);
+        }));
+      await expectLater(cloud.api({'action': 'managed/records', 'schoolId': school,
+        'syncProtocol': 2, 'operation': 'write'}), throwsStateError);
+      expect(calls, invalid == 'foreign-school' ? 1 : 2);
+      cloud.close();
+    });
+  }
+  test('upload identity is scoped to school, owner, slot and immutable bytes', () {
+    final key = CentralSchoolCloud.uploadIdentity(school, 'teacher-1', 'photo', 'YWJj');
+    expect(key, CentralSchoolCloud.uploadIdentity(school, 'teacher-1', 'photo', 'data:image/png;base64,YWJj'));
+    expect(key, isNot(CentralSchoolCloud.uploadIdentity(school, 'teacher-2', 'photo', 'YWJj')));
+    expect(key, isNot(CentralSchoolCloud.uploadIdentity('other', 'teacher-1', 'photo', 'YWJj')));
+    expect(key, isNot(CentralSchoolCloud.uploadIdentity(school, 'teacher-1', 'photo', 'YWJk')));
+    expect(() => CentralSchoolCloud.uploadIdentity(school, '', 'photo', 'YWJj'), throwsStateError);
+  });
   test('managed 120-second budget bounds headers and body without replay', () {
     for (final delayedHeaders in [true, false]) {
       fakeAsync((clock) {

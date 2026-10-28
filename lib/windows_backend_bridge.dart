@@ -1743,6 +1743,9 @@ class WindowsBackendBridge {
           data['photoFileName']?.toString() ?? 'School_Photo.jpg',
           data['photoMimeType']?.toString() ?? 'image/jpeg',
           data['photoBase64'],
+          uploadKey: CentralSchoolCloud.uploadIdentity(school,
+            (data['teacherId'] ?? data['studentId'] ?? data['personId'] ?? data['id'] ?? '').toString(),
+            'photo', data['photoBase64'].toString()),
         );
         data.addAll({
           'photoUrl': file['fileUrl'],
@@ -1764,6 +1767,7 @@ class WindowsBackendBridge {
               data['${prefix}FileName']?.toString() ?? '$prefix.png',
               data['${prefix}MimeType']?.toString() ?? 'image/png',
               raw,
+              uploadKey: CentralSchoolCloud.uploadIdentity(school, 'school_profile', prefix, raw),
             );
             profile['${prefix}Url'] = file['fileUrl'];
             profile['${prefix}FileId'] = file['fileId'];
@@ -1928,15 +1932,15 @@ class WindowsBackendBridge {
         return {'success': true, 'expenseId': id};
       }
       if (action == 'save_fee_payment') {
+        final id = data['paymentId']?.toString() ??
+            data['receiptNo']?.toString() ?? 'FEE-${secureSetupToken(12)}';
         final file = await cloud.upload(
-          '${data['receiptNo'] ?? secureSetupToken(12)}.pdf',
+          '${data['receiptNo'] ?? id}.pdf',
           'application/pdf',
           data['pdfBase64']?.toString() ?? '',
+          uploadKey: CentralSchoolCloud.uploadIdentity(school,
+            id, 'fee_receipt', data['pdfBase64']?.toString() ?? ''),
         );
-        final id =
-            data['paymentId']?.toString() ??
-            data['receiptNo']?.toString() ??
-            'FEE-${secureSetupToken(12)}';
         await save('fee_payments', id, {...data, ...file, 'paymentId': id});
         return {'success': true, ...file, 'sheetUrl': ''};
       }
@@ -1951,6 +1955,8 @@ class WindowsBackendBridge {
             'Report-$id.pdf',
             'application/pdf',
             data['pdfBase64'].toString(),
+            uploadKey: CentralSchoolCloud.uploadIdentity(
+              school, id, 'exam_report', data['pdfBase64'].toString()),
           );
           record['reportCardUrl'] = file['fileUrl'];
           record['reportCardFileId'] = file['fileId'];

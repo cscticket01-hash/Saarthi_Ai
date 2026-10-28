@@ -1,3 +1,4 @@
+import {initSpool,spoolCommand,spoolLane} from './spool';
 import {mobileRequest} from './mobile';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
@@ -5,6 +6,7 @@ type Json=Record<string,unknown>;
 type Job={id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
 export class SyncLane extends DurableObject<Env>{
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{
+  initSpool(ctx.storage);
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL)');
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT \'\',claim_until INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,response TEXT,revision TEXT)');
   ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS due_jobs ON jobs(state,due,seq)');
@@ -17,10 +19,11 @@ export class SyncLane extends DurableObject<Env>{
  private setMeta(key:string,value:string){this.ctx.storage.sql.exec('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,value);}
  private job(id:string):Job|undefined{return this.ctx.storage.sql.exec<Job>('SELECT * FROM jobs WHERE id=?',id).toArray()[0];}
  async command(school:string,lane:string,b:Json):Promise<unknown>{
-  demand(schoolPattern.test(school)&&/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane));
+  demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane)||spoolLane(lane)));
   const identity=school+'/'+lane;demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);
+  if(spoolLane(lane))return spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
   const action=String(b.command||''),id=String(b.id||'');
-  if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
+  if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
   if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
   if(action==='get'){demand(operationPattern.test(id));return this.job(id)||null;}
@@ -105,11 +108,12 @@ export default {
  async fetch(request:Request,env:Env):Promise<Response>{
   const headers={'Cache-Control':'no-store','Content-Type':'application/json','X-Content-Type-Options':'nosniff'};
   try{
-   const url=new URL(request.url);if(url.pathname==='/healthz'&&request.method==='GET')return Response.json({service:'vidya-saarthi-cloudflare-sync',version:1,attendancePartitions:256},{headers});
+   const url=new URL(request.url);if(url.pathname==='/healthz'&&request.method==='GET')return Response.json({service:'vidya-saarthi-cloudflare-sync',version:2,edgeDeliveryVersion:1,attendancePartitions:256},{headers});
    if(request.method==='POST'&&url.pathname==='/mobile')return Response.json(await mobileRequest(request,env),{headers});
-   demand(request.method==='POST'&&url.pathname==='/internal','Not found',404);const raw=await boundedBody(request);
+   demand(request.method==='POST'&&url.pathname==='/internal','Not found',404);const raw=await boundedBody(request,800000);
    demand(await authenticated(env.EDGE_KEY,raw,request.headers),'Sync authorization rejected',401);
-   const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane));
+   const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane)||spoolLane(lane)));
+   demand(raw.length<=(/^file-[a-f0-9]{64}$/.test(lane)?800000:400000),'Request too large',413);
    const value=await env.LANES.getByName(school+'/'+lane).command(school,lane,body);
    return Response.json({success:true,schoolId:school,value},{headers});
   }catch(error){const e=error as Error&{status?:number};const status=e.status||503;return Response.json({success:false,message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});}
