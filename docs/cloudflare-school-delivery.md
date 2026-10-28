@@ -16,6 +16,12 @@ Notices and attendance retain their existing dedicated Cloudflare lanes.
 Reads remain verified Drive reads; this change does not add an unverified
 Cloudflare overlay or alter Firebase login/licence/security authority.
 
+File staging requires a verified school Script native upload capability. Older
+protocol-2 Scripts that support only full uploads retain the existing verified
+Drive file path rather than accepting undrainable staged bytes. Their versioned
+records can still use Cloudflare. Capability evidence is school scoped and
+briefly cached; storage reconnection clears it.
+
 File staging accepts at most the existing 20 MiB limit. Chunks are at most
 512 KiB and hash verified; the complete immutable manifest is checked before
 delivery. Drive upload offsets can resume inside a staging chunk. Staged
