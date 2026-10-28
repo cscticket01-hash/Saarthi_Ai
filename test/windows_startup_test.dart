@@ -541,7 +541,7 @@ void main() {
     },
   );
   testWidgets(
-    'exact App Lock screen checks theme only after correct password and waits before dashboard',
+    'App Lock shows success animation immediately while theme check stays hidden',
     (tester) async {
       FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
       final original = WindowsAppearance.brandData;
@@ -576,7 +576,8 @@ void main() {
         await tester.tap(find.text('Unlock App'));
         await tester.pump();
         await tester.pump();
-        expect(find.text('Checking saved theme…'), findsOneWidget);
+        expect(find.text('Checking saved theme…'), findsNothing);
+        expect(find.text('Login Successful'),findsOneWidget);
         expect(find.text('Unlocked test dashboard'), findsNothing);
         reply.complete(unlockTheme('password-verified'));
         await tester.pump();
@@ -587,6 +588,7 @@ void main() {
         expect(requests, 1);
         expect(WindowsAppearance.brandRevision, 'password-verified');
         expect(find.text('Unlocked test dashboard'), findsOneWidget);
+        expect(find.text('Saved theme applied.'),findsNothing);
       } finally {
         await tester.pumpWidget(const SizedBox());
         ManagedSchoolSession.appearanceUnlockRequestForTesting = null;

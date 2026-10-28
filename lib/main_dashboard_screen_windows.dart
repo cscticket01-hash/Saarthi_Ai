@@ -9535,7 +9535,6 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
       body: const WindowsSettingsBody(children: [
-        WindowsAppearanceCard(), SizedBox(height: 12),
         WindowsAppUpdateCard(), SizedBox(height: 12), WindowsSyncStatusCard(),
       ]),
     );

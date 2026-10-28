@@ -152,8 +152,8 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
   ];
   int slide = 0;
   String get previewAsset => draftPreset == null
-      ? 'assets/app_screenshot_${pages[slide]}.png'
-      : 'assets/theme_preview_${draftPreset}_${pages[slide]}.webp';
+      ? 'assets/app_screenshot_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.png'
+      : 'assets/theme_preview_${draftPreset}_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.webp';
   Widget panel(Widget child) => Card(
     margin: EdgeInsets.zero,
     child: Padding(padding: const EdgeInsets.all(14), child: child),

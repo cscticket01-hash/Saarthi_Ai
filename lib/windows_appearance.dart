@@ -16,6 +16,8 @@ class WindowsAppearance {
   static Color get accent => preset?.accent ?? primary;
   static String? get waveAsset => preset?.wave;
   static final mode = ValueNotifier<ThemeMode>(ThemeMode.dark);
+  static ThemeMode get presetMode =>
+      preset?.light == true ? ThemeMode.light : ThemeMode.dark;
   static File get preferenceFile => File(
     '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}'
     '${Platform.pathSeparator}VidyaSaarthi${Platform.pathSeparator}windows_appearance.json',
@@ -25,23 +27,21 @@ class WindowsAppearance {
     try {
       final data = jsonDecode(await (file ?? preferenceFile).readAsString());
       applyBrand(data['brand'], persist: false);
-      mode.value = data['mode'] == 'light' ? ThemeMode.light : ThemeMode.dark;
+      mode.value = presetMode;
     } catch (_) {
       /* First run or damaged preference uses the dark default. */
     }
   }
 
-  // Serialize writes so rapid toggles cannot persist an older selection last.
+  // Persist only the selected preset/RGB. A legacy local mode cannot override it.
   static Future<void> _writes = Future<void>.value();
-  static Future<void> select(ThemeMode value, {File? file}) {
-    if (value != ThemeMode.dark && value != ThemeMode.light)
-      return Future.value();
-    mode.value = value;
+  static Future<void> persist({File? file}) {
+    mode.value = presetMode;
     final destination = file ?? preferenceFile;
     final operation = _writes.catchError((Object _) {}).then((_) async {
       await destination.parent.create(recursive: true);
       await destination.writeAsString(
-        jsonEncode({'mode': mode.value.name, 'brand': brandData}),
+        jsonEncode({'brand': brandData}),
         flush: true,
       );
     });
@@ -70,10 +70,8 @@ class WindowsAppearance {
     final nextPreset = windowsThemePreset(
       value['presetId'] is String ? value['presetId'] : null,
     );
-    final changedPreset = nextPreset?.id != presetId;
     presetId = nextPreset?.id;
-    if (changedPreset && nextPreset != null)
-      mode.value = nextPreset.light ? ThemeMode.light : ThemeMode.dark;
+    mode.value = presetMode;
     brandRevision = value['revision'];
     brand.value = Color.fromARGB(
       255,
@@ -82,7 +80,7 @@ class WindowsAppearance {
       value['blue'],
     );
     changes.value++;
-    if (persist) select(mode.value).catchError((Object _) {});
+    if (persist) WindowsAppearance.persist().catchError((Object _) {});
   }
 
   static Color get primary =>
@@ -360,92 +358,4 @@ class WindowsAppearance {
           .withValues(alpha: source.a);
     return primary.withValues(alpha: source.a);
   }
-}
-
-class WindowsAppearanceCard extends StatefulWidget {
-  const WindowsAppearanceCard({super.key});
-  @override
-  State<WindowsAppearanceCard> createState() => _WindowsAppearanceCardState();
-}
-
-class _WindowsAppearanceCardState extends State<WindowsAppearanceCard> {
-  Future<void> _select(ThemeMode mode) async {
-    try {
-      await WindowsAppearance.select(mode);
-    } catch (_) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Theme applied. Could not save this preference; please try again.',
-            ),
-          ),
-        );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => ValueListenableBuilder<ThemeMode>(
-    valueListenable: WindowsAppearance.mode,
-    builder: (context, mode, _) => Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final heading = Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  mode == ThemeMode.dark
-                      ? Icons.dark_mode_outlined
-                      : Icons.light_mode_outlined,
-                ),
-                const SizedBox(width: 12),
-                const Flexible(
-                  child: Text(
-                    'Appearance',
-                    style: TextStyle(
-                      fontFamily: 'Segoe UI',
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            );
-            final choices = Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Dark Mode'),
-                  selected: mode == ThemeMode.dark,
-                  onSelected: (_) => _select(ThemeMode.dark),
-                ),
-                ChoiceChip(
-                  label: const Text('Light Mode'),
-                  selected: mode == ThemeMode.light,
-                  onSelected: (_) => _select(ThemeMode.light),
-                ),
-              ],
-            );
-            if (constraints.maxWidth < 560 ||
-                MediaQuery.textScalerOf(context).scale(1) > 1.3) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [heading, const SizedBox(height: 12), choices],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: heading),
-                choices,
-              ],
-            );
-          },
-        ),
-      ),
-    ),
-  );
 }

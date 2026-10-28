@@ -49,10 +49,7 @@ void main() {
             greaterThanOrEqualTo(4.5),
           );
         }
-        await WindowsAppearance.select(
-          WindowsAppearance.mode.value,
-          file: file,
-        );
+        await WindowsAppearance.persist(file: file);
         WindowsAppearance.applyBrand({
           'schemaVersion': 1,
           'red': 0,
