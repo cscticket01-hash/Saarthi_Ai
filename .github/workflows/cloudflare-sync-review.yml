@@ -27,7 +27,7 @@ jobs:
         working-directory: cloudflare-sync
       - run: cp .dev.vars.example .dev.vars && npm run types && npm run check && npm run build && npm test
         working-directory: cloudflare-sync
-      - run: npm ci --ignore-scripts && npm test
+      - run: npm install --ignore-scripts --no-package-lock && npm test
         working-directory: functions
   apps:
     runs-on: ubuntu-latest
