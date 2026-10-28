@@ -86,7 +86,7 @@ void main() {
     expect(values, original);
   });
   testWidgets(
-    'Gmail connect action and original photo are present in Settings for every preset',
+    'passive avatar fallback and original photo render in every Settings theme',
     (tester) async {
       final original = WindowsAppearance.brandData;
       addTearDown(() {
@@ -98,7 +98,6 @@ void main() {
         'R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7',
       );
       final key = GlobalKey();
-      var connected = 0;
       Widget page(bool photo) => MaterialApp(
         theme: WindowsAppearance.theme(
           WindowsAppearance.mode.value == ThemeMode.light
@@ -113,9 +112,7 @@ void main() {
             authenticated: true,
             avatar: OriginalGoogleProfilePhoto(
               bytes: photo ? bytes : null,
-              onConnect: () {
-                connected++;
-              },
+              initial: 'A',
             ),
             year: '2026–27',
             month: 1,
@@ -140,9 +137,9 @@ void main() {
         expect(WindowsAppearance.presetId, preset.id);
         await tester.pumpWidget(page(false));
         await tester.pump();
-        expect(find.text('Connect\nGmail photo'), findsOneWidget);
-        await tester.tap(find.text('Connect\nGmail photo'));
-        expect(connected, windowsThemePresets.indexOf(preset) + 1);
+        expect(find.text('A'), findsOneWidget);
+        expect(find.textContaining('Connect Gmail'), findsNothing);
+        expect(find.byType(OriginalGoogleProfilePhoto), findsOneWidget);
         await tester.pumpWidget(page(true));
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -214,6 +211,21 @@ void main() {
       );
     },
   );
+  testWidgets('missing Google photo uses a passive, non-clickable initial', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: OriginalGoogleProfilePhoto(bytes: null, initial: 'School'),
+        ),
+      ),
+    );
+    expect(find.text('S'), findsOneWidget);
+    expect(find.byType(TextButton), findsNothing);
+    expect(find.byType(InkWell), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('Connect'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'original GIF retains two frames and animates without colour filtering',
     (tester) async {
