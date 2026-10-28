@@ -5,11 +5,14 @@ import argparse, pathlib, shutil, subprocess, tempfile, tarfile
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 def prepare(target):
     target=pathlib.Path(target).resolve()
-    if target==ROOT or ROOT.is_relative_to(target): raise ValueError('Unsafe preview build directory')
+    if target==ROOT or ROOT.is_relative_to(target) or target.is_relative_to(ROOT): raise ValueError('Unsafe preview build directory')
     target.mkdir(parents=True,exist_ok=True)
     for name in ['lib','assets','web']:
         if (ROOT/name).exists():shutil.copytree(ROOT/name,target/name,dirs_exist_ok=True)
-    shutil.copy2(ROOT/'pubspec.yaml',target/'pubspec.yaml')
+    manifest=(ROOT/'pubspec.yaml').read_text()
+    for family in ['Segoe UI','Roboto']:
+        manifest+=f'\n    - family: "{family}"\n      fonts:\n        - asset: assets/id_card_regular.ttf\n        - asset: assets/id_card_bold.ttf\n          weight: 700\n'
+    (target/'pubspec.yaml').write_text(manifest)
     for name in ['windows_sqlite_store','windows_secure_storage','windows_disk_storage','windows_clean_install_recovery']:
         relative=('storage/' if name=='windows_sqlite_store' else '')+name+'.dart'
         shutil.copy2(ROOT/f'.github/preview/{name}_stub.dart',target/'lib'/relative)
@@ -32,6 +35,10 @@ def prepare(target):
     replace('main_dashboard_screen_windows.dart','void _startPortalInactivityTimer() {','void _startPortalInactivityTimer() { return; /* PREVIEW ONLY */')
     replace('windows_local_firestore.dart','Future<void> ensureDurableSchoolRecords() async {','Future<void> ensureDurableSchoolRecords() async { return; /* PREVIEW ONLY */')
     replace('windows_local_storage.dart','static Future<String> currentPath() async => (await dataDirectory()).path;',"static Future<String> currentPath() async => '/Demo preview (RAM only)';")
+    # Preserve the native hash math using BigInt where JS cannot represent 64-bit literals.
+    replace('main_dashboard_screen_windows.dart','var hash = 0xcbf29ce484222325;',"var hash = BigInt.parse('cbf29ce484222325',radix:16).toSigned(64);")
+    replace('main_dashboard_screen_windows.dart','hash ^= unit;','hash ^= BigInt.from(unit);')
+    replace('main_dashboard_screen_windows.dart','hash = (hash * 0x100000001b3) & 0x7fffffffffffffff;',"hash = (hash * BigInt.from(0x100000001b3)) & BigInt.parse('7fffffffffffffff',radix:16);")
     return target
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--prepare-only');parser.add_argument('--flutter',default='flutter');args=parser.parse_args()
