@@ -78,8 +78,12 @@ String originalGoogleProfileImageUrl(String source) {
       .replaceFirst(RegExp(r'=[swh]\d+[^/]*$'), '=s0')
       .replaceFirst(RegExp(r'/s\d+(?:-[^/]+)?/'), '/s0/');
   final query = Map<String, String>.from(uri.queryParameters)..remove('sz');
-  final original = uri.replace(path: path, query: '');
-  return query.isEmpty
-      ? original.toString()
-      : original.replace(queryParameters: query).toString();
+  return Uri(
+    scheme: uri.scheme,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: path,
+    queryParameters: query.isEmpty ? null : query,
+    fragment: uri.hasFragment ? uri.fragment : null,
+  ).toString();
 }
