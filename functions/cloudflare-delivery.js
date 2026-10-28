@@ -44,7 +44,19 @@ function createCloudflareDelivery({edge,now=Date.now}){
   for(let offset=row.manifest.received;offset<bytes.length;offset+=512*1024){const chunk=bytes.subarray(offset,offset+512*1024);await edge.rpc(school,lane,{command:'part',id,offset,base64:chunk.toString('base64'),chunkSha256:digest(chunk)});}
   return status(school,lane,id);
  }
- function verifiedRecord(result,school,request){return result?.success===true&&result.schoolId===school&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!result.recordRevision.startsWith('cf-')&&(!result.record||result.record.schoolId===school&&(!request||result.record.id===request.id&&(!result.record._syncOperationId||result.record._syncOperationId===request.operationId)));}
+ function verifiedRecord(result,school,request){
+  if(result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
+    typeof result.recordRevision!=='string'||!result.recordRevision||result.recordRevision.startsWith('cf-'))return false;
+  const record=result.record;if(!record)return true;
+  if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
+  if(!request)return true;
+  // Sheet lifecycle ACKs return saved.data, which may omit the wrapper ID.
+  // The original immutable operation ID supplies that binding; a present ID
+  // must still match. Never weaken foreign-school/operation/revision checks.
+  return (record.id===undefined?record._syncOperationId===request.operationId:record.id===request.id)&&
+    (record._syncOperationId===undefined||record._syncOperationId===request.operationId);
+ }
+
  async function drain(school,lane,deliver){
   const [job]=await edge.rpc(school,lane,{command:'pending',limit:1});if(!job)return {processed:0};
   const claim=randomUUID();if(!await edge.rpc(school,lane,{command:'claim',id:job.id,claim,expires:now()+120000}))return {processed:0};
