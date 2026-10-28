@@ -82,7 +82,7 @@ void main() {
         expect(File(preset.image).existsSync(), isTrue);
         for (final page in ['dashboard', 'students', 'fees', 'settings'])
           expect(
-            File('assets/theme_preview_${preset.id}_$page.webp').existsSync(),
+            File('assets/theme_preview_${preset.id}_${page=='settings'?'settings_v2':page}.webp').existsSync(),
             isTrue,
           );
         await tester.tap(find.byKey(ValueKey('theme-preset-${preset.id}')));

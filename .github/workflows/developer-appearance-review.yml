@@ -42,27 +42,30 @@ jobs:
       - run: flutter create --platforms=web --project-name=saarthi_ai .
       - run: flutter pub get
       - name: Build isolated native-widget screenshot source
-        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
+        if: ${{ hashFiles('assets/preset_owned_appearance_v2.txt') == '' }}
         run: python3 .github/scripts/build_windows_theme_preview.py
       - name: Install local screenshot verifier
-        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
+        if: ${{ hashFiles('assets/preset_owned_appearance_v2.txt') == '' }}
         run: |
           npm install --no-save playwright@1.58.2
           npx playwright install --with-deps chromium
           python -m pip install pillow
       - name: Capture four actual app screenshots for every preset
-        if: ${{ hashFiles('assets/theme_preview_*.webp') == '' }}
+        if: ${{ hashFiles('assets/preset_owned_appearance_v2.txt') == '' }}
         run: |
           node .github/scripts/capture_theme_carousel.cjs
           python - <<'PYTHON'
           from pathlib import Path
           from PIL import Image
           for p in Path('assets').glob('theme_preview_*.png'):
-              Image.open(p).save(p.with_suffix('.webp'),quality=90)
+              target=p.with_stem(p.stem+'_v2') if p.stem.endswith('_settings') else p
+              Image.open(p).save(target.with_suffix('.webp'),quality=90)
               p.unlink()
           PYTHON
       - name: Verify compact layout, explicit Save and screenshot arrows
         run: flutter test test/developer_windows_theme_test.dart test/windows_theme_presets_test.dart test/windows_startup_test.dart
+      - name: Verify preset-only settings and legacy preference migration
+        run: flutter test test/windows_appearance_test.dart --name "preset appearance|Settings has no"
       - name: Verify authenticated per-PC theme unlock
         run: node --test functions/test/windows-theme.test.js
       - uses: actions/upload-artifact@v4
@@ -71,5 +74,6 @@ jobs:
           name: compact-theme-carousel-review
           path: |
             assets/theme_preview_*.webp
+            assets/app_screenshot_settings_v2.png
             build/theme-layout-review
             build/theme-carousel-report.json

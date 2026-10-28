@@ -32,6 +32,9 @@ const presets=[['neon-teal',0,217,192,'dark'],['electric-blue',22,139,255,'dark'
    await page.waitForFunction(({name,mode,navigation})=>window.previewApplied?.page===name&&window.previewApplied?.mode===mode&&window.previewApplied?.navigation===navigation,{name,mode,navigation},{timeout:15000});
    await page.waitForTimeout(700);await page.screenshot({path:path.join(out,`theme_preview_${presetId}_${name}.png`),clip:{x:0,y:44,width:1440,height:956}});
   }
+  await page.evaluate(({navigation})=>document.querySelector('iframe').contentWindow.postMessage(JSON.stringify({type:'vidya-preview-theme',red:0,green:140,blue:120,presetId:null,mode:'dark',page:'settings',navigation}),location.origin),{navigation:++navigation});
+  await page.waitForFunction(n=>window.previewApplied?.page==='settings'&&window.previewApplied?.navigation===n,navigation,{timeout:15000});
+  await page.waitForTimeout(700);await page.screenshot({path:path.join(out,'app_screenshot_settings_v2.png'),clip:{x:0,y:44,width:1440,height:956}});
   await fs.writeFile('build/theme-carousel-report.json',JSON.stringify({pages:pages.length,presets:presets.length,screenshots:pages.length*presets.length,errors,external},null,2));
   assert.deepEqual(external,[],'Preview must not contact a school/backend or external service');assert.deepEqual(errors,[],'Every preview page must render without runtime errors');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

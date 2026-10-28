@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -56,19 +57,19 @@ void main() {
     WindowsAppearance.applyBrand({'schemaVersion':1,'red':0,'green':140,'blue':120,'revision':'default'},persist:false);
   });
   test(
-    'device preference survives restart, rapid toggles and corrupt file',
+    'preset appearance ignores legacy light override and survives restart',
     () async {
       final dir = await Directory.systemTemp.createTemp('appearance-test-');
       addTearDown(() => dir.delete(recursive: true));
       final file = File('${dir.path}/preference.json');
-      await Future.wait([
-        WindowsAppearance.select(ThemeMode.light, file: file),
-        WindowsAppearance.select(ThemeMode.dark, file: file),
-        WindowsAppearance.select(ThemeMode.light, file: file),
-      ]);
-      WindowsAppearance.mode.value = ThemeMode.dark;
-      await WindowsAppearance.restore(file: file);
-      expect(WindowsAppearance.mode.value, ThemeMode.light);
+      WindowsAppearance.applyBrand({'schemaVersion':1,'red':0,'green':140,'blue':120,'revision':'default'},persist:false);
+      await file.writeAsString(jsonEncode({'mode':'light','brand':WindowsAppearance.brandData}));
+      await WindowsAppearance.restore(file:file);
+      expect(WindowsAppearance.mode.value,ThemeMode.dark);
+      await Future.wait([WindowsAppearance.persist(file:file),WindowsAppearance.persist(file:file)]);
+      expect(jsonDecode(await file.readAsString()).containsKey('mode'),isFalse);
+      await WindowsAppearance.restore(file:file);
+      expect(WindowsAppearance.mode.value,ThemeMode.dark);
       expect(dir.listSync().length, 1);
       await file.writeAsString('broken');
       WindowsAppearance.mode.value = ThemeMode.dark;
@@ -162,7 +163,7 @@ void main() {
     await tester.runAsync(()=>WindowsRuntimeFlags.setLocalStorageEnabled(false));
   });
   testWidgets(
-    'Settings has Appearance above Update in both modes without overflow',
+    'Settings has no Dark/Light or Appearance controls at desktop and laptop sizes',
     (tester) async {
       if (Platform.isWindows) {
         await tester.runAsync(() async {
@@ -189,12 +190,11 @@ void main() {
             app(RepaintBoundary(key: renderKey, child: const SettingsScreen())),
           );
           await tester.pumpAndSettle();
-          expect(
-            tester.getTopLeft(find.byType(WindowsAppearanceCard)).dy,
-            lessThan(tester.getTopLeft(find.byType(WindowsAppUpdateCard)).dy),
-          );
-          expect(find.text('Dark Mode'), findsOneWidget);
-          expect(find.text('Light Mode'), findsOneWidget);
+          expect(find.text('Appearance'), findsNothing);
+          expect(find.text('Dark Mode'), findsNothing);
+          expect(find.text('Light Mode'), findsNothing);
+          expect(tester.getTopLeft(find.byType(WindowsAppUpdateCard)).dy,
+            lessThan(tester.getTopLeft(find.byType(WindowsSyncStatusCard)).dy));
           final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
           expect(
             scaffold.backgroundColor,

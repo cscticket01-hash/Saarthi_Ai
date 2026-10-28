@@ -22,7 +22,7 @@ def prepare(target):
     replace('windows_sync_engine.dart','Future<void> initialize() async {','Future<void> initialize() async { return; /* PREVIEW ONLY */')
     replace('windows_html_shim.dart','void _load() {','void _load() { return; /* PREVIEW ONLY */')
     replace('windows_html_shim.dart','void _save() {','void _save() { return; /* PREVIEW ONLY */')
-    replace('windows_appearance.dart','mode.value = value;','mode.value = value; return Future<void>.value(); /* PREVIEW ONLY */')
+    replace('windows_appearance.dart','final destination = file ?? preferenceFile;','return Future<void>.value(); /* PREVIEW ONLY */ final destination = file ?? preferenceFile;')
     # Connection panels may inspect credentials, but the preview has none.
     # Block API calls at the common transport boundary as well as hosting CSP.
     path=target/'lib/windows_connect/central_school_cloud.dart';text=path.read_text()
