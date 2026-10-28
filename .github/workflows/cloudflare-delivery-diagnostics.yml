@@ -1,0 +1,45 @@
+name: Read-only retained Cloudflare TEST delivery diagnostics
+on:
+  push:
+    branches: [verify/cloudflare-delivery-diagnostics]
+permissions:
+  contents: read
+jobs:
+  inspect-retained-test-receipts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read fixed synthetic receipts without changing a business operation
+        env:
+          TEST_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {createHash} from 'node:crypto';
+          const school='vs-db8afb01a3be46a983c8284714d06e5d',run='cf-delivery-20261028-v1';
+          const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+          const hash=v=>createHash('sha256').update(v).digest('hex');
+          async function request(url,body,token){
+            const r=await fetch(url,{method:body?'POST':'GET',redirect:'error',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(90000)});
+            return {status:r.status,data:await r.json()};
+          }
+          for(const url of ['https://vidya-saarthi-sync.vidya-saarthi-cscticket01.workers.dev/healthz','https://vidya-saarthi-sync-test.vidya-saarthi-cscticket01.workers.dev/healthz','https://saarthi-oauth-staging.onrender.com/school-cloud/healthz',endpoint+'/healthz']){
+            const r=await request(url);console.log(JSON.stringify({check:'public_health',url,http:r.status,ready:r.data.ready,version:r.data.version,edgeDeliveryVersion:r.data.edgeDeliveryVersion,runtimeCommit:r.data.runtimeCommit}));
+          }
+          const login=await request('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A',{email:process.env.TEST_EMAIL,password:process.env.TEST_PASSWORD,returnSecureToken:true});
+          if(login.status!==200||!login.data.idToken)throw Error('TEST login failed');
+          const token=login.data.idToken;
+          const session=await request(endpoint,{action:'managed/session',schoolId:school},token);
+          if(session.status!==200||session.data.schoolId!==school||session.data.allowed!==true)throw Error('Isolated TEST membership required');
+          for(const [collection,id] of [['teachers_directory','CF_TEST_TEACHER_'+run],['teachers_directory','CF_TEST_STAFF_'+run],['documents','CF_TEST_IDCARD_'+run]]){
+            const op=hash(school+':'+collection+':'+id),receipt=hash(JSON.stringify([school,'managed_records',[collection,id,op]]));
+            const r=await request(endpoint,{action:'managed/cloudflare/operation',schoolId:school,lane:'records',id:receipt,waitMillis:0},token);
+            console.log(JSON.stringify({check:'retained_record_receipt',collection,id,http:r.status,code:r.data.code,driveState:r.data.driveState,deliveryStatus:r.data.deliveryStatus,recordRevision:r.data.recordRevision}));
+          }
+          const key='cf_test_document_'+run,id=hash(JSON.stringify([school,key]));
+          const r=await request(endpoint,{action:'managed/cloudflare/operation',schoolId:school,lane:'file-'+id,id,waitMillis:0},token);
+          console.log(JSON.stringify({check:'retained_file_receipt',http:r.status,code:r.data.code,driveState:r.data.driveState,deliveryStatus:r.data.deliveryStatus,committed:r.data.committed}));
+          NODE
