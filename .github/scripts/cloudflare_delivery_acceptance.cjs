@@ -2,7 +2,7 @@
 // Only synthetic records in the retained isolated TEST school. Never delete data.
 const crypto=require('node:crypto'),fs=require('node:fs');
 const SCHOOL='vs-db8afb01a3be46a983c8284714d06e5d';
-const ENDPOINT='https://saarthi-oauth-staging.onrender.com/school-cloud';
+const ENDPOINT='https://saarthi-sync-v2-test.onrender.com/school-cloud';
 const LOGIN='https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 async function transport(url,body,token){
