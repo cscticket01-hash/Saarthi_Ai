@@ -5,6 +5,26 @@ import 'windows_local_firestore.dart';
 
 /// A class/roll ID can be reused. Mobile identity must belong to the person.
 class SchoolPersonIdentity {
+  /// Prepare only never-bound local creates, before their first wire snapshot.
+  /// Retries, conflicts and already-bound operations keep their original IDs.
+  static Future<void> preparePendingCreates(String school, {bool Function()? canAdmit}) async {
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final rows = (await db.collection('_windows_firebase_outbox').get()).docs;
+    for (final row in rows) {
+      if (canAdmit?.call() == false) return;
+      if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed before person identity preparation.');
+      final item = (await row.reference.get()).data();
+      if (item == null || item['schoolId'] != school || item['createIntent'] != true ||
+          item['operation'] != 'set' || item['syncState'] != 'pending' ||
+          item['wireData'] is Map || item['priorDeletion'] != null ||
+          (item['baseCloudRevision'] ?? '') != '' || (item['retryCount'] as num? ?? 0) != 0 ||
+          item['failureCategory'] != null || item['lastError'] != null ||
+          !{'students_directory', 'teachers_directory'}.contains(item['collection'])) continue;
+      await ensure(item['collection'] as String, item['documentId'] as String);
+    }
+  }
+
   static String newGeneration() => 'p-${sha256.convert(List.generate(32, (_) => Random.secure().nextInt(256)))}';
   static Future<Map<String, dynamic>> ensure(String collection, String id) async {
     final ref = FirebaseFirestore.instance.collection(collection).doc(id);
