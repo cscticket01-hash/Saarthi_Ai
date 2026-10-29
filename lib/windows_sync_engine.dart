@@ -2025,6 +2025,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         // Keep locally acknowledged people and their cards in the same priority
         // dependency job, ahead of unrelated cloud pulls and audits.
+        final priorityCardFailure = await WindowsPersonCardSync.priorityPass(() async {
         await WindowsPersonCardSync.run(
           _activeSchoolSyncId,
           canAdmit: () => !isPaused,
@@ -2040,6 +2041,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             onActivity: _recordActivity),
           onActivity: _recordActivity,
         );
+        });
+        if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+          throw StateError('School changed during priority card sync.');
         if (WindowsFirebaseRemote.recordPointReadSupported) {
           await WindowsPendingSchoolSync.repair(
             explicitRetry: _manualSync,
@@ -2262,6 +2266,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if (preparationFailure != null) {
             Error.throwWithStackTrace(preparationFailure, preparationStack!);
           }
+          priorityCardFailure?.rethrowFailure();
           await WindowsSyncDependencies.complete(
             _activeSchoolSyncId,
             dependencyRows,
