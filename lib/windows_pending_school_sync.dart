@@ -44,6 +44,7 @@ class WindowsPendingSchoolSync {
     void Function(Map<String, dynamic>)? onActivity,
     DateTime Function()? now,
     bool explicitRetry = false,
+    String? Function(String module,String category)? learnedAction,
     Duration probeTimeout = const Duration(seconds: 40),
   }) async {
     if (probeTimeout <= Duration.zero) {
@@ -60,7 +61,11 @@ class WindowsPendingSchoolSync {
     final rows = await db.collection('_windows_firebase_outbox').get();
     scope();
     var probes = 0, repaired = 0;
-    for (final row in rows.docs) {
+    final repairRows=rows.docs.toList()..sort((a,b){
+      int priority(Map row)=>learnedAction?.call(row['collection']?.toString()??'',row['failureCategory']?.toString()??'conflict')==null?1:0;
+      return priority(a.data()).compareTo(priority(b.data()));
+    });
+    for (final row in repairRows) {
       if (probes >= 5 || canAdmit?.call() == false) break;
       scope();
       final item = row.data(),
@@ -86,6 +91,27 @@ class WindowsPendingSchoolSync {
           (prior['schoolId'] != school ||
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
+      }
+      final learned = learnedAction?.call(item['collection'] as String, category?.toString() ?? 'conflict');
+      // One learned replay per immutable operation; server CAS/idempotency remain
+      // authoritative. Quota/auth/configuration/conflict never use this shortcut.
+      if (learned == 'replay_original' && state == 'needsAttention' &&
+          {'networkPath','timeout','server'}.contains(category) &&
+          (item['retryAtMillis'] as num? ?? 0) <= clock().millisecondsSinceEpoch &&
+          prior?['learnedReplayOperation'] != item['operationId']) {
+        await journal.set({'schoolId':school,'operationId':item['operationId'],
+          'learnedReplayOperation':item['operationId']}, const SetOptions(merge:true));
+        scope();
+        if(await db.recordOutboxFailure(row.reference,item,state:'retry',
+            failureCategory:category as String,retryCount:0,
+            retryAtMillis:clock().millisecondsSinceEpoch,
+            error:'Previously verified transport action: replay the original immutable request.')) {
+          onActivity?.call({'schoolId':school,'collection':item['collection'],
+            'documentId':item['documentId'],'operationId':item['operationId'],
+            'queueCollection':'_windows_firebase_outbox','stage':'learnedActionApplied',
+            'failureCategory':category,'at':clock().millisecondsSinceEpoch});
+          repaired++;probes++;continue;
+        }
       }
       final legacyFeeProbe = legacyFeePublicationCandidate(item) && prior?['legacyFeePublicationProbeVersion'] != 2;
       final runtimeProbe = admitUpdatedRuntimeProbe(prior, WindowsPlatformClient.version);
@@ -139,6 +165,7 @@ class WindowsPendingSchoolSync {
         'operationId': item['operationId'],
         if (legacyFeeProbe || prior?['legacyFeePublicationProbeVersion'] == 2) 'legacyFeePublicationProbeVersion': 2,
         'attempts': attempts,
+        if(prior?['learnedReplayOperation'] is String) 'learnedReplayOperation':prior!['learnedReplayOperation'],
         'diagnosedAppVersion': WindowsPlatformClient.version,
         'runtimeUpgradeProbes': ((prior?['runtimeUpgradeProbes'] as num?) ?? 0).toInt() + (runtimeProbe ? 1 : 0),
         'nextProbeAt': clock().add(delay).millisecondsSinceEpoch,
