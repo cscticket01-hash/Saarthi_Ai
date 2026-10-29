@@ -6779,6 +6779,7 @@ function VS_studentReadableBackfill(store) {
 }
 function VS_sheetItem(store,id) {
   const started=VS_TEST_SYNC_TIMING?Date.now():0;
+  if(VS_TEST_SYNC_TIMING)VS_TEST_SYNC_TIMING.recordLookupCount++;
   try{return VS_sheetItemCore(store,id);}
   finally{if(started)VS_testSyncTimingAdd('sheetSearchMs',started);}
 }
@@ -6826,13 +6827,23 @@ function VS_studentReadable(store,item,row) {
   const cursor=Math.max(2,Number(p.getProperty(key)||2));
   if(cursor>=row){p.setProperty(key,String(Math.max(cursor,row+1)));if(cursor>=store.sheet.getLastRow()&&store.sheet.hideColumns)store.sheet.hideColumns(1,33);}
 }
-function VS_sheetPut(store,item) {
+function VS_sheetPut(store,item,lookup) {
   if(VS_TEST_SYNC_TIMING)VS_TEST_SYNC_TIMING.storageMode=store.json?'json':store.partitions?'partitioned_sheets':'sheets';
   if(store.json)return VS_jsonPut(store,item);
   if(store.partitions)return VS_layoutPut(store,item);
   const text=JSON.stringify({id:item.id,schoolId:item.schoolId,data:item.data,...(item.layoutRedirect?{layoutRedirect:item.layoutRedirect}:{}),...(item.layoutPrevious?{layoutPrevious:item.layoutPrevious}:{})});
   if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  const old=VS_sheetItem(store,item.id),data=item.data;
+  // Only the current locked operation may supply its own lookup. Never keep
+  // this proof globally, across requests, or across partition/layout changes.
+  const reuse=lookup&&lookup.store===store&&lookup.id===item.id;
+  const old=reuse?lookup.item:VS_sheetItem(store,item.id),data=item.data;
+  if(old&&(old.id!==item.id||old.schoolId!==store.school||!Number.isSafeInteger(old.row)||old.row<2))throw new Error('Sheet lookup identity mismatch');
+  if(reuse&&old){
+    // A human can edit Sheets without our script lock. Re-read the exact row
+    // before overwriting it; the final full search still detects duplicates.
+    const current=VS_sheetDecode(store,store.sheet.getRange(old.row,1,1,33).getValues()[0]);
+    if(current.id!==old.id||VS_layoutHash(current)!==VS_layoutHash({id:old.id,schoolId:old.schoolId,data:old.data,...(old.layoutRedirect?{layoutRedirect:old.layoutRedirect}:{}),...(old.layoutPrevious?{layoutPrevious:old.layoutPrevious}:{})}))throw new Error('External Sheet edit requires review');
+  }
   // Display cells are inert text; canonical JSON always begins with '{'.
   const label=String(data.name||data.studentName||data.title||data.documentName||'').slice(0,200);
   const values=[Utilities.base64EncodeWebSafe(item.id),store.school,data._syncRevision||'',data._syncDeleted===true?'YES':'NO',data._syncOperationId||'',label&&/^[=+\-@]/.test(label)?"'"+label:label];
@@ -7063,11 +7074,11 @@ function VS_managedRecord(b) {
   VS_BACKUP_READ_CACHE=null;
   // Cheap JS-only checks first: ordinary school traffic makes no new
   // Apps Script PropertiesService call just to determine instrumentation.
-  const timed=b.syncProtocol===2&&b.operation==='write'&&b.collection==='school_notices'&&
+  const timed=b.syncProtocol===2&&b.operation==='write'&&['school_notices','students_directory','teachers_directory','documents','fee_ledger','fee_payments','school_expenses'].indexOf(b.collection)>=0&&
     b.data&&b.data.syntheticTest===true&&
     PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID')==='vs-db8afb01a3be46a983c8284714d06e5d';
   const timing=timed?{version:1,scope:'isolated_synthetic_TEST_only',
-    lockWaitMs:0,sheetSearchMs:0,sheetWriteFlushMs:0,finalVerificationMs:0,
+    lockWaitMs:0,recordLookupCount:0,sheetSearchMs:0,sheetWriteFlushMs:0,finalVerificationMs:0,
     postVerificationMs:0,storageMode:'unknown',totalScriptMs:0}:null;
   const began=Date.now(),lock=LockService.getScriptLock();
   // Acquire the EXACT SAME lock with the EXACT SAME deadline.
@@ -7153,6 +7164,7 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(!/^[^/]{1,200}$/.test(b.id||'')||b.id==='.'||b.id==='..')throw new Error('Invalid record ID');
   if(b.operation==='recover')return VS_recoverSheetRecord(b,store);
   let existing=VS_sheetItem(store,b.id);
+  const lockedLookup=!store.json&&!store.partitions?{store:store,id:b.id,item:existing}:undefined;
   const retained=VS_sheetLifecycleEnabled()?VS_recordHead(b.collection,b.id):null;
   if(!existing&&retained){const h=retained.head;existing={id:b.id,schoolId:school,data:{schoolId:school,_syncRevision:h.revision,_syncOperationId:h.operationId,_syncRequestHash:h.requestHash,...(h.deleted?{_syncDeleted:true,_syncDeletedOwner:h.generation,_syncRetiredStudentGenerations:h.retiredGenerations||[]}:{})}};
     if(!h.deleted)throw new Error('Verified local Sheet recovery required before editing');}
@@ -7229,7 +7241,7 @@ function VS_managedRecordUnlocked(b,readContext) {
       if(b.collection==='documents' && existing){data.documentRevision=existing.data.documentRevision||'';const fileId=existing.data._syncDeletedFileId||existing.data.fileId;if(fileId)data._syncDeletedFileId=fileId;}
       if(VS_recycleEnabled()&&existing&&!(VS_sheetLifecycleEnabled()&&b.collection==='students_directory')){const saved=VS_recycleSnapshot(b.collection,b.id,existing,revision);data._syncRecycleFileId=saved.fileId;data._syncRecycleUntil=saved.recoverUntil;}
       PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
-      VS_sheetPut(store,{id:b.id,schoolId:school,data:data});
+      VS_sheetPut(store,{id:b.id,schoolId:school,data:data},lockedLookup);
       return {recordRevision:revision,syncProtocol:2,fileCleanup:VS_managedDeletedFile(store,b.id,data)};
     }
 
@@ -7258,7 +7270,7 @@ function VS_managedRecordUnlocked(b,readContext) {
   }
   delete data._syncDeletedFileId;delete data._syncFileCleanupComplete;
   const text=JSON.stringify({id:b.id,schoolId:school,data:data});if(text.length>512*1024)throw new Error('Record too large; upload files separately');
-  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data});return {recordRevision:revision,syncProtocol:2,record:Object.assign({id:b.id},data),studentUniquenessScope:studentUniquenessScope};
+  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());VS_sheetPut(store,{id:b.id,schoolId:school,data:data},lockedLookup);return {recordRevision:revision,syncProtocol:2,record:Object.assign({id:b.id},data),studentUniquenessScope:studentUniquenessScope};
 }
 /** Opt-in recovery proof for isolated TEST. Financial/document rows require review. */
 function VS_enableTestBackupRecovery() {

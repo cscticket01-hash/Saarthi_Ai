@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const source=fs.readFileSync(path.join(__dirname,'../../school-backend/managed/SaarthiManagedAll.gs'),'utf8');
 test('Apps Script syntax remains valid and tests are school- and synthetic-only',()=>{
   assert.doesNotThrow(()=>new vm.Script(source));
-  assert.match(source,/b\.collection==='school_notices'/);
+  assert.match(source,/\['school_notices','students_directory','teachers_directory','documents','fee_ledger','fee_payments','school_expenses'\]\.indexOf\(b\.collection\)>=0/);
   assert.match(source,/b\.data\.syntheticTest===true/);
   assert.match(source,/VS_MANAGED_SCHOOL_ID'\)==='vs-db8afb01a3be46a983c8284714d06e5d'/);
   assert.match(source,/const waiting=Date\.now\(\);lock\.waitLock\(30000\)/);
