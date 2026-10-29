@@ -7,6 +7,7 @@ import '../lib/windows_school_identity.dart';
 import '../lib/windows_sync_dependencies.dart';
 import '../lib/windows_person_card_sync.dart';
 import '../lib/windows_sync_comparison.dart';
+import '../lib/windows_sync_recovery.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +21,19 @@ void main() {
     await db.switchProfile(dir.path, identity: {'schoolSyncId': school, 'schoolId': school});
   });
   tearDown(() async => db.resetVolatileSession());
+  test('record-local priority failure defers without losing its original error or dependency', () async {
+    await WindowsSyncDependencies.retain(school, 'teachers_directory', 'held', 'revision');
+    const original = MissingSyncAcknowledgement();
+    final deferred = await WindowsPersonCardSync.priorityPass(() async { throw original; });
+    expect(deferred?.error, same(original));
+    expect(await WindowsSyncDependencies.read(school), hasLength(1));
+    expect(() => deferred!.rethrowFailure(), throwsA(same(original)));
+  });
+  test('shared transport failures still stop priority admission immediately', () async {
+    final original = SocketException('offline');
+    await expectLater(WindowsPersonCardSync.priorityPass(() async { throw original; }), throwsA(same(original)));
+    expect(await WindowsPersonCardSync.priorityPass(() async {}), isNull);
+  });
   for (final collection in ['students_directory', 'teachers_directory']) {
     test('$collection fresh create includes QR identity in the first wire snapshot', () async {
       final ref = db.collection(collection).doc('fresh');

@@ -2,9 +2,26 @@ import 'windows_local_firestore.dart';
 import 'windows_sync_dependencies.dart';
 import 'windows_sync_recovery.dart';
 
+class DeferredPersonCardFailure {
+  DeferredPersonCardFailure(this.error, this.stack);
+  final Object error;
+  final StackTrace stack;
+  Never rethrowFailure() => Error.throwWithStackTrace(error, stack);
+}
+
 /// Durable parent + card work. Physical record/file ACKs stay independent;
 /// the parent dependency remains until its dependent card queue has settled.
 class WindowsPersonCardSync {
+  /// A record-local priority failure must not starve normal cloud reads.
+  /// The normal owner still surfaces the original failure before completion.
+  static Future<DeferredPersonCardFailure?> priorityPass(Future<void> Function() work) async {
+    try { await work(); return null; }
+    catch (error, stack) {
+      if (!independentDocumentFailure(error)) rethrow;
+      return DeferredPersonCardFailure(error, stack);
+    }
+  }
+
   static Future<int> run(String school, {
     required Future<void> Function(Map<String, Set<String>>) prepare,
     required Future<void> Function() pushParents,
