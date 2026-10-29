@@ -50,6 +50,8 @@ void main() {
     await tester.enterText(contact, '9876543210');
     expect(tester.widget<TextField>(contact).controller!.text, '9876543210');
     await tester.enterText(field('Student Full Name *'), 'Contact Test');
+    await tester.enterText(field('Roll No *'), 'a01-b2');
+    expect(tester.widget<TextField>(field('Roll No *')).controller!.text, '012');
     await tester.enterText(field('Roll No *'), '1');
     for (final invalid in ['987654321', '98765432101', '98765abcde']) {
       // Also exercise save validation independently of keyboard formatters.

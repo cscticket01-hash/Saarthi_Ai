@@ -492,7 +492,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final school =
         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     if (event['schoolId'] != school) return;
-    event = {...event, if (event['at'] is! int) 'at': DateTime.now().millisecondsSinceEpoch};
+    event = {...event, 'appVersion': WindowsPlatformClient.version, if (event['at'] is! int) 'at': DateTime.now().millisecondsSinceEpoch};
     final remembered = school is String && repairMemory.observe(event, school, DateTime.now().millisecondsSinceEpoch);
     var historyChanged = false;
     if (event['stage'] == 'verified' &&

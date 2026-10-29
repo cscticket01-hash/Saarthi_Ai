@@ -10,6 +10,8 @@ import 'package:pdf/widgets.dart' as pw;
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_fee_receipt_preview.dart';
+import '../lib/windows_person_avatar.dart';
+import '../lib/windows_fee_structure.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
@@ -251,4 +253,69 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('list selection works without search and a new name clears previous roll/class', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      await db.collection('students_directory').doc('S2').set({
+        'schoolId': school, 'name': 'Student Two', 'class': 'Class 2', 'rollNo': '22',
+      });
+      final session = await WindowsFeeStructure.currentSession();
+      await db.collection('fee_settings').doc(WindowsFeeStructure.documentId('Class 1', session)).set({'academicSession': session, 'fees': {'Tuition': 100}});
+      await db.collection('fee_settings').doc(WindowsFeeStructure.documentId('Class 2', session)).set({'academicSession': session, 'fees': {'Admission': 200}});
+      expect((await WindowsFeeStructure.load('Class 2'))['fees'], {'Admission': 200});
+    });
+    await tester.pumpWidget(const MaterialApp(home: FeesCollectionScreen()));
+    Future<void> flush() async {
+      for (var i = 0; i < 15; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+    await flush();
+    final row = find.byKey(const ValueKey('fees-student-S1'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-Class 1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-avatar-S1')), findsOneWidget);
+    expect(tester.widget<WindowsPersonAvatar>(find.byKey(const ValueKey('fees-avatar-S1'))).person['name'], 'Student One');
+    await tester.enterText(find.byKey(const ValueKey('fees-name-search')), 'Student Two');
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-All Classes')), findsOneWidget);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('fees-roll-search'))).controller!.text, isEmpty);
+    final second = find.byKey(const ValueKey('fees-student-S2'));
+    await tester.ensureVisible(second);
+    await tester.tap(second);
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-Class 2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-avatar-S2')), findsOneWidget);
+    final selectAll = find.byType(Checkbox).first;
+    await tester.ensureVisible(selectAll);
+    for (var i = 0; i < 100 && tester.widget<Checkbox>(selectAll).onChanged == null; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(tester.widget<Checkbox>(selectAll).onChanged, isNotNull, reason: tester.allWidgets.whereType<Text>().map((w) => w.data).join(' | '));
+    await tester.tap(selectAll);
+    await tester.pump();
+    expect(tester.widget<Checkbox>(selectAll).value, isTrue);
+    final collect = find.text('Collect Payment');
+    await tester.ensureVisible(collect);
+    expect(tester.widget<ElevatedButton>(find.ancestor(of: collect, matching: find.byType(ElevatedButton))).onPressed, isNotNull);
+    await tester.tap(collect);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.textContaining('Student Two?'), findsOneWidget, reason: tester.allWidgets.whereType<Text>().map((w) => w.data).join(' | '));
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final payments = await tester.runAsync(() => db.collection('fee_payments').get());
+    expect(payments!.docs, isEmpty);
+    final unchanged = await tester.runAsync(() => db.collection('students_directory').doc('S2').get());
+    expect(unchanged!.data()?['mobileStableId'], isNull, reason: 'Cancel must not mutate student identity');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }

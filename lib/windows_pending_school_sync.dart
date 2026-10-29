@@ -1,3 +1,4 @@
+import 'windows_platform_client.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_sync_comparison.dart';
@@ -87,6 +88,7 @@ class WindowsPendingSchoolSync {
         throw StateError('Repair journal identity unverified.');
       }
       final legacyFeeProbe = legacyFeePublicationCandidate(item) && prior?['legacyFeePublicationProbeVersion'] != 1;
+      final runtimeProbe = admitUpdatedRuntimeProbe(prior, WindowsPlatformClient.version);
       final inputSignature = syncPayloadHash({
         'schoolId': school, 'collection': item['collection'],
         'documentId': item['documentId'], 'operationId': item['operationId'],
@@ -99,11 +101,11 @@ class WindowsPendingSchoolSync {
       final head = manifest?['revision'] is String ? manifest!['revision'] as String : null;
       if (repeatedRepairProbe(prior, signature: inputSignature,
           cloudRevision: head, now: clock().millisecondsSinceEpoch,
-          explicitRetry: explicitRetry || legacyFeeProbe, cooldownSeconds: WindowsSharedRepairKnowledge.value(
+          explicitRetry: explicitRetry || legacyFeeProbe || runtimeProbe, cooldownSeconds: WindowsSharedRepairKnowledge.value(
             'record_probe_cooldown',school,module:item['collection'] as String,category:'conflict'))) continue;
       // Budget survives restarts and hourly reconciliation. Manual diagnosis
       // admits one more bounded probe; it never resets history or grants ACK.
-      if (!explicitRetry && !legacyFeeProbe &&
+      if (!explicitRetry && !legacyFeeProbe && !runtimeProbe &&
           (prior?['attempts'] as num? ?? 0) >= automaticRepairProbeLimit) {
         if (prior?['outcome'] != 'probe_budget_exhausted') {
           await journal.set({
@@ -125,7 +127,7 @@ class WindowsPendingSchoolSync {
         }
         continue;
       }
-      if (!explicitRetry && !legacyFeeProbe &&
+      if (!explicitRetry && !legacyFeeProbe && !runtimeProbe &&
           (prior?['nextProbeAt'] as num? ?? 0) > clock().millisecondsSinceEpoch)
         continue;
       final attempts = (prior?['attempts'] as num? ?? 0).toInt() + 1;
@@ -137,6 +139,8 @@ class WindowsPendingSchoolSync {
         'operationId': item['operationId'],
         if (legacyFeeProbe || prior?['legacyFeePublicationProbeVersion'] == 1) 'legacyFeePublicationProbeVersion': 1,
         'attempts': attempts,
+        'diagnosedAppVersion': WindowsPlatformClient.version,
+        'runtimeUpgradeProbes': ((prior?['runtimeUpgradeProbes'] as num?) ?? 0).toInt() + (runtimeProbe ? 1 : 0),
         'nextProbeAt': clock().add(delay).millisecondsSinceEpoch,
         'outcome': 'diagnosing',
         'inputSignature': inputSignature,

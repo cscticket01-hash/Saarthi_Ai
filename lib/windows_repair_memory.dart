@@ -19,6 +19,7 @@ class WindowsRepairMemory {
   static String? _token(Object? value, {int max = 200}) => value is String &&
       value.isNotEmpty && value.length <= max &&
       !RegExp(r'[\x00-\x1f/\\]').hasMatch(value) ? value : null;
+  static String? _version(Object? value) => value is String && RegExp(r'^\d+\.\d+\.\d+(?:[+-][A-Za-z0-9.-]+)?$').hasMatch(value) && value.length <= 60 ? value : null;
   static String _hash(List<Object?> parts) => sha256.convert(utf8.encode(jsonEncode(parts))).toString();
   static String? scope(Map event, String school) {
     if (event['schoolId'] != school || _token(school) == null) return null;
@@ -32,6 +33,7 @@ class WindowsRepairMemory {
     final stage = event['stage'], identity = scope(event, school);
     if (identity == null || now < 0 ||
         !issueStages.contains(stage) && stage != 'verified') return false;
+    final appVersion = _version(event['appVersion']);
     final candidates = _entries.values.where((e) => e['scope'] == identity).toList();
     if (stage == 'verified') {
       // Transport completion/empty queues are never passed as verified evidence.
@@ -43,6 +45,13 @@ class WindowsRepairMemory {
         entry['status'] = 'resolved'; entry['resolvedAt'] = now;
         entry['verifiedRepairs'] = (entry['verifiedRepairs'] as int) + 1;
         entry['lastAt'] = now;
+        if (appVersion != null) {
+          entry['resolvedInVersion'] = appVersion;
+          entry['firstAppVersion'] ??= appVersion;
+          entry['lastAppVersion'] = appVersion;
+          final versions = <String>{...((entry['observedVersions'] as List?) ?? []).whereType<String>(), appVersion}.toList();
+          entry['observedVersions'] = versions.length > 8 ? versions.sublist(versions.length - 8) : versions;
+        }
       }
       return changed;
     }
@@ -73,6 +82,13 @@ class WindowsRepairMemory {
       entry['status'] = stage == 'retry' || stage == 'automaticRepair' || outcome == 'retry_admitted'
         ? 'retrying' : 'reviewRequired';
     }
+    if (appVersion != null) {
+      entry['firstAppVersion'] ??= appVersion;
+      entry['lastAppVersion'] = appVersion;
+      final versions = <String>{...((entry['observedVersions'] as List?) ?? []).whereType<String>(), appVersion}.toList();
+      entry['observedVersions'] = versions.length > 8 ? versions.sublist(versions.length - 8) : versions;
+      if (verified) entry['resolvedInVersion'] = appVersion;
+    }
     entry['lastAt'] = now; entry['outcome'] = outcome;
     entry['learnedAction'] = verified
       ? stage == 'duplicateReconciled' ? 'retain_verified_cloud' : 'retain_verified_evidence'
@@ -100,6 +116,10 @@ class WindowsRepairMemory {
       final entry = <String, dynamic>{
         for (final key in ['key','scope','schoolId','category','status','firstAt','lastAt',
           'observations','verifiedRepairs','recurrences']) key: value[key],
+        for (final key in ['firstAppVersion', 'lastAppVersion', 'resolvedInVersion'])
+          if (_version(value[key]) != null) key: _version(value[key]),
+        'observedVersions': value['observedVersions'] is List
+          ? (value['observedVersions'] as List).map(_version).whereType<String>().take(8).toList() : <String>[],
         'collection': _token(value['collection']) ?? 'unknown',
         'recordId': _token(value['recordId']),
         'outcome': _token(value['outcome'], max:100) ?? 'unknown',
@@ -135,3 +155,11 @@ String repairMemoryActionText(Object? value) => const {
   'retry_original_with_backoff': 'Retry the original operation after its wait',
   'review_without_overwrite': 'Review both versions before changing data',
 }[value] ?? 'Verify evidence before retrying';
+
+/// An update admits one read-only diagnosis per operation, capped across
+/// upgrades. It does not reset upload retries, grant ACKs or resolve money conflicts.
+bool admitUpdatedRuntimeProbe(Map? prior, String version) =>
+    RegExp(r'^\d+\.\d+\.\d+$').hasMatch(version) && prior != null &&
+    prior['diagnosedAppVersion'] != version &&
+    (prior['runtimeUpgradeProbes'] is! num ||
+      (prior['runtimeUpgradeProbes'] as num) < 3);

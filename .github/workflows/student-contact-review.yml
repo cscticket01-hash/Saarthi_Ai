@@ -1,9 +1,15 @@
-name: Add Student contact validation review
+name: Person fields and fee payment review
 on:
   pull_request:
     paths:
       - 'lib/main_dashboard_screen_windows.dart'
       - 'test/windows_student_contact_test.dart'
+      - 'test/windows_fee_collection_flow_test.dart'
+      - 'test/windows_person_payment_fields_test.dart'
+      - 'lib/windows_person_fields.dart'
+      - 'lib/windows_person_avatar.dart'
+      - 'lib/windows_payment_confirmation.dart'
+      - 'lib/windows_staff_payroll.dart'
       - '.github/workflows/student-contact-review.yml'
   workflow_dispatch:
 permissions:
@@ -19,7 +25,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter test --concurrency=1 test/windows_student_contact_test.dart
+      - run: flutter test --concurrency=1 test/windows_student_contact_test.dart test/windows_person_payment_fields_test.dart test/windows_fee_collection_flow_test.dart
         env:
           APPDATA: ${{ runner.temp }}/student-contact-tests
           LOCALAPPDATA: ${{ runner.temp }}/student-contact-tests

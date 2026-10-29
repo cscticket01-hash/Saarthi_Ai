@@ -1388,6 +1388,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               subtitle: Text('Record: ${memory['recordId']}\n'
                                 '${memory['observations']} observations • ${memory['verifiedRepairs']} verified resolutions • '
                                 '${memory['recurrences']} recurrences\n'
+                                'First version: ${memory['firstAppVersion'] ?? 'Unknown'} • Latest: ${memory['lastAppVersion'] ?? 'Unknown'}\n'
+                                '${memory['resolvedInVersion'] == null ? '' : 'Verified in: ${memory['resolvedInVersion']}\n'}'
                                 'Safe response: ${repairMemoryActionText(memory['learnedAction'])}'),
                             ),
                           if (engine.recoveryHistory.isEmpty && engine.repairMemory.entries.isEmpty)

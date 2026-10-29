@@ -1,3 +1,4 @@
+import 'windows_person_fields.dart';
 import 'windows_appearance.dart';
 import 'india_address_fields.dart';
 import 'windows_document_templates.dart';
@@ -167,6 +168,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
         joining = TextEditingController(
           text: existing?['joiningDate']?.toString() ?? '',
         );
+    final birth = TextEditingController(text: existing?['dateOfBirth']?.toString() ?? '');
     final address = TextEditingController(text: existing?['address']?.toString() ?? '');
     final country = TextEditingController(text: existing?['country']?.toString().trim().isNotEmpty == true ? existing!['country'].toString() : 'India');
     final state = TextEditingController(text: existing?['state']?.toString() ?? '');
@@ -223,6 +225,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                       controller: mobile,
                       decoration: const InputDecoration(labelText: 'Mobile'),
                     ),
+                    WindowsDateOfBirthField(controller: birth, enabled: !saving),
                     TextField(
                       controller: joining,
                       decoration: const InputDecoration(
@@ -301,6 +304,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                             'designation': department.text,
                             'mobile': mobile.text,
                             'joiningDate': joining.text,
+                            'dateOfBirth': birth.text.trim(),
                             'address': address.text.trim(),
                             'country': country.text.trim(),
                             'state': state.text.trim(),
@@ -325,7 +329,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
       ),
     );
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    for (final c in [name, employee, department, mobile, joining, address, country, state, district]) c.dispose();
+    for (final c in [name, employee, department, mobile, joining, birth, address, country, state, district]) c.dispose();
     if (changed == true && mounted) await _load();
   }
 
