@@ -9,6 +9,7 @@ import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'windows_fee_structure.dart';
+import 'windows_fee_receipt_preview.dart';
 import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
 import 'qr_authentication_engine.dart';
@@ -10437,7 +10438,11 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _activeStudentId;
   String _paymentMode = 'Cash';
   bool _isSavingPayment = false;
+  final String _feesOriginProfile = FirebaseFirestore.instance.activeProfileId;
+  String? _sessionReceiptPaymentId;
+  String? _sessionReceiptStudentId;
   bool _activeFeeSettingsReady = false;
+  bool _localLedgerReady = false;
   String? _activeFeeSettingsMessage;
 
   Map<String, double> _activeFeeAmounts = {};
@@ -10447,7 +10452,6 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   Map<String, dynamic> _studentUidConfig = <String, dynamic>{};
   bool _studentUidConfigLoaded = false;
 
-  final Map<String, Map<String, dynamic>> _feeSettingsCache = {};
 
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _studentsStream;
   late Stream<QuerySnapshot<Map<String, dynamic>>> _ledgerStream;
@@ -10471,7 +10475,6 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
         FirebaseFirestore.instance.collection('students_directory').snapshots();
     _ledgerStream = _ledgerStreamForMonth(_selectedMonth);
 
-    _preloadFeeSettings();
     _loadStudentUidConfigForFees();
   }
 
@@ -10484,22 +10487,6 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 
   String _settingsDocId(String className) => className.replaceAll(' ', '_');
-
-  Future<void> _preloadFeeSettings() async {
-  try {
-    await Future.wait(
-      List.generate(12, (index) async {
-        final className = 'Class ${index + 1}';
-        final settings = await _getClassFeeSettings(className);
-        _feeSettingsCache[className] = settings;
-      }),
-    );
-
-    debugPrint('Fee settings cache ready');
-  } catch (e) {
-    debugPrint('Fee settings preload error: $e');
-  }
-}
 
   Future<void> _loadStudentUidConfigForFees() async {
     try {
@@ -10665,12 +10652,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     'configuredHeads': configuredHeads,
   };
 
-  _feeSettingsCache[studentClass] = result;
-
   return result;
 }
 
   void _resetActiveSelection() {
+    _sessionReceiptPaymentId = null;
+    _sessionReceiptStudentId = null;
     _activeStudentId = null;
     _activeFeeSettingsReady = false;
     _activeFeeSettingsMessage = null;
@@ -10693,6 +10680,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
     Map<String, dynamic>? ledger,
   ) async {
+    if (_isSavingPayment || !_localLedgerReady) return;
+    if (_sessionReceiptStudentId != studentDoc.id) {
+      _sessionReceiptPaymentId = null;
+      _sessionReceiptStudentId = null;
+    }
     final student = studentDoc.data();
     final studentClass = student['class']?.toString().trim() ?? '';
     final studentName = student['name']?.toString().trim() ?? '';
@@ -10709,7 +10701,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     }
 
         final cachedSettings = await _getClassFeeSettings(studentClass);
-        if (!mounted) return;
+        if (!mounted || FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
 
         _activeStudentId = studentDoc.id;
         _selectedClass = studentClass;
@@ -10728,7 +10720,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
 
     try {
-      final settings = await _getClassFeeSettings(studentClass);
+      final settings = cachedSettings;
       final fees = Map<String, double>.from(settings['fees'] as Map);
       final configured = settings['configured'] == true || _toDouble(ledger?['expectedAmount']) > 0;
       if (_toDouble(ledger?['expectedAmount']) > 0 && ledger?['feeItems'] is Map) {
@@ -10799,80 +10791,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     );
   }
 
-  Future<bool> _confirmPayment({
-    required String studentName,
-    required String studentClass,
-    required String roll,
-    required double amount,
-  }) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) { WindowsAppearance.watch(ctx); return  AlertDialog(
-        backgroundColor: WindowsAppearance.background(const Color(0xFF1F2C34)),
-        title:  Row(
-          children: [
-            Icon(Icons.help_outline_rounded, color: WindowsAppearance.foreground(Colors.orangeAccent)),
-            SizedBox(width: 10),
-            Text('Are you sure?', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))),
-          ],
-        ),
-        content: Text(
-          '$studentName\n$studentClass • Roll $roll\n${_monthName(_selectedMonth)}\n\nCollect ${_money(amount)} via $_paymentMode?',
-          style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: WindowsAppearance.primary),
-            onPressed: () => Navigator.pop(ctx, true),
-            child:  Text('Yes, Collect', style: TextStyle(fontFamily: 'Segoe UI', color: null)),
-          ),
-        ],
-      ); },
-    );
-
-    return result == true;
-  }
-
-  Future<String> _getGoogleScriptUrl() async {
-    return _windowsGoogleScriptUrl();
-  }
-
-  Future<Map<String, dynamic>> _saveFeeToGoogleDrive({
-    required Map<String, dynamic> paymentData,
-    required Uint8List pdfBytes,
-  }) async {
-    final scriptUrl = await _getGoogleScriptUrl();
-
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(scriptUrl),
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode({
-        'action': 'save_fee_payment',
-        ...paymentData,
-        'pdfBase64': base64Encode(pdfBytes),
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Google Drive save failed: ${response.statusCode}');
-    }
-
-    final result = Map<String, dynamic>.from(jsonDecode(response.body));
-    if (result['success'] != true) {
-      throw Exception(result['message'] ?? 'Google Drive fee save failed');
-    }
-    return result;
-  }
-
   Future<void> _collectPayment(
     QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
     Map<String, dynamic>? ledger,
   ) async {
-    if (_isSavingPayment) return;
+    if (_isSavingPayment || !_localLedgerReady) return;
+    final originProfile = FirebaseFirestore.instance.activeProfileId;
+    final originMonth = _selectedMonth;
+    final originMode = _paymentMode;
+    setState(() => _isSavingPayment = true);
+    try {
 
     final student = await SchoolPersonIdentity.ensure('students_directory',studentDoc.id);
     final studentName = student['name']?.toString().trim() ?? 'Student';
@@ -10905,7 +10833,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-    if (amount <= 0 || amount > remainingBefore) {
+    if (!amount.isFinite || (amount * 100 - (amount * 100).round()).abs() > .000001 || amount <= 0 || amount > remainingBefore) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: WindowsAppearance.background(Colors.orangeAccent),
@@ -10915,22 +10843,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-    final confirmed = await _confirmPayment(
-      studentName: studentName,
-      studentClass: studentClass,
-      roll: roll,
-      amount: amount,
-    );
-    if (!confirmed) return;
-
-    setState(() => _isSavingPayment = true);
-
     final now = DateTime.now();
     final schoolProfile = await _loadSchoolProfileCache();
     final receiptNo =
         'VS-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
-    final totalPaid = oldPaid + amount;
-    final balance = (expected - totalPaid).clamp(0, double.infinity).toDouble();
+    final totalPaid = ((oldPaid * 100).round() + (amount * 100).round()) / 100;
+    final balance = ((expected * 100).round() - (totalPaid * 100).round()).clamp(0, 9007199254740991) / 100;
     final status = _feeStatus(expected, totalPaid);
 
     final feeItems = <String, double>{};
@@ -10947,6 +10865,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
     final paymentData = <String, dynamic>{
+      'schoolId': FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
+      'receiptDocumentId': 'FEE-${paymentRef.id}',
+      'paidAt': Timestamp.fromDate(now),
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
       'studentId': studentDoc.id,
@@ -10959,14 +10880,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'class': studentClass,
       'rollNo': roll,
       'parentContact': parentContact,
-      'month': _selectedMonth,
+      'month': originMonth,
       'feeItems': feeItems,
       'expectedAmount': expected,
       'installmentAmount': amount,
       'totalPaid': totalPaid,
       'balance': balance,
       'status': status,
-      'paymentMode': _paymentMode,
+      'paymentMode': originMode,
       'schoolName': _schoolName(schoolProfile),
     'schoolAddress': schoolProfile['address']?.toString() ?? '',
       'principalName': _principalName(schoolProfile),
@@ -10979,24 +10900,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
     };
 
-    try {
       final pdfBytes = await _buildReceiptPdf(paymentData);
-      final googleResult = await _saveFeeToGoogleDrive(
-        paymentData: paymentData,
-        pdfBytes: pdfBytes,
-      );
-
-      final driveUrl = googleResult['fileUrl']?.toString() ?? '';
-      final sheetUrl = googleResult['sheetUrl']?.toString() ?? '';
-
-      final batch = FirebaseFirestore.instance.batch();
-      batch.set(paymentRef, {
-        ...paymentData,
-        'driveUrl': driveUrl,
-        'sheetUrl': sheetUrl,
-        'paidAt': FieldValue.serverTimestamp(),
-      });
-
+      if (FirebaseFirestore.instance.activeProfileId != originProfile ||
+          _activeStudentId != studentDoc.id || _selectedMonth != originMonth)
+        throw StateError('School or student changed. Reopen fees before collecting.');
+      const driveUrl = '';
       final existingLedgerDocId =
           ledger?['__docId']?.toString().trim() ?? '';
 
@@ -11006,9 +10914,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ? existingLedgerDocId
               : _ledgerId(feeIdentity));
 
-      batch.set(
-        ledgerRef,
-        {
+      await WindowsBackendBridge.collectFeePayment(
+        profileId: originProfile, paymentId: paymentRef.id, payment: paymentData,
+        ledgerId: ledgerRef.id, previousPaid: oldPaid, pdfBytes: pdfBytes,
+        ledger: {
           'studentId': studentDoc.id,
           'personId': student['mobileStableId'] ?? studentDoc.id,
           'feeIdentity': feeIdentity,
@@ -11019,28 +10928,28 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'class': studentClass,
           'rollNo': roll,
           'parentContact': parentContact,
-          'month': _selectedMonth,
+          'month': originMonth,
           'feeItems': feeItems,
           'expectedAmount': expected,
           'totalPaid': totalPaid,
           'balance': balance,
           'status': status,
-          'paymentMode': _paymentMode,
+          'paymentMode': originMode,
           'lastPaymentId': paymentRef.id,
           'lastReceiptNo': receiptNo,
           'lastDriveUrl': driveUrl,
           'updatedAt': FieldValue.serverTimestamp(),
         },
-        SetOptions(merge: true),
       );
+      try { WindowsSyncEngine.instance.scheduleSoon(); } catch (_) {}
 
-      await batch.commit();
-
-      if (!mounted) return;
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != originProfile) return;
       setState(() {
         // Payment ke baad student selected hi rahega taaki receipt
         // print/WhatsApp aur final status isi panel me dikh sake.
         _activeStudentId = studentDoc.id;
+        _sessionReceiptPaymentId = paymentRef.id;
+        _sessionReceiptStudentId = studentDoc.id;
         _activeLedger = {
           ...?ledger,
           'expectedAmount': expected,
@@ -11063,18 +10972,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
-          content: Text(
-            status == 'PAID'
-                ? 'Payment complete. Current month Collect button lock ho gaya.'
-                : 'Partial payment saved. Balance ${_money(balance)}.',
-          ),
+          content: const Text('Payment collected'),
         ),
       );
 
-      _openWhatsAppFromPayment({
-        ...paymentData,
-        'driveUrl': driveUrl,
-      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSavingPayment = false);
@@ -11084,6 +10985,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           content: Text('Payment save error: $e'),
         ),
       );
+    } finally {
+      if (mounted) setState(() => _isSavingPayment = false);
     }
   }
 
@@ -11155,15 +11058,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   Future<void> _printLastReceipt(Map<String, dynamic>? ledger) async {
     try {
-      final data = await _loadLastPayment(ledger);
-      if (data == null) throw Exception('Receipt record nahi mila.');
-      final bytes = await _buildReceiptPdf(data);
-      await Printing.layoutPdf(onLayout: (_) async => bytes);
+      final id = _sessionReceiptPaymentId;
+      if (id == null || _sessionReceiptStudentId != _activeStudentId) return;
+      final data = (await FirebaseFirestore.instance.collection('fee_payments').doc(id).get()).data();
+      if (data == null) throw StateError('Receipt record not found.');
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
+      await WindowsFeeReceiptPreview.open(context, data);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Receipt print error: $e')),
-      );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Receipt error: $e')));
     }
   }
 
@@ -11460,7 +11362,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     required Map<String, dynamic>? ledger,
     required QueryDocumentSnapshot<Map<String, dynamic>>? studentDoc,
   }) {
-    final hasReceipt = ledger?['lastPaymentId'] != null;
+    final hasReceipt = _sessionReceiptPaymentId != null && _sessionReceiptStudentId == studentDoc?.id;
     final canCollect = studentSelected &&
         settingsReady &&
         !alreadyPaid &&
@@ -11562,6 +11464,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 10.5, fontWeight: FontWeight.w700),
               ),
             ),
+          if (hasReceipt) Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text('Receipt ${ledger?['lastReceiptNo'] ?? ''}'),
+          ),
           Row(
             children: [
               Expanded(
@@ -11879,13 +11785,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
-    if (!_studentUidConfigLoaded) {
-      return  Scaffold(
-        backgroundColor: WindowsAppearance.background(Color(0xFF0B141A)),
-        body: Center(
-          child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))),
-        ),
-      );
+    if (FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) {
+      return const Scaffold(body: Center(child: Text('School changed. Reopen fees.')));
     }
 
     return Scaffold(
@@ -11897,10 +11798,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _studentsStream,
         builder: (context, studentSnapshot) {WindowsAppearance.watch(context);
-          if (studentSnapshot.connectionState == ConnectionState.waiting &&
-              !studentSnapshot.hasData) {
-            return Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))));
-          }
           if (studentSnapshot.hasError) {
             return Center(
               child: Text(
@@ -11913,15 +11810,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           final students = studentSnapshot.data?.docs ?? [];
 
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            key: ValueKey('fees-ledger-$_selectedMonth'),
             stream: _ledgerStream,
             builder: (context, ledgerSnapshot) {WindowsAppearance.watch(context);
-              if (!ledgerSnapshot.hasData && !ledgerSnapshot.hasError) {
-                return Center(child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))));
-              }
               if (ledgerSnapshot.hasError) {
                 return Center(child: Text('Fee history could not load. Reopen Fees Collection before collecting a payment.',
                   style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent))));
               }
+              _localLedgerReady = ledgerSnapshot.hasData && _studentUidConfigLoaded;
               final ledgerByIdentity = <String, Map<String, dynamic>>{};
               final legacyLedgerByStudentId = <String, Map<String, dynamic>>{};
 
@@ -12019,7 +11915,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 }
               }
 
-              final activeLedger = activeStudentDoc == null
+              final activeLedger = activeStudentDoc == null || !ledgerSnapshot.hasData || !_studentUidConfigLoaded
                   ? null
                   : ledgerForStudent(activeStudentDoc);
 
@@ -12160,6 +12056,7 @@ child: Row(
           if (value != null) {
             setState(() {
               _selectedMonth = value;
+              _localLedgerReady = false;
               _ledgerStream = _ledgerStreamForMonth(value);
               _resetActiveSelection();
             });
@@ -20341,7 +20238,9 @@ class FeeTransactionHistoryScreen extends StatefulWidget {
 class _FeeTransactionHistoryScreenState
     extends State<FeeTransactionHistoryScreen> {
   final _search = TextEditingController();
-  bool _loading = true;
+  bool _localReadComplete = false;
+  final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
   String? _error;
   List<Map<String, dynamic>> _payments = [];
   String _classFilter = 'All Classes';
@@ -20350,58 +20249,33 @@ class _FeeTransactionHistoryScreenState
   @override
   void initState() {
     super.initState();
-    _load();
+    _subscription = FirebaseFirestore.instance.collection('fee_payments').snapshots().listen(
+      (snapshot) {
+        if (!mounted || _originProfile != FirebaseFirestore.instance.activeProfileId) return;
+        setState(() {
+          _payments = snapshot.docs.where((d) => d.data()['_syncDeleted'] != true &&
+            (d.data()['schoolId'] == null || d.data()['schoolId'] == FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])).map((d) => {
+            ...d.data(), 'paymentId': d.id, 'studentClass': d.data()['class'] ?? d.data()['studentClass'] ?? '',
+          }).toList()..sort((a, b) => (b['receiptNo']?.toString() ?? '').compareTo(a['receiptNo']?.toString() ?? ''));
+          _localReadComplete = true;
+          _error = null;
+        });
+      }, onError: (Object error) {
+        if (mounted) setState(() => _error = error.toString());
+      });
   }
 
   @override
   void dispose() {
+    _subscription?.cancel();
     _search.dispose();
     super.dispose();
   }
 
-  Future<String> _scriptUrl() async {
-    return _windowsGoogleScriptUrl();
-  }
-
   Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final response = await WindowsBackendBridge.post(
-        Uri.parse(await _scriptUrl()),
-        headers: {'Content-Type': 'text/plain;charset=utf-8'},
-        body: jsonEncode({'action': 'list_fee_payments'}),
-      );
-      if (response.statusCode != 200) {
-        throw Exception('History load failed: ${response.statusCode}');
-      }
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map) throw Exception('History response invalid hai.');
-      final result = Map<String, dynamic>.from(decoded);
-      if (result['success'] != true) {
-        throw Exception(result['message'] ?? 'History load failed');
-      }
-      final raw = result['payments'];
-      final payments = raw is List
-          ? raw
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList()
-          : <Map<String, dynamic>>[];
-      if (!mounted) return;
-      setState(() {
-        _payments = payments;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
-    }
+    // A manual refresh asks the existing sync owner; history stays visible.
+    if (_originProfile == FirebaseFirestore.instance.activeProfileId)
+      WindowsSyncEngine.instance.scheduleSoon();
   }
 
   double _n(dynamic value) =>
@@ -20481,6 +20355,9 @@ class _FeeTransactionHistoryScreenState
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
+    if (_originProfile != FirebaseFirestore.instance.activeProfileId) {
+      return const Scaffold(body: Center(child: Text('School changed. Reopen history.')));
+    }
     final data = _filtered;
     final total = data.fold<double>(
         0, (sum, p) => sum + _n(p['installmentAmount']));
@@ -20499,15 +20376,12 @@ class _FeeTransactionHistoryScreenState
         title: const Text('Transaction History'),
         actions: [
           IconButton(
-            onPressed: _loading ? null : _load,
+            onPressed: _load,
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
-      body: _loading
-          ? Center(
-              child: CircularProgressIndicator(color: WindowsAppearance.foreground(Color(0xFF00A884))))
-          : _error != null
+      body: _error != null && _payments.isEmpty
               ? Center(
                   child: Text(_error!,
                       style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent))))
@@ -20635,14 +20509,13 @@ class _FeeTransactionHistoryScreenState
                       if (data.isEmpty)
                          Padding(
                           padding: EdgeInsets.all(30),
-                          child: Text('Matching transaction nahi mila.',
+                          child: Text(_localReadComplete ? 'Matching transaction nahi mila.' : 'Reading saved history...',
                               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
                         )
                       else
                         ...data.map((p) {
                           final status = p['status']?.toString() ?? '';
                           final paid = status == 'PAID';
-                          final url = p['fileUrl']?.toString().trim() ?? '';
                           return Container(
                             margin: const EdgeInsets.only(bottom: 9),
                             padding: const EdgeInsets.all(13),
@@ -20716,10 +20589,7 @@ class _FeeTransactionHistoryScreenState
                                           fontWeight: FontWeight.w900),
                                     ),
                                     TextButton.icon(
-                                      onPressed: url.isEmpty
-                                          ? null
-                                          : () =>
-                                              html.window.open(url, '_blank'),
+                                      onPressed: () => WindowsFeeReceiptPreview.open(context, p),
                                       icon: const Icon(
                                           Icons.picture_as_pdf_rounded,
                                           size: 15),

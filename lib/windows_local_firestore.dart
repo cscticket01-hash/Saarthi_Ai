@@ -665,6 +665,24 @@ class WriteBatch {
   final List<_WriteOperation> _operations =
       <_WriteOperation>[];
 
+  final Map<String, Map<String, Map<String, dynamic>?>> _expected = {};
+
+  /// Check financial read dependencies inside the serialized storage owner,
+  /// before any record/outbox changes. A concurrent sync cannot erase a balance.
+  void requireUnchanged(
+    DocumentReference<Map<String, dynamic>> reference,
+    Map<String, dynamic>? expected,
+  ) {
+    reference.requireOriginProfile();
+    if (reference.originProfile != originProfile) throw StateError('Foreign read dependency.');
+    _expected.putIfAbsent(
+      reference.collectionPath,
+      () => {},
+    )[reference.documentId] = expected == null
+        ? null
+        : _encodeMap(expected);
+  }
+
   void set<T>(
     DocumentReference<T> reference,
     T data, [
@@ -713,8 +731,15 @@ class WriteBatch {
 
   Future<void> commit() async {
     if(firestore.activeProfileId!=originProfile)throw StateError('School profile changed during batch.');
+    for (final collection in _expected.entries) {
+      for (final id in collection.value.keys) {
+        if (!_operations.any((o) => o.collection == collection.key && o.documentId == id))
+          throw StateError('A guarded record must be included in the batch.');
+      }
+    }
     await firestore._database.applyOperations(
       _operations,
+      expected: _expected,
     );
   }
 }
@@ -1152,6 +1177,7 @@ class _LocalSchoolDatabase {
 
   Future<void> applyOperations(
     List<_WriteOperation> operations,
+    {Map<String, Map<String, Map<String, dynamic>?>> expected = const {}}
   ) {
     if (operations.isEmpty) {
       return Future<void>.value();
@@ -1222,6 +1248,16 @@ class _LocalSchoolDatabase {
         },recordScope:ownerScope ?? {for(final name in operations.map((o)=>o.collection).where((n)=>!n.startsWith('_windows_') && !retiringOwner).toSet())name:operations.where((o)=>o.collection==name).map((o)=>o.documentId).toSet().toList()});
         if(_activeProfileId!=profileAtEnqueue)throw StateError('School profile changed during queued write.');
         final collections = _collections(root);
+        for (final collection in expected.entries) {
+          for (final record in collection.value.entries) {
+            final actual = (collections[collection.key] as Map?)?[record.key];
+            if (jsonEncode(actual) != jsonEncode(record.value))
+              throw StateError(
+                'Record changed before commit. Refresh and check history.',
+              );
+          }
+        }
+
         final touched = <String>{};
         var trackedMutation = false;
 
