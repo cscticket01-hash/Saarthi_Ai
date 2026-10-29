@@ -124,3 +124,14 @@ bool repeatedRepairProbe(Map? prior, {required String signature,
     prior?['cloudManifestRevision'] == cloudRevision && at is int &&
     at <= now && now - at < const Duration(hours:1).inMilliseconds;
 }
+
+String repairMemoryStatusText(Object? value) => const {
+  'resolved': 'Verified resolved', 'retrying': 'Retry pending',
+  'reviewRequired': 'Review required', 'recurred': 'Problem recurred',
+}[value] ?? 'Unverified';
+String repairMemoryActionText(Object? value) => const {
+  'retain_verified_cloud': 'Keep the verified cloud version',
+  'retain_verified_evidence': 'Keep verified published evidence',
+  'retry_original_with_backoff': 'Retry the original operation after its wait',
+  'review_without_overwrite': 'Review both versions before changing data',
+}[value] ?? 'Verify evidence before retrying';

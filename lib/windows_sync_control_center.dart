@@ -1,3 +1,4 @@
+import 'windows_repair_memory.dart';
 import 'sync_pending_diagnostics.dart';
 import 'cloud_transfer_status.dart';
 import 'windows_appearance.dart';
@@ -1379,11 +1380,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             ListTile(
                               leading: Icon(memory['status'] == 'resolved'
                                 ? Icons.check_circle_outline : Icons.history),
-                              title: Text('${memory['collection']} • ${memory['category']} • ${memory['status']}'),
+                              title: Text('${memory['collection']} • ${memory['category']} • ${repairMemoryStatusText(memory['status'])}'),
                               subtitle: Text('Record: ${memory['recordId']}\n'
                                 '${memory['observations']} observations • ${memory['verifiedRepairs']} verified resolutions • '
                                 '${memory['recurrences']} recurrences\n'
-                                'Safe response: ${memory['learnedAction']}'),
+                                'Safe response: ${repairMemoryActionText(memory['learnedAction'])}'),
                             ),
                           if (engine.recoveryHistory.isEmpty && engine.repairMemory.entries.isEmpty)
                             const Padding(

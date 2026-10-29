@@ -78,7 +78,9 @@ class WindowsIdCardReviews {
     final clock = now ?? DateTime.now;
     items.sort((a,b) => ((a['lastRepairAttempt'] as num?)?.toInt() ?? 0).compareTo((b['lastRepairAttempt'] as num?)?.toInt() ?? 0));
     Future<Map<String, dynamic>>? inventory;
-    for (final item in items.take(20)) {
+    var probes = 0;
+    for (final item in items) {
+      if (probes >= 20) break;
       guard(profile, school);
       final at = clock().millisecondsSinceEpoch;
       final signature = syncPayloadHash({for (final k in ['schoolId','documentId',
@@ -93,6 +95,7 @@ class WindowsIdCardReviews {
       if (current?['status'] != 'needsReview' ||
           ['schoolId','inputRevision','cloudRevision','personId','personDocId','ownerRole']
             .any((k) => current?[k] != item[k])) continue;
+      probes++;
       await ref.update({'repairScope': signature, 'repairAttempts': attempts + 1,
         'lastRepairAttempt': at, 'nextRepairAt': at + Duration(
           minutes: (2 * (1 << attempts.clamp(0, 5).toInt())).clamp(2,60).toInt()).inMilliseconds});
