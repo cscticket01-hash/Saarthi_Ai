@@ -304,10 +304,12 @@ void main() {
     await tester.ensureVisible(collect);
     expect(tester.widget<ElevatedButton>(find.ancestor(of: collect, matching: find.byType(ElevatedButton))).onPressed, isNotNull);
     await tester.tap(collect);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.textContaining('Student Two?'), findsOneWidget, reason: tester.allWidgets.whereType<Text>().map((w) => w.data).join(' | '));
     await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     final payments = await tester.runAsync(() => db.collection('fee_payments').get());
     expect(payments!.docs, isEmpty);
     final unchanged = await tester.runAsync(() => db.collection('students_directory').doc('S2').get());
