@@ -1,3 +1,4 @@
+import 'windows_payment_confirmation.dart';
 import 'windows_appearance.dart';
 import 'windows_other_staff.dart';
 import 'dart:async';
@@ -164,7 +165,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     } catch (e) { if (mounted && generation == _loadGeneration) setState(() => _error = '$e'); }
     finally { if (mounted && generation == _loadGeneration) setState(() => _loading = false); }
   }
-  Future<void> _editor(String title, List<Widget> Function(StateSetter) fields, Future<void> Function() save) async {
+  Future<void> _editor(String title, List<Widget> Function(StateSetter) fields, Future<void> Function() save, {String? paymentName, String Function()? paymentAmount}) async {
     bool saving = false; String? error;
     final changed = await showDialog<bool>(context: context, barrierDismissible: false, builder: (ctx) { WindowsAppearance.watch(ctx); return  StatefulBuilder(builder: (ctx, setD) { WindowsAppearance.watch(ctx); return  PopScope(
       canPop: !saving, child: AlertDialog(title: Text(title), content: SizedBox(width: 470,
@@ -174,9 +175,20 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(ctx, false), child: Text('Cancel')),
           FilledButton(onPressed: saving ? null : () async {
             setD(() { saving = true; error = null; });
-            try { await save(); if (ctx.mounted) Navigator.pop(ctx, true); }
+            try {
+              if (paymentName != null) {
+                final confirmed = await confirmSchoolPayment(ctx, name: paymentName,
+                  collecting: false, amount: paymentAmount!());
+                if (!confirmed) {
+                  if (ctx.mounted) setD(() => saving = false);
+                  return;
+                }
+                StaffPayroll._sameSchool(_profile);
+              }
+              await save(); if (ctx.mounted) Navigator.pop(ctx, true);
+            }
             catch (e) { if (ctx.mounted) setD(() { saving = false; error = '$e'; }); }
-          }, child: Text(saving ? 'Saving…' : 'Save'))])); }); });
+          }, child: Text(saving ? 'Saving…' : paymentName == null ? 'Save' : 'Pay'))])); }); });
     if (changed == true && mounted) await _load();
   }
   Future<void> _salary(Map<String, dynamic> person, Map<String, dynamic>? old) async {
@@ -217,7 +229,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
       }),
       TextField(controller: reference, decoration: const InputDecoration(labelText: 'Payment reference / note')),
       Text('This records a payment already made. It does not transfer money.'),
-    ], () => StaffPayroll.recordPayment(_profile, row['id'].toString(), StaffPayroll.money(amount.text), paymentId: paymentId, date: date, mode: mode, reference: reference.text));
+    ], () => StaffPayroll.recordPayment(_profile, row['id'].toString(), StaffPayroll.money(amount.text), paymentId: paymentId, date: date, mode: mode, reference: reference.text), paymentName: row['name']?.toString() ?? 'Staff member',
+      paymentAmount: () {
+        final value = StaffPayroll.money(amount.text);
+        if (value <= 0 || value > StaffPayroll.total(row) - StaffPayroll.paid(row)) throw StateError('Enter an amount within the remaining salary balance.');
+        return '₹${StaffPayroll.format(value)}';
+      });
     await Future<void>.delayed(const Duration(milliseconds: 250));
     amount.dispose(); reference.dispose();
   }
