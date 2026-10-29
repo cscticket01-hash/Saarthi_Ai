@@ -1,0 +1,36 @@
+name: Measure fresh Cloudflare to Drive sync latency
+on:
+  push:
+    branches: [verify/cloudflare-speed-20261029]
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-isolated-speed-20261029
+  cancel-in-progress: false
+jobs:
+  fresh-cloud-speed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test .github/scripts/cloudflare_delivery_timing.test.cjs
+      - name: Time only fresh retained synthetic TEST records and one file
+        env:
+          VS_CF_DELIVERY_ACCEPTANCE: '1'
+          VS_CF_DELIVERY_RUN_ID: cf-speed-20261029-v1
+          VS_EXPECTED_RUNTIME: aaa7eb7060969c3feeb9976b81c8f4c8c70caa48
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/cloudflare_delivery_timing.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloudflare-fresh-latency-20261029
+          path: build/cloud-prerequisites/cloudflare-delivery-timing.json
+          if-no-files-found: warn
+          retention-days: 7
