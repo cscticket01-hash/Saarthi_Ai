@@ -23,6 +23,7 @@ import '../lib/windows_local_settings.dart';
 import '../lib/windows_local_auth.dart' as auth;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_school_profile_store.dart';
+import '../lib/windows_ui_localization.dart' as ui;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -176,6 +177,50 @@ void main() {
     expect((await db.readSchoolRegistrationCache(school))?['schoolName'],'Saved school');
     expect((await db.collection('school_settings').doc('school_location').get()).data()?['radiusMeters'],200);
     expect((await db.collection('_windows_firebase_outbox').get()).docs.length,2);
+  });
+  test('unchanged profile Save preserves timestamps, original pending operations and queue counts', () async {
+    final input = <String,dynamic>{'schoolName':'School','principalName':'Principal',
+      'schoolContactNo':'123','latitude':26.1,'longitude':93.1,'attendanceRadiusMeters':100};
+    final first = await WindowsSchoolProfileStore.saveLocal(input);
+    final before = (await db.collection('_windows_firebase_outbox').get()).docs
+      .map((d)=>[d.id,d.data()['operationId']]).toList();
+    final second = await WindowsSchoolProfileStore.saveLocal({...input,'attendanceRadiusMeters':100.0});
+    expect(second['updatedAt'], first['updatedAt']);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs
+      .map((d)=>[d.id,d.data()['operationId']]).toList(), before);
+    await WindowsSchoolProfileStore.saveLocal({...input,'schoolName':'Changed school'});
+    expect((await db.collection('school_config').doc('school_profile_cache').get()).data()?['schoolName'], 'Changed school');
+  });
+  testWidgets('language plus Save is device-only even with no school identity or location entered', (tester) async {
+    ui.WindowsUiLanguage.change('en');
+    addTearDown(() => ui.WindowsUiLanguage.change('en'));
+    await tester.binding.setSurfaceSize(const Size(1300,1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(const MaterialApp(home: SchoolSettingsScreen()));
+    for (var i=0; i<20; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:20)));
+      await tester.pump(const Duration(milliseconds:100));
+    }
+    final pendingBefore = (await tester.runAsync(() => db.collection('_windows_firebase_outbox').get()))!.docs.length;
+    final language = find.byKey(const ValueKey('windows-ui-language'));
+    await tester.ensureVisible(language);
+    await tester.tap(language);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('বাংলা').last);
+    await tester.pumpAndSettle();
+    final save = find.byKey(const ValueKey('save-school-settings'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds:300));
+    ui.WindowsUiLanguage.restore();
+    expect(ui.WindowsUiLanguage.current, 'bn');
+    final pendingAfter = (await tester.runAsync(() => db.collection('_windows_firebase_outbox').get()))!.docs.length;
+    expect(pendingAfter,pendingBefore);
+    expect((await tester.runAsync(() => db.collection('school_config').doc('school_profile_cache').get()))!.exists,false);
+    expect((await tester.runAsync(() => db.collection('school_settings').doc('school_location').get()))!.exists,false);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox());
   });
   test('a cloud acknowledgement cannot delete a newer local save', () async {
     final ref=db.collection('school_config').doc('school_profile_cache');
