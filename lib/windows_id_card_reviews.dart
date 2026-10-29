@@ -1,3 +1,4 @@
+import 'windows_shared_repair_knowledge.dart';
 import 'windows_sync_comparison.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -96,9 +97,12 @@ class WindowsIdCardReviews {
           ['schoolId','inputRevision','cloudRevision','personId','personDocId','ownerRole']
             .any((k) => current?[k] != item[k])) continue;
       probes++;
+      final learnedFloor=WindowsSharedRepairKnowledge.value('card_probe_cooldown',school,
+        module:'documents',category:'idCardInputs')??120;
+      final normalDelay=Duration(minutes:(2*(1<<attempts.clamp(0,5).toInt())).clamp(2,60).toInt()).inSeconds;
+      final delaySeconds=(normalDelay>learnedFloor?normalDelay:learnedFloor).clamp(120,3600).toInt();
       await ref.update({'repairScope': signature, 'repairAttempts': attempts + 1,
-        'lastRepairAttempt': at, 'nextRepairAt': at + Duration(
-          minutes: (2 * (1 << attempts.clamp(0, 5).toInt())).clamp(2,60).toInt()).inMilliseconds});
+        'lastRepairAttempt': at, 'nextRepairAt': at + Duration(seconds:delaySeconds).inMilliseconds});
       guard(profile, school);
       try {
         await keepPublished(profile, item, read: () => inventory ??= read?.call() ??

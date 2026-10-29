@@ -52,7 +52,7 @@ class ManagedSchoolSession {
       final metadata = action=='managed/session' || action=='managed/device/list'
           ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
-      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock'; // A quiet event subscription is not data transfer.
+      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull'; // A quiet event subscription is not data transfer.
       if(visibleTransfer)activeTransfers.value++;
       late final Map<String,dynamic> result;
       try {

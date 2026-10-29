@@ -117,12 +117,12 @@ class WindowsRepairMemory {
 /// the current hour. New local inputs, changed cloud heads and manual review
 /// always return to the authoritative repair owner.
 bool repeatedRepairProbe(Map? prior, {required String signature,
-  required String? cloudRevision, required int now, bool explicitRetry = false}) {
+  required String? cloudRevision, required int now, bool explicitRetry = false, int? cooldownSeconds}) {
   final at = prior?['verifiedReadbackAt'];
   return !explicitRetry && cloudRevision != null && cloudRevision.isNotEmpty &&
     prior?['outcome'] == 'review_required' && prior?['inputSignature'] == signature &&
     prior?['cloudManifestRevision'] == cloudRevision && at is int &&
-    at <= now && now - at < const Duration(hours:1).inMilliseconds;
+    at <= now && now - at < Duration(seconds:(cooldownSeconds??3600).clamp(300,3600).toInt()).inMilliseconds;
 }
 
 String repairMemoryStatusText(Object? value) => const {

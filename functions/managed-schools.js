@@ -1,3 +1,4 @@
+const {createRepairKnowledge}=require('./repair-knowledge');
 const {createCloudflareDelivery}=require('./cloudflare-delivery');
 const {createProviderPressure,retryAfterMillis,firebaseQuota,quotaError}=require('./provider-pressure');
 const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
@@ -20,8 +21,9 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
+function createManagedSchools({repairKnowledgeOptions={},cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
+ const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
  const cardReader=createManagedCardReader({db,enforced:cardReaderEnforced,privateKey:cardReaderPrivateKey,now});
@@ -360,7 +362,10 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
   ticket.used=true;return {success:true,schoolId:m.schoolId};
  }
  if(action?.startsWith('developer/managed/')){
-  const admin=await developer(req),id=b.schoolId;if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
+  const admin=await developer(req),id=b.schoolId;
+  if(action==='developer/managed/repair-knowledge/status')return {success:true,...await repairKnowledge.status()};
+  if(action==='developer/managed/repair-knowledge/publish')return {success:true,...await repairKnowledge.publish(b.publication,admin.uid)};
+  if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
    const email=String(b.email||'').trim().toLowerCase(),name=String(b.schoolName||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||name.length<2||name.length>160)fail(400,'School name and valid login email required');
    const password=b.password;
    if(password!==undefined&&(typeof password!=='string'||password.length<12||password.length>128))fail(400,'Use an initial password of 12–128 characters');
@@ -514,6 +519,7 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
  const m=await identity(req,b.schoolId);
  m.edgeDeliveryVersion=b.edgeDeliveryVersion===1?1:0;
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ if(action==='managed/repair-knowledge/pull'){if(!lease(m).allowed)fail(403,'School licence is inactive');return {success:true,schoolId:m.schoolId,...await repairKnowledge.pull(m,b.observation||{})};}
  if(['managed/support/list','managed/support/create','managed/support/thread','managed/support/reply','managed/support/resolve'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
  // directory admission is background metadata, never a new school-data gate.
@@ -722,194 +728,1630 @@ function createManagedSchools({cloudflareAllDataEnabled=false,providerPressureJo
     const data={...prior,schoolId:m.schoolId,name:op.record.name,studentClass:op.record.class,section:op.record.section,rollNo:op.record.rollNo};
     if(!records[op.studentId]||Object.hasOwn(prior,'class'))data.class=op.record.class;
     for(const key of Object.keys(data))if(key.startsWith('_sync'))delete data[key];
-    return {...op,data,operationId:canonicalHash([op.operationId,data])};
-   });
-   const planId=canonicalHash([plan.planId,operations,sourceFingerprint,sourceSheetId]);
-   if(Buffer.byteLength(JSON.stringify(operations))>500000)fail(400,'Import preview exceeds safe storage bound');
-   const expiresAt=now()+1800000,admission=db.doc('school_import_admission_private/'+m.schoolId);
-   await db.runTransaction(async tx=>{
-    const saved=await tx.get(admission);let ledger={schoolId:m.schoolId,plans:[]};
-    try{if(saved.exists)ledger=JSON.parse(unprotect(saved.data().sealed,encryptionKey));}catch{fail(503,'Import admission requires administrator review');}
-    if(ledger.schoolId!==m.schoolId||!Array.isArray(ledger.plans)||ledger.plans.length>20)fail(503,'Import admission requires administrator review');
-    const active=ledger.plans.filter(p=>p.expiresAt>now());
-    if(active.some(p=>!Number.isInteger(p.slot)||p.slot<0||p.slot>=20)||new Set(active.map(p=>p.slot)).size!==active.length)fail(503,'Import admission requires administrator review');
-    const old=active.find(p=>p.planId===planId),occupied=new Set(active.map(p=>p.slot));
-    if(!old&&active.length>=20)fail(429,'Too many active import previews; wait for expiry');
-    const slot=old?old.slot:Array.from({length:20},(_,i)=>i).find(i=>!occupied.has(i));
-    tx.set(admission,{sealed:protect(JSON.stringify({schoolId:m.schoolId,plans:[...active.filter(p=>p.planId!==planId),{planId,expiresAt,slot}]}),encryptionKey)});
-    tx.set(refFor(slot),{sealed:protect(JSON.stringify({planId,schoolId:m.schoolId,actor:m.uid,rowsHash,sourceFingerprint,sourceSheetId,expiresAt,operations}),encryptionKey)});
-   });
-   return {success:true,...plan,planId,sourceFingerprint,sourceSheetId,expiresAt,operations:operations.map(({data,...op})=>op),requiresAdminCommit:true};
+    return {...op,data,operationId:canonicalHa…55795 tokens truncated…      _dispatch.request(_nextRetry!.difference(DateTime.now()));
+          }
+          state.value = SchoolCloudState.syncPending;
+          return;
+        }
+        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+          () => FirebaseFirestore.instance
+              .collection('_windows_sync_status')
+              .doc('last')
+              .set({
+                'successfulAt': DateTime.now().millisecondsSinceEpoch,
+                if (completedReconciliation)
+                  'checkpointAt': DateTime.now().millisecondsSinceEpoch,
+                if (!completedReconciliation && lastVerifiedCheckpoint != null)
+                  'checkpointAt':
+                      lastVerifiedCheckpoint!.millisecondsSinceEpoch,
+              }),
+        );
+        lastSuccessfulSync = DateTime.now();
+        if (completedReconciliation) {
+          lastVerifiedCheckpoint = lastSuccessfulSync;
+          _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
+        }
+        _failures = 0;
+        _nextRetry = null;
+        state.value = SchoolCloudState.synced;
+        return;
+      }
+      final firebaseStatus = await WindowsFirebaseRemote.status();
+
+      String? projectId;
+      String? idToken;
+
+      if (firebaseStatus.authenticated &&
+          firebaseStatus.projectId.trim().isNotEmpty) {
+        projectId = firebaseStatus.projectId.trim();
+        idToken = await WindowsFirebaseRemote.freshIdToken();
+
+        // Never sync into a profile that no longer matches the live Firebase
+        // connection. This protects against a connection switch racing a timer.
+        if (_activeFirebaseProject.isNotEmpty &&
+            projectId != _activeFirebaseProject) {
+          unawaited(activateCurrentConnections(allowPairing: false));
+          return;
+        }
+
+        _admitBatch();
+        await _pushFirebaseOutbox(projectId: projectId, idToken: idToken);
+        _admitBatch();
+        await _pullFirebase(projectId: projectId, idToken: idToken);
+      }
+
+      final scriptUrl = await _googleScriptUrl();
+      if (_activeGoogleUrl.isNotEmpty && scriptUrl != _activeGoogleUrl) {
+        unawaited(activateCurrentConnections(allowPairing: false));
+        return;
+      }
+
+      if (scriptUrl.isNotEmpty && central.isEmpty) {
+        _admitBatch();
+        await _pullGoogleSnapshot(scriptUrl);
+      }
+
+      if (scriptUrl.isNotEmpty && central.isEmpty) {
+        _admitBatch();
+        await WindowsBackendBridge.flushPending(
+          canAdmit: () => !isPaused,
+          respectBackoff: true,
+          onActivity: _recordActivity,
+        );
+      }
+
+      if (central['managed'] == true) {
+        _admitBatch();
+        await WindowsBackendBridge.flushDocumentPending(
+          canAdmit: () => !isPaused,
+          respectBackoff: true,
+          onActivity: _recordActivity,
+        );
+      }
+
+      _admitBatch();
+      lastSuccessfulSync = DateTime.now();
+      if (_activeProfileId == syncOrigin) state.value = SchoolCloudState.synced;
+    } on _SyncAdmissionPaused {
+      // A safe boundary was reached. Pending operations and ACKs remain intact.
+    } catch (e) {
+      if (_activeProfileId != syncOrigin) return;
+      lastError = e.toString();
+      recoveryDecision = windowsSyncRecovery(e);
+      _failures++;
+      final learnedFloor=WindowsSharedRepairKnowledge.value('retry_floor',_activeSchoolSyncId,
+        category:recoveryDecision!.kind.name);
+      final originalDelay=recoveryDecision!.delay(_failures);
+      final retryDelay=learnedFloor!=null && originalDelay<Duration(seconds:learnedFloor)
+        ? Duration(seconds:learnedFloor) : originalDelay;
+      _nextRetry = recoveryDecision!.retry
+          ? syncRetryDeadline(now: DateTime.now(), previous: _nextRetry,
+              delay: retryDelay)
+          : null;
+      if (recoveryDecision!.kind == SyncFailureKind.quota) {
+        _quotaRetryAt = _nextRetry;
+        try {
+          await FirebaseFirestore.instance.collection('_windows_sync_status').doc('provider-pressure').set({
+            'version': 1, 'schoolId': _activeSchoolSyncId,
+            'observedAtMillis': DateTime.now().millisecondsSinceEpoch,
+            'retryAtMillis': _nextRetry!.millisecondsSinceEpoch,
+          });
+        } catch (_) { /* In-memory admission stays closed if diagnostic persistence fails. */ }
+      }
+      if (_activeProfileId != syncOrigin) return;
+      if (recoveryHistory.length >= 100) recoveryHistory.removeAt(0);
+      recoveryHistory.add({
+        'atUtc': DateTime.now().toUtc().toIso8601String(),
+        'category': recoveryDecision!.kind.name,
+        'attempt': _failures,
+        'outcome': recoveryDecision!.retry
+            ? 'retained_for_retry'
+            : 'retained_for_review',
+      });
+      try {
+        await _persistRepairHistory(syncOrigin);
+      } catch (_) {
+        /* A failed diagnostic write never removes the durable queue. */
+      }
+      if (_activeProfileId == syncOrigin)
+        state.value = SchoolCloudState.syncError;
+    } finally {
+      watch.stop();
+      metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
+      _checkingCloud = false;
+      _syncing = false;
+      if (isPaused && _activeProfileId == syncOrigin)
+        state.value = SchoolCloudState.syncPending;
+      await refreshDetails();
+      if ((lastError != null &&
+              recoveryDecision?.retry == true &&
+              _failures <= 5) ||
+          _rerunRequested ||
+          (lastError == null &&
+              (_remoteCollections.isNotEmpty ||
+                  _remoteRecordIds.isNotEmpty ||
+                  _remoteResetPending ||
+                  _pendingIdInputs.isNotEmpty))) {
+        final independentMutation =
+            _rerunRequested && recoveryDecision?.independentRecords == true;
+        _rerunRequested = false;
+        scheduleSoon(
+          localMutation: independentMutation,
+          delay: lastError == null
+              ? const Duration(milliseconds: 250)
+              : schoolRetryDelay(_failures),
+        );
+      }
+    }
   }
-  if(!/^[a-f0-9]{64}$/.test(b.planId||''))fail(400,'Exact preview plan required');
-  const admission=await db.doc('school_import_admission_private/'+m.schoolId).get();let entry;
-  try{const ledger=admission.exists?JSON.parse(unprotect(admission.data().sealed,encryptionKey)):null;if(ledger?.schoolId===m.schoolId&&Array.isArray(ledger.plans)&&ledger.plans.length<=20)entry=ledger.plans.find(p=>p.planId===b.planId&&p.expiresAt>now());}catch{fail(409,'Import preview verification failed');}
-  if(!entry||!Number.isInteger(entry.slot)||entry.slot<0||entry.slot>=20)fail(409,'Import preview changed or expired');
-  const saved=await refFor(entry.slot).get();let plan;
-  try{if(saved.exists)plan=JSON.parse(unprotect(saved.data().sealed,encryptionKey));}catch{fail(409,'Import preview verification failed');}
-  if(!saved.exists||plan.planId!==b.planId||plan.schoolId!==m.schoolId||plan.actor!==m.uid||plan.rowsHash!==rowsHash||plan.sourceFingerprint!==sourceFingerprint||plan.sourceSheetId!==sourceSheetId||plan.expiresAt<=now())fail(409,'Import preview changed or expired');
-  const outcomes=[];
-  for(const op of plan.operations){
-   const current=records[op.studentId];
-   if(current?._syncOperationId===op.operationId&&canonicalHash(relevant(current))===canonicalHash(op.data)){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'verified',recordRevision:current._syncRevision});continue;}
-   if((current?._syncRevision??null)!==op.expectedRevision){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'conflict'});break;}
-   try{
-    const fresh=await identity(req,m.schoolId);if(!lease(fresh).allowed||fresh.entitlement.status!=='trial'&&fresh.entitlement.activated!==true)fail(403,'School access changed');
-    const ack=await signed(fresh,{action:'managed_records',collection:'students_directory',operation:'write',syncProtocol:2,id:op.studentId,data:op.data,operationId:op.operationId,expectedRecordRevision:op.expectedRevision??''});
-    invalidate(m.schoolId);
-    if(ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision)throw Error('Unverified import ACK');
-    const final=(await read())[op.studentId];
-    if(!final||final._syncRevision!==ack.recordRevision||final._syncOperationId!==op.operationId||canonicalHash(relevant(final))!==canonicalHash(op.data))throw Error('Import readback pending');
-    outcomes.push({studentId:op.studentId,operationId:op.operationId,state:'verified',recordRevision:ack.recordRevision});
-   }catch(error){outcomes.push({studentId:op.studentId,operationId:op.operationId,state:error.status===409?'conflict':'pending'});break;}
+
+  bool _manualSync = false;
+
+  /// Guardian may repair the owner's local timer, never its queue or ACKs.
+  bool get automaticScheduleExpected =>
+      _initialized &&
+      automaticSyncEnabled &&
+      !_syncBlocked &&
+      !_resetPaused &&
+      !isPaused &&
+      _activeSchoolSyncId.isNotEmpty &&
+      FirebaseFirestore.instance.activeProfileId == _activeProfileId;
+  bool get automaticScheduleRunning =>
+      _schedule.reconciliation?.isActive == true;
+  bool get retryDispatchExpected =>
+      automaticScheduleExpected &&
+      !_syncing &&
+      _activating == 0 &&
+      canRestoreOwnerDispatch(
+        retryAllowed: recoveryDecision?.retry != false,
+        admittedAt: _dispatch.scheduledAt,
+        nextRetry: _nextRetry,
+        quotaRetry: _quotaRetryAt,
+      );
+  bool get retryDispatchRunning => _dispatch.running;
+  bool get checkpointTimerExpected =>
+      automaticScheduleExpected && !_syncing && _schedule.checkpointExpected;
+  bool get checkpointTimerRunning => _schedule.checkpointRunning;
+  void repairRetryDispatch({required String school, required String profile}) {
+    if (!retryDispatchExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
+      throw StateError('Owner dispatch repair is not admitted.');
+    }
+    // Restores the captured deadline only. It does not call syncNow, reset
+    // backoff, select a queue item or authorize a business retry.
+    _dispatch.repair();
   }
-  return {success:true,schoolId:m.schoolId,planId:b.planId,atomicBatch:false,outcomes,remaining:plan.operations.length-outcomes.length,verified:outcomes.length===plan.operations.length&&outcomes.every(o=>o.state==='verified')};
- }
- if(['managed/card/issue','managed/card/reissue','managed/card/revoke','managed/card/status','managed/card/verify'].includes(action)){
-  if(cardIssueEnabled!==true)fail(503,'Card lifecycle is not enabled','CARD_ISSUE_DISABLED');
-  const operation=action.substring('managed/card/'.length);
-  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'School licence is inactive');
-  const readPerson=async(school,role,personId)=>{
-   if(school!==m.schoolId)fail(403,'Another school is not accessible');
-   const collection=role==='student'?'students_directory':'teachers_directory';
-   const result=await signed(m,{action:'managed_records',collection,operation:'read',syncProtocol:2});
-   if(!result||result.syncProtocol!==2||!result.records||typeof result.records!=='object'||Array.isArray(result.records)||Object.keys(result.records).length>100000)fail(502,'Verified school person inventory required','CARD_PERSON_UNVERIFIED');
-   const direct=result.records[personId];
-   if(direct&&direct.schoolId===school)return direct;
-   const matches=Object.values(result.records).filter(r=>r&&r.schoolId===school&&r.mobileStableId===personId);
-   if(matches.length!==1)fail(409,'Card person identity requires review');
-   return matches[0];
-  };
-  return cardAuthority({request:{...b,operation},identity:m,readPerson});
- }
- if(action==='managed/records/batch'){
-  if(!Array.isArray(b.operations)||b.operations.length<1||b.operations.length>10||JSON.stringify(b.operations).length>256000)fail(400,'Invalid record batch');
-  const seen=new Set(),operationIds=new Set();
-  const operations=b.operations.map(op=>{
-   if(!op||!COLLECTIONS.has(op.collection)||['students_directory','teachers_directory','documents','backups'].includes(op.collection)||
-     op.operation!=='write'||op.syncProtocol!==2||typeof op.id!=='string'||!/^[^/]{1,200}$/.test(op.id)||['.','..','__proto__','prototype','constructor'].includes(op.id)||
-     !/^[A-Za-z0-9_-]{16,100}$/.test(op.operationId||'')||typeof op.expectedRecordRevision!=='string'||op.expectedRecordRevision.length>100||(seen.has(op.collection+'/'+op.id)||operationIds.has(op.operationId)))fail(400,'Invalid batch operation');
-   seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,
-    syncProtocol:2,operationId:op.operationId,expectedRecordRevision:op.expectedRecordRevision,data:{...clean(op.data),schoolId:m.schoolId}};
-  });
-  if(!(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1)&&edgeEnabled(m.schoolId)&&operations.some(op=>op.collection==='school_notices')){const acknowledgements=[];for(const op of operations){try{const ack=await signed(m,op);acknowledgements.push({...ack,operationId:op.operationId,success:true});}catch(error){acknowledgements.push({operationId:op.operationId,success:false,code:error.code==='RECORD_REVISION_CONFLICT'?'SCRIPT_RECORD_REVISION_CONFLICT':'SCRIPT_OPERATION_FAILED'});}}return {success:true,schoolId:m.schoolId,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements};}
-  if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1&&operations.some(op=>op.collection==='school_notices'))fail(400,'Notice batches use their existing dedicated lane','EDGE_BATCH_NOTICE_MIX');
-  const tickets=[];for(const op of operations)tickets.push(await deliveryBudget(syncDelivery.prepare(m.schoolId,op)));
-  const result=await signed(m,{action:'managed_records_batch',operations});
-  if(result.edgeDeliveryVersion===1&&result.delivery)return result;
-  if(result.syncProtocol!==2||result.recordWriteBatchVersion!==1||!Array.isArray(result.acknowledgements)||result.acknowledgements.length>operations.length)fail(502,'Invalid batch acknowledgement');
-  const replied=new Set();
-  for(const ack of result.acknowledgements){
-   const index=operations.findIndex(op=>op.operationId===ack.operationId);
-   if(index<0||replied.has(ack.operationId)||typeof ack.success!=='boolean'||ack.success&&(typeof ack.recordRevision!=='string'||!ack.recordRevision))fail(502,'Unverified batch receipt');
-   replied.add(ack.operationId);
-   if(ack.success){if(tickets[index])await deliveryBudget(syncDelivery.committed(tickets[index],ack.recordRevision)).catch(()=>{});else await changeHint(m.schoolId,operations[index].collection,operations[index].id);}
-   else if(ack.code==='SCRIPT_RECORD_REVISION_CONFLICT'&&tickets[index])await syncDelivery.rejected(tickets[index]).catch(()=>{});
+
+  void repairCheckpointTimer({
+    required String school,
+    required String profile,
+  }) {
+    if (!checkpointTimerExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
+      throw StateError('Owner checkpoint timer repair is not admitted.');
+    }
+    _schedule.repairCheckpoint();
   }
-  invalidate(m.schoolId);return result;
- }
- if(action==='managed/records'){
-  if(!COLLECTIONS.has(b.collection)||!['read','write','delete','recover'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=['write','recover'].includes(b.operation)?{...clean(b.data),schoolId:m.schoolId}:undefined;
-  if(b.expectedRevision!==undefined&&(b.collection!=='documents'||typeof b.expectedRevision!=='string'||b.expectedRevision.length>100))fail(400,'Invalid document version');if(b.syncProtocol!==undefined&&b.syncProtocol!==2)fail(400,'Invalid sync protocol');
-  if(b.syncProtocol===2&&b.operation!=='read'&&(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100))fail(400,'Invalid sync operation');
-  if(b.deletedStudentGeneration!==undefined&&(b.collection!=='students_directory'||b.operation!=='delete'||typeof b.deletedStudentGeneration!=='string'||!b.deletedStudentGeneration||b.deletedStudentGeneration.length>200))fail(400,'Invalid student deletion generation');
-  const acknowledged=await signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
-    ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.deletedStudentGeneration!==undefined?{deletedStudentGeneration:b.deletedStudentGeneration}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});
-  if(b.operation!=='read')invalidate(m.schoolId);
-  // Only verified durable Script ACK permits a hint. FCM is optional and never
-  // changes the storage acknowledgement or sends private school content.
-  const owner=b.operation==='write'&&(b.collection==='students_directory'||b.collection==='teachers_directory')?{personId:data.mobileStableId||b.id,role:b.collection==='students_directory'?'student':'teacher'}:b.operation==='write'&&data?.personId?{personId:data.personId,role:data.ownerRole||'student'}:undefined;
-  if((b.syncProtocol===2||(b.collection==='documents'&&typeof b.expectedRevision==='string'))&&acknowledged.syncProtocol===2&&typeof acknowledged.recordRevision==='string'&&b.operation!=='read'&&['school_notices','school_config','school_settings','school_calendar','students_directory','teachers_directory','teacher_schedules','attendance_records','attendance_logs','teacher_attendance','fee_settings','fee_ledger','fee_payments','teacher_salary','exams','exam_center_results','exam_results','documents'].includes(b.collection))
-   void notifyChanged(m.schoolId,b.operationId||hash(m.schoolId+'/'+b.collection+'/'+b.id+'/'+acknowledged.recordRevision),b.collection==='school_notices'&&b.operation==='write',owner).catch(error=>{const safe=['messaging/authentication-error','messaging/mismatched-credential','messaging/server-unavailable'];try{pushDiagnostics({event:'managed_push_hint_failure',code:safe.includes(error.code)?error.code:'FCM_UNAVAILABLE'});}catch{}});
-  return acknowledged;
- }
- if(action==='managed/file/inventory'){
-  if(b.cursor!==undefined&&b.cursor!==null&&!/^[A-Za-z0-9_-]{1,200}$/.test(b.cursor))fail(400,'Invalid binary inventory cursor');
-  const result=await signed(m,{action:'managed_binary_inventory',...(b.cursor?{cursor:b.cursor}:{})});
-  if(result.binaryInventoryVersion!==1||!/^[a-f0-9]{64}$/.test(result.inventoryFingerprint||'')||result.inventoryScope!=='application_media_folders'||!Number.isSafeInteger(result.observedAt)||typeof result.partial!=='boolean'||typeof result.scanLimited!=='boolean'||typeof result.coverageComplete!=='boolean'||!Array.isArray(result.items)||result.items.length>5||(result.nextCursor!==null&&!/^[A-Za-z0-9_-]{1,200}$/.test(result.nextCursor||'')))fail(502,'Unverified binary inventory','BINARY_INVENTORY_UNVERIFIED');
-  const ids=new Set();for(const item of result.items){if(!item||! /^[A-Za-z0-9_-]{1,200}$/.test(item.fileId||'')||ids.has(item.fileId)||!Number.isSafeInteger(item.sizeBytes)||item.sizeBytes<0||typeof item.name!=='string'||item.name.length>1000||typeof item.mime!=='string'||item.mime.length>200)fail(502,'Invalid binary inventory','BINARY_INVENTORY_UNVERIFIED');ids.add(item.fileId);
-   if(item.verification==='bytes_hashed'){if(item.sizeBytes<1||item.sizeBytes>20*1024*1024||!/^[a-f0-9]{64}$/.test(item.sha256||'')||typeof item.version!=='string'||item.version.length>150)fail(502,'Invalid binary verification','BINARY_INVENTORY_UNVERIFIED');}
-   else if(item.verification!=='unavailable'||result.partial!==true||result.coverageComplete!==false)fail(502,'Binary hashes unavailable','BINARY_INVENTORY_UNVERIFIED');
-  }return {...result,binaryRangeVersion:1};
- }
- if(action==='managed/file/download/part'){
-  if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||!/^[a-f0-9]{64}$/.test(b.expectedSha256||'')||typeof b.expectedVersion!=='string'||b.expectedVersion.length<1||b.expectedVersion.length>150||!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=20*1024*1024||!Number.isSafeInteger(b.length)||b.length<1||b.length>512*1024)fail(400,'Invalid binary range');
-  const item=await rangedBinary(m,b);
-  if(b.offset>=item.sizeBytes)fail(400,'Binary range exceeds verified file');
-  const bytes=item.bytes.subarray(b.offset,Math.min(item.sizeBytes,b.offset+b.length));
-  return {success:true,schoolId:m.schoolId,binaryRangeVersion:1,fileId:item.fileId,sha256:item.sha256,version:item.version,sizeBytes:item.sizeBytes,offset:b.offset,nextOffset:b.offset+bytes.length,chunkSha256:createHash('sha256').update(bytes).digest('hex'),base64:bytes.toString('base64')};
- }
- if(action==='managed/file/download'){
-  if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||!/^[a-f0-9]{64}$/.test(b.expectedSha256||'')||typeof b.expectedVersion!=='string'||b.expectedVersion.length<1||b.expectedVersion.length>150)fail(400,'Invalid binary download');
-  const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
-  if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
-  const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
- }
- if(action==='managed/file/upload/resumable'){
-  if(!['begin','status','part'].includes(b.operation)||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||!/^[a-f0-9]{64}$/.test(b.sha256||'')||!Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>20*1024*1024||typeof b.name!=='string'||!b.name||b.name.length>200||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||b.mime.startsWith('application/vnd.google-apps.'))fail(400,'Invalid resumable school upload');
-  const payload={action:'managed_upload_resumable',operation:b.operation,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime};
-  if(b.operation==='part'){
-   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||typeof b.base64!=='string'||!b.base64||b.base64.length>700000||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||!/^[a-f0-9]{64}$/.test(b.chunkSha256||''))fail(400,'Invalid upload chunk');
-   const bytes=Buffer.from(b.base64,'base64');
-   if(!bytes.length||bytes.length>512*1024||b.offset+bytes.length>b.sizeBytes||(b.offset+bytes.length<b.sizeBytes&&bytes.length%(256*1024)!==0)||createHash('sha256').update(bytes).digest('hex')!==b.chunkSha256)fail(400,'Invalid upload chunk');
-   Object.assign(payload,{offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256});
+
+  void repairAutomaticSchedule({
+    required String school,
+    required String profile,
+  }) {
+    if (!automaticScheduleExpected ||
+        school != _activeSchoolSyncId ||
+        profile != _activeProfileId) {
+      throw StateError('Automatic scheduling is paused or the school changed.');
+    }
+    if (automaticScheduleRunning) return;
+    // No immediate sync, backoff reset, pause override or business submission.
+    // Subsequent timer ticks still enter scheduleSoon's owner admission policy.
+    _schedule.repairReconciliationTimer(reconciliationInterval);
   }
-  const out=await signed(m,payload);
-  if(out.edgeDeliveryVersion===1&&out.delivery)return out;
-  if(out.uploadResumableVersion!==1||out.uploadKey!==b.uploadKey||out.sha256!==b.sha256||out.sizeBytes!==b.sizeBytes||typeof out.committed!=='boolean'||!Number.isSafeInteger(out.offset)||out.offset<0||out.offset>b.sizeBytes||out.committed&&out.offset!==b.sizeBytes||!out.committed&&out.offset===b.sizeBytes||out.committed&&!/^[A-Za-z0-9_-]{1,200}$/.test(out.fileId||''))fail(502,'Upload progress or completion is unverified','UPLOAD_ACK_UNVERIFIED');
-  return {success:true,schoolId:m.schoolId,uploadResumableVersion:1,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,offset:out.offset,committed:out.committed,...(out.committed?{fileId:out.fileId,fileUrl:'https://drive.google.com/file/d/'+out.fileId+'/view'}:{})};
- }
- if(action==='managed/file/upload'){
-  if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});
- }
- if(action==='managed/file/read'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid file ID');return signed(m,{action:'managed_file',fileId:b.fileId});}
- if(action==='managed/recycle'){
-  if(b.operation==='list'){
-   if(!COLLECTIONS.has(b.collection)||(b.after!==undefined&&typeof b.after!=='string')||(b.after||'').length>200)fail(400,'Invalid recycle inventory');
-   return signed(m,{action:'managed_recycle',operation:'list',collection:b.collection,after:b.after||''});
+
+  Future<void> setAutomaticSync(bool enabled) async {
+    final origin = _activeProfileId;
+    await FirebaseFirestore.instance
+        .collection('_windows_sync_status')
+        .doc('settings')
+        .set({'automaticSync': enabled}, const SetOptions(merge: true));
+    if (_activeProfileId != origin) return;
+    automaticSyncEnabled = enabled;
+    if (!enabled) {
+      _dispatch.cancel();
+      _remoteFeed.stop();
+      _rerunRequested = false;
+    } else
+      scheduleSoon();
+    await refreshDetails();
   }
-  if(!['restore','purge'].includes(b.operation)||! /^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||
-     !/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100)fail(400,'Invalid recycle operation');
-  const result=await signed(m,{action:'managed_recycle',operation:b.operation,fileId:b.fileId,operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision});
-  invalidate(m.schoolId);return result;
- }
- if(action==='managed/disaster/readback'){
-  if(m.schoolId!=='vs-db8afb01a3be46a983c8284714d06e5d')fail(403,'Disaster readback is isolated TEST only');
-  if(!/^[a-f0-9]{64}$/.test(b.operationId||'')||!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid disaster readback');
-  const result=await signed(m,{action:'managed_disaster_readback',operationId:b.operationId,fileId:b.fileId});
-  const bounded=(key,max)=>Number.isSafeInteger(result[key])&&result[key]>=0&&result[key]<=max;
-  if(result.readbackVersion!==1||result.operationId!==b.operationId||result.readOnly!==true||result.activeStorageChanged!==false||
-     result.scope!=='completed_rehearsal_rows_and_bytes'||!['records','binaries','verified'].includes(result.phase)||
-     typeof result.complete!=='boolean'||typeof result.verified!=='boolean'||
-     !['recordCount','rowCount','checkedRows'].every(key=>bounded(key,1000000))||
-     !['binaryCount','checkedBinaries'].every(key=>bounded(key,1000))||result.recordCount>result.rowCount||
-     result.checkedRows>result.rowCount||result.checkedBinaries>result.binaryCount||
-     !['startedAt','observedAt','verifiedAt'].every(key=>bounded(key,now()+300000))||result.startedAt<=0||result.observedAt<result.startedAt||
-     result.verified!==result.complete||result.complete!==(result.phase==='verified')||result.complete&&(result.checkedRows!==result.rowCount||
-       result.checkedBinaries!==result.binaryCount||result.verifiedAt<result.startedAt||result.verifiedAt>result.observedAt)||
-     !result.complete&&result.verifiedAt!==0)fail(502,'Unverified disaster readback','SCRIPT_RESPONSE_INVALID');
-  return result;
- }
- if(action==='managed/disaster'){
-  if(m.schoolId!=='vs-db8afb01a3be46a983c8284714d06e5d')fail(403,'Disaster rehearsal is isolated TEST only');
-  if(!['backup','rehearse'].includes(b.operation)||!/^[a-f0-9]{64}$/.test(b.operationId||'')||
-     b.operation==='rehearse'&&!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||'')||b.operation==='backup'&&b.fileId!==undefined)fail(400,'Invalid disaster operation');
-  return signed(m,{action:'managed_disaster',operation:b.operation,operationId:b.operationId,...(b.operation==='rehearse'?{fileId:b.fileId}:{})});
- }
- if(action==='managed/backup/snapshot')return signed(m,{action:'managed_backup_snapshot',schoolId:m.schoolId});
- if(action==='managed/backup')return signed(m,{action:'managed_backup'});
- if(action==='managed/restore'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid backup file ID');return signed(m,{action:'managed_restore',fileId:b.fileId});}
- fail(400,'Unknown managed school operation');
- };
- handler.syncReadMetrics=()=>({hits:viewHits,misses:viewMisses,entries:readViews.size,bytes:readBytes,ttlMillis:5000});
- handler.drainAttendance=queue.drain;handler.attendanceMetrics=queue.metrics;handler.setAttendanceWake=wake=>{attendanceWake=wake;};
- const firebasePressure=createProviderPressure({now,isQuotaError:error=>error?.code==='FIREBASE_QUOTA_EXCEEDED'});
- const firebaseWork=work=>firebasePressure.run(projectId,'FIREBASE_QUOTA_EXCEEDED',async()=>{
-  try{return await work();}catch(error){if(firebaseQuota(error))throw quotaError('FIREBASE_QUOTA_EXCEEDED',900000);throw error;}
- });
- const wrapped=async req=>firebaseWork(()=>handler(req));
- Object.assign(wrapped,handler);
- wrapped.drainAttendance=()=>firebaseWork(()=>queue.drain());
- return wrapped;
+
+  bool _rerunRequested = false;
+  Future<void> requestSync() async {
+    final generation = ++_pauseGeneration;
+    final origin = _activeProfileId;
+    final ref = FirebaseFirestore.instance
+        .collection('_windows_sync_status')
+        .doc('pause');
+    // Persist cancellation before admitting resumed work.
+    final write = _pauseWrite
+        .catchError((Object _) {})
+        .then((_) => ref.set({'pausedUntilMillis': 0, 'startedAtMillis': 0}));
+    _pauseWrite = write;
+    await write;
+    if (_activeProfileId != origin || generation != _pauseGeneration) return;
+    _pause.resume();
+    _pauseTimer?.cancel();
+    if (_syncing) _rerunRequested = true;
+    _dispatch.cancel();
+    _nextRetry = null;
+    recoveryDecision = null;
+    _failures = 0;
+    _manualSync = true;
+    try {
+      await SchoolCloudEngine.instance.verify();
+      await syncNow();
+    } finally {
+      _manualSync = false;
+    }
+  }
+
+  /// One reviewed transient record/document retry through the same serial admission lane.
+  /// It never clears a queue, replaces operation IDs, or resumes a user pause.
+  Future<void> retryRecoverableOperation({
+    required String queueCollection,
+    required String queueId,
+    required String expectedOperationId,
+    required String expectedSchoolId,
+  }) async {
+    final documentRetry = queueCollection == '_windows_document_outbox';
+    final operationField = documentRetry ? 'documentRevision' : 'operationId';
+    if (!documentRetry && queueCollection != '_windows_firebase_outbox') {
+      throw StateError('This queue requires its own verified recovery action.');
+    }
+    if (_syncing ||
+        _activating > 0 ||
+        _syncBlocked ||
+        _resetPaused ||
+        isPaused) {
+      throw StateError(
+        'Sync is busy, paused, or unavailable. Pending data retained.',
+      );
+    }
+    _syncing = true;
+    final db = FirebaseFirestore.instance, origin = _activeProfileId;
+    bool valid(Map<String, dynamic>? row) =>
+        row != null &&
+        row[operationField] == expectedOperationId &&
+        expectedOperationId.isNotEmpty &&
+        row['schoolId'] == expectedSchoolId &&
+        expectedSchoolId == _activeSchoolSyncId &&
+        db.activeProfileId == origin &&
+        _activeProfileId == origin &&
+        row['syncState'] == 'retry' &&
+        {'networkPath', 'timeout', 'server'}.contains(row['failureCategory']);
+    try {
+      final ref = db.collection(queueCollection).doc(queueId);
+      final row = (await ref.get()).data();
+      if (!valid(row))
+        throw StateError('Retry is stale or requires administrator review.');
+      final central = await CentralSchoolCloud.saved();
+      if (central['managed'] != true ||
+          central['schoolId'] != expectedSchoolId ||
+          central['storageReady'] != true)
+        throw StateError('Verified managed school storage required.');
+      ManagedSchoolSession.verifyBuildEndpoint(
+        central['endpoint']?.toString() ?? '',
+      );
+      await SchoolCloudEngine.instance.verify();
+      if (SchoolCloudEngine.instance.identity != null &&
+          !SchoolCloudEngine.instance.canOpen) {
+        throw StateError('School authorization needs verification.');
+      }
+      _admitBatch();
+      final health = await ManagedSchoolSession.callForSchool(
+        expectedSchoolId,
+        'managed/storage/check',
+        {},
+      );
+      if (health['recordSyncVersion'] != 2 ||
+          health['brokerRecordSyncVersion'] != 2) {
+        throw StateError('School sync protocol verification required.');
+      }
+      if (!valid((await ref.get()).data()))
+        throw StateError('Operation changed during retry preparation.');
+      _admitBatch();
+      bool admit() =>
+          db.activeProfileId == origin &&
+          _activeProfileId == origin &&
+          !isPaused;
+      if (documentRetry) {
+        await WindowsBackendBridge.flushDocumentPending(
+          canAdmit: admit,
+          admitRow: (id, record) => id == queueId && valid(record),
+          onActivity: _recordActivity,
+        );
+      } else {
+        await _pushManagedOutbox(
+          onlyQueueId: queueId,
+          onlyOperationId: expectedOperationId,
+          canAdmit: admit,
+        );
+      }
+      final remaining = (await ref.get()).data();
+      if (remaining?[operationField] == expectedOperationId) {
+        throw StateError(
+          'Operation remains pending; completion is unverified.',
+        );
+      }
+    } finally {
+      _checkingCloud = false;
+      _syncing = false;
+      await refreshDetails();
+      if (_rerunRequested) {
+        _rerunRequested = false;
+        scheduleSoon();
+      }
+    }
+  }
+
+  Future<void> _pushManagedOutbox({
+    String? onlyQueueId,
+    String? onlyOperationId,
+    bool Function()? canAdmit,
+  }) async {
+    if (onlyOperationId == null) {
+      await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
+        canAdmit: () => !isPaused && (canAdmit?.call() ?? true));
+    }
+    final batchReplies = onlyOperationId == null
+        ? await WindowsFirebaseRemote.prepareManagedBatch(
+            _activeSchoolSyncId,
+            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+          )
+        : <String, Object>{};
+    if (batchReplies.isNotEmpty)
+      metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
+    final canonical = <String, Map<String, dynamic>>{};
+    await WindowsPendingSchoolSync.flush(
+      profileId: _activeProfileId,
+      onlyQueueId: onlyQueueId,
+      onlyOperationId: onlyOperationId,
+      respectBackoff: onlyOperationId == null,
+      diagnoseUnclassified: _manualSync,
+      onActivity: _recordActivity,
+      canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+      send: (c, id, op, data) async {},
+      prepareVersioned: (ref, item) =>
+          WindowsFirebaseRemote.prepareQueuedRecord(
+            ref,
+            item,
+            _activeSchoolSyncId,
+          ),
+      canonicalForAck: (item) => canonical[item['operationId']],
+      sendVersioned: (item) async {
+        // Refill only after this bounded batch has been consumed. Dedicated
+        // parent/file/delete paths retain the original serial admission rules.
+        if (onlyOperationId == null &&
+            batchReplies.isEmpty &&
+            WindowsFirebaseRemote.recordWriteBatchSupported &&
+            item['operation'] == 'set' &&
+            !{
+              'students_directory',
+              'teachers_directory',
+              'documents',
+              'backups',
+              'school_config',
+            }.contains(item['collection'])) {
+          final next = await WindowsFirebaseRemote.prepareManagedBatch(
+            _activeSchoolSyncId,
+            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+          );
+          if (next.isNotEmpty) {
+            batchReplies.addAll(next);
+            metrics['recordWriteRequests'] =
+                metrics['recordWriteRequests']! + 1;
+          }
+        }
+        if (!batchReplies.containsKey(item['operationId']))
+          metrics['recordWriteRequests'] = metrics['recordWriteRequests']! + 1;
+        final queuedAt = item['queuedAt'];
+        final queuedMillis = queuedAt is Timestamp
+            ? queuedAt.millisecondsSinceEpoch
+            : queuedAt is num
+            ? queuedAt.toInt()
+            : null;
+        if (queuedMillis != null)
+          metrics['lastQueueWaitMillis'] =
+              (DateTime.now().millisecondsSinceEpoch - queuedMillis)
+                  .clamp(0, 1 << 53)
+                  .toInt();
+        final origin = FirebaseFirestore.instance.activeProfileId;
+        final school = _activeSchoolSyncId;
+        final watch = Stopwatch()..start();
+        final batched = batchReplies.remove(item['operationId']);
+        if (batched is CentralCloudException) throw batched;
+        final reply = await WindowsFirebaseRemote.syncManagedRecord(
+          item,
+          _activeSchoolSyncId,
+          batchReply: batched is Map<String, dynamic> ? batched : null,
+        );
+        watch.stop();
+        metrics['lastRecordAckMicros'] =
+            batched is Map && batched['batchRequestMicros'] is int
+            ? batched['batchRequestMicros'] as int
+            : watch.elapsedMicroseconds;
+        // Consuming an already-verified batch receipt is not another cloud RTT.
+        if (batched == null)
+          _sample('cloudAckMicros', watch.elapsedMicroseconds);
+        if (queuedMillis != null)
+          _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
+        final timing = reply['syncTiming'];
+        if (timing is Map && timing['scriptRoundTripMillis'] is num) {
+          metrics['lastScriptRoundTripMillis'] =
+              (timing['scriptRoundTripMillis'] as num).toInt();
+          _sample(
+            'scriptRoundTripMillis',
+            metrics['lastScriptRoundTripMillis']!,
+          );
+        }
+        if (FirebaseFirestore.instance.activeProfileId != origin ||
+            _activeSchoolSyncId != school) {
+          throw StateError(
+            'School changed before retaining verified dependencies.',
+          );
+        }
+        final revision = reply['recordRevision'] as String;
+        if (item['operation'] != 'delete' && reply['record'] is Map)
+          canonical[item['operationId'] as String] = Map<String, dynamic>.from(
+            reply['record'],
+          );
+        // Persist before the outbox ACK can remove its only recovery source.
+        await WindowsSyncDependencies.retain(
+          school,
+          item['collection'] as String,
+          item['documentId'] as String,
+          revision,
+        );
+        return revision;
+      },
+    );
+  }
+
+  Future<Set<String>> _managedChangedCollections(
+    String school,
+    Future<Map<String, String>> Function(Map<String, String>) read, {
+    required bool recordDeltas,
+  }) async {
+    final db = FirebaseFirestore.instance,
+        origin = FirebaseFirestore.instance.activeProfileId;
+    if (db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School identity changed before change check.');
+    }
+    final known = <String, String>{};
+    for (final col in _firebaseCollections.where((c) => c != 'backups')) {
+      final prior =
+          (await db
+                  .collection('_windows_sync_manifest')
+                  .doc(_manifestId('managed', col))
+                  .get())
+              .data();
+      known[col] = windowsManagedCheckpointRevision(
+        prior,
+        recordDeltas: recordDeltas,
+      );
+    }
+    if (db.activeProfileId != origin)
+      throw StateError('School changed before change check.');
+    final heads = await read(known);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during change check.');
+    }
+    return changedWindowsCollections(known, heads);
+  }
+
+  @visibleForTesting
+  Future<Set<String>> changedManagedCollectionsForTesting(
+    String school,
+    Future<Map<String, String>> Function(Map<String, String>) read,
+  ) => _managedChangedCollections(school, read, recordDeltas: true);
+
+  @visibleForTesting
+  Future<void> reconcileManagedCacheForTesting(
+    String school,
+    Future<Map<String, dynamic>> Function(Map<String, String>) read, {
+    Set<String>? selectedCollections,
+    bool verifyInventory = true,
+  }) => _pullManagedChanges(
+    schoolOverride: school,
+    batchReader: read,
+    verifyInventory: verifyInventory,
+    selectedCollections: selectedCollections,
+  );
+
+  @visibleForTesting
+  Future<void> reconcileManagedRecordDeltaForTesting(
+    String school,
+    Future<Map<String, dynamic>> Function(
+      Map<String, String>,
+      Map<String, Map<String, String>>,
+    )
+    read, {
+    Set<String>? selectedCollections,
+  }) => _pullManagedChanges(
+    schoolOverride: school,
+    recordBatchReader: read,
+    verifyInventory: false,
+    selectedCollections: selectedCollections,
+  );
+
+  @visibleForTesting
+  Future<void> reconcileManagedPointTargetsForTesting(
+    String school,
+    Map<String, Set<String>> targets,
+    Future<Map<String, dynamic>> Function(String, Set<String>) read,
+  ) => _pullManagedChanges(
+    schoolOverride: school,
+    selectedCollections: targets.keys.toSet(),
+    targetRecordIds: targets,
+    pointReader: read,
+    recordBatchReader: (a, b) async =>
+        throw StateError('Verified baseline required for point read'),
+  );
+
+  Future<void> _pullManagedChanges({
+    String? schoolOverride,
+    Future<Map<String, dynamic>> Function(Map<String, String>)? batchReader,
+    Future<Map<String, dynamic>> Function(
+      Map<String, String>,
+      Map<String, Map<String, String>>,
+    )?
+    recordBatchReader,
+    bool? verifyInventory,
+    Set<String>? selectedCollections,
+    Map<String, Set<String>>? targetRecordIds,
+    Future<Map<String, dynamic>> Function(String, Set<String>)? pointReader,
+  }) async {
+    _lastManagedApplyVerified = true;
+    final db = FirebaseFirestore.instance,
+        origin = db.activeProfileId,
+        school = schoolOverride ?? _activeSchoolSyncId;
+    if (db.activeProfileIdentity['schoolSyncId'] != school)
+      throw StateError('School identity changed before recovery.');
+    final audit = verifyInventory ?? false;
+    if (!audit &&
+        !_recordDeltasSupported &&
+        batchReader == null &&
+        recordBatchReader == null) {
+      throw StateError(
+        'Record-only sync requires the matching updated school Script and central backend. Pending data retained.',
+      );
+    }
+    final collections = _firebaseCollections
+        .where(
+          (c) =>
+              c != 'backups' &&
+              (selectedCollections == null || selectedCollections.contains(c)),
+        )
+        .toList();
+    final pendingAtRead =
+        (await db.collection('_windows_firebase_outbox').get()).docs;
+    final revisions = <String, String>{};
+    final recordCheckpoints = <String, Map<String, String>>{};
+    for (final collection in collections) {
+      final prior =
+          (await db
+                  .collection('_windows_sync_manifest')
+                  .doc(_manifestId('managed', collection))
+                  .get())
+              .data();
+      if ((_recordDeltasSupported || recordBatchReader != null) &&
+          !audit &&
+          prior?['recordRevisions'] is Map) {
+        recordCheckpoints[collection] = Map<String, String>.from(
+          prior!['recordRevisions'] as Map,
+        );
+        for (final row in pendingAtRead) {
+          final item = row.data();
+          if (item['collection'] == collection &&
+              item['syncState'] == 'conflict') {
+            recordCheckpoints[collection]!.remove(item['documentId']);
+          }
+        }
+      }
+      final needsBaseline =
+          !audit &&
+          (_recordDeltasSupported || recordBatchReader != null) &&
+          prior?['recordRevisions'] is! Map;
+      if (needsBaseline && prior?['recordDeltaBaselineAttempted'] == true)
+        throw StateError(
+          'Verified record revision baseline unavailable; explicit inventory repair required.',
+        );
+      revisions[collection] = needsBaseline
+          ? ''
+          : audit
+          ? managedRecoveryRevision(
+              prior,
+              (await db.collection(collection).get()).docs
+                  .map((d) => d.id)
+                  .toSet(),
+              {
+                ...pendingAtRead
+                    .where((d) => d.data()['collection'] == collection)
+                    .map((d) => d.data()['documentId'])
+                    .whereType<String>(),
+                if (collection == 'school_config') 'google_drive_account',
+              },
+            )
+          : prior?['revision']?.toString() ?? '';
+      if (recordCheckpoints.containsKey(collection) &&
+          pendingAtRead.any(
+            (row) =>
+                row.data()['collection'] == collection &&
+                row.data()['syncState'] == 'conflict',
+          )) {
+        // Keep every other record revision: only conflicted IDs are fetched.
+        revisions[collection] = '';
+      }
+    }
+    if (db.activeProfileId != origin)
+      throw StateError('School changed during recovery inventory.');
+    // A full-school Apps Script read holds one lock while opening every
+    // category and checking its retained heads. Bound each request instead:
+    // verified earlier categories survive a later timeout, and local mutations
+    // can drain between groups without waiting for the whole school census.
+    Map<String, dynamic>? batch;
+    final exactCollections = <String>{
+      for (final entry in (targetRecordIds ?? <String, Set<String>>{}).entries)
+        if (entry.value.isNotEmpty &&
+            entry.value.length <= 64 &&
+            recordCheckpoints.containsKey(entry.key) &&
+            (WindowsFirebaseRemote.recordPointReadSupported ||
+                pointReader != null))
+          entry.key,
+    };
+    final remainingCollections = revisions.keys
+        .where((c) => !exactCollections.contains(c))
+        .toList();
+    for (final collection in collections) {
+      // A new durable notice must not wait for every startup collection read.
+      if (_rerunRequested) {
+        _rerunRequested = false;
+        _admitBatch();
+        await _pushManagedOutbox();
+      }
+      _admitBatch();
+      final manifest = db
+          .collection('_windows_sync_manifest')
+          .doc(_manifestId('managed', collection));
+      if (!exactCollections.contains(collection) &&
+          (_deltaBatchSupported ||
+              batchReader != null ||
+              recordBatchReader != null)) {
+        if (batch == null || !batch.containsKey(collection)) {
+          final group = <String, String>{
+            for (final name in remainingCollections.take(2))
+              name: revisions[name]!,
+          };
+          metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+          batch = await (recordBatchReader != null
+              ? recordBatchReader(group, {
+                  for (final name in group.keys)
+                    if (recordCheckpoints.containsKey(name))
+                      name: recordCheckpoints[name]!,
+                })
+              : batchReader != null
+              ? batchReader(group)
+              : WindowsFirebaseRemote.readManagedBatch(
+                  school,
+                  group,
+                  knownRecordRevisions: {
+                    for (final name in group.keys)
+                      if (recordCheckpoints.containsKey(name))
+                        name: recordCheckpoints[name]!,
+                  },
+                ));
+          if (db.activeProfileId != origin)
+            throw StateError('School changed during reconciliation.');
+          if (batch.length != group.length ||
+              group.keys.any((name) => batch![name] is! Map))
+            throw StateError('Incomplete school delta; checkpoint retained.');
+          remainingCollections.removeRange(0, group.length);
+        }
+      } else {
+        metrics['recordReadRequests'] = metrics['recordReadRequests']! + 1;
+      }
+      final result = exactCollections.contains(collection)
+          ? <String, dynamic>{
+              'syncProtocol': 2,
+              'partialRecords': true,
+              'collectionRevision': revisions[collection]!,
+              'records': await (pointReader != null
+                  ? pointReader(collection, targetRecordIds![collection]!)
+                  : WindowsFirebaseRemote.readManagedPoints(
+                      school,
+                      collection,
+                      targetRecordIds![collection]!,
+                    )),
+            }
+          : batch != null && batch.containsKey(collection)
+          ? Map<String, dynamic>.from(batch[collection] as Map)
+          : await WindowsFirebaseRemote.readManagedChanges(
+              school,
+              collection,
+              revisions[collection] ?? '',
+            );
+      if (db.activeProfileId != origin)
+        throw StateError('School changed during reconciliation.');
+      if (result['syncProtocol'] != 2 ||
+          result['collectionRevision'] is! String ||
+          result['records'] is! Map)
+        throw StateError('Invalid authoritative recovery response.');
+      if (result['partialRecords'] == true &&
+          !recordCheckpoints.containsKey(collection))
+        throw StateError('Incremental baseline missing.');
+      if (result['unchanged'] == true) continue;
+      final records = Map<String, dynamic>.from(result['records'] as Map);
+      if (result['missingRecords'] is List &&
+          batchReader == null &&
+          recordBatchReader == null) {
+        final restored = await recoverMissingSheetRecords(
+          school,
+          collection,
+          result['missingRecords'] as List,
+        );
+        if (restored > 0) {
+          _rerunRequested = true;
+          scheduleSoon(localMutation: true);
+        }
+      }
+      if (result['partialRecords'] == true &&
+          result['missingRecords'] is List &&
+          (result['missingRecords'] as List).isNotEmpty)
+        throw StateError(
+          'Missing Sheet records require verified recovery; checkpoint retained.',
+        );
+      // Validate the whole response before recording any inventory or applying it.
+      if (records.values.any(
+        (value) => value is! Map || value['schoolId'] != school,
+      ))
+        throw StateError('Foreign or invalid school inventory rejected.');
+      final downloadable = records.entries
+          .where(
+            (entry) =>
+                collection != 'school_config' ||
+                entry.key != 'google_drive_account',
+          )
+          .length;
+      final progress = db.collection('_windows_sync_downloads').doc(collection);
+      var remaining = downloadable, verifiedDownloads = 0, blockedDownloads = 0;
+      await progress.set({
+        'schoolId': school,
+        'collection': collection,
+        'collectionRevision': result['collectionRevision'],
+        'observedAt': DateTime.now().millisecondsSinceEpoch,
+        'inventoryScope': 'records_only',
+        'state': 'downloading',
+        'remaining': remaining,
+        'verified': 0,
+        'blocked': 0,
+      });
+      final pending =
+          (await db.collection('_windows_firebase_outbox').get()).docs;
+      if (db.activeProfileId != origin)
+        throw StateError('School changed during reconciliation.');
+      final pendingById = {
+        for (final row in pending.where(
+          (row) => row.data()['collection'] == collection,
+        ))
+          row.data()['documentId']: row,
+      };
+      var processed = 0;
+      final applyWatch = Stopwatch()..start();
+      final entries = records.entries
+          .where(
+            (entry) =>
+                collection != 'school_config' ||
+                entry.key != 'google_drive_account',
+          )
+          .toList();
+      for (var offset = 0; offset < entries.length; offset += 100) {
+        final chunk = entries.skip(offset).take(100).toList();
+        final incoming = <String, Map<String, dynamic>>{};
+        for (final entry in chunk) {
+          if (db.activeProfileId != origin)
+            throw StateError('School changed during reconciliation.');
+          final data = Map<String, dynamic>.from(entry.value as Map);
+          if (data['schoolId'] != school)
+            throw StateError('Foreign school manifest rejected.');
+          if (data['id'] != null && data['id'] != entry.key)
+            throw StateError('Cloud record identity mismatch.');
+          data['id'] = entry.key;
+          if (collection == 'students_directory' &&
+              data['_syncRevision'] is String) {
+            for (final generation in verifiedDeletedStudentGenerations(data)) {
+              await db.applyVerifiedStudentDeletion(
+                school,
+                entry.key,
+                generation,
+                data['_syncRevision'],
+              );
+            }
+          }
+          final queued = pendingById[entry.key];
+          if (queued != null &&
+              ((data['_syncRevision'] ?? '') !=
+                      (queued.data()['baseCloudRevision'] ?? '') ||
+                  queued.data()['syncState'] == 'conflict')) {
+            // Still compare the live operation inside the existing durable writer.
+            await db.recordOutboxConflict(
+              queued.reference,
+              queued.data(),
+              data,
+            );
+            if (automaticDuplicateReadback(queued.data(), data)) {
+              final history =
+                  (await db
+                          .collection('_windows_sync_conflict_history')
+                          .doc(queued.data()['operationId'] as String)
+                          .get())
+                      .data();
+              if (db.activeProfileId != origin)
+                throw StateError(
+                  'School changed after duplicate reconciliation.',
+                );
+              if (history?['resolution'] ==
+                      'automatic identical authenticated readback' &&
+                  history?['verifiedCloud'] is Map &&
+                  history!['verifiedCloud']['_syncRevision'] ==
+                      data['_syncRevision']) {
+                _recordActivity({
+                  'schoolId': school,
+                  'queueCollection': '_windows_firebase_outbox',
+                  'queueId': queued.id,
+                  'operationId': queued.data()['operationId'],
+                  'collection': collection,
+                  'documentId': entry.key,
+                  'stage': 'duplicateReconciled',
+                  'failureCategory': 'verifiedDuplicate',
+                  'at': DateTime.now().millisecondsSinceEpoch,
+                });
+              }
+            }
+          }
+          incoming[entry.key] = data;
+        }
+        await cacheVerifiedSheetRecords(school, collection, {
+          for (final entry in incoming.entries)
+            if (entry.value['_syncRevision'] is String) entry.key: entry.value,
+        });
+        if (db.activeProfileId != origin)
+          throw StateError('School changed during reconciliation.');
+        await db.applySyncedCollectionBatch(collection, incoming);
+        // Read back after commit. A newer local edit is retained by the same
+        // live queue guard and must not be counted as a verified download.
+        for (final entry in incoming.entries) {
+          final data = entry.value;
+          if (await db.syncedDocumentMatches(
+            db.collection(collection).doc(entry.key),
+            data['_syncDeleted'] == true ? null : data,
+          )) {
+            verifiedDownloads++;
+            remaining--;
+          } else {
+            blockedDownloads++;
+          }
+          processed++;
+          if (processed % 50 == 0 || processed == downloadable) {
+            await progress.set({
+              'remaining': remaining,
+              'verified': verifiedDownloads,
+              'blocked': blockedDownloads,
+              if (verifiedDownloads > 0)
+                'lastVerifiedLocalReadbackAt':
+                    DateTime.now().millisecondsSinceEpoch,
+            }, const SetOptions(merge: true));
+          }
+        }
+      }
+      _sample('collectionApplyMicros', applyWatch.elapsedMicroseconds);
+      // Missing IDs are not deletions: only explicit server tombstones delete.
+      if (db.activeProfileId != origin)
+        throw StateError('School changed during reconciliation.');
+      final partial = result['partialRecords'] == true;
+      if (partial && !recordCheckpoints.containsKey(collection))
+        throw StateError('Incremental baseline missing.');
+      final nextRecordRevisions = <String, String>{
+        if (partial) ...recordCheckpoints[collection]!,
+        for (final entry in records.entries)
+          if ((entry.value as Map)['_syncRevision'] is String)
+            entry.key: (entry.value as Map)['_syncRevision'] as String,
+      };
+      final priorManifest = partial ? (await manifest.get()).data() : null;
+      final deletedIds = <String>{
+        if (partial)
+          ...((priorManifest?['deletedIds'] as List?) ?? [])
+              .whereType<String>(),
+      };
+      for (final entry in records.entries) {
+        if ((entry.value as Map)['_syncDeleted'] == true) {
+          deletedIds.add(entry.key);
+        } else {
+          deletedIds.remove(entry.key);
+        }
+      }
+      // Persist dependent work before advancing the record checkpoint. A crash
+      // before this write leaves the old checkpoint and the delta is replayed.
+      await WindowsSyncDependencies.retainMany(school, collection, {
+        for (final entry in records.entries)
+          if (WindowsSyncDependencies.relevant(collection, entry.key))
+            entry.key:
+                ((entry.value as Map)['_syncRevision'] as String?) ??
+                result['collectionRevision'] as String,
+      });
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => manifest.set({
+          'revision': result['collectionRevision'],
+          'collection': collection,
+          'ids': <String>{
+            if (partial)
+              ...((priorManifest?['ids'] as List?) ?? []).whereType<String>(),
+            ...records.keys,
+          }.toList(),
+          'recordRevisions':
+              records.values.every(
+                (row) =>
+                    row is Map &&
+                    row['_syncRevision'] is String &&
+                    (row['_syncRevision'] as String).isNotEmpty,
+              )
+              ? nextRecordRevisions
+              : null,
+          'recordDeltaBaselineAttempted': true,
+          'deletedIds': deletedIds.toList(),
+        }),
+      );
+      for (final id in records.keys) {
+        _noteIdInput(collection, id);
+      }
+      if (remaining != 0) _lastManagedApplyVerified = false;
+      await progress.set({
+        'state': remaining == 0 ? 'verified' : 'needsReview',
+        'finishedAt': DateTime.now().millisecondsSinceEpoch,
+      }, const SetOptions(merge: true));
+    }
+  }
+
+  Future<void> _pullFirebase({
+    required String projectId,
+    required String idToken,
+  }) async {
+    final pullProfile = FirebaseFirestore.instance.activeProfileId;
+    final pending = await _firebasePendingKeys();
+
+    for (final collection in _firebaseCollections) {
+      _admitBatch();
+      if (projectId != platformProjectId &&
+          _firebaseCollections.indexOf(collection) >= 12)
+        continue;
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+        throw StateError('School profile changed during sync.');
+      final remote = await WindowsFirebaseRemote.readCollection(
+        projectId: projectId,
+        idToken: idToken,
+        collection: collection,
+      );
+
+      if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+        throw StateError('School profile changed during sync.');
+      final localSnapshot = await FirebaseFirestore.instance
+          .collection(collection)
+          .get();
+
+      final local = <String, Map<String, dynamic>>{
+        for (final doc in localSnapshot.docs)
+          doc.id: Map<String, dynamic>.from(doc.data()),
+      };
+
+      final manifestRef = FirebaseFirestore.instance
+          .collection('_windows_sync_manifest')
+          .doc(_manifestId('firebase', collection));
+
+      final manifest = await manifestRef.get();
+
+      final oldIds = _stringSet(manifest.data()?['ids']);
+
+      final remoteIds = remote.keys.toSet();
+
+      for (final entry in remote.entries) {
+        if (FirebaseFirestore.instance.activeProfileId != pullProfile)
+          throw StateError('School profile changed during sync.');
+        // Windows connection selector is authoritative for its own Drive URL.
+        // A stale Firestore copy must never switch the active backend behind
+        // the user's back or revive another school's Drive link.
+        if (collection == 'school_config' &&
+            entry.key == 'google_drive_account') {
+          continue;
+        }
+
+        final key = _pendingKey(collection, entry.key);
+
+        final localData = local[entry.key];
+
+        if (pending.contains(key)) {
+          // Local unsynced change wins until its
+          // outbox has been pushed.
+          continue;
+        }
+
+        if (localData == null) {
+          await _remoteSetLocal(collection, entry.key, entry.value);
+          continue;
+        }
+
+        final localMs = _modifiedMillis(localData);
+        final remoteMs = _modifiedMillis(entry.value);
+
+        if (localMs > 0 && remoteMs > 0 && localMs > remoteMs) {
+          // Local is clearly newer. Re-writing the
+          // same document records it in the outbox.
+          await FirebaseFirestore.instance
+              .collection(collection)
+              .doc(entry.key)
+              .set(localData);
+          pending.add(key);
+          continue;
+        }
+
+        final merged = <String, dynamic>{...localData, ...entry.value};
+
+        await _remoteSetLocal(collection, entry.key, merged);
+      }
+
+      // A document that existed on Firebase in an
+      // earlier successful snapshot but is absent now
+      // is a confirmed remote deletion.
+      final deletedRemote = oldIds.difference(remoteIds);
+
+      for (final id in deletedRemote) {
+        if (collection == 'school_config' && id == 'google_drive_account') {
+          continue;
+        }
+
+        final key = _pendingKey(collection, id);
+
+        if (pending.contains(key)) {
+          continue;
+        }
+
+        await _remoteDeleteLocal(collection, id);
+      }
+
+      // Existing local-only documents on the first
+      // sync must not be lost. Queue them to Firebase.
+      for (final entry in local.entries) {
+        if (remoteIds.contains(entry.key) || oldIds.contains(entry.key)) {
+          continue;
+        }
+
+        final key = _pendingKey(collection, entry.key);
+
+        if (pending.contains(key)) {
+          continue;
+        }
+
+        await FirebaseFirestore.instance
+            .collection(collection)
+            .doc(entry.key)
+            .set(entry.value);
+
+        pending.add(key);
+      }
+
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        () => manifestRef.set(<String, dynamic>{
+          'source': 'firebase',
+          'collection': collection,
+          'ids': remoteIds.toList()..sort(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
+      );
+    }
+  }
+
+  Future<Set<String>> _firebasePendingKeys() async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('_windows_firebase_outbox')
+        .get();
+
+    return snapshot.docs
+        .map((doc) {
+          final data = doc.data();
+          return _pendingKey(
+            data['collection']?.toString() ?? '',
+            data['documentId']?.toString() ?? '',
+          );
+        })
+        .where((value) {
+          return !value.startsWith('\u0000');
+        })
+        .toSet();
+  }
+
+  Future<void> _pushFirebaseOutbox({
+    required String projectId,
+    required String idToken,
+  }) => WindowsPendingSchoolSync.flush(
+    profileId: FirebaseFirestore.instance.activeProfileId,
+    respectBackoff: true,
+    onActivity: _recordActivity,
+    canAdmit: () => !isPaused,
+    send: (collection, id, operation, data) async {
+      if (operation == 'delete') {
+        await WindowsFirebaseRemote.deleteDocument(
+          projectId: projectId,
+          idToken: idToken,
+          collection: collection,
+          documentId: id,
+        );
+      } else {
+        await WindowsFirebaseRemote.writeDocument(
+          projectId: projectId,
+          idToken: idToken,
+          collection: collection,
+          documentId: id,
+          data: data!,
+        );
+      }
+    },
+  );
+
+  Future<String> _googleScriptUrl() {
+    return WindowsExternalConnections.googleScriptUrl();
+  }
+
+  Future<void> _pullGoogleSnapshot(String scriptUrl) async {
+    final response = await WindowsBackendBridge.post(
+      Uri.parse(scriptUrl),
+      headers: const <String, String>{
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: jsonEncode(const <String, dynamic>{
+        'action': 'windows_sync_snapshot',
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return;
+    }
+
+    final decoded = jsonDecode(response.body);
+
+    if (decoded is! Map) {
+      return;
+    }
+
+    final result = Map<String, dynamic>.from(decoded);
+
+    if (result['success'] != true || result['windowsLocalFallback'] == true) {
+      return;
+    }
+
+    await _importGoogleList(
+      sourceName: 'students',
+      collection: 'students_directory',
+      rawList: result['students'],
+      idFor: (item) => _canonicalStudentDocumentId(item),
+      coreFirebaseCollection: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'teachers',
+      collection: 'teachers_directory',
+      rawList: result['teachers'],
+      idFor: (item) => item['teacherId']?.toString().trim() ?? '',
+      coreFirebaseCollection: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'feePayments',
+      collection: 'fee_payments',
+      rawList: result['feePayments'],
+      idFor: (item) => item['paymentId']?.toString().trim() ?? '',
+      coreFirebaseCollection: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'documents',
+      collection: '_local_student_documents',
+      rawList: result['documents'],
+      idFor: (item) => item['documentId']?.toString().trim() ?? '',
+      deleteMissing: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'studentAttendance',
+      collection: '_local_student_attendance',
+      rawList: result['studentAttendance'],
+      idFor: (item) => item['attendanceId']?.toString().trim() ?? '',
+      deleteMissing: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'teacherAttendance',
+      collection: '_local_teacher_attendance',
+      rawList: result['teacherAttendance'],
+      idFor: (item) => item['attendanceId']?.toString().trim() ?? '',
+      deleteMissing: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'exams',
+      collection: '_local_exam_center_exams',
+      rawList: result['exams'],
+      idFor: (item) => item['examId']?.toString().trim() ?? '',
+      deleteMissing: true,
+    );
+
+    await _importGoogleList(
+      sourceName: 'results',
+      collection: '_local_exam_center_results',
+      rawList: result['results'],
+      idFor: (item) {
+        final examId = item['examId']?.toString().trim() ?? '';
+        final studentId = item['studentId']?.toString().trim() ?? '';
+
+        if (examId.isEmpty || studentId.isEmpty) {
+          return '';
+        }
+
+        return '${examId}_$studentId';
+      },
+      deleteMissing: true,
+    );
+
+    final profile = result['schoolProfile'];
+
+    if (profile is Map) {
+      await _mergeGoogleDocument(
+        collection: 'school_config',
+        documentId: 'school_profile_cache',
+        remote: Map<String, dynamic>.from(profile),
+        coreFirebaseCollection: true,
+      );
+    }
+  }
+
+  Future<void> _importGoogleList({
+    required String sourceName,
+    required String collection,
+    required dynamic rawList,
+    required String Function(Map<String, dynamic> item) idFor,
+    bool coreFirebaseCollection = false,
+    bool deleteMissing = false,
+  }) async {
+    if (rawList is! List) return;
+
+    final remoteIds = <String>{};
+
+    for (final raw in rawList) {
+      if (raw is! Map) continue;
+
+      final item = Map<String, dynamic>.from(raw);
+
+      final id = idFor(item);
+
+      if (id.isEmpty) continue;
+
+      remoteIds.add(id);
+
+      await _mergeGoogleDocument(
+        collection: collection,
+        documentId: id,
+        remote: item,
+        coreFirebaseCollection: coreFirebaseCollection,
+      );
+    }
+
+    if (collection == 'students_directory' && remoteIds.isNotEmpty) {
+      await _cleanupStudentAliases(remoteIds);
+    }
+
+    if (!deleteMissing) {
+      return;
+    }
+
+    final manifestRef = FirebaseFirestore.instance
+        .collection('_windows_sync_manifest')
+        .doc(_manifestId('google', sourceName));
+
+    final manifest = await manifestRef.get();
+
+    final oldIds = _stringSet(manifest.data()?['ids']);
+
+    for (final id in oldIds.difference(remoteIds)) {
+      await _remoteDeleteLocal(collection, id);
+    }
+
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+      () => manifestRef.set(<String, dynamic>{
+        'source': 'google',
+        'collection': collection,
+        'ids': remoteIds.toList()..sort(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }),
+    );
+  }
+
+  String _normalizeStudentRoll(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return '';
+
+    if (RegExp(r'^\d+$').hasMatch(raw)) {
+      final normalized = raw.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+      return normalized.isEmpty ? '0' : normalized;
+    }
+
+    return raw.toLowerCase();
+  }
+
+  int _studentClassNumber(dynamic value) {
+    final raw = value?.toString() ?? '';
+    return int.tryParse(raw.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+  }
+
+  String _canonicalStudentDocumentId(Map<String, dynamic> item) {
+    final classValue = item['class'] ?? item['studentClass'];
+    final rollValue = item['rollNo'] ?? item['roll'];
+    final classNumber = _studentClassNumber(classValue);
+    final roll = _normalizeStudentRoll(rollValue);
+
+    if (classNumber <= 0 || roll.isEmpty) {
+      return '';
+    }
+
+    return 'Class ${classNumber}_Roll_$roll';
+  }
+
+  Future<void> _cleanupStudentAliases(Set<String> canonicalRemoteIds) async {
+    final snapshot = await FirebaseFirestore.instance
+        .collection('students_directory')
+        .get();
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final canonicalId = _canonicalStudentDocumentId(data);
+
+      if (canonicalId.isEmpty ||
+          !canonicalRemoteIds.contains(canonicalId) ||
+          doc.id == canonicalId) {
+        continue;
+      }
+
+      // This is a real tracked delete on purpose. It removes old Firebase
+      // aliases such as Class 1_Roll_01 after the canonical Roll_1 record
+      // has been imported from Google.
+      await doc.reference.delete();
+    }
+  }
+
+  Future<void> _mergeGoogleDocument({
+    required String collection,
+    required String documentId,
+    required Map<String, dynamic> remote,
+    required bool coreFirebaseCollection,
+  }) async {
+    final ref = FirebaseFirestore.instance
+        .collection(collection)
+        .doc(documentId);
+
+    final current = await ref.get();
+    final local = current.data();
+
+    if (local == null) {
+      if (coreFirebaseCollection) {
+        await ref.set(remote);
+      } else {
+        await _remoteSetLocal(collection, documentId, remote);
+      }
+      return;
+    }
+
+    final localMs = _modifiedMillis(local);
+    final remoteMs = _modifiedMillis(remote);
+
+    if (remoteMs > 0 && localMs > 0 && remoteMs < localMs) {
+      return;
+    }
+
+    final merged = <String, dynamic>{...local, ...remote};
+
+    if (coreFirebaseCollection) {
+      // Only create a Firebase outbox entry when
+      // Google is actually newer or fills a missing
+      // record/field set.
+      if (_jsonStable(local) != _jsonStable(merged)) {
+        await ref.set(merged);
+      }
+    } else {
+      await _remoteSetLocal(collection, documentId, merged);
+    }
+  }
+
+  Future<void> _remoteSetLocal(
+    String collection,
+    String documentId,
+    Map<String, dynamic> data,
+  ) {
+    final db = FirebaseFirestore.instance;
+    return db.applySyncedDocument(
+      db.collection(collection).doc(documentId),
+      data,
+    );
+  }
+
+  Future<void> _remoteDeleteLocal(String collection, String documentId) {
+    final db = FirebaseFirestore.instance;
+    return db.applySyncedDocument(
+      db.collection(collection).doc(documentId),
+      null,
+    );
+  }
+
+  String _pendingKey(String collection, String documentId) {
+    return '$collection\u0000$documentId';
+  }
+
+  String _manifestId(String source, String collection) {
+    return base64Url
+        .encode(utf8.encode('$source\n$collection'))
+        .replaceAll('=', '');
+  }
+
+  Set<String> _stringSet(dynamic value) {
+    if (value is! Iterable) {
+      return <String>{};
+    }
+
+    return value
+        .map((item) => item.toString())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+  }
+
+  int _modifiedMillis(Map<String, dynamic> data) {
+    const keys = <String>[
+      'updatedAt',
+      'lastEdited',
+      'timestamp',
+      'paidAt',
+      'uploadedAt',
+      'createdAt',
+      'queuedAt',
+    ];
+
+    for (final key in keys) {
+      final value = data[key];
+
+      if (value is Timestamp) {
+        return value.millisecondsSinceEpoch;
+      }
+
+      if (value is DateTime) {
+        return value.millisecondsSinceEpoch;
+      }
+
+      if (value is num) {
+        return value.toInt();
+      }
+
+      if (value is String) {
+        final asInt = int.tryParse(value);
+        if (asInt != null) {
+          return asInt;
+        }
+
+        final parsed = DateTime.tryParse(value);
+        if (parsed != null) {
+          return parsed.millisecondsSinceEpoch;
+        }
+      }
+    }
+
+    return 0;
+  }
+
+  String _jsonStable(Map<String, dynamic> value) {
+    dynamic clean(dynamic input) {
+      if (input is Timestamp) {
+        return input.millisecondsSinceEpoch;
+      }
+
+      if (input is DateTime) {
+        return input.millisecondsSinceEpoch;
+      }
+
+      if (input is Map) {
+        final keys = input.keys.map((key) => key.toString()).toList()..sort();
+
+        return <String, dynamic>{
+          for (final key in keys) key: clean(input[key]),
+        };
+      }
+
+      if (input is Iterable) {
+        return input.map(clean).toList();
+      }
+
+      return input;
+    }
+
+    return jsonEncode(clean(value));
+  }
+
+  void dispose() {
+    _schedule.stop();
+    _changeTimer?.cancel();
+    _remoteFeed.stop();
+    _pauseTimer?.cancel();
+    _dispatch.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _initialized = false;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (lifecycle == AppLifecycleState.resumed) _schedule.wake();
+  }
 }
-module.exports={createManagedSchools,scriptUrl,protect,unprotect,clean,COLLECTIONS};
+
+class _GoogleIdentity {
+  const _GoogleIdentity({
+    required this.schoolSyncId,
+    required this.backendInstanceId,
+  });
+
+  final String schoolSyncId;
+  final String backendInstanceId;
+}
+
+class _ResolvedSyncProfile {
+  const _ResolvedSyncProfile({
+    required this.profileId,
+    required this.schoolSyncId,
+    required this.firebaseProjectId,
+    required this.googleUrl,
+    required this.googleEmail,
+    required this.googleBackendId,
+    required this.blocked,
+    required this.message,
+  });
+
+  final String profileId;
+  final String schoolSyncId;
+  final String firebaseProjectId;
+  final String googleUrl;
+  final String googleEmail;
+  final String googleBackendId;
+  final bool blocked;
+  final String message;
+
+  _ResolvedSyncProfile copyWith({String? googleEmail}) {
+    return _ResolvedSyncProfile(
+      profileId: profileId,
+      schoolSyncId: schoolSyncId,
+      firebaseProjectId: firebaseProjectId,
+      googleUrl: googleUrl,
+      googleEmail: googleEmail ?? this.googleEmail,
+      googleBackendId: googleBackendId,
+      blocked: blocked,
+      message: message,
+    );
+  }
+}
+
+class _SyncAdmissionPaused implements Exception {
+  const _SyncAdmissionPaused();
+}

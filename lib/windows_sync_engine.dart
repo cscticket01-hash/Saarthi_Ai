@@ -1,3 +1,4 @@
+import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
 import 'windows_person_card_sync.dart';
@@ -1873,6 +1874,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return;
     }
     _syncing = true;
+    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,repairMemory.entries));
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
       now: now,
@@ -2428,9 +2430,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       lastError = e.toString();
       recoveryDecision = windowsSyncRecovery(e);
       _failures++;
+      final learnedFloor=WindowsSharedRepairKnowledge.value('retry_floor',_activeSchoolSyncId,
+        category:recoveryDecision!.kind.name);
+      final originalDelay=recoveryDecision!.delay(_failures);
+      final retryDelay=learnedFloor!=null && originalDelay<Duration(seconds:learnedFloor)
+        ? Duration(seconds:learnedFloor) : originalDelay;
       _nextRetry = recoveryDecision!.retry
           ? syncRetryDeadline(now: DateTime.now(), previous: _nextRetry,
-              delay: recoveryDecision!.delay(_failures))
+              delay: retryDelay)
           : null;
       if (recoveryDecision!.kind == SyncFailureKind.quota) {
         _quotaRetryAt = _nextRetry;

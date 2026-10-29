@@ -1,3 +1,4 @@
+import 'windows_shared_repair_knowledge.dart';
 import 'windows_sync_recovery.dart';
 import 'sync_recovery_policy.dart';
 import 'student_lifecycle_policy.dart';
@@ -483,7 +484,14 @@ class WindowsFirebaseRemote {
     if (health != null && health['schoolId'] != school) {
       throw StateError('Foreign batch health journal.');
     }
-    final limit = (health?['nextLimit'] as int? ?? 10).clamp(2, 10).toInt();
+    var limit = (health?['nextLimit'] as int? ?? 10).clamp(2, 10).toInt();
+    for(final row in rows){
+      final module=row.data()['collection'];
+      if(module is! String)continue;
+      final cap=WindowsSharedRepairKnowledge.value('batch_cap',school,module:module,
+        category:health?['failureCategory'] is String?health!['failureCategory'] as String:'unknown');
+      if(cap!=null && cap<limit)limit=cap;
+    }
     final ready = <Map<String, dynamic>>[], operations = <Map<String, dynamic>>[];
     Future<void> recordHealth(int micros, int successful, bool complete, {String? category}) async {
       requireBatchScope();

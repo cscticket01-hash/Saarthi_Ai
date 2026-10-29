@@ -149,3 +149,15 @@ test('developer notifications are developer-written, own-school or broadcast rea
  await assertFails(getDoc(doc(school(),own)));
  await assertFails(getDoc(doc(school(),all)));
 });
+
+test('shared repair signing, CI evidence and private source state are backend-only for every browser role',async()=>{
+ for(const path of ['repair_knowledge/published','repair_knowledge/catalog','repair_knowledge_evidence/'+'a'.repeat(64),'repair_knowledge_sources/'+'b'.repeat(64)]){
+  await seed(path,{private:'synthetic-protected-state'});
+  for(const db of [publicDb(),anon(),school(),dev()]){
+   await assertFails(getDoc(doc(db,path)));
+   await assertFails(setDoc(doc(db,path),{passed:true,policyHash:'forged'}));
+   await assertFails(updateDoc(doc(db,path),{passed:true}));
+   await assertFails(deleteDoc(doc(db,path)));
+  }
+ }
+});

@@ -1,3 +1,4 @@
+import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_sync_comparison.dart';
 import 'dart:async';
@@ -97,7 +98,8 @@ class WindowsPendingSchoolSync {
       final head = manifest?['revision'] is String ? manifest!['revision'] as String : null;
       if (repeatedRepairProbe(prior, signature: inputSignature,
           cloudRevision: head, now: clock().millisecondsSinceEpoch,
-          explicitRetry: explicitRetry)) continue;
+          explicitRetry: explicitRetry, cooldownSeconds: WindowsSharedRepairKnowledge.value(
+            'record_probe_cooldown',school,module:item['collection'] as String,category:'conflict'))) continue;
       // Budget survives restarts and hourly reconciliation. Manual diagnosis
       // admits one more bounded probe; it never resets history or grants ACK.
       if (!explicitRetry &&
