@@ -52,6 +52,16 @@ String syncPayloadHash(Map data) => sha256
     )
     .toString();
 
+// JSON/Sheets may round-trip an integral double as an int. Normalize ONLY
+// semantic readback comparisons; durable wire hashes/operation IDs stay exact.
+Object? _businessValue(Object? value) {
+  if (value is double && value.isFinite && value.abs() <= 9007199254740991 &&
+      value == value.truncateToDouble()) return value.toInt();
+  if (value is Map) return value.map((key, item) => MapEntry(key, _businessValue(item)));
+  if (value is List) return value.map(_businessValue).toList();
+  return value;
+}
+
 /// Directory Save timestamps describe the save, not another person or edit.
 /// Keep identity, photos, lifecycle markers and every business field in proof.
 /// Financial/document dates remain significant in their original collections.
@@ -62,7 +72,8 @@ bool sameSavedRecord(String collection, Map left, Map right) {
           {'createdAt', 'updatedAt'}.contains(entry.key)))
         entry.key: entry.value,
   };
-  return syncPayloadHash(value(left)) == syncPayloadHash(value(right));
+  return syncPayloadHash(_businessValue(value(left)) as Map) ==
+      syncPayloadHash(_businessValue(value(right)) as Map);
 }
 
 /// An explicit changed Save may replace a reviewed directory version, using
@@ -142,7 +153,7 @@ List<String> recordDifferenceFields(Map queued, Map cloud) {
   if({'students_directory','teachers_directory'}.contains(queued['collection']))
     keys.removeAll({'createdAt','updatedAt'});
   final differences=keys.where((key)=>local.containsKey(key)!=cloud.containsKey(key) ||
-    jsonEncode(_canonical(local[key]))!=jsonEncode(_canonical(cloud[key]))).toList()..sort();
+    jsonEncode(_canonical(_businessValue(local[key])))!=jsonEncode(_canonical(_businessValue(cloud[key])))).toList()..sort();
   return differences.take(40).toList();
 }
 

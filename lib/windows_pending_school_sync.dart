@@ -87,7 +87,7 @@ class WindowsPendingSchoolSync {
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
       }
-      final legacyFeeProbe = legacyFeePublicationCandidate(item) && prior?['legacyFeePublicationProbeVersion'] != 1;
+      final legacyFeeProbe = legacyFeePublicationCandidate(item) && prior?['legacyFeePublicationProbeVersion'] != 2;
       final runtimeProbe = admitUpdatedRuntimeProbe(prior, WindowsPlatformClient.version);
       final inputSignature = syncPayloadHash({
         'schoolId': school, 'collection': item['collection'],
@@ -137,7 +137,7 @@ class WindowsPendingSchoolSync {
       await journal.set({
         'schoolId': school,
         'operationId': item['operationId'],
-        if (legacyFeeProbe || prior?['legacyFeePublicationProbeVersion'] == 1) 'legacyFeePublicationProbeVersion': 1,
+        if (legacyFeeProbe || prior?['legacyFeePublicationProbeVersion'] == 2) 'legacyFeePublicationProbeVersion': 2,
         'attempts': attempts,
         'diagnosedAppVersion': WindowsPlatformClient.version,
         'runtimeUpgradeProbes': ((prior?['runtimeUpgradeProbes'] as num?) ?? 0).toInt() + (runtimeProbe ? 1 : 0),

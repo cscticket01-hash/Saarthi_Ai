@@ -1,3 +1,4 @@
+import 'windows_sync_comparison.dart';
 import 'school_profile_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
@@ -27,8 +28,7 @@ class WindowsSchoolProfileStore {
     final profile = mergeSchoolProfileSafely(previous, <String,dynamic>{
       for (final key in ['schoolName','principalName','schoolContactNo','latitude','longitude','attendanceRadiusMeters'])
         if (payload.containsKey(key)) key: payload[key],
-      if (saved['managed'] == true) 'schoolId': school,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch});
+      if (saved['managed'] == true) 'schoolId': school});
     for (final prefix in ['logo','seal','principalSignature']) {
       final raw = payload['${prefix}Base64'];
       if (raw is String && raw.startsWith('data:image/')) {
@@ -36,6 +36,13 @@ class WindowsSchoolProfileStore {
         profile.remove('${prefix}FileId');
       }
     }
+    final location = (await db.collection('school_settings').doc('school_location').get()).data();
+    verify();
+    if (sameSavedRecord('school_config', previous, profile) && location != null &&
+        location['latitude'] == profile['latitude'] && location['longitude'] == profile['longitude'] &&
+        location['radiusMeters'] == profile['attendanceRadiusMeters'] &&
+        (saved['managed'] != true || location['schoolId'] == school)) return previous;
+    profile['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
     final batch = db.batch();
     batch.set(ref, profile);
     batch.set(db.collection('school_settings').doc('school_location'), {

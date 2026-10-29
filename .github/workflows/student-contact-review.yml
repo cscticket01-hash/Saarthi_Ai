@@ -10,6 +10,8 @@ on:
       - 'lib/windows_person_avatar.dart'
       - 'lib/windows_payment_confirmation.dart'
       - 'lib/windows_staff_payroll.dart'
+      - 'lib/windows_sync_comparison.dart'
+      - 'lib/windows_school_profile_store.dart'
       - '.github/workflows/student-contact-review.yml'
   workflow_dispatch:
 permissions:
@@ -25,7 +27,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter test --concurrency=1 test/windows_student_contact_test.dart test/windows_person_payment_fields_test.dart test/windows_fee_collection_flow_test.dart
+      - run: flutter test --concurrency=1 test/windows_student_contact_test.dart test/windows_person_payment_fields_test.dart test/windows_fee_collection_flow_test.dart test/windows_legacy_fee_receipt_test.dart test/windows_local_first_save_test.dart
         env:
           APPDATA: ${{ runner.temp }}/student-contact-tests
           LOCALAPPDATA: ${{ runner.temp }}/student-contact-tests
