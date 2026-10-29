@@ -49,7 +49,7 @@ void main() {
         {
           'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           'stage': 'verified',
-          'at': 12345,
+          'at': DateTime.now().millisecondsSinceEpoch,
         },
       ],
     };
@@ -104,12 +104,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:page(sync:()=>pending.future)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sync Now')); await tester.pump();
-    await tester.scrollUntilVisible(find.text('Diagnostics and recovery tools'),250,
-      scrollable:find.byType(Scrollable).first);
-    await Scrollable.ensureVisible(tester.element(find.text('Diagnostics and recovery tools')),alignment:0.5);
-    await tester.pump(const Duration(milliseconds:400));
-    await tester.tap(find.text('Diagnostics and recovery tools'));
-    await tester.pump(const Duration(milliseconds:400));
+    await tester.tap(find.byType(PopupMenuButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Advanced checks'));
+    await tester.pumpAndSettle();
     for(final label in ['Check Cloud Health','Local Storage Details','School Drive Usage']) {
       expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,label)).onPressed,isNotNull);
     }
@@ -217,7 +215,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(find.text('Diagnostics and recovery tools')).dy, lessThan(736));
+    expect(find.text('Diagnostics and recovery tools'), findsNothing);
+    expect(find.text('Local Storage'), findsOneWidget);
+    expect(find.text('Open Folder'), findsNothing);
     await tester.runAsync(() async {
       final image =
           await (key.currentContext!.findRenderObject()

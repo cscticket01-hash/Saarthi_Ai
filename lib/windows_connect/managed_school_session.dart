@@ -1,3 +1,4 @@
+import '../windows_sync_evidence.dart';
 import '../windows_appearance.dart';
 import '../windows_theme_presets.dart';
 import '../windows_local_session.dart';
@@ -54,10 +55,13 @@ class ManagedSchoolSession {
       final token=await CentralSchoolCloud.firebaseToken();
       final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull'; // A quiet event subscription is not data transfer.
       if(visibleTransfer)activeTransfers.value++;
+      final dataTransfer=WindowsSyncEvidence.dataAction(action);
+      final dataSchool=saved['schoolId'].toString();
+      if(dataTransfer){WindowsSyncEvidence.enter(dataSchool,'cloud');if(action.startsWith('managed/file/'))WindowsSyncEvidence.enter(dataSchool,'drive');}
       late final Map<String,dynamic> result;
       try {
         result=await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},token:token);
-      } finally {if(visibleTransfer)activeTransfers.value--;}
+      } finally {if(visibleTransfer)activeTransfers.value--;if(dataTransfer){WindowsSyncEvidence.leave(dataSchool,'cloud');if(action.startsWith('managed/file/'))WindowsSyncEvidence.leave(dataSchool,'drive');}}
       final currentIdentity = await CentralSchoolCloud.saved();
       if (currentIdentity['schoolId'] != saved['schoolId'] || currentIdentity['uid'] != saved['uid']) {
         throw StateError('School changed during operation. Retry login.');

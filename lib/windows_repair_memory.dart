@@ -9,6 +9,8 @@ class WindowsRepairMemory {
   List<Map<String, dynamic>> get entries =>
       _entries.values.map((e) => Map<String, dynamic>.from(e)).toList();
   void clear() => _entries.clear();
+  void pruneResolved(int now) => _entries.removeWhere((_,e)=>e['status']=='resolved'&&
+    e['lastAt'] is int&&now>=e['lastAt']&&now-e['lastAt']>=const Duration(hours:24).inMilliseconds);
   static const issueStages = {'retry', 'conflict', 'needsAttention',
     'unauthorized', 'repairDiagnosed', 'automaticRepair', 'duplicateReconciled'};
   static const verifiedOutcomes = {'verified_cloud_reconciled',

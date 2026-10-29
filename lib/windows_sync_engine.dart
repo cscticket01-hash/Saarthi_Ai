@@ -1,3 +1,5 @@
+import 'windows_sync_evidence.dart';
+import 'windows_learned_sync_rules.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
@@ -243,6 +245,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool automaticSyncEnabled = true;
   final recoveryHistory = <Map<String, dynamic>>[];
   final repairMemory = WindowsRepairMemory();
+  final learnedSyncRules = WindowsLearnedSyncRules();
+  final verifiedTransferTiming = VerifiedSyncTiming();
+  Timer? _historyExpiryTimer;
+  void _pruneRepairHistory(){
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final count=repairMemory.entries.length;
+    repairMemory.pruneResolved(now);
+    _activity.removeWhere((e)=>!recentRepairEvent(e,now));
+    final recent=recentRepairHistory(recoveryHistory,now);
+    final changed=recent.length!=recoveryHistory.length||count!=repairMemory.entries.length;
+    recoveryHistory..clear()..addAll(recent);
+    if(changed)unawaited(_persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
+  }
   Future<void> _repairPersistTail = Future<void>.value();
   DateTime? get nextRetryAt => _nextRetry;
   DateTime? get providerQuotaRetryAt => _quotaRetryAt;
@@ -493,6 +508,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     if (event['schoolId'] != school) return;
     event = {...event, 'appVersion': WindowsPlatformClient.version, if (event['at'] is! int) 'at': DateTime.now().millisecondsSinceEpoch};
+    final learnedChanged = school is String && learnedSyncRules.observe(event,school);
+    if(event['stage']=='verified'||event['stage']=='downloadVerified')verifiedTransferTiming.verified();
     final remembered = school is String && repairMemory.observe(event, school, DateTime.now().millisecondsSinceEpoch);
     var historyChanged = false;
     if (event['stage'] == 'verified' &&
@@ -534,7 +551,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       });
       historyChanged = true;
     }
-    if (remembered || historyChanged) unawaited(
+    if (remembered || historyChanged || learnedChanged) unawaited(
       _persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String, dynamic>.from(event));
@@ -542,6 +559,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
       'repairMemory': repairMemory.entries,
+      'learnedRuleCount':learnedSyncRules.rules.length,
     };
   }
 
@@ -553,7 +571,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) return;
         await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
           () => FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').set({
-            'events': List<Map<String, dynamic>>.from(recoveryHistory),
+            'events': recentRepairHistory(recoveryHistory,DateTime.now().millisecondsSinceEpoch),
+            'learnedRules':learnedSyncRules.snapshot(school),
             'repairMemory': repairMemory.snapshot(school),
           }),
         );
@@ -608,6 +627,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   Future<void> refreshDetails() async {
+    _pruneRepairHistory();
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
     final general = await db.collection('_windows_firebase_outbox').get();
@@ -711,8 +731,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           '_queueCollection': '_windows_recycle_requests',
         },
     ];
+    final incomingPending=downloads.docs.fold<int>(0,(n,d)=>n+((d.data()['remaining'] as num? ?? 0).toInt()).clamp(0,1000000000).toInt()) +
+          (_remoteCollections.isNotEmpty||_remoteRecordIds.isNotEmpty||_remoteResetPending ? 1:0) +
+          (binary?['inventory']!='UNKNOWN' ? ((binary?['pending'] as int? ?? 0)+(binary?['failed'] as int? ?? 0)+(binary?['interrupted'] as int? ?? 0)):0);
     details.value = {
+      'incomingPending':incomingPending,
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
+      'lastVerifiedTransferMicros':verifiedTransferTiming.lastMicros,
+      'lastVerifiedTransferAt':verifiedTransferTiming.completedAt,
       'lastRecordCheckMillis': downloadCheckpoint?['verifiedAt'],
       'lastRecordAckMillis': receipts.docs
           .where(
@@ -736,6 +762,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         liveQueue,
         nowMillis: nowMillis,
         syncing: _syncing,
+        incomingPending: incomingPending,
         paused: isPaused,
         blocked: _syncBlocked,
         offline:
@@ -1080,6 +1107,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
     if (_resetPaused) return;
 
+    _historyExpiryTimer?.cancel();
+    _historyExpiryTimer=Timer.periodic(const Duration(minutes:1),(_)=>_pruneRepairHistory());
     _schedule.start(reconciliationInterval);
     _changeTimer?.cancel();
     _changeTimer = Timer.periodic(
@@ -1296,6 +1325,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _resetPaused = true;
     _schedule.stop();
     _changeTimer?.cancel();
+    _historyExpiryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
@@ -1525,6 +1555,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       recoveryDecision = null;
       recoveryHistory.clear();
       repairMemory.clear();
+      learnedSyncRules.clear();
+      verifiedTransferTiming.clear();
       lastSuccessfulSync = null;
       lastVerifiedCheckpoint = null;
       metrics.clear();
@@ -1594,6 +1626,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             .data();
     final storedHistory = storedRecovery?['events'];
     repairMemory.restore(storedRecovery?['repairMemory'], _activeSchoolSyncId);
+    learnedSyncRules.restore(storedRecovery?['learnedRules'],_activeSchoolSyncId);
+    learnedSyncRules.seedVerified(repairMemory.entries,_activeSchoolSyncId);
+    final savedTransfer=(await FirebaseFirestore.instance.collection('_windows_sync_status').doc('last-transfer').get()).data();
+    if(FirebaseFirestore.instance.activeProfileId!=profile.profileId)return;
+    verifiedTransferTiming.restore(savedTransfer,_activeSchoolSyncId);
     recoveryHistory.clear();
     if (storedHistory is List) {
       for (final event in storedHistory.take(100)) {
@@ -1610,6 +1647,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             event['atUtc'] is String &&
             DateTime.tryParse(event['atUtc'] as String) != null &&
             (event['attempt'] == null || event['attempt'] is num)) {
+          if(!recentRepairEvent(Map<String,dynamic>.from(event),DateTime.now().millisecondsSinceEpoch))continue;
           recoveryHistory.add({
             'atUtc': event['atUtc'],
             'category': event['category'],
@@ -1621,6 +1659,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
       }
     }
+    unawaited(_persistRepairHistory(profile.profileId));
     final savedStatus =
         (await FirebaseFirestore.instance
                 .collection('_windows_sync_status')
@@ -1901,6 +1940,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     state.value = SchoolCloudState.syncing;
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
+    final transferSequenceAtStart=verifiedTransferTiming.sequence;
     bool completedReconciliation = false;
     lastError = null;
     recoveryDecision = null;
@@ -2075,6 +2115,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (WindowsFirebaseRemote.recordPointReadSupported) {
           await _measure('recordRepairStage', () => WindowsPendingSchoolSync.repair(
             explicitRetry: _manualSync,
+            learnedAction:(module,category)=>learnedSyncRules.recommend(_activeSchoolSyncId,module,category),
             profileId: syncOrigin,
             school: _activeSchoolSyncId,
             canAdmit: () =>
@@ -2333,7 +2374,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (details.value['needsAttention'] as num).toInt(),
             (details.value['conflictCount'] as num? ?? 0).toInt(),
           );
-        if ((details.value['pending'] as num? ?? 0) > 0) {
+        if ((details.value['pending'] as num? ?? 0) > 0 || (details.value['incomingPending'] as num? ?? 0)>0) {
           // Legacy Drive requests are visible for review but are not serviced
           // by the managed protocol. Their presence must not spin this engine.
           // Queue presence is not a new mutation. Re-dispatching unchanged
@@ -2347,6 +2388,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _nextRetry = DateTime.fromMillisecondsSinceEpoch(deadline);
             _dispatch.request(_nextRetry!.difference(DateTime.now()));
           }
+          if(verifiedTransferTiming.sequence>transferSequenceAtStart &&
+              (details.value['liveQueue'] as List).any((r)=>r is Map&&r['_queueCollection']=='_windows_firebase_outbox'&&
+                {'pending','retry',null}.contains(r['syncState'])&&(r['retryAtMillis'] as num? ?? 0)<=DateTime.now().millisecondsSinceEpoch))_rerunRequested=true;
           state.value = SchoolCloudState.syncPending;
           return;
         }
@@ -2481,6 +2525,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (isPaused && _activeProfileId == syncOrigin)
         state.value = SchoolCloudState.syncPending;
       await refreshDetails();
+      if (_activeProfileId==syncOrigin && verifiedTransferTiming.complete(
+          startSequence:transferSequenceAtStart,micros:watch.elapsedMicroseconds,
+          now:DateTime.now().millisecondsSinceEpoch,idle:lastError==null&&details.value['displayState']=='idle')) {
+        final timingSchool=_activeSchoolSyncId, snapshot=verifiedTransferTiming.snapshot(_activeSchoolSyncId);
+        try {
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+            if(FirebaseFirestore.instance.activeProfileId!=syncOrigin||_activeSchoolSyncId!=timingSchool)return;
+            await FirebaseFirestore.instance.collection('_windows_sync_status').doc('last-transfer').set(snapshot);
+          });
+        } catch (_) { /* Optional timing evidence never changes queue completion. */ }
+        if(_activeProfileId==syncOrigin)await refreshDetails();
+      }
       if ((lastError != null &&
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
@@ -3254,7 +3310,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         });
         if (db.activeProfileId != origin)
           throw StateError('School changed during reconciliation.');
-        await db.applySyncedCollectionBatch(collection, incoming);
+        WindowsSyncEvidence.enter(school,'local');
+        try{await db.applySyncedCollectionBatch(collection, incoming);}
+        finally{WindowsSyncEvidence.leave(school,'local');}
         // Read back after commit. A newer local edit is retained by the same
         // live queue guard and must not be counted as a verified download.
         for (final entry in incoming.entries) {
@@ -3282,6 +3340,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
       }
       _sample('collectionApplyMicros', applyWatch.elapsedMicroseconds);
+      if(verifiedDownloads>0)_recordActivity({'schoolId':school,'stage':'downloadVerified',
+        'collection':collection,'at':DateTime.now().millisecondsSinceEpoch});
       // Missing IDs are not deletions: only explicit server tombstones delete.
       if (db.activeProfileId != origin)
         throw StateError('School changed during reconciliation.');
@@ -3919,6 +3979,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   void dispose() {
     _schedule.stop();
     _changeTimer?.cancel();
+    _historyExpiryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
