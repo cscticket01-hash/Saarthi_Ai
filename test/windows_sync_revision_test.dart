@@ -51,20 +51,10 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
   if (!primary.contains(label)) {
     await tester.tap(overview.hitTestable());
     await tester.pumpAndSettle();
-    final expander = find.text('Diagnostics and recovery tools');
-    await tester.scrollUntilVisible(
-      expander,
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
-    // Controls only exist while the expander is open.
+    await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();
-    await Scrollable.ensureVisible(tester.element(expander),alignment:0.5);
+    await tester.tap(find.text('Advanced checks'));
     await tester.pumpAndSettle();
-    if (find.text(label).evaluate().isEmpty) {
-      await tester.tap(expander);
-      await tester.pumpAndSettle();
-    }
   }
   await tester.scrollUntilVisible(
     find.text(label),
