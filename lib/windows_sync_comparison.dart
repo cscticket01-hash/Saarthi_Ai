@@ -207,7 +207,8 @@ Map<String, dynamic>? documentAcknowledgementFromWrite(Map payload, Map ack) {
     'success': true, 'schoolId': ack['schoolId'], 'syncProtocol': 2,
     'records': {payload['documentId']: row},
   });
-  return verifiedDocumentAcknowledgement(payload, result) ? result : null;
+  return verifiedDocumentAcknowledgement(payload, result)
+      ? {...result, 'verification': 'authenticated metadata write ACK'} : null;
 }
 
 /// Bind identity to the key selected from an authenticated managed readback.

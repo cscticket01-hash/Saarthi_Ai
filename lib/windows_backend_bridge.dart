@@ -730,7 +730,7 @@ class WindowsBackendBridge {
               'schoolId':record['schoolId'], 'operationId':record['documentRevision'],
               'collection':'documents', 'documentId':queued.id,
               'recordRevision':result['document']['_syncRevision'],
-              'contentHash':payload['contentHash'], 'verification':'authenticated readback',
+              'contentHash':payload['contentHash'], 'verification':result['verification'] ?? 'authenticated readback',
               'acknowledgedAt':DateTime.now().millisecondsSinceEpoch,
             });
             if (current?['documentRevision'] != record['documentRevision'] ||
@@ -1861,7 +1861,13 @@ class WindowsBackendBridge {
         if (documentWriteAck != null) {
           final receipt = documentAcknowledgementFromWrite(
             {...data, ...file, 'documentId': id, 'schoolId': school}, documentWriteAck!);
-          if (receipt != null) return receipt;
+          if (receipt != null) {
+            await ensureSchool();
+            await FirebaseFirestore.instance.applySyncedDocument(
+              FirebaseFirestore.instance.collection('documents').doc(id),
+              Map<String, dynamic>.from(receipt['document'] as Map));
+            return receipt;
+          }
         }
         return await documentReceipt(id, data);
       }
