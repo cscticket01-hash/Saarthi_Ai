@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_fee_receipt_preview.dart';
+import '../lib/windows_person_avatar.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
@@ -251,4 +252,43 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('list selection works without search and a new name clears previous roll/class', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      await db.collection('students_directory').doc('S2').set({
+        'schoolId': school, 'name': 'Student Two', 'class': 'Class 2', 'rollNo': '22',
+      });
+      await db.collection('fee_settings').doc('Class_1').set({'fees': {'Tuition': 100}});
+      await db.collection('fee_settings').doc('Class_2').set({'fees': {'Admission': 200}});
+    });
+    await tester.pumpWidget(const MaterialApp(home: FeesCollectionScreen()));
+    Future<void> flush() async {
+      for (var i = 0; i < 15; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+    await flush();
+    final row = find.byKey(const ValueKey('fees-student-S1'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-Class 1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-avatar-S1')), findsOneWidget);
+    expect(tester.widget<WindowsPersonAvatar>(find.byKey(const ValueKey('fees-avatar-S1'))).person['name'], 'Student One');
+    await tester.enterText(find.byKey(const ValueKey('fees-name-search')), 'Student Two');
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-All Classes')), findsOneWidget);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('fees-roll-search'))).controller!.text, isEmpty);
+    final second = find.byKey(const ValueKey('fees-student-S2'));
+    await tester.ensureVisible(second);
+    await tester.tap(second);
+    await flush();
+    expect(find.byKey(const ValueKey('fees-class-Class 2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-avatar-S2')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }
