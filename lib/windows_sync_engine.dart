@@ -493,7 +493,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (event['schoolId'] != school) return;
     event = {...event, if (event['at'] is! int) 'at': DateTime.now().millisecondsSinceEpoch};
     final remembered = school is String && repairMemory.observe(event, school, DateTime.now().millisecondsSinceEpoch);
-    if (remembered) unawaited(_persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
+    var historyChanged = false;
     if (event['stage'] == 'verified' &&
         event['queueCollection'] == '_windows_firebase_outbox' &&
         event['collection'] is String &&
@@ -531,10 +531,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         for (final key in ['collection','documentId','operationId'])
           if (event[key] is String) key: event[key],
       });
-      unawaited(
-        _persistRepairHistory(FirebaseFirestore.instance.activeProfileId),
-      );
+      historyChanged = true;
     }
+    if (remembered || historyChanged) unawaited(
+      _persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String, dynamic>.from(event));
     details.value = {
@@ -1592,13 +1592,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       for (final event in storedHistory.take(100)) {
         if (event is Map &&
             (SyncFailureKind.values.any((kind) => kind.name == event['category']) ||
-              {'recoverable','idCardInputs'}.contains(event['category'])) &&
+              {'recoverable','idCardInputs','verifiedDuplicate'}.contains(event['category'])) &&
             {
               'retained_for_retry',
               'retained_for_review','duplicate_reconciled','repaired_and_verified',
               'safe_retry_reopened','review_required','retry_admitted',
               'verified_cloud_reconciled','verified_published_card_retained',
-              'probe_budget_exhausted','probe_deferred',
+              'probe_budget_exhausted','probe_deferred','external_sheet_review_required',
             }.contains(event['outcome']) &&
             event['atUtc'] is String &&
             DateTime.tryParse(event['atUtc'] as String) != null &&
@@ -1977,6 +1977,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           );
           if ((audit['findings'] as List).isNotEmpty) {
             _recordActivity({
+              'schoolId': _activeSchoolSyncId,
               'stage': 'repairDiagnosed', 'outcome': 'external_sheet_review_required',
               'failureCategory': 'configuration',
             });

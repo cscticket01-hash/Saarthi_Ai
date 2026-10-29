@@ -15,7 +15,7 @@ class WindowsRepairMemory {
     'verified_published_card_retained'};
   static const categories = {'networkPath', 'timeout', 'server', 'quota',
     'authorization', 'configuration', 'conflict', 'validation', 'fileMissing',
-    'unknown', 'idCardInputs', 'recoverable'};
+    'unknown', 'idCardInputs', 'recoverable', 'verifiedDuplicate'};
   static String? _token(Object? value, {int max = 200}) => value is String &&
       value.isNotEmpty && value.length <= max &&
       !RegExp(r'[\x00-\x1f/\\]').hasMatch(value) ? value : null;
@@ -36,13 +36,15 @@ class WindowsRepairMemory {
     if (stage == 'verified') {
       // Transport completion/empty queues are never passed as verified evidence.
       if (candidates.isEmpty) return false;
+      var changed = false;
       for (final entry in candidates) {
         if (entry['status'] == 'resolved') continue;
+        changed = true;
         entry['status'] = 'resolved'; entry['resolvedAt'] = now;
         entry['verifiedRepairs'] = (entry['verifiedRepairs'] as int) + 1;
         entry['lastAt'] = now;
       }
-      return true;
+      return changed;
     }
     final category = categories.contains(event['failureCategory'])
       ? event['failureCategory'] as String

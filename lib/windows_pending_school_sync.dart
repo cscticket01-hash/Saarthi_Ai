@@ -112,6 +112,8 @@ class WindowsPendingSchoolSync {
           onActivity?.call({
             'schoolId': school,
             'operationId': item['operationId'],
+            'queueCollection': '_windows_firebase_outbox', 'queueId': row.id,
+            'collection': item['collection'], 'documentId': item['documentId'],
             'stage': 'repairDiagnosed',
             'outcome': 'probe_budget_exhausted',
             'failureCategory': category ?? 'conflict',

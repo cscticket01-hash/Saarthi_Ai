@@ -32,7 +32,7 @@ void main() {
     expect(restored.entries.single['status'],'recurred');
     expect(restored.entries.single['recurrences'],1);
     restored.observe(event('retry'),school,9);
-    expect(restored.entries.single['recurrences'],1,'log repeats are not new repair episodes');
+    expect(restored.entries.single['recurrences'],1,reason:'log repeats are not new repair episodes');
     expect((WindowsRepairMemory()..restore(memory.snapshot(school),'foreign')).entries,isEmpty);
   });
   test('bounded memory groups observations but separates school, module, record and operation', () {
@@ -83,13 +83,13 @@ void main() {
     final before=(await ref.get()).data()!;
     await WindowsIdCardReviews.retain(problem('input1'),'Teacher');
     expect((await ref.get()).data()?['nextRepairAt'],before['nextRepairAt']);
-    await repair();expect(calls,1,'same failed evidence cannot issue a new network read');
+    await repair();expect(calls,1,reason:'same failed evidence cannot issue a new network read');
     await repair(manual:true);expect(calls,2);
-    expect((await ref.get()).data()?['status'],'needsReview','manual retry is not proof');
+    expect((await ref.get()).data()?['status'],'needsReview',reason:'manual retry is not proof');
     await WindowsIdCardReviews.retain(problem('input2'),'Teacher');
-    await repair();expect(calls,3,'new input gets a fresh bounded diagnosis');
+    await repair();expect(calls,3,reason:'new input gets a fresh bounded diagnosis');
     for(var n=0;n<6;n++){clock+=3600000;await repair();}
-    expect(calls,7,'five probes for the new evidence; no endless repair loop');
+    expect(calls,7,reason:'five probes for the new evidence; no endless repair loop');
     expect((await ref.get()).data()?['status'],'needsReview');
     expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
   });
