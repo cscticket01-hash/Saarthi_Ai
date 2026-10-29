@@ -15,3 +15,12 @@ test('fractional active time is supported but unsafe, invalid and over-policy in
  assert.equal(capacityBudget({activeHours:0.5}).idleLongPoll.requests,36000);
  for(const args of [{schools:0},{schools:1.5},{pcsPerSchool:6},{pollSeconds:NaN},{pollSeconds:Number.MIN_VALUE},{activeHours:25},{studentsPerSchool:Number.MAX_SAFE_INTEGER}])assert.throws(()=>capacityBudget(args));
 });
+test('Cloudflare planning removes only attendance queue writes and retains auth read scenarios',()=>{
+ const before=capacityBudget(),after=capacityBudget({attendanceStorage:'cloudflare',eventsPerStudent:2,burstSeconds:60});
+ assert.equal(after.oneEntryPerStudent.minimumOutboxWrites,0);
+ assert.equal(after.idleLongPoll.minimumIdentityReads,before.idleLongPoll.minimumIdentityReads);
+ assert.equal(after.requiredBurst.events,200000);
+ assert.equal(after.requiredBurst.globalAcceptsPerSecond,200000/60);
+ assert.equal(after.requiredBurst.perSchoolAcceptsPerSecond,500/60);
+ for(const args of [{attendanceStorage:'none'},{eventsPerStudent:3},{burstSeconds:0},{burstSeconds:NaN}])assert.throws(()=>capacityBudget(args));
+});

@@ -18,11 +18,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_repair_memory.dart lib/windows_id_card_reviews.dart lib/windows_pending_school_sync.dart lib/windows_sync_engine.dart lib/windows_sync_control_center.dart test/windows_repair_memory_test.dart lib/shared_repair_policy.dart lib/windows_shared_repair_knowledge.dart test/shared_repair_policy_test.dart
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_performance.dart lib/windows_backend_bridge.dart lib/windows_document_templates.dart lib/windows_repair_memory.dart lib/windows_id_card_reviews.dart lib/windows_pending_school_sync.dart lib/windows_sync_engine.dart lib/windows_sync_control_center.dart test/windows_repair_memory_test.dart lib/shared_repair_policy.dart lib/windows_shared_repair_knowledge.dart test/shared_repair_policy_test.dart
       - name: Verified memory, durable cooldown, record and UI regressions
         env:
           APPDATA: ${{ runner.temp }}/verified-repair-memory
-        run: flutter test --concurrency=1 test/shared_repair_policy_test.dart test/windows_repair_memory_test.dart test/windows_pending_auto_repair_test.dart test/windows_document_review_owner_test.dart test/windows_sync_modern_ui_test.dart test/windows_smart_recovery_test.dart
+        run: flutter test --concurrency=1 test/windows_sync_performance_test.dart test/shared_repair_policy_test.dart test/windows_repair_memory_test.dart test/windows_pending_auto_repair_test.dart test/windows_document_review_owner_test.dart test/windows_sync_modern_ui_test.dart test/windows_smart_recovery_test.dart
       - name: SQLite restart and CAS regression
         env:
           APPDATA: ${{ runner.temp }}/verified-repair-memory-sqlite

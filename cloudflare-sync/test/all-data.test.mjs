@@ -153,3 +153,53 @@ test('authenticated broker drain commits real record ACK and pending jobs drain 
  const status=await rolledBack.call({action:'managed/cloudflare/operation',...accepted.delivery});
  assert.equal(status.recordRevision,'drive-real-broker');assert.equal(status.driveState,'verified');
 });
+
+test('retrying record blocks its own revisions but independent ready records proceed',async()=>{
+ const school='vs-'+hash('retry-scheduler-school').slice(0,32),first=await delivery.record(school,{...write('school_expenses','same','operation-first-record-0001'),data:{schoolId:school,title:'One'}});
+ await delivery.record(school,{...write('school_expenses','same','operation-second-record-0002'),data:{schoolId:school,title:'Two'}});
+ const independent=await delivery.record(school,{...write('school_expenses','independent','operation-independent-0003'),data:{schoolId:school,amount:1}});
+ await rpc(school,'records',{command:'claim',id:first.delivery.id,claim:'retry-head',expires:Date.now()+10000});
+ const deadline=Date.now()+60000;
+ await rpc(school,'records',{command:'finish',id:first.delivery.id,claim:'retry-head',values:{state:'retry',nextAttemptAt:deadline}});
+ const ready=(await rpc(school,'records',{command:'pending',limit:2})).value;
+ assert.deepEqual(ready.map(r=>r.id),[independent.delivery.id]);
+ const successorId=hash(JSON.stringify([school,'managed_records',['school_expenses','same','operation-second-record-0002']]));
+ assert.equal((await rpc(school,'records',{command:'claim',id:successorId,claim:'cannot-jump',expires:Date.now()+10000})).value,false);
+ await delivery.drain(school,'records',async request=>({success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-independent',record:{...request.data,id:request.id,_syncOperationId:request.operationId}}));
+ assert.equal((await delivery.status(school,'records',independent.delivery.id)).driveState,'verified');
+ assert.equal((await delivery.status(school,'records',first.delivery.id)).driveState,'pending');
+ const stats=(await rpc(school,'records',{command:'stats'})).value;
+ assert.equal(stats.due,deadline,'Blocked successor must not cause an immediate alarm loop');
+});
+
+test('person/document/financial jobs and mixed batches are conservative ordering barriers',async()=>{
+ for(const collection of ['students_directory','teachers_directory','documents','fee_payments']){
+  const school='vs-'+hash('barrier-'+collection).slice(0,32);
+  const first=await delivery.record(school,{...write(collection,'barrier','operation-barrier-'+collection),data:{schoolId:school}});
+  await delivery.record(school,{...write('school_expenses','later','operation-later-'+collection),data:{schoolId:school}});
+  await rpc(school,'records',{command:'claim',id:first.delivery.id,claim:'held-barrier',expires:Date.now()+10000});
+  await rpc(school,'records',{command:'finish',id:first.delivery.id,claim:'held-barrier',values:{state:'retry',nextAttemptAt:Date.now()+60000}});
+  assert.deepEqual((await rpc(school,'records',{command:'pending',limit:2})).value,[]);
+ }
+ const school=tenant('6');
+ const batch=await delivery.record(school,{action:'managed_records_batch',operations:[{...write('school_expenses','n','operation-mixed-notice-0001'),data:{schoolId:school}},{...write('students_directory','s','operation-mixed-student-0002'),data:{schoolId:school}}]});
+ await delivery.record(school,{...write('school_expenses','later','operation-later-batch-0003'),data:{schoolId:school}});
+ assert.deepEqual((await rpc(school,'records',{command:'pending',limit:2})).value.map(r=>r.id),[batch.delivery.id]);
+});
+
+test('explicit parallel canary admits at most two independent records and emits bounded timing evidence',async()=>{
+ const school=tenant('5'),parallel=createCloudflareDelivery({edge,recordParallelism:2});
+ for(let i=0;i<3;i++)await parallel.record(school,{...write('school_expenses','parallel-'+i,'operation-parallel-'+i+'-0000'),data:{schoolId:school}});
+ let active=0,peak=0;const receipts=[];
+ const result=await parallel.drain(school,'records',async request=>{
+  active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,20));active--;receipts.push(request);
+  return {success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-'+request.id,record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
+ });
+ assert.equal(result.processed,2);assert.equal(peak,2);assert.equal(receipts.length,2);
+ const id=hash(JSON.stringify([school,'managed_records',[receipts[0].collection,receipts[0].id,receipts[0].operationId]]));
+ const final=await parallel.status(school,'records',id);
+ assert.equal(final.driveState,'verified');assert.equal(final.deliveryTiming.version,1);
+ assert.ok(final.deliveryTiming.deliveryMillis>=0);assert.ok(final.deliveryTiming.queueWaitMillis>=0);
+ assert.deepEqual(Object.keys(final.deliveryTiming).sort(),['deliveryMillis','observedAt','queueWaitMillis','version']);
+ assert.equal((await rpc(school,'records',{command:'stats'})).value.pending,1);
+});

@@ -1,4 +1,5 @@
 import 'windows_repair_memory.dart';
+import 'windows_sync_performance.dart';
 import 'sync_pending_diagnostics.dart';
 import 'cloud_transfer_status.dart';
 import 'windows_appearance.dart';
@@ -1522,6 +1523,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               'Measured status & recovery',
                               style: TextStyle(fontFamily: 'Segoe UI', fontSize: 22),
                             ),
+                            WindowsSyncPerformance(summary: engine.performanceSummary),
                             Wrap(
                               spacing: 12,
                               runSpacing: 12,

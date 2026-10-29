@@ -80,11 +80,15 @@ void main() {
       if (healthResponse.statusCode!=200 || runtime['runtimeCommit']!=Platform.environment['VS_EXPECTED_TEST_RUNTIME'])
         throw StateError('TEST runtime mismatch.');
       report['runtimeCommit']=runtime['runtimeCommit'];
+      report['comparisonAvailable']=false;
+      report['measurementScope']='Candidate client against the installed isolated TEST broker/Script; not a before/after speed claim';
       stage='TEST login';
       final session=await ManagedSchoolSession.login(Platform.environment['VS_TEST_LOGIN_EMAIL']!,
         Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint);
       if(session['schoolId']!=school||session['allowed']!=true)throw StateError('TEST membership unavailable.');
       final health=await ManagedSchoolSession.callForSchool(school,'managed/storage/check',{});
+      report['installedScriptBundleVersion']=health['scriptBundleVersion'];
+      report['candidateScriptVerified']=health['scriptBundleVersion']=='2026-10-29.1'&&health['recordLookupReuseVersion']==1;
       if(health['recordSyncVersion']!=2||health['uploadResumableVersion']!=1)throw StateError('TEST storage capability required.');
       WindowsFirebaseRemote.recordPointReadSupported=health['recordPointReadVersion']==1;
       WindowsFirebaseRemote.recordFieldPatchSupported=health['recordFieldPatchVersion']==1;
