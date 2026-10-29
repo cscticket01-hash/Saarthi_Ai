@@ -8795,6 +8795,13 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
   final TextEditingController _schoolLongitudeController = TextEditingController();
   final TextEditingController _attendanceRadiusController = TextEditingController(text: '200');
   String _selectedWindowsLanguage = _windowsLanguage();
+  List<String>? _appliedSchoolFields;
+
+  List<String> _schoolFields() => [
+    _schoolNameController.text.trim(), _principalNameController.text.trim(),
+    _schoolContactController.text.trim(), _schoolLatitudeController.text.trim(),
+    _schoolLongitudeController.text.trim(), _attendanceRadiusController.text.trim(),
+  ];
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _profileImages;
   late final String _profileOrigin;
@@ -8881,6 +8888,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
     _schoolLongitudeController.text = profile['longitude']?.toString() ?? '';
     _attendanceRadiusController.text =
         (profile['attendanceRadiusMeters'] ?? schoolAttendanceRadiusMeters).toString();
+    _appliedSchoolFields = _schoolFields();
   }
 
   Future<void> _selectSchoolMapPin() async {
@@ -8953,6 +8961,17 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
+    if (FirebaseFirestore.instance.activeProfileId != _profileOrigin) return;
+    // Language is already persisted by WindowsUiLanguage on this device.
+    // An unchanged form must not create school/location writes or sync work.
+    final fields = _schoolFields();
+    if (_appliedSchoolFields != null &&
+        List.generate(fields.length, (i) => fields[i] == _appliedSchoolFields![i]).every((same) => same) &&
+        _logoBytes == null && _sealBytes == null && _signatureBytes == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('App preferences saved on this device. No school changes to sync.')));
+      return;
+    }
 
     final schoolName = _schoolNameController.text.trim();
     final principalName = _principalNameController.text.trim();
@@ -9446,6 +9465,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                               ),
                             ),
                             DropdownButton<String>(
+                              key: const ValueKey('windows-ui-language'),
                               value: _selectedWindowsLanguage,
                               dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
                               items: const [
@@ -9488,6 +9508,7 @@ class _SchoolSettingsScreenState extends State<SchoolSettingsScreen> {
                               borderRadius: BorderRadius.circular(13),
                             ),
                           ),
+                          key: const ValueKey('save-school-settings'),
                           onPressed: _saving ? null : _save,
                           icon: _saving
                               ?  SizedBox(
