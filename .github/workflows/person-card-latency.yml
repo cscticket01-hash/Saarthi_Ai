@@ -1,0 +1,97 @@
+name: Measure actual teacher and student ID-card owner flow
+on:
+  push:
+    branches: [verify/person-card-latency-20261029]
+permissions:
+  contents: read
+concurrency:
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+jobs:
+  before:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 43f6ddf9d476465e12186f73e695af9605d2afb3
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d5c8d544d40f333e8ea2b61dfac0e18217c88a55
+          path: measured-harness
+          persist-credentials: false
+      - name: Install the identical benchmark without changing baseline application code
+        shell: pwsh
+        run: |
+          Copy-Item measured-harness/.github/tests/person_card_live_test.dart .github/tests/person_card_live_test.dart
+          Copy-Item measured-harness/.github/tests/person_card_strategy_before.dart .github/tests/person_card_strategy.dart
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyMuPDF==1.26.7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Run one fresh teacher and student with actual PDF raster and permanent cloud verification
+        env:
+          APPDATA: ${{ runner.temp }}/person-card-before
+          VS_PERSON_CARD_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_PERSON_CARD_MODE: before
+          VS_EXPECTED_TEST_RUNTIME: aaa7eb7060969c3feeb9976b81c8f4c8c70caa48
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/person_card_live_test.dart --concurrency=1 --timeout 30m --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: person-card-before
+          path: build/cloud-prerequisites/person-card-before.json
+          if-no-files-found: warn
+          retention-days: 14
+  after:
+    needs: before
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d5c8d544d40f333e8ea2b61dfac0e18217c88a55
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d5c8d544d40f333e8ea2b61dfac0e18217c88a55
+          path: measured-harness
+          persist-credentials: false
+      - name: Install the identical benchmark without changing baseline application code
+        shell: pwsh
+        run: |
+          Copy-Item measured-harness/.github/tests/person_card_live_test.dart .github/tests/person_card_live_test.dart
+          Copy-Item measured-harness/.github/tests/person_card_strategy.dart .github/tests/person_card_strategy.dart
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyMuPDF==1.26.7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Run one fresh teacher and student with actual PDF raster and permanent cloud verification
+        env:
+          APPDATA: ${{ runner.temp }}/person-card-after
+          VS_PERSON_CARD_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_PERSON_CARD_MODE: after
+          VS_EXPECTED_TEST_RUNTIME: aaa7eb7060969c3feeb9976b81c8f4c8c70caa48
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/person_card_live_test.dart --concurrency=1 --timeout 30m --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: person-card-after
+          path: build/cloud-prerequisites/person-card-after.json
+          if-no-files-found: warn
+          retention-days: 14
