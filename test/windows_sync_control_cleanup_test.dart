@@ -97,15 +97,10 @@ void main() {
         expect(find.text(label), findsOneWidget);
       }
       expect(find.text('Export Sanitized Report'), findsNothing);
-      await tester.scrollUntilVisible(
-        find.text('Diagnostics and recovery tools'),
-        250,
-        scrollable: find.byType(Scrollable).first,
-      );
+      expect(find.text('Diagnostics and recovery tools'),findsNothing);
+      await tester.tap(find.byType(PopupMenuButton<int>));
       await tester.pumpAndSettle();
-      await Scrollable.ensureVisible(tester.element(find.text('Diagnostics and recovery tools')),alignment:0.5);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Diagnostics and recovery tools'));
+      await tester.tap(find.text('Advanced checks'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Export Sanitized Report'),
@@ -123,13 +118,13 @@ void main() {
         {'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'stage': 'retry',
          'operationId': 'original-op', 'queueId': 'original-row',
          'queueCollection': '_windows_firebase_outbox', 'isRetryable': true,
-         'at': 123456},
+         'at': DateTime.now().millisecondsSinceEpoch},
         {'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'stage': 'conflict',
          'operationId': 'conflict-op', 'queueId': 'conflict-row',
          'queueCollection': '_windows_firebase_outbox', 'isRetryable': true,
-         'at': 123456},
+         'at': DateTime.now().millisecondsSinceEpoch},
         {'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'stage': 'unauthorized',
-         'operationId': 'foreign-op', 'isRetryable': true, 'at': 123456},
+         'operationId': 'foreign-op', 'isRetryable': true, 'at': DateTime.now().millisecondsSinceEpoch},
       ],
     };
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
