@@ -289,13 +289,16 @@ void main() {
     expect(find.byKey(const ValueKey('fees-avatar-S2')), findsOneWidget);
     final selectAll = find.byType(Checkbox).first;
     await tester.ensureVisible(selectAll);
+    expect(tester.widget<Checkbox>(selectAll).onChanged, isNotNull, reason: 'Selected student fee settings must be ready');
     await tester.tap(selectAll);
     await tester.pump();
+    expect(tester.widget<Checkbox>(selectAll).value, isTrue);
     final collect = find.text('Collect Payment');
     await tester.ensureVisible(collect);
+    expect(tester.widget<ElevatedButton>(find.ancestor(of: collect, matching: find.byType(ElevatedButton))).onPressed, isNotNull);
     await tester.tap(collect);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Student Two?'), findsOneWidget);
+    expect(find.textContaining('Student Two?'), findsOneWidget, reason: tester.allWidgets.whereType<Text>().map((w) => w.data).join(' | '));
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     final payments = await tester.runAsync(() => db.collection('fee_payments').get());
