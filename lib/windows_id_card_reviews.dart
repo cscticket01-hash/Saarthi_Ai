@@ -1,3 +1,4 @@
+import 'windows_sync_comparison.dart';
 import 'windows_local_firestore.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_sync_recovery.dart';
@@ -16,7 +17,16 @@ class WindowsIdCardReviews {
     final school = error.schoolId, id = error.documentId;
     if (school == null || id == null || error.inputRevision == null || error.cloudRevision == null) throw error;
     guard(profile, school);
-    await db.collection(collection).doc(id).set({
+    final ref = db.collection(collection).doc(id);
+    final prior = (await ref.get()).data();
+    guard(profile, school);
+    // Re-observing identical protected evidence must not erase learned cooldown
+    // or turn a previously verified retain decision into a new review.
+    if (prior?['schoolId'] == school && prior?['documentId'] == id &&
+        prior?['inputRevision'] == error.inputRevision && prior?['cloudRevision'] == error.cloudRevision &&
+        prior?['personId'] == error.personId && prior?['personDocId'] == error.personDocId &&
+        prior?['ownerRole'] == error.ownerRole) return;
+    await ref.set({
       'schoolId': school, 'documentId': id, 'name': name, 'ownerRole': error.ownerRole,
       'personId': error.personId, 'personDocId': error.personDocId,
       'inputRevision': error.inputRevision, 'cloudRevision': error.cloudRevision,
@@ -61,12 +71,31 @@ class WindowsIdCardReviews {
   /// on a receiving PC is not authority to overwrite an existing cloud card.
   /// Failed verification remains durable and retries on the next sync cycle.
   static Future<void> repairPending(String school,
-      {Future<Map<String, dynamic>> Function()? read, void Function(Map<String, dynamic>)? onRepair}) async {
+      {Future<Map<String, dynamic>> Function()? read, void Function(Map<String, dynamic>)? onRepair,
+       bool explicitRetry = false, DateTime Function()? now}) async {
     final db = FirebaseFirestore.instance, profile = db.activeProfileId;
     final items = await pending(school);
+    final clock = now ?? DateTime.now;
     items.sort((a,b) => ((a['lastRepairAttempt'] as num?)?.toInt() ?? 0).compareTo((b['lastRepairAttempt'] as num?)?.toInt() ?? 0));
     Future<Map<String, dynamic>>? inventory;
     for (final item in items.take(20)) {
+      guard(profile, school);
+      final at = clock().millisecondsSinceEpoch;
+      final signature = syncPayloadHash({for (final k in ['schoolId','documentId',
+        'inputRevision','cloudRevision','personId','personDocId','ownerRole']) k: item[k]});
+      final same = item['repairScope'] == signature;
+      final attempts = same ? (item['repairAttempts'] as num? ?? 0).toInt().clamp(0, 1000000) : 0;
+      if (!explicitRetry && same && (attempts >= 5 ||
+          (item['nextRepairAt'] as num? ?? 0) > at)) continue;
+      final ref = db.collection(collection).doc(item['documentId'] as String);
+      final current = (await ref.get()).data();
+      guard(profile, school);
+      if (current?['status'] != 'needsReview' ||
+          ['schoolId','inputRevision','cloudRevision','personId','personDocId','ownerRole']
+            .any((k) => current?[k] != item[k])) continue;
+      await ref.update({'repairScope': signature, 'repairAttempts': attempts + 1,
+        'lastRepairAttempt': at, 'nextRepairAt': at + Duration(
+          minutes: (2 * (1 << attempts.clamp(0, 5).toInt())).clamp(2,60).toInt()).inMilliseconds});
       guard(profile, school);
       try {
         await keepPublished(profile, item, read: () => inventory ??= read?.call() ??
@@ -74,7 +103,8 @@ class WindowsIdCardReviews {
             {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2}));
         onRepair?.call({'schoolId': school, 'stage': 'repairDiagnosed',
           'failureCategory': 'idCardInputs', 'outcome': 'verified_published_card_retained',
-          'collection': 'documents', 'documentId': item['documentId']});
+          'collection': 'documents', 'documentId': item['documentId'],
+          'inputRevision': item['inputRevision'], 'at': clock().millisecondsSinceEpoch});
       } catch (error) {
         guard(profile, school);
         final ref = db.collection(collection).doc(item['documentId'] as String);
@@ -83,8 +113,15 @@ class WindowsIdCardReviews {
         if (current?['status'] == 'needsReview' &&
             current?['inputRevision'] == item['inputRevision'] &&
             current?['cloudRevision'] == item['cloudRevision']) {
-          await ref.update({'lastRepairAttempt': DateTime.now().millisecondsSinceEpoch,
-            'repair': 'Published evidence unavailable or changed; automatic retry pending.'});
+          await ref.update({'lastRepairAttempt': clock().millisecondsSinceEpoch,
+            'repair': attempts + 1 >= 5
+              ? 'Automatic repair budget reached; review the retained evidence or use manual Sync Now.'
+              : 'Published evidence unavailable or changed; retry after the stored cooldown.'});
+          onRepair?.call({'schoolId': school, 'stage': 'repairDiagnosed',
+            'failureCategory': 'idCardInputs', 'outcome': attempts + 1 >= 5
+              ? 'probe_budget_exhausted' : 'probe_deferred',
+            'collection': 'documents', 'documentId': item['documentId'],
+            'inputRevision': item['inputRevision'], 'at': clock().millisecondsSinceEpoch});
         }
       }
     }

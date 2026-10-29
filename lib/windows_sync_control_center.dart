@@ -691,6 +691,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'needsAttention': 'Administrator attention required',
       'waitingForResponse': 'Waiting for provider response',
       'requestCompleted': 'Request completed — authoritative ACK unverified',
+      'repairDiagnosed': 'Repair diagnosis recorded — check outcome',
+      'automaticRepair': 'Original operation safely reopened — ACK pending',
+      'personCardJob': 'Person and ID-card dependency pass',
+      'changeFeedUnavailable': 'Change feed unavailable — fallback retained',
+      'networkRecoveryDeferred': 'Network recovery deferred',
+      'changeDiscoveryFailed': 'Cloud change check failed',
     };
     final stage = event['stage']?.toString() ?? '';
     final retryAt = event['retryAt'];
@@ -712,7 +718,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         stage == 'verified' ? Icons.check_circle_outline : Icons.sync,
         color: stage == 'verified' ? Colors.greenAccent : _cyan,
       ),
-      title: Text(labels[stage] ?? 'Unknown activity stage'),
+      title: Text(labels[stage] ?? 'Unrecognized diagnostic event (no verified result)'),
       subtitle: Text(
         'Observed: ${stamp(event['at'])}'
         '${remaining != null ? '\nRetry: ${remaining > 0 ? '${(remaining / 1000).ceil()} seconds remaining' : 'due when permitted'}' : ''}',
@@ -1369,7 +1375,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          if (engine.recoveryHistory.isEmpty)
+                          for (final memory in engine.repairMemory.entries.reversed)
+                            ListTile(
+                              leading: Icon(memory['status'] == 'resolved'
+                                ? Icons.check_circle_outline : Icons.history),
+                              title: Text('${memory['collection']} • ${memory['category']} • ${memory['status']}'),
+                              subtitle: Text('Record: ${memory['recordId']}\n'
+                                '${memory['observations']} observations • ${memory['verifiedRepairs']} verified resolutions • '
+                                '${memory['recurrences']} recurrences\n'
+                                'Safe response: ${memory['learnedAction']}'),
+                            ),
+                          if (engine.recoveryHistory.isEmpty && engine.repairMemory.entries.isEmpty)
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 20),
                               child: Text(
@@ -1382,7 +1398,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 '${event['category']} • ${event['outcome']}',
                               ),
                               subtitle: Text(
-                                '${event['atUtc']} • attempt ${event['attempt']}',
+                                '${event['atUtc']}${event['attempt'] is num ? ' • attempt ${event['attempt']}' : ''}'
+                                '${event['collection'] == null ? '' : '\n${event['collection']} • ${event['documentId'] ?? 'record not identified'}'}',
                               ),
                             ),
                           for (final raw
@@ -1850,7 +1867,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                   '${event['category']} • ${event['outcome']}',
                                 ),
                                 subtitle: Text(
-                                  '${event['atUtc']} • attempt ${event['attempt']}',
+                                  '${event['atUtc']}${event['attempt'] is num ? ' • attempt ${event['attempt']}' : ''}'
+                                '${event['collection'] == null ? '' : '\n${event['collection']} • ${event['documentId'] ?? 'record not identified'}'}',
                                 ),
                               ),
                             if (diagnostics != null) ...[
