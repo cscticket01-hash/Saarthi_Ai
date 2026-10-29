@@ -746,7 +746,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       if (ownSchool && engine.lastError != null && engine.recoveryDecision == null)
         windowsSyncRecovery(engine.lastError!).message,
     };
-    return Padding(
+    return CloudflareTransferStatus(
+      messages: messages.toList(),
+      showTransfers: ownSchool,
+      panelBuilder: (messages) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: _panelBox(
         Column(
@@ -763,10 +766,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   style: TextStyle(fontFamily: 'Segoe UI',
                     color: WindowsAppearance.foreground(Colors.orangeAccent))),
               ),
-            if (ownSchool) const CloudflareTransferStatus(),
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -1886,7 +1889,11 @@ String syncFailureReason(Map item) {
 
 /// Cloudflare acceptance and final Google Drive delivery are separate receipts.
 class CloudflareTransferStatus extends StatefulWidget {
-  const CloudflareTransferStatus({super.key});
+  const CloudflareTransferStatus({super.key, this.messages = const [],
+    this.showTransfers = true, this.panelBuilder});
+  final List<String> messages;
+  final bool showTransfers;
+  final Widget Function(List<String>)? panelBuilder;
   @override State<CloudflareTransferStatus> createState() => _CloudflareTransferStatusState();
 }
 class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
@@ -1894,10 +1901,10 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
   Map<String, dynamic>? _status;
   String? _profile;
   bool _busy = false;
-  @override void initState() { super.initState(); if (ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
+  @override void initState() { super.initState(); if (widget.showTransfers && ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
   @override void dispose() { _timer?.cancel(); super.dispose(); }
   Future<void> _refresh() async {
-    if (_busy) return;
+    if (_busy || !widget.showTransfers) return;
     _busy = true;
     final origin = FirebaseFirestore.instance.activeProfileId;
     try {
@@ -1911,8 +1918,12 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
   }
   @override Widget build(BuildContext context) {
     WindowsAppearance.watch(context);
-    if (_profile != FirebaseFirestore.instance.activeProfileId) return const SizedBox.shrink();
-    final message = cloudTransferMessage(_status);
+    final message = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+      ? cloudTransferMessage(_status) : null;
+    if (widget.panelBuilder != null) {
+      final messages = <String>{...widget.messages, if (message != null) message}.toList();
+      return messages.isEmpty ? const SizedBox.shrink() : widget.panelBuilder!(messages);
+    }
     if (message == null) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 10), child: Text(message,
       style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,

@@ -395,7 +395,10 @@ void main(){
      })));
    await tester.pumpAndSettle();
    await selectSyncTool(tester, 'Check Cloud Health');
-   await tester.scrollUntilVisible(find.text('Action timed out. Completion is unverified; local data is retained.'),300,scrollable:find.byType(Scrollable).first);
+   tester.state<ScrollableState>(find.byType(Scrollable).first).position.jumpTo(0);
+   await tester.pumpAndSettle();
+   expect(find.descendant(of:find.byKey(const ValueKey('sync-errors-alerts')),
+     matching:find.text('Action timed out. Completion is unverified; local data is retained.')),findsOneWidget);
    expect(find.text('Action timed out. Completion is unverified; local data is retained.'),findsOneWidget);
    expect(find.textContaining('Private upstream detail'),findsNothing);
    await openSyncTool(tester, 'Check Cloud Health');

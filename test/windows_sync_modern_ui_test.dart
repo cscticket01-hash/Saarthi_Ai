@@ -133,7 +133,9 @@ void main() {
     final card = find.byKey(const ValueKey('sync-errors-alerts'));
     expect(card, findsOneWidget);
     expect(find.descendant(of: card, matching: find.byType(SelectableText)), findsOneWidget);
-    expect(find.byType(SelectableText), findsOneWidget,
+    final alert = tester.widget<SelectableText>(find.descendant(
+      of: card, matching: find.byType(SelectableText)));
+    expect(find.text(alert.data!), findsOneWidget,
       reason: 'The same alert must not also be rendered below the overview');
     await tester.tap(find.text('Smart Repair History'));
     await tester.pumpAndSettle();
