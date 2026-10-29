@@ -72,7 +72,7 @@ void main() {
         expect(writes, 0);
         await tester.tap(find.text('Pay'));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Confirm Payment'));
+        await tester.tap(find.widgetWithText(FilledButton, 'Confirm Payment'));
         await tester.pumpAndSettle();
         expect(writes, 1);
       },
