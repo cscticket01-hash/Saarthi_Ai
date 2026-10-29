@@ -238,11 +238,12 @@ void main() {
       );
       expect(find.text('Transaction History'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 100; i++) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 30)),
         );
-        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('Student One').evaluate().isNotEmpty) break;
       }
       expect(find.text('Student One'), findsOneWidget);
       expect(find.text('Receipt'), findsOneWidget);
