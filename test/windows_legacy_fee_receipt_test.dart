@@ -55,7 +55,7 @@ void main() {
     expect(syncPayloadHash({'amount':100.0}), isNot(syncPayloadHash({'amount':100})),
       reason:'Persisted wire identities must not change');
     expect(automaticDuplicateReadback(pending, cloud()), isTrue);
-    expect(recordDifferenceFields({'data':{'amount':100.0}}, {'amount':100}), isEmpty);
+    expect(recordDifferenceFields({'schoolId':school,'data':{'amount':100.0}}, {'schoolId':school,'amount':100}), isEmpty);
     for (final field in ['expectedAmount','installmentAmount','totalPaid','balance']) {
       expect(automaticDuplicateReadback(pending, {...cloud(), field:99}), isFalse);
     }
