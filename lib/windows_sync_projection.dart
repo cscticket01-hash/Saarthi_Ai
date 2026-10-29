@@ -21,6 +21,7 @@ String projectWindowsSyncState(
   bool offline = false,
   bool failed = false,
   bool reviewRequired = false,
+  int incomingPending = 0,
 }) {
   if (paused) return 'paused';
   if (syncing) return 'syncing';
@@ -39,7 +40,7 @@ String projectWindowsSyncState(
   }
   if (offline) return 'offline';
   if (failed) return 'waiting';
-  if (rows.isEmpty) return 'idle';
+  if (rows.isEmpty) return incomingPending>0?'pending':'idle';
   if (rows.every(
     (r) =>
         r['_queueCollection'] == '_windows_google_outbox' ||
