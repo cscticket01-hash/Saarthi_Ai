@@ -792,7 +792,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lanes = details['lanes'] is Map ? details['lanes'] as Map
         : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
     final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
-    final hasUploads = (details['pending'] as num? ?? 0) > 0;
+    final hasUploads = (details['pending'] as num? ?? 0) > 0 ||
+        (details['incomingPending'] as num? ?? 0) > 0;
     final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
     final checking = !engine.isPaused && (checkingOnly || engine.isCheckingCloud);
     final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
