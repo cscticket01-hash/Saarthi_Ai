@@ -1,0 +1,21 @@
+name: Hold superseded person-card release builds
+on:
+  push:
+    branches: [verify/person-card-release-hold]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  hold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            for (const run_id of [40808391638, 40808391670, 40808391622]) {
+              const {data} = await github.rest.actions.getWorkflowRun({...context.repo, run_id});
+              if (data.head_sha !== '5283a69a93dedd6f7c03885d7febd9e1a5565d25') throw new Error('Unexpected release source');
+              if (data.status === 'completed') { core.info(run_id + ': already ' + data.conclusion); continue; }
+              await github.rest.actions.cancelWorkflowRun({...context.repo, run_id});
+              core.info(run_id + ': superseded release cancellation requested');
+            }
