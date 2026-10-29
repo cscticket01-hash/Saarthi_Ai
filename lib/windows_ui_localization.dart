@@ -4,6 +4,8 @@ import 'package:flutter/material.dart' as m;
 import 'package:flutter/foundation.dart';
 import 'windows_html_shim.dart' as html;
 import 'windows_ui_translations.dart';
+import 'windows_sync_translations.dart';
+final _deviceUiTranslations={...windowsUiTranslations,...windowsSyncTranslations};
 
 class WindowsUiLanguage {
   static const key = 'vidya_windows_language_v1';
@@ -31,10 +33,10 @@ class WindowsUiLanguage {
   }
   static String translate(String value) {
     if (current == 'en') return value;
-    final exact = (windowsUiTranslations[value] ?? windowsUiTranslations[value.trim()] ?? windowsUiTranslations[value.replaceAll(' *', '')])?[current];
+    final exact = (_deviceUiTranslations[value] ?? _deviceUiTranslations[value.trim()] ?? _deviceUiTranslations[value.replaceAll(' *', '')])?[current];
     if (exact != null) return exact;
     // Template parameters (names, dates and counts) are kept verbatim.
-    for (final entry in windowsUiTranslations.entries) {
+    for (final entry in _deviceUiTranslations.entries) {
       if (!entry.key.contains('{0}')) continue;
       final parts = entry.key.split(RegExp(r'\{[0-9]+\}'));
       final pattern = parts.map(RegExp.escape).join('(.*?)');
