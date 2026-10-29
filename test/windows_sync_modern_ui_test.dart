@@ -119,6 +119,29 @@ void main() {
     pending.complete(); await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('sync failure is shown once inside the alerts card in every view', (tester) async {
+    tester.view.physicalSize = const Size(1440, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(home: page(sync: () async {
+      throw TimeoutException('provider unavailable');
+    })));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync Now'));
+    await tester.pumpAndSettle();
+    final card = find.byKey(const ValueKey('sync-errors-alerts'));
+    expect(card, findsOneWidget);
+    expect(find.descendant(of: card, matching: find.byType(SelectableText)), findsOneWidget);
+    expect(find.byType(SelectableText), findsOneWidget,
+      reason: 'The same alert must not also be rendered below the overview');
+    await tester.tap(find.text('Smart Repair History'));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: card, matching: find.byType(SelectableText)), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('Back returns to previous route', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

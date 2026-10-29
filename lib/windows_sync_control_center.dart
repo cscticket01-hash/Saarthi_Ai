@@ -737,6 +737,39 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
   }
 
+  Widget _alerts({required bool ownSchool}) {
+    final messages = <String>{
+      if (!ownSchool) 'School changed. Close and reopen this page.',
+      if (ownSchool && notice.isNotEmpty) notice,
+      if (ownSchool && engine.recoveryDecision != null)
+        engine.recoveryDecision!.message,
+      if (ownSchool && engine.lastError != null && engine.recoveryDecision == null)
+        windowsSyncRecovery(engine.lastError!).message,
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: _panelBox(
+        Column(
+          key: const ValueKey('sync-errors-alerts'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Sync Errors & Alerts',
+              style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16,
+                fontWeight: FontWeight.w600)),
+            for (final message in messages)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: SelectableText(message,
+                  style: TextStyle(fontFamily: 'Segoe UI',
+                    color: WindowsAppearance.foreground(Colors.orangeAccent))),
+              ),
+            if (ownSchool) const CloudflareTransferStatus(),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
     final rows = details['liveQueue'] is List
         ? (details['liveQueue'] as List).whereType<Map>().map((r) => Map<String,dynamic>.from(r)).toList()
@@ -744,8 +777,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lanes = details['lanes'] is Map ? details['lanes'] as Map
         : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
     final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
-    final syncing = engine.isSyncing && !engine.isPaused && ManagedSchoolSession.activeTransfers.value>0;
-    final phase = engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
+    final hasUploads = (details['pending'] as num? ?? 0) > 0;
+    final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
+    final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
+    final phase = checkingOnly || engine.isCheckingCloud ? 'checking' :
+        engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
         details['displayState']?.toString() ??
         (syncing
             ? 'syncing'
@@ -758,6 +794,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ? 'pending'
             : 'idle');
     final phaseLabels = {
+      'checking': 'Checking cloud',
       'preparing': 'Preparing changed data',
       'syncing': engine.isCheckingCloud ? 'Checking cloud' : 'Syncing',
       'needsAttention': 'Needs Attention',
@@ -905,10 +942,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     final cloud = _connection(
                               Icons.cloud_outlined,
                               'School Cloud',
-                              syncing
-                                  ? engine.isCheckingCloud
-                                        ? 'Checking cloud changes'
-                                        : 'Sync in progress'
+                              checkingOnly || engine.isCheckingCloud
+                                  ? 'Checking cloud changes'
+                                  : syncing
+                                  ? 'Sync in progress'
                                   : ack is num && ack > 0
                                   ? 'Last ACK: ${stamp(ack)}'
                                   : 'No verified ACK yet',
@@ -1316,13 +1353,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       const Text(
                         'Your school records, cloud transfers and recovery — together in one live workspace.',
                       ),
-                      if (!ownSchool)
-                        Text(
-                          'School changed. Close and reopen this page.',
-                          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orange)),
-                        ),
+                      _alerts(ownSchool: ownSchool),
                       if (ownSchool) ...[
-                        const CloudflareTransferStatus(),
                         _navigation(active),
                         const SizedBox(height: 12),
                         if (showHistory) ...[
@@ -1379,14 +1411,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           if (engine.isPaused)
                             Text(
                               'Paused on this PC: ${engine.pausedUntil?.difference(DateTime.now()).inMinutes ?? 0} minutes remaining (until ${engine.pausedUntil?.toLocal()})${engine.isSyncing ? ' — finishing the accepted operation' : ''}',
-                            ),
-                          if (notice.isNotEmpty) SelectableText(notice),
-                          if (engine.recoveryDecision != null)
-                            Text(
-                              engine.recoveryDecision!.message,
-                              style: TextStyle(fontFamily: 'Segoe UI', 
-                                color: WindowsAppearance.foreground(Colors.orangeAccent),
-                              ),
                             ),
                         ],
                         if (showDiagnostics) ...[
@@ -1688,15 +1712,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               ],
                             ),
                             const SizedBox(height: 20),
-                            if (engine.recoveryDecision != null)
-                              Text(
-                                engine.recoveryDecision!.message,
-                                style: TextStyle(fontFamily: 'Segoe UI', 
-                                  color: WindowsAppearance.foreground(Colors.orangeAccent),
-                                ),
-                              ),
-                            if (notice.isNotEmpty) SelectableText(notice),
-                            const SizedBox(height: 12),
+                              const SizedBox(height: 12),
                             SizedBox(key: _backupKey),
                             SizedBox(key: _settingsKey),
                             SwitchListTile(
