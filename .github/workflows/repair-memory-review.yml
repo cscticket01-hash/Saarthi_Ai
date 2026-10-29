@@ -11,8 +11,6 @@ jobs:
   repair-memory:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      APPDATA: ${{ runner.temp }}/verified-repair-memory
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -22,6 +20,10 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_repair_memory.dart lib/windows_id_card_reviews.dart lib/windows_pending_school_sync.dart lib/windows_sync_engine.dart lib/windows_sync_control_center.dart test/windows_repair_memory_test.dart
       - name: Verified memory, durable cooldown, record and UI regressions
+        env:
+          APPDATA: ${{ runner.temp }}/verified-repair-memory
         run: flutter test --concurrency=1 test/windows_repair_memory_test.dart test/windows_pending_auto_repair_test.dart test/windows_document_review_owner_test.dart test/windows_sync_modern_ui_test.dart test/windows_smart_recovery_test.dart
       - name: SQLite restart and CAS regression
+        env:
+          APPDATA: ${{ runner.temp }}/verified-repair-memory-sqlite
         run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 test/windows_pending_auto_repair_test.dart test/windows_document_review_owner_test.dart test/windows_smart_recovery_test.dart
