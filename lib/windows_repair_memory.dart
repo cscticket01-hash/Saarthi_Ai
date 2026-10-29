@@ -45,7 +45,13 @@ class WindowsRepairMemory {
         entry['status'] = 'resolved'; entry['resolvedAt'] = now;
         entry['verifiedRepairs'] = (entry['verifiedRepairs'] as int) + 1;
         entry['lastAt'] = now;
-        if (appVersion != null) entry['resolvedInVersion'] = appVersion;
+        if (appVersion != null) {
+          entry['resolvedInVersion'] = appVersion;
+          entry['firstAppVersion'] ??= appVersion;
+          entry['lastAppVersion'] = appVersion;
+          final versions = <String>{...((entry['observedVersions'] as List?) ?? []).whereType<String>(), appVersion}.toList();
+          entry['observedVersions'] = versions.length > 8 ? versions.sublist(versions.length - 8) : versions;
+        }
       }
       return changed;
     }
