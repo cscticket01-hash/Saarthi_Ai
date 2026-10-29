@@ -1,3 +1,6 @@
+import 'windows_person_fields.dart';
+import 'windows_payment_confirmation.dart';
+import 'windows_person_avatar.dart';
 import 'india_address_fields.dart';
 import 'windows_inactivity_timer.dart';
 import 'windows_student_excel.dart';
@@ -6507,6 +6510,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
 
                   final rollField = TextField(
                     controller: _rollController,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     keyboardType: TextInputType.number,
                     style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     onChanged: (_) {
@@ -10443,6 +10447,8 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _sessionReceiptStudentId;
   bool _activeFeeSettingsReady = false;
   bool _localLedgerReady = false;
+  int _selectionGeneration = 0;
+  Map<String, dynamic> _feesBranding = {};
   String? _activeFeeSettingsMessage;
 
   Map<String, double> _activeFeeAmounts = {};
@@ -10476,6 +10482,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     _ledgerStream = _ledgerStreamForMonth(_selectedMonth);
 
     _loadStudentUidConfigForFees();
+    _loadFeesBranding();
   }
 
   @override
@@ -10484,6 +10491,14 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
     _rollSearchController.dispose();
     _receivedAmountController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadFeesBranding() async {
+    Map<String, dynamic> branding;
+    try { branding = await _loadSchoolProfileCache(); } catch (_) { return; }
+    if (mounted && FirebaseFirestore.instance.activeProfileId == _feesOriginProfile) {
+      setState(() => _feesBranding = branding);
+    }
   }
 
   String _settingsDocId(String className) => className.replaceAll(' ', '_');
@@ -10656,6 +10671,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 }
 
   void _resetActiveSelection() {
+    _selectionGeneration++;
     _sessionReceiptPaymentId = null;
     _sessionReceiptStudentId = null;
     _activeStudentId = null;
@@ -10671,6 +10687,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
   void _clearStudentAndSearch() {
     setState(() {
       _resetActiveSelection();
+      _selectedClass = 'All Classes';
       _nameSearchController.clear();
       _rollSearchController.clear();
     });
@@ -10700,26 +10717,25 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
-        final cachedSettings = await _getClassFeeSettings(studentClass);
-        if (!mounted || FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
-
-        _activeStudentId = studentDoc.id;
-        _selectedClass = studentClass;
-        _nameSearchController.text = studentName;
-        _rollSearchController.text = roll;
-        _activeFeeSettingsReady = cachedSettings != null;
-        _activeFeeSettingsMessage =
-            cachedSettings == null ? 'Fee structure load ho raha hai...' : null;
-
-        _activeFeeAmounts = cachedSettings != null
-            ? Map<String, double>.from(cachedSettings['fees'] as Map)
-            : {};
-        _selectedFeeHeads = <String>{};
-        _activeLedger = ledger;
-        _receivedAmountController.clear();
-        _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
-
+    final generation = ++_selectionGeneration;
+    bool current() => mounted && generation == _selectionGeneration &&
+        FirebaseFirestore.instance.activeProfileId == _feesOriginProfile;
+    setState(() {
+      _activeStudentId = studentDoc.id;
+      _selectedClass = studentClass;
+      _nameSearchController.text = studentName;
+      _rollSearchController.text = roll;
+      _activeFeeSettingsReady = false;
+      _activeFeeSettingsMessage = 'Loading fee settings...';
+      _activeFeeAmounts = {};
+      _selectedFeeHeads = {};
+      _activeLedger = ledger;
+      _receivedAmountController.clear();
+      _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
+    });
     try {
+      final cachedSettings = await _getClassFeeSettings(studentClass);
+      if (!current()) return;
       final settings = cachedSettings;
       final fees = Map<String, double>.from(settings['fees'] as Map);
       final configured = settings['configured'] == true || _toDouble(ledger?['expectedAmount']) > 0;
@@ -10728,7 +10744,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       }
 
       if (!configured) {
-        if (!mounted) return;
+        if (!current()) return;
         setState(() {
           _activeFeeSettingsReady = false;
           _activeFeeSettingsMessage =
@@ -10753,7 +10769,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       final paid = _toDouble(ledger?['totalPaid']);
       final remaining = (expected - paid).clamp(0, double.infinity).toDouble();
 
-      if (!mounted) return;
+      if (!current()) return;
       setState(() {
         _activeStudentId = studentDoc.id;
         _activeFeeSettingsReady = true;
@@ -10770,7 +10786,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             remaining > 0 ? remaining.toStringAsFixed(0) : '';
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!current()) return;
       setState(() {
         _activeFeeSettingsReady = false;
         _activeFeeSettingsMessage = 'Fee settings load error: $e';
@@ -10802,7 +10818,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     setState(() => _isSavingPayment = true);
     try {
 
-    final student = await SchoolPersonIdentity.ensure('students_directory',studentDoc.id);
+    final student = studentDoc.data();
     final studentName = student['name']?.toString().trim() ?? 'Student';
     final studentClass = student['class']?.toString().trim() ?? '';
     final roll = student['rollNo']?.toString().trim() ?? '';
@@ -10815,8 +10831,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             _studentUidConfig['feesEnabled'] == true
         ? rawStudentUid
         : '';
-    final feeIdentity = _feeIdentityForStudent(student, _studentUidConfig);
-
     final oldExpected = _toDouble(ledger?['expectedAmount']);
     final oldPaid = _toDouble(ledger?['totalPaid']);
     final expected = oldExpected > 0 ? oldExpected : _selectedFeesTotal;
@@ -10843,6 +10857,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       return;
     }
 
+    final confirmed = await confirmSchoolPayment(context,
+      name: studentName, collecting: true, amount: _money(amount));
+    if (!confirmed || !mounted) return;
+    if (FirebaseFirestore.instance.activeProfileId != originProfile ||
+        _activeStudentId != studentDoc.id || _selectedMonth != originMonth) {
+      throw StateError('School or student changed. Reopen fees before collecting.');
+    }
+    final ensuredStudent = await SchoolPersonIdentity.ensure('students_directory', studentDoc.id);
+    student.addAll(ensuredStudent);
+    final feeIdentity = _feeIdentityForStudent(student, _studentUidConfig);
     final now = DateTime.now();
     final schoolProfile = await _loadSchoolProfileCache();
     final receiptNo =
@@ -11577,13 +11601,10 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 26,
-                backgroundColor: WindowsAppearance.background(const Color(0x2200A884)),
-                child: Text(
-                  studentSelected && name.isNotEmpty ? name[0].toUpperCase() : '—',
-                  style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontWeight: FontWeight.w900, fontSize: 18),
-                ),
+              WindowsPersonAvatar(
+                key: ValueKey('fees-avatar-${studentDoc?.id ?? 'school'}'),
+                person: studentSelected ? student : _feesBranding,
+                school: !studentSelected, radius: 26,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -11710,6 +11731,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
+      key: ValueKey('fees-student-${studentDoc.id}'),
       onTap: canSelect && !_isSavingPayment
           ? () => _openInlineCollector(studentDoc, ledger)
           : null,
@@ -11734,13 +11756,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               size: 22,
             ),
             const SizedBox(width: 10),
-            CircleAvatar(
-              backgroundColor: WindowsAppearance.background(const Color(0x2200A884)),
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : 'S',
-                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontWeight: FontWeight.bold),
-              ),
-            ),
+            WindowsPersonAvatar(person: student),
             const SizedBox(width: 12),
             Expanded(
               flex: 3,
@@ -12052,7 +12068,7 @@ child: Row(
               ),
             )
             .toList(),
-        onChanged: (value) {
+        onChanged: _isSavingPayment ? null : (value) {
           if (value != null) {
             setState(() {
               _selectedMonth = value;
@@ -12071,6 +12087,7 @@ child: Row(
       flex: 2,
       child: DropdownButtonFormField<String>(
         isExpanded: true,
+        key: ValueKey('fees-class-$_selectedClass'),
         value: _selectedClass,
         dropdownColor: WindowsAppearance.resolve(const Color(0xFF172229)),
         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
@@ -12078,7 +12095,7 @@ child: Row(
           'Class',
           Icons.class_rounded,
         ),
-        items: _classes
+        items: {..._classes, ...students.map((d) => d.data()['class']?.toString().trim() ?? '').where((c) => c.isNotEmpty)}
             .map(
               (value) => DropdownMenuItem(
                 value: value,
@@ -12086,7 +12103,7 @@ child: Row(
               ),
             )
             .toList(),
-        onChanged: (value) {
+        onChanged: _isSavingPayment ? null : (value) {
           if (value != null) {
             setState(() {
               _selectedClass = value;
@@ -12104,6 +12121,8 @@ child: Row(
     Expanded(
       flex: 3,
       child: TextField(
+        key: const ValueKey('fees-name-search'),
+        enabled: !_isSavingPayment,
         controller: _nameSearchController,
         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
@@ -12112,9 +12131,9 @@ child: Row(
         ),
         onChanged: (_) {
           setState(() {
-            if (_activeStudentId != null) {
-              _resetActiveSelection();
-            }
+            _resetActiveSelection();
+            _selectedClass = 'All Classes';
+            _rollSearchController.clear();
           });
         },
       ),
@@ -12125,6 +12144,8 @@ child: Row(
     Expanded(
       flex: 2,
       child: TextField(
+        key: const ValueKey('fees-roll-search'),
+        enabled: !_isSavingPayment,
         controller: _rollSearchController,
         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
         decoration: _inputDecoration(
@@ -12133,9 +12154,9 @@ child: Row(
         ),
         onChanged: (_) {
           setState(() {
-            if (_activeStudentId != null) {
-              _resetActiveSelection();
-            }
+            _resetActiveSelection();
+            _selectedClass = 'All Classes';
+            _nameSearchController.clear();
           });
         },
       ),
@@ -12168,7 +12189,7 @@ child: Row(
                                   Text(
                                     searchStarted
                                         ? 'Matching student select karein'
-                                        : 'Name ya Roll No search karne ke baad selection active hoga',
+                                        : 'Select a student from the list or search by name / roll number',
                                     style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
                                   ),
                                 ],
@@ -12191,7 +12212,7 @@ child: Row(
                                         return _studentCard(
                                           student,
                                           ledgerForStudent(student),
-                                          canSelect: searchStarted && ledgerSnapshot.hasData && !ledgerSnapshot.hasError,
+                                          canSelect: _localLedgerReady,
                                         );
                                       },
                                     ),
@@ -13419,8 +13440,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       Row(
                         children: [
                           Expanded(
-                            child: TextField(
-                              controller: dobCtrl,
+                            child: WindowsDateOfBirthField(controller: dobCtrl,
                               style:
                                    TextStyle(fontFamily: 'Segoe UI', 
                                 color:
@@ -15861,9 +15881,7 @@ class _AddTeacherScreenState
                     children: [
                       Expanded(
                         child:
-                            TextField(
-                          controller:
-                              _dobCtrl,
+                            WindowsDateOfBirthField(controller: _dobCtrl,
                           style:
                                TextStyle(fontFamily: 'Segoe UI', 
                             color:
@@ -16222,7 +16240,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           Expanded(
                             child: TextField(
                               controller: rollCtrl,
-                              keyboardType: TextInputType.number,
+                              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    keyboardType: TextInputType.number,
                               style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                               decoration: _inputDecoration('Roll No *'),
                             ),
@@ -16271,7 +16290,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: dobCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
+                      WindowsDateOfBirthField(controller: dobCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Date of Birth (DD/MM/YYYY)')),
                     ],
                   ),
                 ),
@@ -16306,7 +16325,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final roll = rollCtrl.text.trim();
                           final contact = contactCtrl.text.trim();
 
-                          if (name.isEmpty || roll.isEmpty || contact.isEmpty) {
+                          if (name.isEmpty || !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: WindowsAppearance.background(Colors.redAccent),
@@ -17284,8 +17303,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                         decoration: _dialogInput('Admission Date'),
                       ),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: dobCtrl,
+                      WindowsDateOfBirthField(controller: dobCtrl,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Date of Birth'),
                       ),
@@ -17610,7 +17628,6 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                   itemBuilder: (context, index) {
                     final doc = docs[index];
                     final student = doc.data() as Map<String, dynamic>;
-                    final photoUrl = student['photoUrl']?.toString();
                     final latestResult =
                         _latestExamResultForStudent(doc.id, student);
                     final resultStatus =
@@ -17630,19 +17647,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SizedBox(
-                            width: 56,
-                            height: 56,
-                            child: ClipOval(
-                              child: (photoUrl != null && photoUrl.isNotEmpty)
-                                  ? schoolNetworkImage(
-                                      photoUrl,
-                                      fit: BoxFit.cover,
-errorBuilder: (context, error, stackTrace) =>  ColoredBox(color: WindowsAppearance.background(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: WindowsAppearance.foreground(Color(0xFF00A884)))),
-                                    )
-                                  :  ColoredBox(color: WindowsAppearance.background(Color(0xFF121B22)), child: Icon(Icons.person, size: 30, color: WindowsAppearance.foreground(Color(0xFF00A884)))),
-                            ),
-                          ),
+                          WindowsPersonAvatar(person: student, radius: 28),
                           const SizedBox(width: 14),
                           Expanded(
                             child: Column(
