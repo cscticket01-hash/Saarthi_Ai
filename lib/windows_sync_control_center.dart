@@ -779,8 +779,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
     final hasUploads = (details['pending'] as num? ?? 0) > 0;
     final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
+    final checking = !engine.isPaused && (checkingOnly || engine.isCheckingCloud);
     final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
-    final phase = checkingOnly || engine.isCheckingCloud ? 'checking' :
+    final phase = engine.isPaused ? 'paused' : checking ? 'checking' :
         engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
         details['displayState']?.toString() ??
         (syncing
@@ -942,7 +943,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     final cloud = _connection(
                               Icons.cloud_outlined,
                               'School Cloud',
-                              checkingOnly || engine.isCheckingCloud
+                              checking
                                   ? 'Checking cloud changes'
                                   : syncing
                                   ? 'Sync in progress'
@@ -1712,7 +1713,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               ],
                             ),
                             const SizedBox(height: 20),
-                              const SizedBox(height: 12),
                             SizedBox(key: _backupKey),
                             SizedBox(key: _settingsKey),
                             SwitchListTile(
