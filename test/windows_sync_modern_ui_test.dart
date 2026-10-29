@@ -108,6 +108,24 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Advanced checks'));
     await tester.pumpAndSettle();
+    for(final label in ['Check Cloud Health','Local Storage Details','School Drive Usage']) {
+      expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,label)).onPressed,isNotNull);
+    }
+    final backups = tester.widgetList<OutlinedButton>(find.widgetWithText(OutlinedButton,'Backup School Data'));
+    expect(backups,isNotEmpty);
+    expect(backups.every((button)=>button.onPressed==null),isTrue);
+    pending.complete(); await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('sync failure is shown once inside the alerts card in every view', (tester) async {
+    tester.view.physicalSize = const Size(1440, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(home: page(sync: () async {
+      throw TimeoutException('provider unavailable');
+    })));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Sync Now'));
     await tester.pumpAndSettle();
     final card = find.byKey(const ValueKey('sync-errors-alerts'));
@@ -198,8 +216,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Diagnostics and recovery tools'), findsNothing);
-    expect(find.text('Local Storage'),findsOneWidget);
-    expect(find.text('Open Folder'),findsNothing);
+    expect(find.text('Local Storage'), findsOneWidget);
+    expect(find.text('Open Folder'), findsNothing);
     await tester.runAsync(() async {
       final image =
           await (key.currentContext!.findRenderObject()
