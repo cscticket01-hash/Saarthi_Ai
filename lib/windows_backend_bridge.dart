@@ -2429,8 +2429,10 @@ class WindowsBackendBridge {
     // A verified existing card (or input conflict above) needs no new PDF.
     // Keep expensive rendering outside the document writer as well.
     final reuseCloud = captured == null && existingCloud?['inputRevision'] == inputRevision;
-    final package = reuseCloud ? null : bytes ?? await prepareBytes?.call();
-    if (!reuseCloud && (package == null || package.isEmpty)) {
+    final reuseLocal = captured?['deleted'] != true &&
+        (captured?['inputRevision'] == inputRevision || captured?['ownerCloudChoiceInputRevision'] == inputRevision);
+    final package = reuseCloud || reuseLocal ? null : bytes ?? await prepareBytes?.call();
+    if (!reuseCloud && !reuseLocal && (package == null || package.isEmpty)) {
       throw StateError('Selected ID renderer returned no package.');
     }
     // Cloud waits happen outside the local document writer, so another offline

@@ -471,6 +471,20 @@ void main() {
     expect((await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList(),queues);
     expect(await File(local['localPath']).readAsBytes(),[1,2,3]);
   });
+  test('unchanged local publication needs neither another cloud read nor a render', () async {
+    final person={'mobileLinkToken':'c'*32,'mobileStableId':'S1'};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardId(qr);
+    await db.collection('_local_student_documents').doc(cardId).set({...local,'documentId':cardId,'inputRevision':'same','syncState':'Synced'});
+    await WindowsBackendBridge.publishIdCard(qr:qr,kind:'studentId',person:person,inputRevision:'same',automatic:true,
+      prepareBytes:()async=>throw StateError('Unchanged card must not render'),
+      readPublished:()async=>throw StateError('Existing local generation must not re-read cloud'));
+    expect((await db.collection('_local_student_documents').doc(cardId).get()).data()?['inputRevision'],'same');
+    expect((await db.collection('_windows_document_outbox').doc(cardId).get()).exists,false);
+    expect(await File(local['localPath']).readAsBytes(),[1,2,3]);
+  });
   test('verified same-input cloud card skips rendering and never claims local PDF bytes', () async {
     final person={'mobileLinkToken':'c'*32,'mobileStableId':'S1'};
     final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
