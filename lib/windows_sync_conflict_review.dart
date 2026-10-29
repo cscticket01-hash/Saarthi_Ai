@@ -1,5 +1,6 @@
 import 'windows_appearance.dart';
 import 'windows_backend_bridge.dart';
+import 'windows_firebase_sync.dart';
 import 'windows_sync_comparison.dart';
 import 'school_profile_policy.dart';
 
@@ -116,6 +117,8 @@ class _ConflictReviewState extends State<_ConflictReview> {
     if (db.activeProfileId != origin ||
         queued['schoolId'] != db.activeProfileIdentity['schoolSyncId'])
       throw StateError('School changed. Reopen review.');
+    final point = WindowsFirebaseRemote.recordPointReadSupported;
+    final recordId = queued['documentId'] ?? widget.item['id'];
     final reply = await (widget.cloudReader?.call(queued) ?? ManagedSchoolSession.callForSchool(
       queued['schoolId'] as String,
       'managed/records',
@@ -123,12 +126,15 @@ class _ConflictReviewState extends State<_ConflictReview> {
         'operation': 'read',
         'collection': queued['collection'] ?? 'documents',
         'syncProtocol': 2,
+        if (point) 'id': recordId,
       },
     ));
     final row =
         (reply['records'] as Map?)?[queued['documentId'] ?? widget.item['id']];
     if (db.activeProfileId != origin ||
         reply['syncProtocol'] != 2 ||
+        widget.cloudReader == null && point && (reply['pointRead'] != true ||
+          (reply['records'] is! Map || (reply['records'] as Map).keys.any((k) => k != recordId))) ||
         reply['schoolId'] != queued['schoolId'] ||
         row is! Map ||
         row['schoolId'] != queued['schoolId'] ||
@@ -419,6 +425,12 @@ class _ConflictReviewState extends State<_ConflictReview> {
                   ),
                   const SizedBox(height: 12),
                   if (remote != null) ...[
+                    if (expected?['collection'] == 'fee_payments') ...[
+                      const Text('Payment comparison', style: TextStyle(fontWeight: FontWeight.bold)),
+                      for (final key in ['receiptNo','studentName','studentId','month','installmentAmount','expectedAmount','totalPaid','balance','paymentMode','dateText','timeText'])
+                        Text('$key: Local ${expected?['data']?[key] ?? '—'} | Cloud ${remote?[key] ?? '—'}'),
+                      const SizedBox(height: 12),
+                    ],
                     Text(
                       'Operation identity: local ${expected?['operationId'] ?? expected?['documentRevision'] ?? 'unknown'} / cloud ${remote?['_syncOperationId'] ?? remote?['documentRevision'] ?? 'unknown'}',
                     ),
