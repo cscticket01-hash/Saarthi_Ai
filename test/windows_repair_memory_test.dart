@@ -35,6 +35,26 @@ void main() {
     expect(restored.entries.single['recurrences'],1,reason:'log repeats are not new repair episodes');
     expect((WindowsRepairMemory()..restore(memory.snapshot(school),'foreign')).entries,isEmpty);
   });
+  test('version history survives update and only verified evidence records a fix', () {
+    final memory = WindowsRepairMemory();
+    memory.observe({...event('conflict'), 'appVersion': '2.1.199'}, school, 1);
+    final restored = WindowsRepairMemory()..restore(memory.snapshot(school), school);
+    restored.observe({...event('automaticRepair'), 'appVersion': '2.1.200'}, school, 2);
+    expect(restored.entries.single['firstAppVersion'], '2.1.199');
+    expect(restored.entries.single['lastAppVersion'], '2.1.200');
+    expect(restored.entries.single['resolvedInVersion'], isNull);
+    restored.observe({...event('verified'), 'appVersion': '2.1.200'}, school, 3);
+    expect(restored.entries.single['resolvedInVersion'], '2.1.200');
+    expect(restored.entries.single['verifiedRepairs'], 1);
+  });
+  test('updates admit one bounded read without resetting old retry history', () {
+    expect(admitUpdatedRuntimeProbe(null, '2.1.200'), isFalse);
+    final prior = {'diagnosedAppVersion': '2.1.199', 'runtimeUpgradeProbes': 0, 'attempts': 8};
+    expect(admitUpdatedRuntimeProbe(prior, '2.1.200'), isTrue);
+    expect(admitUpdatedRuntimeProbe(prior, '2.1.199'), isFalse);
+    expect(admitUpdatedRuntimeProbe({...prior, 'runtimeUpgradeProbes': 3}, '2.1.200'), isFalse);
+    expect(prior['attempts'], 8);
+  });
   test('bounded memory groups observations but separates school, module, record and operation', () {
     final memory=WindowsRepairMemory();
     for(var i=0;i<150;i++) memory.observe(event('conflict',id:'T$i'),school,i);
