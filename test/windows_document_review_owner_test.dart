@@ -439,7 +439,7 @@ void main() {
         read: () async => {'schoolId': 'foreign', 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), hasLength(1));
       final receiptsBefore = (await db.collection('_windows_sync_receipts').get()).docs.length;
-      await WindowsIdCardReviews.repairPending(school,
+      await WindowsIdCardReviews.repairPending(school, explicitRetry: true,
         read: () async => {'schoolId': school, 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), isEmpty);
       expect((await db.collection('_windows_sync_receipts').get()).docs.length, receiptsBefore);

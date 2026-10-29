@@ -1,0 +1,9 @@
+{
+  "now": 1800000000000,
+  "publicKey": "M8kipI3m8-ucJm9dTVlgdMTNa7pCFuoR27NDuyQhgew",
+  "envelope": {
+    "keyId": "test-only",
+    "payload": "eyJwcm90b2NvbCI6MSwicHVycG9zZSI6InZpZHlhLXN5bmMtcmVwYWlyIiwic2VxdWVuY2UiOjEsImlzc3VlZEF0IjoxODAwMDAwMDAwMDAwLCJleHBpcmVzQXQiOjE4MDAwODY0MDAwMDAsImVuYWJsZWQiOnRydWUsInJ1bGVzIjpbeyJpZCI6ImNhcmQtd2FpdCIsIm1vZHVsZSI6ImRvY3VtZW50cyIsImNhdGVnb3J5IjoiaWRDYXJkSW5wdXRzIiwiYWN0aW9uIjoiY2FyZF9wcm9iZV9jb29sZG93biIsInZhbHVlIjozMDAsInJvbGxvdXRQZXJjZW50IjoxMDB9XX0",
+    "signature": "nN0gP7bONXCTaGGc3YnD-IXjga9QHxBjYhSE2xxPfLSzgUSSlhO-xOvqL2GSzDvtw4-zivoffSi2MXJ0aGYqCw"
+  }
+}

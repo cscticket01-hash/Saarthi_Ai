@@ -1,3 +1,6 @@
+import 'windows_shared_repair_knowledge.dart';
+import 'windows_repair_memory.dart';
+import 'windows_sync_comparison.dart';
 import 'dart:async';
 
 import 'windows_local_firestore.dart';
@@ -83,6 +86,20 @@ class WindowsPendingSchoolSync {
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
       }
+      final inputSignature = syncPayloadHash({
+        'schoolId': school, 'collection': item['collection'],
+        'documentId': item['documentId'], 'operationId': item['operationId'],
+        'operation': item['operation'], 'baseCloudRevision': item['baseCloudRevision'],
+        'data': item['data'],
+      });
+      final manifest = (await db.collection('_windows_sync_manifest')
+        .doc(item['collection'] as String).get()).data();
+      scope();
+      final head = manifest?['revision'] is String ? manifest!['revision'] as String : null;
+      if (repeatedRepairProbe(prior, signature: inputSignature,
+          cloudRevision: head, now: clock().millisecondsSinceEpoch,
+          explicitRetry: explicitRetry, cooldownSeconds: WindowsSharedRepairKnowledge.value(
+            'record_probe_cooldown',school,module:item['collection'] as String,category:'conflict'))) continue;
       // Budget survives restarts and hourly reconciliation. Manual diagnosis
       // admits one more bounded probe; it never resets history or grants ACK.
       if (!explicitRetry &&
@@ -97,6 +114,8 @@ class WindowsPendingSchoolSync {
           onActivity?.call({
             'schoolId': school,
             'operationId': item['operationId'],
+            'queueCollection': '_windows_firebase_outbox', 'queueId': row.id,
+            'collection': item['collection'], 'documentId': item['documentId'],
             'stage': 'repairDiagnosed',
             'outcome': 'probe_budget_exhausted',
             'failureCategory': category ?? 'conflict',
@@ -118,6 +137,8 @@ class WindowsPendingSchoolSync {
         'attempts': attempts,
         'nextProbeAt': clock().add(delay).millisecondsSinceEpoch,
         'outcome': 'diagnosing',
+        'inputSignature': inputSignature,
+        'cloudManifestRevision': head,
       });
       scope();
       probes++;
@@ -159,6 +180,7 @@ class WindowsPendingSchoolSync {
           'queueCollection': '_windows_firebase_outbox',
           'queueId': row.id,
           'operationId': item['operationId'],
+          'collection': item['collection'], 'documentId': item['documentId'],
           'stage': 'repairDiagnosed',
           'outcome': 'probe_deferred',
           'failureCategory': decision.kind.name,
@@ -233,6 +255,8 @@ class WindowsPendingSchoolSync {
         'queueCollection': '_windows_firebase_outbox',
         'queueId': row.id,
         'operationId': item['operationId'],
+        'collection': item['collection'], 'documentId': item['documentId'],
+        'failureCategory': category ?? 'conflict',
         'stage': 'repairDiagnosed',
         'outcome': outcome,
         'at': clock().millisecondsSinceEpoch,
