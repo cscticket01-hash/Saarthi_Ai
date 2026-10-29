@@ -11,6 +11,7 @@ import '../lib/windows_backend_bridge.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_fee_receipt_preview.dart';
 import '../lib/windows_person_avatar.dart';
+import '../lib/windows_fee_structure.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
@@ -259,8 +260,10 @@ void main() {
       await db.collection('students_directory').doc('S2').set({
         'schoolId': school, 'name': 'Student Two', 'class': 'Class 2', 'rollNo': '22',
       });
-      await db.collection('fee_settings').doc('Class_1').set({'fees': {'Tuition': 100}});
-      await db.collection('fee_settings').doc('Class_2').set({'fees': {'Admission': 200}});
+      final session = await WindowsFeeStructure.currentSession();
+      await db.collection('fee_settings').doc(WindowsFeeStructure.documentId('Class 1', session)).set({'academicSession': session, 'fees': {'Tuition': 100}});
+      await db.collection('fee_settings').doc(WindowsFeeStructure.documentId('Class 2', session)).set({'academicSession': session, 'fees': {'Admission': 200}});
+      expect((await WindowsFeeStructure.load('Class 2'))['fees'], {'Admission': 200});
     });
     await tester.pumpWidget(const MaterialApp(home: FeesCollectionScreen()));
     Future<void> flush() async {
@@ -289,7 +292,11 @@ void main() {
     expect(find.byKey(const ValueKey('fees-avatar-S2')), findsOneWidget);
     final selectAll = find.byType(Checkbox).first;
     await tester.ensureVisible(selectAll);
-    expect(tester.widget<Checkbox>(selectAll).onChanged, isNotNull, reason: 'Selected student fee settings must be ready');
+    for (var i = 0; i < 100 && tester.widget<Checkbox>(selectAll).onChanged == null; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(tester.widget<Checkbox>(selectAll).onChanged, isNotNull, reason: tester.allWidgets.whereType<Text>().map((w) => w.data).join(' | '));
     await tester.tap(selectAll);
     await tester.pump();
     expect(tester.widget<Checkbox>(selectAll).value, isTrue);
