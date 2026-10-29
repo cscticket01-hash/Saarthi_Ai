@@ -158,6 +158,40 @@ bool legacyFeePublicationCandidate(Map queued) {
       RegExp(r'^VS-\d{6}-\d{13}$').hasMatch(d['receiptNo']?.toString() ?? '');
 }
 
+// Remove only typed upload-protocol fields emitted by the existing broker.
+// Unknown keys remain business data and must still compare exactly.
+bool _legacyFeeUploadEnvelope(Map<String,dynamic> remote, String school, String owner) {
+  if (remote.containsKey('success')) { if(remote['success'] != true)return false; remote.remove('success'); }
+  if (remote.containsKey('syncTiming')) {
+    final t=remote['syncTiming'];
+    if(t is! Map || t.keys.any((k)=>!{'brokerPreparationMillis','scriptRoundTripMillis'}.contains(k)) ||
+      t.values.any((v)=>v is! num || !v.isFinite || v<0))return false;
+    remote.remove('syncTiming');
+  }
+  if(remote.containsKey('cloudflareAccepted') || remote.containsKey('driveState')) {
+    if(remote['cloudflareAccepted']!=true || remote['driveState']!='verified')return false;
+    remote.remove('cloudflareAccepted');remote.remove('driveState');
+  }
+  if(remote.containsKey('deliveryTiming')) {
+    final t=remote['deliveryTiming'];
+    if(t is! Map || t['version']!=1 || !t.containsKey('deliveryMillis') || !t.containsKey('observedAt') ||
+      t.keys.any((k)=>!{'version','deliveryMillis','observedAt','queueWaitMillis'}.contains(k)) ||
+      t.values.any((v)=>v is! int || v<0))return false;
+    remote.remove('deliveryTiming');
+  }
+  const uploadKeys={'uploadResumableVersion','uploadKey','sha256','sizeBytes','offset','committed'};
+  if(uploadKeys.any(remote.containsKey)) {
+    if(remote['uploadResumableVersion']!=1 || remote['committed']!=true ||
+      remote['sizeBytes'] is! int || remote['sizeBytes']<=0 || remote['sizeBytes']>20*1024*1024 ||
+      remote['offset']!=remote['sizeBytes'] || remote['sha256'] is! String ||
+      !RegExp(r'^[a-f0-9]{64}$').hasMatch(remote['sha256']))return false;
+    final key=sha256.convert(utf8.encode(jsonEncode([school,owner,'fee_receipt',remote['sha256']]))).toString();
+    if(remote['uploadKey']!=key)return false;
+    for(final key in uploadKeys)remote.remove(key);
+  }
+  return true;
+}
+
 bool identicalLegacyFeePublication(Map queued, Map cloud) {
   if (!legacyFeePublicationCandidate(queued) || queued['schoolId'] != cloud['schoolId'] ||
       cloud['id'] != queued['documentId'] || cloud['_syncDeleted'] == true ||
@@ -194,6 +228,7 @@ bool identicalLegacyFeePublication(Map queued, Map cloud) {
   if (local.containsKey('fileUrl')) { if(local['fileUrl'] != cloud['fileUrl']) return false; local.remove('fileUrl'); }
   if (local.containsKey('fileId')) { if(local['fileId'] != cloud['fileId']) return false; local.remove('fileId'); }
   remote.remove('fileUrl'); remote.remove('fileId');
+  if(!_legacyFeeUploadEnvelope(remote,queued['schoolId'] as String,queued['documentId'] as String))return false;
   return sameSavedRecord('fee_payments',local,remote);
 }
 

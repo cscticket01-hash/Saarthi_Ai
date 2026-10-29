@@ -60,6 +60,7 @@ bool firstCommittedCreateWins(Map queued, Map remote) =>
   remote['_syncDeleted']!=true && remote['_syncRevision'] is String &&
   (remote['_syncRevision'] as String).isNotEmpty &&
   queued['collection']!='documents' && queued['collection']!='backups' &&
+  !{'fee_payments','fee_ledger'}.contains(queued['collection']) &&
   queued['data'] is Map && queued['data']['replacesStudentGeneration']==null &&
   !(queued['data'] as Map).keys.any((key)=>key.toString().startsWith('_syncRecreates'));
 

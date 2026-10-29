@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_sync_comparison.dart';
@@ -21,6 +23,7 @@ void main() {
   };
   Map<String,dynamic> cloud() => {...local(), 'id':'legacy',
     'fileId':'original-receipt','fileUrl':'https://drive.google.com/file/d/original-receipt/view',
+    'success':true,'syncTiming':{'brokerPreparationMillis':4,'scriptRoundTripMillis':1200},
     '_syncRevision':'verified-cloud-revision','_syncOperationId':'original-cloud-operation'}
     ..remove('driveUrl')..remove('sheetUrl')..remove('paidAt');
   Map<String,dynamic> queued() => {'collection':'fee_payments','documentId':'legacy',
@@ -44,6 +47,18 @@ void main() {
     ]) expect(automaticDuplicateReadback(queued(),{...cloud(),...changed}),false,reason:changed.keys.join(','));
     expect(automaticDuplicateReadback({...queued(),'operation':'delete'},cloud()),false);
     expect(automaticDuplicateReadback({...queued(),'data':{...local(),'paidAt':Timestamp.fromDate(at.subtract(const Duration(seconds:1)))}},cloud()),false);
+  });
+  test('only complete committed upload envelopes can be reconciled', () {
+    final hash='a'*64;
+    final key=sha256.convert(utf8.encode(jsonEncode([school,'legacy','fee_receipt',hash]))).toString();
+    final envelope={...cloud(),'cloudflareAccepted':true,'driveState':'verified',
+      'uploadResumableVersion':1,'uploadKey':key,'sha256':hash,'sizeBytes':1000,'offset':1000,'committed':true,
+      'deliveryTiming':{'version':1,'deliveryMillis':1200,'observedAt':at.millisecondsSinceEpoch}};
+    expect(automaticDuplicateReadback(queued(),envelope),true);
+    for(final bad in <Map<String,dynamic>>[
+      {'driveState':'pending'},{'committed':false},{'offset':500},{'uploadKey':'b'*64},
+      {'syncTiming':{'unknownFinancialField':100}}, {'success':false},
+    ]) expect(automaticDuplicateReadback(queued(),{...envelope,...bad}),false);
   });
   test('verified legacy duplicate retires one exact queue row and archives both financial originals', () async {
     await db.collection('fee_payments').doc('legacy').set(local());
