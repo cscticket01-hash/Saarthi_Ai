@@ -9,6 +9,8 @@ class WindowsSyncPerformance extends StatelessWidget {
     'queueWaitMillis': 'Local queue wait',
     'cloudAckMicros': 'Verified record ACK request',
     'scriptRoundTripMillis': 'Google Script round trip',
+    'changeDiscoveryMicros': 'Changed-record discovery',
+    'collectionApplyMicros': 'Local collection apply',
     'edgeQueueWaitMillis': 'Cloudflare delivery queue wait',
     'edgeDeliveryMillis': 'Cloudflare delivery attempt',
     'recordUploadStageMicros': 'Record upload stage',
