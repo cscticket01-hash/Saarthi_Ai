@@ -4,15 +4,17 @@ const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
 const terminal=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
-function createCloudflareDelivery({edge,now=Date.now}){
+function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1}){
  const pending=(school,lane,id)=>({success:true,schoolId:school,edgeDeliveryVersion:1,cloudflareAccepted:true,driveState:'pending',delivery:{lane,id}});
  async function status(school,lane,id){
   if(!(lane==='records'||FILE.test(lane))||!/^[a-f0-9]{64}$/.test(id)||FILE.test(lane)&&lane!=='file-'+id)fail(400,'INVALID_EDGE_RECEIPT');
   const row=await edge.rpc(school,lane,{command:'status',id});
-  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...row.response.result,cloudflareAccepted:true,driveState:'verified'};
+  const timing=row.response?.timing;
+  const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
+  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...row.response.result,cloudflareAccepted:true,driveState:'verified',...measured};
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
-  return {...pending(school,lane,id),deliveryStatus:{state:row.state,
+  return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
    ...(/^[A-Z_]{1,80}$/.test(row.response?.failureCode||'')?{failureCode:row.response.failureCode}:{})}};
  }
@@ -57,10 +59,10 @@ function createCloudflareDelivery({edge,now=Date.now}){
     (record._syncOperationId===undefined||record._syncOperationId===request.operationId);
  }
 
- async function drain(school,lane,deliver){
-  const [job]=await edge.rpc(school,lane,{command:'pending',limit:1});if(!job)return {processed:0};
+ async function drainOne(school,lane,deliver,job){
   const claim=randomUUID();if(!await edge.rpc(school,lane,{command:'claim',id:job.id,claim,expires:now()+120000}))return {processed:0};
-  const original=JSON.parse(job.payload);const finish=values=>edge.rpc(school,lane,{command:'finish',id:job.id,claim,values});
+  const started=now(),original=JSON.parse(job.payload);
+  const finish=values=>edge.rpc(school,lane,{command:'finish',id:job.id,claim,values:{...values,timing:{version:1,deliveryMillis:Math.max(0,now()-started),observedAt:now(),...(Number.isSafeInteger(job.created)&&job.created>0?{queueWaitMillis:Math.max(0,started-job.created)}:{})}}});
   let partial=job.response?JSON.parse(job.response).partial||{}:{};
   try{
    let result;
@@ -100,6 +102,19 @@ function createCloudflareDelivery({edge,now=Date.now}){
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
   }
+ }
+ async function drain(school,lane,deliver){
+  // Default remains serial. Two independently eligible jobs are admitted only
+  // with an explicit broker rollout flag and a scheduler-capable Worker.
+  let limit=1;
+  if(lane==='records'&&recordParallelism===2){
+   const capability=await edge.rpc(school,lane,{command:'capabilities'});
+   if(capability?.recordSchedulingVersion===1)limit=2;
+  }
+  const jobs=await edge.rpc(school,lane,{command:'pending',limit});
+  if(!Array.isArray(jobs)||jobs.length>limit)fail(502,'EDGE_SCHEDULER_UNVERIFIED');
+  const results=await Promise.all(jobs.map(job=>drainOne(school,lane,deliver,job)));
+  return {processed:results.reduce((n,r)=>n+r.processed,0)};
  }
  return {record,file,wholeFile,status,drain};
 }

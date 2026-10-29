@@ -396,11 +396,8 @@ class WindowsDocumentTemplates {
           'address': address,
           'showStudentUid': person['studentUid'] != null,
         };
-        final bytes = await selected(kind, data, qr: qr, publish: false);
-        if (bytes == null)
-          throw StateError('Selected ID renderer returned no package.');
         await WindowsBackendBridge.publishIdCard(
-          bytes: bytes,
+          prepareBytes: () => selected(kind, data, qr: qr, publish: false),
           qr: qr,
           kind: kind,
           person: person,
@@ -412,7 +409,26 @@ class WindowsDocumentTemplates {
         } catch (error, stack) {
           if (error is PublishedIdInputConflict && db.activeProfileId == origin) {
             await WindowsIdCardReviews.retain(error, doc.data()?['name']?.toString() ?? doc.id);
-            await WindowsIdCardReviews.repairPending(identity['schoolId'] as String, read: readPublished, onRepair: onCardRepair);
+            // Reuse this operation's already verified point-read response.
+            // Do not scan all reviews or fetch the entire documents inventory
+            // once per conflicting person. keepPublished retains its full CAS,
+            // school/owner/revision/hash checks and never acknowledges bytes.
+            try {
+            await WindowsIdCardReviews.keepPublished(origin, {
+              'schoolId': error.schoolId, 'documentId': error.documentId,
+              'inputRevision': error.inputRevision, 'cloudRevision': error.cloudRevision,
+              'ownerRole': error.ownerRole, 'personId': error.personId,
+              'personDocId': error.personDocId,
+            }, read: () => readTarget(error.documentId!));
+            onCardRepair?.call({'schoolId': error.schoolId, 'stage': 'repairDiagnosed',
+              'failureCategory': 'idCardInputs', 'outcome': 'verified_published_card_retained',
+              'collection': 'documents', 'documentId': error.documentId,
+              'inputRevision': error.inputRevision});
+            } catch (repairError, repairStack) {
+              if (db.activeProfileId != origin || repairError is CentralCloudException) rethrow;
+              firstFailure ??= repairError;
+              firstFailureStack ??= repairStack;
+            }
             continue;
           }
           // One unavailable photo, renderer or owner conflict must not starve

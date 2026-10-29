@@ -1,7 +1,7 @@
 import {demand,digest,operationPattern} from './protocol';
 import {Buffer} from 'node:buffer';
 type Json=Record<string,unknown>;
-type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null};
+type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number};
 export const spoolLane=(lane:string)=>lane==='records'||/^file-[a-f0-9]{64}$/.test(lane);
 const collections=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 export function canonical(value:unknown):string {
@@ -12,6 +12,33 @@ export function canonical(value:unknown):string {
 export function initSpool(storage:DurableObjectStorage){
  storage.sql.exec("CREATE TABLE IF NOT EXISTS edge_ops(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,response TEXT)");
  storage.sql.exec('CREATE TABLE IF NOT EXISTS edge_chunks(offset INTEGER PRIMARY KEY,size INTEGER NOT NULL,sha256 TEXT NOT NULL,body BLOB NOT NULL)');
+ const columns=storage.sql.exec<{name:string}>('PRAGMA table_info(edge_ops)').toArray();
+ if(!columns.some(c=>c.name==='resources'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN resources TEXT');
+ if(!columns.some(c=>c.name==='created'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN created INTEGER NOT NULL DEFAULT 0');
+}
+// Unknown/legacy, person, document and financial dependencies stay barriers.
+// Only these independent record types may overtake a retry of another key.
+const independent=new Set(['school_expenses','attendance_records','attendance_logs','teacher_attendance']);
+function resources(request:Json):string {
+ const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
+ if(ops.some(op=>!independent.has(String(op.collection))))return '*';
+ return JSON.stringify([...new Set(ops.map(op=>JSON.stringify([op.collection,op.id])))].sort());
+}
+function schedule(storage:DurableObjectStorage,limit:number,at:number):{ids:string[];due:number|null}{
+ const rows=storage.sql.exec<Pick<Row,'id'|'state'|'due'|'claim_until'|'resources'>>("SELECT id,state,due,claim_until,resources FROM edge_ops WHERE state IN ('pending','retry','processing') ORDER BY seq LIMIT 512").toArray();
+ const blocked=new Set<string>(),result:string[]=[];let due:number|null=null;
+ for(const row of rows){
+  const keys=row.resources&&row.resources!=='*'?JSON.parse(row.resources) as string[]:['*'];
+  const barrier=keys.includes('*');
+  const availableAt=Math.max(row.due,row.state==='processing'?row.claim_until:0);
+  if((!barrier||blocked.size===0)&&!keys.some(k=>blocked.has(k))){
+   due=due===null?availableAt:Math.min(due,availableAt);
+   if(availableAt<=at){result.push(row.id);if(result.length>=limit)break;}
+  }
+  if(barrier)break;
+  for(const key of keys)blocked.add(key);
+ }
+ return {ids:result,due};
 }
 function recordRequest(request:Json,school:string){
  demand(request.action==='managed_records'&&collections.has(String(request.collection))&&['write','delete'].includes(String(request.operation))&&request.syncProtocol===2&&typeof request.id==='string'&&request.id.length>0&&request.id.length<=200&&!request.id.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(request.id)&&/^[A-Za-z0-9_-]{16,100}$/.test(String(request.operationId))&&typeof request.expectedRecordRevision==='string'&&request.expectedRecordRevision.length<=100,'Invalid versioned record');
@@ -34,10 +61,12 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
 
  }
  const receipt=(row:Row)=>({id:row.id,state:row.state,due:row.due,response:row.response?JSON.parse(row.response):null});
- if(action==='capabilities')return {edgeDeliveryVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
- if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
+ if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
  if(action==='pending'){
-  demand(b.limit===1);const row=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state IN ('pending','retry','processing') ORDER BY seq LIMIT 1").toArray()[0];return row&&row.due<=Date.now()?[row]:[];
+  demand(b.limit===1||lane==='records'&&b.limit===2);
+  if(lane==='records')return schedule(storage,Number(b.limit),Date.now()).ids.map(get);
+  const row=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state IN ('pending','retry','processing') ORDER BY seq LIMIT 1").toArray()[0];return row&&row.due<=Date.now()?[row]:[];
  }
  if(action==='enqueue'){
   demand(lane==='records'&&operationPattern.test(id)&&b.request&&typeof b.request==='object');const request=b.request as Json;demand(JSON.stringify(request).length<=300000,'Record request too large',413);
@@ -50,7 +79,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const fingerprint=await digest(canonical(request));const old=get(id);
   if(old){demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));return receipt(old);}
   const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
-  storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due) VALUES(?,?,?,'pending',?)",id,fingerprint,JSON.stringify(request),Date.now());await wake(Date.now()+250);return receipt(get(id));
+  const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
  if(action==='begin'){
   demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');const m=b.manifest as Json;
@@ -85,6 +114,9 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='claim'){
   if(!['pending','retry','processing'].includes(row.state)||row.due>Date.now()||row.state==='processing'&&row.claim_until>Date.now())return false;
+  // Re-evaluate dependencies after any awaited broker round-trip, not just at
+  // selection. A forged/stale claim cannot jump an earlier same-record job.
+  if(lane==='records'&&!schedule(storage,512,Date.now()).ids.includes(id))return false;
   demand(typeof b.claim==='string'&&b.claim.length>0&&b.claim.length<=100&&Number.isSafeInteger(b.expires)&&Number(b.expires)>Date.now()&&Number(b.expires)<=Date.now()+180000);
   storage.sql.exec("UPDATE edge_ops SET state='processing',claim=?,claim_until=?,due=? WHERE id=?",b.claim,Number(b.expires),Number(b.expires),id);return true;
  }

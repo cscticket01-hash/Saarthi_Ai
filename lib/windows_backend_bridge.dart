@@ -2339,7 +2339,8 @@ class WindowsBackendBridge {
   }
 
   static Future<void> publishIdCard({
-    required Uint8List bytes,
+    Uint8List? bytes,
+    Future<Uint8List?> Function()? prepareBytes,
     required String qr,
     required String kind,
     required Map<String, dynamic> person,
@@ -2424,6 +2425,14 @@ class WindowsBackendBridge {
         }
       }
     }
+    // Decide whether an automatic receiver needs a package before rendering.
+    // A verified existing card (or input conflict above) needs no new PDF.
+    // Keep expensive rendering outside the document writer as well.
+    final reuseCloud = captured == null && existingCloud?['inputRevision'] == inputRevision;
+    final package = reuseCloud ? null : bytes ?? await prepareBytes?.call();
+    if (!reuseCloud && (package == null || package.isEmpty)) {
+      throw StateError('Selected ID renderer returned no package.');
+    }
     // Cloud waits happen outside the local document writer, so another offline
     // document save can complete while this bounded inventory read is pending.
     var publicationQueued=false;
@@ -2462,6 +2471,9 @@ class WindowsBackendBridge {
         );
         return;
       }
+      if (package == null) {
+        throw StateError('ID publication changed during preparation. Retry the current revision.');
+      }
       await _saveLocalStudentDocument({
         '_queueCloud': true,
         if (old == null && existingCloud != null)
@@ -2480,7 +2492,7 @@ class WindowsBackendBridge {
         'documentName': 'School ID card • Front & back',
         'fileName': '$id.pdf',
         'mimeType': 'application/pdf',
-        'fileBase64': base64Encode(bytes),
+        'fileBase64': base64Encode(package),
       });
       publicationQueued = true;
     });

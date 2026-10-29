@@ -54,6 +54,8 @@ jobs:
         working-directory: cloudflare-sync
       - run: npm install --ignore-scripts --no-package-lock && npm test
         working-directory: functions
+      - name: Verify separate attendance/provider budget scenarios
+        run: node --test .github/scripts/sync3_capacity_budget.test.cjs
   apps:
     runs-on: ubuntu-latest
     timeout-minutes: 20

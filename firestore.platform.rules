@@ -130,6 +130,9 @@ service cloud.firestore {
       // Publishing remains developer-only under the rule below.
     }
     // Developer-only enumeration, keys, renewal, support and legacy collections.
-    match /{document=**} { allow read, write: if developer(); }
+    match /{root}/{document=**} {
+      allow read, write: if developer() &&
+        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources']);
+    }
   }
 }

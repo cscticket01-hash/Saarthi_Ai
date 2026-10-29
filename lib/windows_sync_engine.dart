@@ -1,3 +1,5 @@
+import 'windows_shared_repair_knowledge.dart';
+import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
 import 'windows_person_card_sync.dart';
 import 'windows_id_card_reviews.dart';
@@ -240,6 +242,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   SyncRecoveryDecision? recoveryDecision;
   bool automaticSyncEnabled = true;
   final recoveryHistory = <Map<String, dynamic>>[];
+  final repairMemory = WindowsRepairMemory();
+  Future<void> _repairPersistTail = Future<void>.value();
   DateTime? get nextRetryAt => _nextRetry;
   DateTime? get providerQuotaRetryAt => _quotaRetryAt;
   bool get isSyncing => _syncing;
@@ -488,6 +492,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final school =
         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     if (event['schoolId'] != school) return;
+    event = {...event, if (event['at'] is! int) 'at': DateTime.now().millisecondsSinceEpoch};
+    final remembered = school is String && repairMemory.observe(event, school, DateTime.now().millisecondsSinceEpoch);
+    var historyChanged = false;
     if (event['stage'] == 'verified' &&
         event['queueCollection'] == '_windows_firebase_outbox' &&
         event['collection'] is String &&
@@ -522,31 +529,37 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             ? 'repaired_and_verified'
             : 'safe_retry_reopened',
         if (event['stage'] == 'duplicateReconciled') 'attempt': 1,
+        for (final key in ['collection','documentId','operationId'])
+          if (event[key] is String) key: event[key],
       });
-      unawaited(
-        _persistRepairHistory(FirebaseFirestore.instance.activeProfileId),
-      );
+      historyChanged = true;
     }
+    if (remembered || historyChanged) unawaited(
+      _persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String, dynamic>.from(event));
     details.value = {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
+      'repairMemory': repairMemory.entries,
     };
   }
 
-  Future<void> _persistRepairHistory(String origin) async {
-    try {
-      if (FirebaseFirestore.instance.activeProfileId != origin) return;
-      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-        () => FirebaseFirestore.instance
-            .collection('_windows_sync_status')
-            .doc('recovery')
-            .set({'events': List<Map<String, dynamic>>.from(recoveryHistory)}),
-      );
-    } catch (_) {
-      /* Diagnostic failure cannot remove or ACK a queue row. */
-    }
+  Future<void> _persistRepairHistory(String origin) {
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    _repairPersistTail = _repairPersistTail.then((_) async {
+      try {
+        if (school is! String || FirebaseFirestore.instance.activeProfileId != origin ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) return;
+        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+          () => FirebaseFirestore.instance.collection('_windows_sync_status').doc('recovery').set({
+            'events': List<Map<String, dynamic>>.from(recoveryHistory),
+            'repairMemory': repairMemory.snapshot(school),
+          }),
+        );
+      } catch (_) { /* Evidence failure never removes or ACKs queued data. */ }
+    });
+    return _repairPersistTail;
   }
 
   static Duration retryDelayForFailure(
@@ -564,6 +577,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   int _failures = 0;
   DateTime? _nextRetry, _lastPull, _quotaRetryAt;
   final _samples = <String, List<int>>{};
+  Future<T> _measure<T>(String stage, Future<T> Function() work) async {
+    final timer = Stopwatch()..start();
+    var completed = false;
+    try { final result = await work(); completed = true; return result; }
+    finally { _sample('$stage${completed ? 'Micros' : 'FailureMicros'}', timer.elapsedMicroseconds); }
+  }
   void _sample(String name, int value) {
     final values = _samples.putIfAbsent(name, () => <int>[]);
     if (values.length >= 256) values.removeAt(0);
@@ -1505,6 +1524,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _quotaRetryAt = null;
       recoveryDecision = null;
       recoveryHistory.clear();
+      repairMemory.clear();
       lastSuccessfulSync = null;
       lastVerifiedCheckpoint = null;
       metrics.clear();
@@ -1566,31 +1586,37 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final device = await _localPauseDeviceId();
     _pause.restore(storedPause?['deviceId'] == device ? storedPause : null);
     _armPauseExpiry();
-    final storedHistory =
+    final storedRecovery =
         (await FirebaseFirestore.instance
                 .collection('_windows_sync_status')
                 .doc('recovery')
                 .get())
-            .data()?['events'];
+            .data();
+    final storedHistory = storedRecovery?['events'];
+    repairMemory.restore(storedRecovery?['repairMemory'], _activeSchoolSyncId);
     recoveryHistory.clear();
     if (storedHistory is List) {
       for (final event in storedHistory.take(100)) {
         if (event is Map &&
-            SyncFailureKind.values.any(
-              (kind) => kind.name == event['category'],
-            ) &&
+            (SyncFailureKind.values.any((kind) => kind.name == event['category']) ||
+              {'recoverable','idCardInputs','verifiedDuplicate'}.contains(event['category'])) &&
             {
               'retained_for_retry',
-              'retained_for_review',
+              'retained_for_review','duplicate_reconciled','repaired_and_verified',
+              'safe_retry_reopened','review_required','retry_admitted',
+              'verified_cloud_reconciled','verified_published_card_retained',
+              'probe_budget_exhausted','probe_deferred','external_sheet_review_required',
             }.contains(event['outcome']) &&
             event['atUtc'] is String &&
             DateTime.tryParse(event['atUtc'] as String) != null &&
-            event['attempt'] is num) {
+            (event['attempt'] == null || event['attempt'] is num)) {
           recoveryHistory.add({
             'atUtc': event['atUtc'],
             'category': event['category'],
             'outcome': event['outcome'],
-            'attempt': (event['attempt'] as num).toInt(),
+            if (event['attempt'] is num) 'attempt': (event['attempt'] as num).toInt(),
+            for (final key in ['collection','documentId','operationId'])
+              if (event[key] is String) key: event[key],
           });
         }
       }
@@ -1854,6 +1880,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return;
     }
     _syncing = true;
+    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,repairMemory.entries));
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
       now: now,
@@ -1958,6 +1985,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           );
           if ((audit['findings'] as List).isNotEmpty) {
             _recordActivity({
+              'schoolId': _activeSchoolSyncId,
               'stage': 'repairDiagnosed', 'outcome': 'external_sheet_review_required',
               'failureCategory': 'configuration',
             });
@@ -2001,7 +2029,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         try {
           _admitBatch();
           _setCheckingCloud(false);
-          await _pushManagedOutbox();
+          await _measure('recordUploadStage', () => _pushManagedOutbox());
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
               !isRecordSyncConflict(e))
@@ -2025,7 +2053,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         // Keep locally acknowledged people and their cards in the same priority
         // dependency job, ahead of unrelated cloud pulls and audits.
-        final priorityCardFailure = await WindowsPersonCardSync.priorityPass(() async {
+        final priorityCardFailure = await _measure('priorityCardStage', () => WindowsPersonCardSync.priorityPass(() async {
         await WindowsPersonCardSync.run(
           _activeSchoolSyncId,
           canAdmit: () => !isPaused,
@@ -2041,11 +2069,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             onActivity: _recordActivity),
           onActivity: _recordActivity,
         );
-        });
+        }));
         if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
           throw StateError('School changed during priority card sync.');
         if (WindowsFirebaseRemote.recordPointReadSupported) {
-          await WindowsPendingSchoolSync.repair(
+          await _measure('recordRepairStage', () => WindowsPendingSchoolSync.repair(
             explicitRetry: _manualSync,
             profileId: syncOrigin,
             school: _activeSchoolSyncId,
@@ -2064,7 +2092,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 'syncProtocol': 2,
               },
             ),
-          );
+          ));
         }
         _admitBatch();
         await syncLocalRestoreRequests(
@@ -2115,7 +2143,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           final remoteGenerationAtRead = _remoteChangeGeneration;
           if (selected == null || selected.isNotEmpty) {
             _setCheckingCloud(false);
-            await _pullManagedChanges(
+            await _measure('recordDownloadStage', () => _pullManagedChanges(
               verifyInventory: inventoryAudit,
               selectedCollections: selected,
               targetRecordIds: fullPull || inventoryAudit || _remoteResetPending
@@ -2125,7 +2153,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                         if (!_remoteCollections.contains(entry.key))
                           entry.key: {...entry.value},
                     },
-            );
+            ));
           }
           if (remoteGenerationAtRead == _remoteChangeGeneration) {
             _remoteResetPending = false;
@@ -2158,7 +2186,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         _admitBatch();
         _setCheckingCloud(false);
-        await WindowsIdCardReviews.repairPending(_activeSchoolSyncId, onRepair: _recordActivity);
+        await _measure('cardRepairStage', () => WindowsIdCardReviews.repairPending(_activeSchoolSyncId, explicitRetry: _manualSync, onRepair: _recordActivity));
         final bootstrapRef = FirebaseFirestore.instance
             .collection('_windows_sync_status')
             .doc('id-card-publication-bootstrap-v2');
@@ -2408,9 +2436,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       lastError = e.toString();
       recoveryDecision = windowsSyncRecovery(e);
       _failures++;
+      final learnedFloor=WindowsSharedRepairKnowledge.value('retry_floor',_activeSchoolSyncId,
+        category:recoveryDecision!.kind.name);
+      final originalDelay=recoveryDecision!.delay(_failures);
+      final retryDelay=learnedFloor!=null && originalDelay<Duration(seconds:learnedFloor)
+        ? Duration(seconds:learnedFloor) : originalDelay;
       _nextRetry = recoveryDecision!.retry
           ? syncRetryDeadline(now: DateTime.now(), previous: _nextRetry,
-              delay: recoveryDecision!.delay(_failures))
+              delay: retryDelay)
           : null;
       if (recoveryDecision!.kind == SyncFailureKind.quota) {
         _quotaRetryAt = _nextRetry;
@@ -2433,10 +2466,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             : 'retained_for_review',
       });
       try {
-        await FirebaseFirestore.instance
-            .collection('_windows_sync_status')
-            .doc('recovery')
-            .set({'events': List<Map<String, dynamic>>.from(recoveryHistory)});
+        await _persistRepairHistory(syncOrigin);
       } catch (_) {
         /* A failed diagnostic write never removes the durable queue. */
       }
@@ -2445,6 +2475,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     } finally {
       watch.stop();
       metrics['reconciliationMicros'] = watch.elapsedMicroseconds;
+      _sample(lastError == null ? 'syncCycleMicros' : 'syncCycleFailureMicros', watch.elapsedMicroseconds);
       _checkingCloud = false;
       _syncing = false;
       if (isPaused && _activeProfileId == syncOrigin)
@@ -2775,6 +2806,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         if (queuedMillis != null)
           _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
         final timing = reply['syncTiming'];
+        final edgeTiming = reply['deliveryTiming'];
+        if (edgeTiming is Map && edgeTiming['version'] == 1) {
+          for (final name in ['queueWaitMillis', 'deliveryMillis']) {
+            final value = edgeTiming[name];
+            if (value is int && value >= 0) _sample('edge${name[0].toUpperCase()}${name.substring(1)}', value);
+          }
+        }
         if (timing is Map && timing['scriptRoundTripMillis'] is num) {
           metrics['lastScriptRoundTripMillis'] =
               (timing['scriptRoundTripMillis'] as num).toInt();

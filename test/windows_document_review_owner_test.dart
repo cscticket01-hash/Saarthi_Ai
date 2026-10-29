@@ -427,8 +427,13 @@ void main() {
       final changed=Uint8List.fromList(img.encodePng(img.Image(width:20,height:30)));
       await WindowsSchoolImageCache.store(school,'changed-photo',WindowsSchoolImageCache.dataUrl(changed));
       await db.collection('students_directory').doc('S1').update({'photoUrl':'https://drive.google.com/file/d/changed-photo/view'});
-      await WindowsDocumentTemplates.publishChangedIdCards(readInventory:()async=>
-        {'schoolId':school,'syncProtocol':2,'records':{cardId:published}});
+      var pointReads=0;
+      await WindowsDocumentTemplates.publishChangedIdCards(readDocument:(id)async {
+        pointReads++;
+        expect(id,cardId);
+        return {'schoolId':school,'syncProtocol':2,'records':{cardId:published}};
+      });
+      expect(pointReads,1,reason:'Mismatch recovery must reuse its verified point read without a full inventory request');
       expect(await WindowsIdCardReviews.pending(school), isEmpty);
       final repaired = (await db.collection(WindowsIdCardReviews.collection).doc(cardId).get()).data()!;
       expect(repaired['status'], 'autoRetained');
@@ -439,7 +444,7 @@ void main() {
         read: () async => {'schoolId': 'foreign', 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), hasLength(1));
       final receiptsBefore = (await db.collection('_windows_sync_receipts').get()).docs.length;
-      await WindowsIdCardReviews.repairPending(school,
+      await WindowsIdCardReviews.repairPending(school, explicitRetry: true,
         read: () async => {'schoolId': school, 'syncProtocol': 2, 'records': {cardId: published}});
       expect(await WindowsIdCardReviews.pending(school), isEmpty);
       expect((await db.collection('_windows_sync_receipts').get()).docs.length, receiptsBefore);
@@ -456,12 +461,31 @@ void main() {
       'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
     final cardId=WindowsBackendBridge.publishedIdCardId(qr);
     final queues=(await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList();
-    await expectLater(WindowsBackendBridge.publishIdCard(bytes:Uint8List(0),qr:qr,kind:'studentId',person:person,
+    var renders = 0;
+    await expectLater(WindowsBackendBridge.publishIdCard(prepareBytes:()async{renders++;return Uint8List.fromList([1]);},qr:qr,kind:'studentId',person:person,
       inputRevision:'different-device-input',automatic:true,
       readPublished:()async=>{'schoolId':school,'syncProtocol':2,'records':{cardId:{...cloud,'id':cardId}}}),
       throwsA(isA<PublishedIdInputConflict>()));
+    expect(renders,0,reason:'Cloud input conflict must be found before PDF rendering');
     expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
     expect((await db.collection('_windows_document_outbox').get()).docs.map((d)=>d.data()).toList(),queues);
+    expect(await File(local['localPath']).readAsBytes(),[1,2,3]);
+  });
+  test('verified same-input cloud card skips rendering and never claims local PDF bytes', () async {
+    final person={'mobileLinkToken':'c'*32,'mobileStableId':'S1'};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardId(qr);
+    var reads=0;
+    await WindowsBackendBridge.publishIdCard(qr:qr,kind:'studentId',person:person,
+      inputRevision:cloud['inputRevision'] as String,automatic:true,
+      prepareBytes:() async=>throw StateError('Existing cloud card must not render'),
+      readPublished:()async{reads++;return {'schoolId':school,'syncProtocol':2,'records':{cardId:{...cloud,'id':cardId}}};});
+    expect(reads,1);
+    expect((await db.collection('documents').doc(cardId).get()).data()?['_syncRevision'],cloud['_syncRevision']);
+    expect((await db.collection('_local_student_documents').doc(cardId).get()).exists,false);
+    expect((await db.collection('_windows_document_outbox').doc(cardId).get()).exists,false);
     expect(await File(local['localPath']).readAsBytes(),[1,2,3]);
   });
   test('local ID renderer stays usable with retained publication conflict and offline cloud', () async {
