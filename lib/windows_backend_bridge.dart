@@ -733,6 +733,7 @@ class WindowsBackendBridge {
           try {
             onActivity?.call({
               'queueCollection': '_windows_document_outbox',
+              'collection':'documents','documentId':record['documentId']??queued.id,
               'queueId': queued.id,
               'operationId': record['documentRevision'],
               'schoolId': record['schoolId'],
