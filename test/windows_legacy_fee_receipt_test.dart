@@ -48,6 +48,21 @@ void main() {
     expect(automaticDuplicateReadback({...queued(),'operation':'delete'},cloud()),false);
     expect(automaticDuplicateReadback({...queued(),'data':{...local(),'paidAt':Timestamp.fromDate(at.subtract(const Duration(seconds:1)))}},cloud()),false);
   });
+  test('JSON integral double round trips reconcile without changing wire hashes or real amounts', () {
+    final pending = {...queued(), 'data': {...local(),
+      'feeItems': {'Tuition': 100.0}, 'expectedAmount': 100.0,
+      'installmentAmount': 100.0, 'totalPaid': 100.0, 'balance': 0.0}};
+    expect(syncPayloadHash({'amount':100.0}), isNot(syncPayloadHash({'amount':100})),
+      reason:'Persisted wire identities must not change');
+    expect(automaticDuplicateReadback(pending, cloud()), isTrue);
+    expect(recordDifferenceFields({'data':{'amount':100.0}}, {'amount':100}), isEmpty);
+    for (final field in ['expectedAmount','installmentAmount','totalPaid','balance']) {
+      expect(automaticDuplicateReadback(pending, {...cloud(), field:99}), isFalse);
+    }
+    expect(sameSavedRecord('fee_payments', {'amount':100.00000000000001}, {'amount':100}), isFalse);
+    expect(sameSavedRecord('fee_payments', {'amount':9007199254740992.0}, {'amount':9007199254740992}), isFalse);
+    expect(automaticDuplicateReadback(pending, {...cloud(),'unknownMoneyField':0}), isFalse);
+  });
   test('only complete committed upload envelopes can be reconciled', () {
     final hash='a'*64;
     final key=sha256.convert(utf8.encode(jsonEncode([school,'legacy','fee_receipt',hash]))).toString();
@@ -61,12 +76,15 @@ void main() {
     ]) expect(automaticDuplicateReadback(queued(),{...envelope,...bad}),false);
   });
   test('verified legacy duplicate retires one exact queue row and archives both financial originals', () async {
-    await db.collection('fee_payments').doc('legacy').set(local());
+    await db.collection('fee_payments').doc('legacy').set({...local(),
+      'feeItems':{'Tuition':100.0}, 'expectedAmount':100.0,
+      'installmentAmount':100.0, 'totalPaid':100.0, 'balance':0.0});
     final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
     await row.reference.update({'syncState':'conflict','failureCategory':'conflict'});
     final pending=(await row.reference.get()).data()!;
     await db.collection('_windows_sync_status').doc('repair-${pending['operationId']}').set({
       'schoolId':school,'operationId':pending['operationId'],'attempts':5,
+      'legacyFeePublicationProbeVersion':1,
       'nextProbeAt':DateTime.now().add(const Duration(days:1)).millisecondsSinceEpoch,
     });
     var reads=0;
