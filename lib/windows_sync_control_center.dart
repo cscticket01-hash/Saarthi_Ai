@@ -1,3 +1,6 @@
+import 'windows_sync_flow.dart';
+import 'windows_sync_evidence.dart';
+import 'windows_ui_localization.dart';
 import 'windows_repair_memory.dart';
 import 'windows_sync_performance.dart';
 import 'sync_pending_diagnostics.dart';
@@ -9,7 +12,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'package:file_selector/file_selector.dart' as files;
 
 import 'windows_sync_engine.dart';
@@ -423,8 +426,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     super.initState();
     unawaited(_measureDisk());
     pauseDisplayTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if(mounted && showHistory)unawaited(engine.refreshDetails());
       if (mounted &&
-          (engine.isPaused || engine.nextRetryAt != null ||
+          (showHistory || engine.isPaused || engine.nextRetryAt != null ||
               (engine.details.value['pending'] as num? ?? 0) > 0 ||
               (engine.details.value['activity'] as List? ?? const []).any(
                 (row) => row is Map && row['retryAt'] is int,
@@ -854,136 +858,18 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
-                  LayoutBuilder(builder: (context, space) {WindowsAppearance.watch(context);
-                    final scale = MediaQuery.textScalerOf(context).scale(1);
-                    final horizontal = space.maxWidth / scale >= 620;
-                    final indicatorExtent = 144.0 * scale.clamp(1.0, 2.0);
-                    final connectionWidth = horizontal ? space.maxWidth - indicatorExtent - 16 : space.maxWidth;
-                    final twoColumns = connectionWidth / scale >= 440;
-                    final indicator = SizedBox(
-                        width: indicatorExtent,
-                        height: indicatorExtent,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            SizedBox(
-                              width: indicatorExtent - 8,
-                              height: indicatorExtent - 8,
-                              child: CircularProgressIndicator(
-                                value: syncing ? null : 0,
-                                strokeWidth: 6,
-                                color: phaseColor,
-                                backgroundColor: WindowsAppearance.background(const Color(0xFF24445D)),
-                              ),
-                            ),
-                            Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  syncing ? Icons.sync : Icons.shield_outlined,
-                                  size: 26,
-                                  color: _cyan,
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  phaseLabel,
-                                  style: const TextStyle(fontFamily: 'Segoe UI', 
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${details['pending'] ?? 'Unknown'} pending',
-                                  style:  TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    final local = _connection(
-                              Icons.computer,
-                              'Local PC',
-                              diskLabel,
-                              const Color(0xFF24DD9B),
-                              details: localDataPath == null
-                                  ? null
-                                  : Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        const SizedBox(height: 10),
-                                        const Text(
-                                          'Data folder',
-                                          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
-                                        ),
-                                        SelectableText(
-                                          localDataPath!,
-                                          style:  TextStyle(fontFamily: 'Segoe UI', 
-                                            fontSize: 12,
-                                            color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'Files folder',
-                                          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
-                                        ),
-                                        SelectableText(
-                                          localFilesPath ?? 'Unknown',
-                                          style:  TextStyle(fontFamily: 'Segoe UI', 
-                                            fontSize: 12,
-                                            color: WindowsAppearance.foreground(Color(0xFF9AB4C9)),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        TextButton.icon(
-                                          onPressed: _openLocalFolder,
-                                          icon: const Icon(
-                                            Icons.folder_open,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Open Folder'),
-                                        ),
-                                      ],
-                                    ),
-                            );
-                    final cloud = _connection(
-                              Icons.cloud_outlined,
-                              'School Cloud',
-                              checking
-                                  ? 'Checking cloud changes'
-                                  : syncing
-                                  ? 'Sync in progress'
-                                  : ack is num && ack > 0
-                                  ? 'Last ACK: ${stamp(ack)}'
-                                  : 'No verified ACK yet',
-                              _cyan,
-                            );
-                    final drive = _connection(
-                              Icons.folder_outlined,
-                              'Google Drive',
-                              driveLabel,
-                              const Color(0xFFFFC153),
-                            );
-                    final connections = twoColumns
-                      ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Expanded(child: local), const SizedBox(width: 10),
-                          Expanded(child: Column(children: [cloud, drive])),
-                        ])
-                      : Column(children: [local, cloud, drive]);
-                    return horizontal
-                      ? Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                          indicator, const SizedBox(width: 16), Expanded(child: connections),
-                        ])
-                      : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                          Align(alignment: Alignment.centerLeft, child: indicator),
-                          const SizedBox(height: 12), connections,
-                        ]);
-                  }),
+                  WindowsSyncFlow(
+                    phase:phase,label:phaseLabel,
+                    local:diskEvidence?['status']=='Measured'
+                      ? '${diskEvidence!['volume']}\n${bytesLabel(diskEvidence!['usedBytes'] as int)} / ${bytesLabel(diskEvidence!['totalBytes'] as int)}'
+                      : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
+                    cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
+                    drive:driveLabel,
+                    pending:((details['pending'] as num? ?? 0)+(details['incomingPending'] as num? ?? 0)).toInt(),
+                    lastMicros:details['lastVerifiedTransferMicros'] as int?,
+                    active:engine.isPaused?const {}:WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
+                      .where((lane)=>lane=='local'||!checking&&hasUploads).toSet(),
+                  ),
                   const SizedBox(height: 12),
                    Text(
                     'Live state from the durable queue • No estimated percentages',
@@ -1295,7 +1181,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         title: const Text('Sync Engine 3.0'),
         actions: [
           AnimatedBuilder(
-            animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers]),
+            animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
             builder: (context, _) { WindowsAppearance.watch(context); return  Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: FilledButton.icon(
@@ -1326,12 +1212,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           PopupMenuButton<int>(
             tooltip: 'Schedule sync pause',
             enabled: !busy && db.activeProfileId == origin,
-            onSelected: (hours) => _run(
+            onSelected: (hours) {
+              if(hours==0){setState((){showDiagnostics=true;showHistory=false;showQueue=false;});return;}
+              _run(
               () => (widget.pauseRequest ?? engine.pauseSync)(
                 Duration(hours: hours),
               ),
-            ),
+            );},
             itemBuilder: (_) => const [
+              PopupMenuItem(value:0,child:Text('Advanced checks')),
               PopupMenuItem(value: 1, child: Text('Pause Sync for 1 Hour')),
               PopupMenuItem(value: 12, child: Text('Pause Sync for 12 Hours')),
               PopupMenuItem(value: 24, child: Text('Pause Sync for 1 Day')),
@@ -1345,7 +1234,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Expanded(
               child: AnimatedBuilder(
-                animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers]),
+                animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
                 builder: (context, _) {WindowsAppearance.watch(context);
                   final details = engine.details.value;
                   final ownSchool = db.activeProfileId == origin;
@@ -1380,7 +1269,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          for (final memory in engine.repairMemory.entries.reversed)
+                          for (final memory in engine.repairMemory.entries.reversed.where((e)=>recentRepairEvent(e,DateTime.now().millisecondsSinceEpoch)))
                             ListTile(
                               leading: Icon(memory['status'] == 'resolved'
                                 ? Icons.check_circle_outline : Icons.history),
@@ -1392,14 +1281,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 '${memory['resolvedInVersion'] == null ? '' : 'Verified in: ${memory['resolvedInVersion']}\n'}'
                                 'Safe response: ${repairMemoryActionText(memory['learnedAction'])}'),
                             ),
-                          if (engine.recoveryHistory.isEmpty && engine.repairMemory.entries.isEmpty)
+                          if (recentRepairHistory(engine.recoveryHistory,DateTime.now().millisecondsSinceEpoch).isEmpty && !engine.repairMemory.entries.any((e)=>recentRepairEvent(e,DateTime.now().millisecondsSinceEpoch)))
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 20),
                               child: Text(
                                 'No recovery events recorded for this school.',
                               ),
                             ),
-                          for (final event in engine.recoveryHistory.reversed)
+                          for (final event in recentRepairHistory(engine.recoveryHistory,DateTime.now().millisecondsSinceEpoch).reversed)
                             ListTile(
                               title: Text(
                                 '${event['category']} • ${event['outcome']}',
@@ -1414,7 +1303,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 (row) =>
                                     row is Map &&
                                     row['schoolId'] ==
-                                        db.activeProfileIdentity['schoolSyncId'],
+                                        db.activeProfileIdentity['schoolSyncId'] && recentRepairEvent(row,DateTime.now().millisecondsSinceEpoch),
                               ))
                             _activityRow(
                               Map<String, dynamic>.from(raw as Map),
@@ -1424,24 +1313,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         if (!showDiagnostics && !showHistory) ...[
                           _hero(details, items, active),
                           const SizedBox(height: 18),
-                          ExpansionTile(
-                            title: const Text('Diagnostics and recovery tools'),
-                            subtitle: const Text(
-                              'Advanced checks; retained records and automatic services remain active',
-                            ),
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: _controls(active),
-                              ),
-                            ],
-                          ),
                           if (engine.isPaused)
                             Text(
                               'Paused on this PC: ${engine.pausedUntil?.difference(DateTime.now()).inMinutes ?? 0} minutes remaining (until ${engine.pausedUntil?.toLocal()})${engine.isSyncing ? ' — finishing the accepted operation' : ''}',
                             ),
                         ],
                         if (showDiagnostics) ...[
+                          _controls(active),
                           if (showQueue) ...[
                             SizedBox(key: _queueKey),
                             const Text(
@@ -1869,7 +1747,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                 'No recovery events recorded for this school.',
                               ),
                             SizedBox(key: _activityKey),
-                            for (final event in engine.recoveryHistory.reversed)
+                            for (final event in recentRepairHistory(engine.recoveryHistory,DateTime.now().millisecondsSinceEpoch).reversed)
                               ListTile(
                                 title: Text(
                                   '${event['category']} • ${event['outcome']}',
