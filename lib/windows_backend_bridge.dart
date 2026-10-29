@@ -58,6 +58,110 @@ class WindowsBackendBridge {
 
   WindowsBackendBridge._();
 
+  /// Commit money, balance and immutable PDF/outbox in one durable local batch.
+  /// Only the existing sync owners may acknowledge the cloud generations.
+  static Future<void> collectFeePayment({
+    required String profileId,
+    required String paymentId,
+    required Map<String, dynamic> payment,
+    required String ledgerId,
+    required Map<String, dynamic> ledger,
+    required double previousPaid,
+    required Uint8List pdfBytes,
+  }) => _documentWrite(() async {
+    final db = FirebaseFirestore.instance;
+    void scope() {
+      if (db.activeProfileId != profileId)
+        throw StateError('School changed. Reopen fees.');
+    }
+
+    scope();
+    await db.ensureDurableSchoolRecords();
+    scope();
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (payment['schoolId'] != school ||
+        payment['paymentId'] != paymentId ||
+        payment['receiptDocumentId'] != 'FEE-$paymentId' ||
+        payment['studentId'] is! String ||
+        (payment['studentId'] as String).isEmpty)
+      throw StateError('Receipt school or payment identity is invalid.');
+    final amount = payment['installmentAmount'];
+    final expected = payment['expectedAmount'];
+    final total = payment['totalPaid'];
+    if (amount is! num ||
+        !amount.isFinite ||
+        amount <= 0 ||
+        expected is! num ||
+        !expected.isFinite ||
+        expected <= 0 ||
+        total is! num ||
+        !total.isFinite ||
+        !previousPaid.isFinite ||
+        previousPaid < 0 ||
+        (total - previousPaid - amount).abs() > .001 ||
+        total > expected ||
+        ledger['totalPaid'] != total ||
+        ledger['lastPaymentId'] != paymentId ||
+        ledger['studentId'] != payment['studentId'] ||
+        ledger['month'] != payment['month'] ||
+        ledger['expectedAmount'] != expected ||
+        ledger['balance'] != payment['balance'] ||
+        (((payment['balance'] as num?)?.toDouble() ?? -1) - (expected - total)).abs() > .001)
+      throw StateError('Payment totals are invalid.');
+    final paymentRef = db.collection('fee_payments').doc(paymentId);
+    final ledgerRef = db.collection('fee_ledger').doc(ledgerId);
+    final existing = (await paymentRef.get()).data();
+    final current = (await ledgerRef.get()).data();
+    scope();
+    if (existing != null) {
+      if (!sameSavedRecord('fee_payments', existing, payment))
+        throw StateError(
+          'This payment ID already has different details. Original retained.',
+        );
+      return; // Same intent retry never creates another receipt or changes balances.
+    }
+    final currentPaid = current?['totalPaid'] is num
+        ? (current!['totalPaid'] as num).toDouble()
+        : 0.0;
+    if (currentPaid != previousPaid ||
+        current != null &&
+            (current['studentId'] != payment['studentId'] ||
+                current['month'] != payment['month'] ||
+                current['expectedAmount'] != expected ||
+                (current['feeIdentity'] != null &&
+                    current['feeIdentity'] != payment['feeIdentity'])))
+      throw StateError(
+        'Fee balance changed. Refresh and check history before collecting.',
+      );
+    final managed = (await CentralSchoolCloud.saved())['managed'] == true;
+    scope();
+    final batch = db.batch();
+    batch.requireUnchanged(paymentRef, null);
+    batch.requireUnchanged(ledgerRef, current);
+    await _saveLocalStudentDocument({
+      'replaceDocumentId': 'FEE-$paymentId',
+      'documentKind': 'feeReceipt',
+      'studentId': payment['studentId'],
+      'studentName': payment['studentName'],
+      'studentClass': payment['class'],
+      'rollNo': payment['rollNo'],
+      'documentName': 'Fee receipt ${payment['receiptNo']}',
+      'fileName': '${payment['receiptNo']}.pdf',
+      'mimeType': 'application/pdf',
+      'fileBase64': base64Encode(pdfBytes),
+      'uploadedBy': payment['collectedBy'],
+      '_queueCloud': managed,
+    }, owningBatch: batch);
+    scope();
+    batch.set(paymentRef, payment);
+    batch.set(ledgerRef, ledger, const SetOptions(merge: true));
+    await batch.commit();
+    // A callback failure cannot turn a committed financial intent into a failed save.
+    try {
+      onLocalDocumentCommitted?.call();
+    } catch (_) {}
+  });
+
   // Response's default Latin-1 encoder rejects multilingual JSON metadata.
   static http.Response _jsonResponse(
     String body,
@@ -140,11 +244,11 @@ class WindowsBackendBridge {
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
     final saved = await CentralSchoolCloud.saved(),
-        school = saved['schoolId']?.toString() ?? '';
+        school = saved['schoolId']?.toString() ?? db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
     void own() {
       if (db.activeProfileId != origin ||
-          db.activeProfileIdentity['schoolSyncId'] != school ||
-          document['schoolId'] != school)
+          (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != school ||
+          (document['schoolId']?.toString() ?? '') != school)
         throw StateError('Foreign school document blocked.');
     }
 
@@ -168,6 +272,9 @@ class WindowsBackendBridge {
         own();
         final bytes = await File(canonical).readAsBytes();
         own();
+        if (document['documentKind'] == 'feeReceipt' &&
+            document['contentHash'] != crypto.sha256.convert(bytes).toString())
+          throw StateError('Original receipt hash mismatch. File retained for review.');
         if (bytes.isNotEmpty) return bytes;
       } on FileSystemException { /* Retain the path; try authenticated restore. */ }
     }
@@ -668,6 +775,8 @@ class WindowsBackendBridge {
               : await File(path).readAsBytes();
           if (FirebaseFirestore.instance.activeProfileId != origin)
             throw StateError('School changed before upload.');
+          if (record['documentKind'] == 'feeReceipt' && record['contentHash'] != crypto.sha256.convert(bytes).toString())
+            throw StateError('Original receipt hash mismatch. Upload retained for review.');
           final payload = <String, dynamic>{
             for (final key in [
               'studentId',
@@ -1954,7 +2063,8 @@ class WindowsBackendBridge {
           uploadKey: CentralSchoolCloud.uploadIdentity(school,
             id, 'fee_receipt', data['pdfBase64']?.toString() ?? ''),
         );
-        await save('fee_payments', id, {...data, ...file, 'paymentId': id});
+        final record = {...data, ...file, 'paymentId': id}..remove('pdfBase64');
+        await save('fee_payments', id, record);
         return {'success': true, ...file, 'sheetUrl': ''};
       }
       if (action == 'save_exam' || action == 'save_exam_result') {
@@ -2503,7 +2613,9 @@ class WindowsBackendBridge {
 
   static Future<Map<String, dynamic>> _saveLocalStudentDocument(
     Map<String, dynamic> body,
-  ) async {
+  {
+    WriteBatch? owningBatch,
+  }) async {
     final originProfile = FirebaseFirestore.instance.activeProfileId;
     final owner = body['_queueCloud'] == true
         ? await CentralSchoolCloud.saved()
@@ -2554,7 +2666,20 @@ class WindowsBackendBridge {
     Map<String, dynamic> processing = {};
     String? processingWarning;
     try {
-      if (body['documentKind'] == 'idCard') {
+      if (body['documentKind'] == 'feeReceipt') {
+        // Financial originals are immutable. Never rasterize/recompress a receipt.
+        if (!utf8
+            .decode(bytes.take(5).toList(), allowMalformed: true)
+            .startsWith('%PDF-'))
+          throw StateError('A valid receipt PDF is required.');
+        processing = {
+          'optimized': Uint8List.fromList(bytes),
+          'highQuality': Uint8List.fromList(bytes),
+          'mimeType': 'application/pdf',
+          'sourceRetained': true,
+          'cleanupStatus': 'Exact original financial receipt retained',
+        };
+      } else if (body['documentKind'] == 'idCard') {
         await IdCardEngine.verifyExport(
           Uint8List.fromList(bytes),
           body['qr'].toString(),
@@ -2575,7 +2700,7 @@ class WindowsBackendBridge {
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
     } catch (e) {
-      if (body['_queueCloud'] == true) rethrow;
+      if (body['_queueCloud'] == true || body['documentKind'] == 'feeReceipt') rethrow;
       processingWarning =
           'Processing unavailable; original retained. ${e.runtimeType}';
     }
@@ -2599,8 +2724,14 @@ class WindowsBackendBridge {
         : processing['mimeType'] == 'image/png'
         ? 'png'
         : 'jpg';
-    final optimizedFile = body['documentKind'] == 'idCard' ? file : File('${file.path}.optimized.$optimizedExtension');
-    final highFile = body['documentKind'] == 'idCard' ? file : File(
+    final exactOriginal = {
+      'idCard',
+      'feeReceipt',
+    }.contains(body['documentKind'] );
+    final optimizedFile =exactOriginal
+        ? file : File('${file.path}.optimized.$optimizedExtension');
+    final highFile = exactOriginal
+        ? file : File(
       '${file.path}.processed.${processing['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
     );
     if (optimized != null && optimizedFile.path != file.path)
@@ -2618,6 +2749,11 @@ class WindowsBackendBridge {
     // explicit retention policy removes them; a failed metadata write rolls back.
     final metadata = <String, dynamic>{
       'documentId': documentId,
+      if (body['documentKind'] == 'feeReceipt') ...{
+        'documentKind': 'feeReceipt',
+        'inventoryCategory': 'feeReceipt',
+        'contentHash': crypto.sha256.convert(bytes).toString(),
+      },
       if (ownerRecord?['mobileStableId'] is String) ...{
         'personId':ownerRecord!['mobileStableId'], 'ownerRole':'student',
       },
@@ -2690,7 +2826,7 @@ class WindowsBackendBridge {
       'uploadedAt': DateTime.now().millisecondsSinceEpoch,
     };
 
-    final batch = FirebaseFirestore.instance.batch();
+    final batch = owningBatch ?? FirebaseFirestore.instance.batch();
     batch.set(ref, metadata, SetOptions(merge: true));
     if (body['_queueCloud'] == true)
       batch.set(
@@ -2699,7 +2835,7 @@ class WindowsBackendBridge {
             .doc(documentId),
         metadata,
       );
-    await batch.commit();
+    if (owningBatch == null) await batch.commit();
 
     return {
       'success': true,
