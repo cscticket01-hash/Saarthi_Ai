@@ -14,10 +14,10 @@ Only bounded existing handlers are configurable: retry floor (5–900 seconds, n
 
 The client verifies the pinned Ed25519 key, protocol, purpose, signature, timestamp/24-hour lease, monotonic sequence, equal-sequence payload hash and every action/parameter before saving and applying. Cached expiry returns handlers to their compiled defaults while retaining the local sequence high-water mark. The broker renews a publication with a higher sequence only while its test evidence remains valid; withdrawn or expired evidence produces a newer disabled policy. Background refresh is at most hourly and does not block a business sync. Offline devices retain valid cached rules only until expiry; immediate offline revocation is not promised.
 
-## Initial activation (not performed by this PR)
+## Initial activation
 
 1. Provision a dedicated Ed25519 signing key and independent random telemetry salt in the broker secrets: `SAARTHI_REPAIR_KNOWLEDGE_ENABLED=true`, `SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY`, `SAARTHI_REPAIR_KNOWLEDGE_KEY_ID=repair-v1`, `SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT` (at least 32 characters). Do not reuse OAuth, Drive or device signing keys.
-2. Set release repository variables `SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY` to the raw 32-byte public key encoded as unpadded base64url and its matching key ID. The Windows release workflow passes these public values to the binary. Missing configuration leaves the feature off without interrupting current sync.
+2. The Windows release workflow pins the public verification key `QTxk98cwRGkVvFTfeqRRwdTnKy_-9cr4dbZQJrSAz1g` with key ID `repair-20261029-v1`. Only the public key is committed. Optional repository variables `SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY` (raw 32-byte unpadded base64url) and `SAARTHI_REPAIR_KNOWLEDGE_KEY_ID` override this release pin together when deliberately rotating it. Builds outside that workflow must supply their own matching defines; without a pin the receiver stays off.
 3. Release/install that receiver once, run isolated two-school tests, and publish a tested canary rule with protected evidence. Broader rollout requires observing the result; counter reports alone are not approval.
 4. Subsequent supported rule changes arrive remotely without another installer. New native functionality, new repair action types, database changes or key-pin replacement still require an app release.
 

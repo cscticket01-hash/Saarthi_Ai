@@ -274,8 +274,9 @@ jobs:
 
       - name: Build Windows Admin App
         env:
-          SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY: ${{ vars.SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY }}
-          SAARTHI_REPAIR_KNOWLEDGE_KEY_ID: ${{ vars.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID || 'repair-v1' }}
+          # Public verification pin only; the private key stays in broker secrets.
+          SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY: ${{ vars.SAARTHI_REPAIR_KNOWLEDGE_PUBLIC_KEY || 'QTxk98cwRGkVvFTfeqRRwdTnKy_-9cr4dbZQJrSAz1g' }}
+          SAARTHI_REPAIR_KNOWLEDGE_KEY_ID: ${{ vars.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID || 'repair-20261029-v1' }}
           SAARTHI_SCHOOL_CLOUD_URL: ${{ vars.SAARTHI_SCHOOL_CLOUD_URL || 'https://saarthi-oauth-staging.onrender.com/school-cloud' }}
           SAARTHI_GOOGLE_DESKTOP_CLIENT_ID: ${{ vars.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID }}
           SAARTHI_GOOGLE_OAUTH_BROKER_URL: ${{ vars.SAARTHI_GOOGLE_OAUTH_BROKER_URL || 'https://saarthi-oauth-staging.onrender.com/oauth/token' }}
