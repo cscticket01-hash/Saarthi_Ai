@@ -184,7 +184,7 @@ bool identicalLegacyFeePublication(Map queued, Map cloud) {
   final expected = local['expectedAmount'], amount = local['installmentAmount'], total = local['totalPaid'], balance = local['balance'];
   if ([expected,amount,total,balance].any((v)=>v is! num || !v.isFinite) ||
       expected <= 0 || amount <= 0 || total < amount || total > expected || balance < 0 ||
-      (expected-total-balance).abs() > .001 || local['feeItems'] is! Map || (local['feeItems'] as Map).isEmpty) return false;
+      (expected-total-balance).abs() > .001 || local['status'] != (total == expected ? 'PAID' : 'PARTIAL') || local['feeItems'] is! Map || (local['feeItems'] as Map).isEmpty) return false;
   final feeValues = (local['feeItems'] as Map).values;
   if (feeValues.any((v)=>v is! num || !v.isFinite || v < 0) ||
       (feeValues.fold<double>(0,(sum,v)=>sum+(v as num).toDouble())-expected).abs() > .001) return false;
