@@ -1,3 +1,4 @@
+import 'windows_firebase_sync.dart';
 import 'windows_payslip_template.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
@@ -276,6 +277,7 @@ class WindowsDocumentTemplates {
   static Future<void> publishChangedIdCards({
     Future<Map<String, dynamic>> Function()? readInventory,
     Map<String, Set<String>>? affectedPeople,
+    Future<Map<String, dynamic>> Function(String)? readDocument,
     void Function(Map<String, dynamic>)? onCardRepair,
   }) async {
     if (affectedPeople != null && affectedPeople.values.every((ids) => ids.isEmpty)) return;
@@ -294,6 +296,14 @@ class WindowsDocumentTemplates {
           'managed/records',
           {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
         );
+    final pointReads = <String, Future<Map<String, dynamic>>>{};
+    Future<Map<String, dynamic>> readTarget(String id) {
+      if (readInventory != null) return readPublished();
+      if (readDocument != null) return pointReads.putIfAbsent(id, () => readDocument(id));
+      if (!WindowsFirebaseRemote.recordPointReadSupported) return readPublished();
+      return pointReads.putIfAbsent(id, () => WindowsBackendBridge.readManagedDocument(
+        identity['schoolId'] as String, id));
+    }
     final fileQueue =
         (await db.collection('_windows_document_outbox').get()).docs;
     final recordQueue =
@@ -356,7 +366,7 @@ class WindowsDocumentTemplates {
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
             existing?['deleted'] != true) {
           if (pending == null && cached == null && existing?['syncState'] != 'Synced') {
-            await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: readPublished);
+            await WindowsBackendBridge.requeueUnpublishedIdCard(id, readPublished: () => readTarget(id));
           }
           continue;
         }
@@ -395,7 +405,7 @@ class WindowsDocumentTemplates {
           kind: kind,
           person: person,
           inputRevision: revision,
-          readPublished: readPublished,
+          readPublished: () => readTarget(id),
           automatic:true,
         );
         await WindowsIdCardReviews.supersede(identity['schoolId'] as String, id);

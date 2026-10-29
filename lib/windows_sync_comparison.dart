@@ -193,6 +193,23 @@ bool identicalFreshStudent(Map queued, Map cloud) {
   return syncPayloadHash(business(data)) == syncPayloadHash(business(cloud));
 }
 
+/// A real same-operation Drive write receipt can replace a redundant read.
+/// Incomplete/legacy ACKs keep the original readback fallback.
+Map<String, dynamic>? documentAcknowledgementFromWrite(Map payload, Map ack) {
+  final row = ack['record'], revision = ack['recordRevision'];
+  if (ack['success'] != true || ack['schoolId'] != payload['schoolId'] ||
+      ack['syncProtocol'] != 2 || revision is! String || revision.isEmpty ||
+      revision.startsWith('cf-') || ack['driveState'] == 'pending' || row is! Map ||
+      row['_syncRevision'] != revision || row['_syncOperationId'] != payload['documentRevision'] ||
+      payload['fileId'] is! String || (payload['fileId'] as String).isEmpty ||
+      row['fileId'] != payload['fileId']) return null;
+  final result = documentAcknowledgementFromReadback(payload, {
+    'success': true, 'schoolId': ack['schoolId'], 'syncProtocol': 2,
+    'records': {payload['documentId']: row},
+  });
+  return verifiedDocumentAcknowledgement(payload, result) ? result : null;
+}
+
 /// Bind identity to the key selected from an authenticated managed readback.
 /// Never replace an explicitly contradictory ID or weaken content verification.
 Map<String, dynamic> documentAcknowledgementFromReadback(Map payload, Map reply, {Map? deleteAcknowledgement}) {

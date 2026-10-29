@@ -1662,19 +1662,21 @@ class WindowsBackendBridge {
     }
 
     final action = body['action']?.toString() ?? '';
+    Map<String, dynamic>? initialDocumentRead;
+    Map<String, dynamic>? documentWriteAck;
     if (connection['managed'] == true &&
-        {
-          'upload_student_document',
-          'delete_student_document',
-        }.contains(action)) {
-      final health = await cloud.api({
-        'action': 'managed/storage/check',
-        'schoolId': school,
-      }, token: token);
-      if (health['documentVersions'] != 1)
-        throw StateError(
-          'School storage needs the version-safe document adapter upgrade. Local originals and pending changes are retained.',
-        );
+        {'upload_student_document', 'delete_student_document'}.contains(action)) {
+      final requestedId = (body['documentId'] ?? body['replaceDocumentId'])?.toString() ?? '';
+      final checks = await Future.wait<Map<String, dynamic>>([
+        cloud.api({'action': 'managed/storage/check', 'schoolId': school}, token: token),
+        if (action == 'upload_student_document' && requestedId.isNotEmpty &&
+            requestedId.length <= 200 && !requestedId.contains('/'))
+          readManagedDocument(school, requestedId),
+      ]);
+      await ensureSchool();
+      if (checks.first['documentVersions'] != 1)
+        throw StateError('School storage needs the version-safe document adapter upgrade. Local originals and pending changes are retained.');
+      if (checks.length > 1) initialDocumentRead = checks[1];
     }
     Future<Map<String, dynamic>> read(String collection) =>
         WindowsFirebaseRemote.readCollection(
@@ -1685,11 +1687,7 @@ class WindowsBackendBridge {
     Future<Map<String, dynamic>> documentReceipt(String id, Map payload, {Map? deleteAcknowledgement}) async {
       if (connection['managed'] != true)
         throw const MissingSyncAcknowledgement();
-      final reply = await ManagedSchoolSession.callForSchool(
-        school,
-        'managed/records',
-        {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
-      );
+      final reply = await readManagedDocument(school, id);
       await ensureSchool();
       final receipt = documentAcknowledgementFromReadback(
         {...payload, 'schoolId': school, 'documentId': id}, reply, deleteAcknowledgement:deleteAcknowledgement,
@@ -1725,6 +1723,8 @@ class WindowsBackendBridge {
         expectedRevision: expectedRevision,
         expectedUploadedAt: expectedUploadedAt,
         reviewedRecordRevision: recordRevision,
+        onManagedAcknowledgement: collection == 'documents'
+          ? (ack) => documentWriteAck = ack : null,
       );
       await ensureSchool();
       await FirebaseFirestore.instance.applySyncedDocument(
@@ -1811,7 +1811,9 @@ class WindowsBackendBridge {
             : requestedId;
         if (id.contains('/') || id.length > 200)
           throw StateError('Invalid document ID.');
-        final old = (await read('documents'))[id];
+        final old = connection['managed'] == true
+          ? ((initialDocumentRead ?? await readManagedDocument(school, id))['records'] as Map)[id]
+          : (await read('documents'))[id];
         if (old != null && old['studentId'] != data['studentId'])
           throw StateError('Document belongs to another student.');
         final revision = data['documentRevision']?.toString() ?? '';
@@ -1856,6 +1858,11 @@ class WindowsBackendBridge {
               '',
           expectedUploadedAt: data['baseCloudUploadedAt'] as num?,
         );
+        if (documentWriteAck != null) {
+          final receipt = documentAcknowledgementFromWrite(
+            {...data, ...file, 'documentId': id, 'schoolId': school}, documentWriteAck!);
+          if (receipt != null) return receipt;
+        }
         return await documentReceipt(id, data);
       }
       if (action == 'delete_student_document') {
@@ -2309,6 +2316,22 @@ class WindowsBackendBridge {
     if (queued) onLocalDocumentCommitted?.call();
   }
 
+  /// A bounded owner read; the verified capability decides whether old Scripts
+  /// retain their full-inventory path. Never infer absence from an invalid reply.
+  static Future<Map<String, dynamic>> readManagedDocument(String school, String id) async {
+    final point = WindowsFirebaseRemote.recordPointReadSupported;
+    final reply = await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+      'operation': 'read', 'collection': 'documents', 'syncProtocol': 2,
+      if (point) 'id': id,
+    });
+    if (reply['schoolId'] != school || reply['syncProtocol'] != 2 ||
+        reply['records'] is! Map || point && (reply['pointRead'] != true ||
+          (reply['records'] as Map).keys.any((key) => key != id))) {
+      throw const MissingSyncAcknowledgement();
+    }
+    return reply;
+  }
+
   static Future<void> publishIdCard({
     required Uint8List bytes,
     required String qr,
@@ -2339,15 +2362,7 @@ class WindowsBackendBridge {
       try {
         reply =
             await (readPublished?.call() ??
-                ManagedSchoolSession.callForSchool(
-                  link.schoolId,
-                  'managed/records',
-                  {
-                    'operation': 'read',
-                    'collection': 'documents',
-                    'syncProtocol': 2,
-                  },
-                ));
+                readManagedDocument(link.schoolId, id));
       } on TimeoutException {
         /* Offline generation remains safely queued; CAS still required. */
       } on SocketException {

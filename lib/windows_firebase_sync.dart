@@ -924,6 +924,7 @@ class WindowsFirebaseRemote {
     String? expectedRevision,
     num? expectedUploadedAt,
     String? reviewedRecordRevision,
+    void Function(Map<String, dynamic>)? onManagedAcknowledgement,
   }) async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     final school =
@@ -947,7 +948,7 @@ class WindowsFirebaseRemote {
         return ManagedSchoolSession.callForSchool(school, action, body);
       });
       unchanged();
-      await _managedRecords(idToken, {
+      final acknowledgement = await _managedRecords(idToken, {
         'operation': 'write',
         'collection': collection,
         'id': documentId,
@@ -961,6 +962,8 @@ class WindowsFirebaseRemote {
         if (expectedUploadedAt != null)
           'expectedUploadedAt': expectedUploadedAt,
       }, expectedSchoolId: school);
+      unchanged();
+      onManagedAcknowledgement?.call(acknowledgement);
       if (collection == 'school_config' &&
           documentId == 'school_profile_cache' &&
           (data['schoolName']?.toString().length ?? 0) >= 2 &&

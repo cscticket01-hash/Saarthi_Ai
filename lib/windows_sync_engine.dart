@@ -1,3 +1,5 @@
+import 'windows_school_identity.dart';
+import 'windows_person_card_sync.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_sync_inbox.dart';
 import 'sync_latency_statistics.dart';
@@ -2021,6 +2023,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }
           }
         }
+        // Keep locally acknowledged people and their cards in the same priority
+        // dependency job, ahead of unrelated cloud pulls and audits.
+        await WindowsPersonCardSync.run(
+          _activeSchoolSyncId,
+          canAdmit: () => !isPaused,
+          prepare: (targets) => WindowsDocumentTemplates.publishChangedIdCards(
+            affectedPeople: targets, onCardRepair: _recordActivity),
+          pushParents: () => _pushManagedOutbox(),
+          cardId: (collection, id, person) => WindowsBackendBridge.publishedIdCardOwnerIdForPerson(
+            collection == 'students_directory' ? 'student' : 'teacher', id, person),
+          sendCards: (ids) => WindowsBackendBridge.flushDocumentPending(
+            canAdmit: () => !isPaused, respectBackoff: true,
+            admitRow: (id, row) => ids.contains(id) &&
+              (row['retryAtMillis'] as num? ?? 0) <= DateTime.now().millisecondsSinceEpoch,
+            onActivity: _recordActivity),
+          onActivity: _recordActivity,
+        );
         if (WindowsFirebaseRemote.recordPointReadSupported) {
           await WindowsPendingSchoolSync.repair(
             explicitRetry: _manualSync,
@@ -2664,6 +2683,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     String? onlyOperationId,
     bool Function()? canAdmit,
   }) async {
+    if (onlyOperationId == null) {
+      await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
+        canAdmit: () => !isPaused && (canAdmit?.call() ?? true));
+    }
     final batchReplies = onlyOperationId == null
         ? await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
