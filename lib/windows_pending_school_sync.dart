@@ -86,6 +86,7 @@ class WindowsPendingSchoolSync {
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
       }
+      final legacyFeeProbe = legacyFeePublicationCandidate(item) && prior?['legacyFeePublicationProbeVersion'] != 1;
       final inputSignature = syncPayloadHash({
         'schoolId': school, 'collection': item['collection'],
         'documentId': item['documentId'], 'operationId': item['operationId'],
@@ -98,11 +99,11 @@ class WindowsPendingSchoolSync {
       final head = manifest?['revision'] is String ? manifest!['revision'] as String : null;
       if (repeatedRepairProbe(prior, signature: inputSignature,
           cloudRevision: head, now: clock().millisecondsSinceEpoch,
-          explicitRetry: explicitRetry, cooldownSeconds: WindowsSharedRepairKnowledge.value(
+          explicitRetry: explicitRetry || legacyFeeProbe, cooldownSeconds: WindowsSharedRepairKnowledge.value(
             'record_probe_cooldown',school,module:item['collection'] as String,category:'conflict'))) continue;
       // Budget survives restarts and hourly reconciliation. Manual diagnosis
       // admits one more bounded probe; it never resets history or grants ACK.
-      if (!explicitRetry &&
+      if (!explicitRetry && !legacyFeeProbe &&
           (prior?['attempts'] as num? ?? 0) >= automaticRepairProbeLimit) {
         if (prior?['outcome'] != 'probe_budget_exhausted') {
           await journal.set({
@@ -124,7 +125,7 @@ class WindowsPendingSchoolSync {
         }
         continue;
       }
-      if (!explicitRetry &&
+      if (!explicitRetry && !legacyFeeProbe &&
           (prior?['nextProbeAt'] as num? ?? 0) > clock().millisecondsSinceEpoch)
         continue;
       final attempts = (prior?['attempts'] as num? ?? 0).toInt() + 1;
@@ -134,6 +135,7 @@ class WindowsPendingSchoolSync {
       await journal.set({
         'schoolId': school,
         'operationId': item['operationId'],
+        if (legacyFeeProbe || prior?['legacyFeePublicationProbeVersion'] == 1) 'legacyFeePublicationProbeVersion': 1,
         'attempts': attempts,
         'nextProbeAt': clock().add(delay).millisecondsSinceEpoch,
         'outcome': 'diagnosing',

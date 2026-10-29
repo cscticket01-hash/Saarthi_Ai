@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:printing/printing.dart';
+import 'windows_receipt_print_dialog.dart';
 
 import 'windows_backend_bridge.dart';
 import 'windows_document_templates.dart';
@@ -50,71 +50,10 @@ class WindowsFeeReceiptPreview {
   static Future<void> open(BuildContext context, Map<String, dynamic> payment) {
     final origin = FirebaseFirestore.instance.activeProfileId;
     final receipt = bytes(Map<String, dynamic>.from(payment));
-    return showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        child: SizedBox(
-          width: 1050,
-          height: 760,
-          child: Column(
-            children: [
-              ListTile(
-                title: Text('Receipt ${payment['receiptNo'] ?? ''}'),
-                subtitle: Text(
-                  '${payment['studentName'] ?? ''} • ${payment['month'] ?? ''}',
-                ),
-                trailing: IconButton(
-                  tooltip: 'Close receipt',
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: FutureBuilder<Uint8List>(
-                  future: receipt,
-                  builder: (context, snapshot) {
-                    if (origin != FirebaseFirestore.instance.activeProfileId)
-                      return const Center(
-                        child: Text('School changed. Reopen receipt history.'),
-                      );
-                    if (snapshot.hasError)
-                      return Center(
-                        child: SelectableText(
-                          'Receipt unavailable: ${snapshot.error}',
-                        ),
-                      );
-                    if (!snapshot.hasData)
-                      return const Center(child: CircularProgressIndicator());
-                    return PdfPreview(
-                      build: (_) async {
-                        if (origin !=
-                            FirebaseFirestore.instance.activeProfileId)
-                          throw StateError(
-                            'School changed. Reopen receipt history.',
-                          );
-                        return snapshot.data!;
-                      },
-                      pdfFileName: '${payment['receiptNo'] ?? 'Receipt'}.pdf',
-                      allowSharing: false,
-                      allowPrinting: true,
-                      canDebug: false,
-                      canChangePageFormat: false,
-                      canChangeOrientation: false,
-                    );
-                  },
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.all(10),
-                child: Text(
-                  'Print: choose printer, copies and pages in the system print settings.',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    return showDialog<void>(context: context, builder: (_) => WindowsReceiptPrintDialog(
+      receipt: receipt, title: 'Receipt ${payment['receiptNo'] ?? ''}',
+      subtitle: '${payment['studentName'] ?? ''} • ${payment['month'] ?? ''}',
+      isCurrent: () => origin == FirebaseFirestore.instance.activeProfileId,
+    ));
   }
 }

@@ -1033,10 +1033,13 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        trailing: Text(
-                          '${raw['syncState'] ?? raw['state'] ?? 'pending'}',
-                          style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFFC153))),
-                        ),
+                        trailing: (raw['syncState'] ?? raw['state']) == 'conflict'
+                          ? TextButton(onPressed: active ? null : () => _run(() async {
+                              await showWindowsConflictReview(context, Map<String,dynamic>.from(raw));
+                              await engine.refreshDetails();
+                            }), child: const Text('Review conflict'))
+                          : Text('${raw['syncState'] ?? raw['state'] ?? 'pending'}',
+                              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFFFFC153)))),
                       ),
                   const SizedBox(height: 10),
                   TextButton.icon(

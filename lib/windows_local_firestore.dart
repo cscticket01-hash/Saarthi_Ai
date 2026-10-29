@@ -1908,7 +1908,8 @@ class _LocalSchoolDatabase {
                 () => <String,dynamic>{}) as Map;
             history[operationId] = _encodeMap({...expected,
               'verifiedCloud': remote,
-              'resolution': automaticDuplicateReadback(expected,remote)?'automatic identical authenticated readback':
+              'resolution': identicalLegacyFeePublication(expected,remote)?'verified legacy fee publication; post-upload local metadata archived':
+                automaticDuplicateReadback(expected,remote)?'automatic identical authenticated readback':
                 firstCreate?'first committed create retained':
                 recordFieldIntentSatisfied(expected,remote)?'changed fields already verified in cloud':
                 'automatic identical authenticated readback',

@@ -146,6 +146,92 @@ List<String> recordDifferenceFields(Map queued, Map cloud) {
   return differences.take(40).toList();
 }
 
+/// Exact old UI signature: cloud save completed, then a second local set added
+/// driveUrl/sheetUrl and a post-upload paidAt. This never equates changed money,
+/// invoice dates, people, receipt IDs, or different Drive files.
+bool legacyFeePublicationCandidate(Map queued) {
+  final d = queued['data'];
+  return queued['collection'] == 'fee_payments' && queued['operation'] == 'set' &&
+      queued['priorDeletion'] == null && queued['reviewedFromOperationId'] == null &&
+      d is Map && d['receiptDocumentId'] == null && d['paymentId'] == queued['documentId'] &&
+      d['sheetUrl'] == '' && d['driveUrl'] is String && d['paidAt'] != null &&
+      RegExp(r'^VS-\d{6}-\d{13}$').hasMatch(d['receiptNo']?.toString() ?? '');
+}
+
+// Remove only typed upload-protocol fields emitted by the existing broker.
+// Unknown keys remain business data and must still compare exactly.
+bool _legacyFeeUploadEnvelope(Map<String,dynamic> remote, String school, String owner) {
+  if (remote.containsKey('success')) { if(remote['success'] != true)return false; remote.remove('success'); }
+  if (remote.containsKey('syncTiming')) {
+    final t=remote['syncTiming'];
+    if(t is! Map || t.keys.any((k)=>!{'brokerPreparationMillis','scriptRoundTripMillis'}.contains(k)) ||
+      t.values.any((v)=>v is! num || !v.isFinite || v<0))return false;
+    remote.remove('syncTiming');
+  }
+  if(remote.containsKey('cloudflareAccepted') || remote.containsKey('driveState')) {
+    if(remote['cloudflareAccepted']!=true || remote['driveState']!='verified')return false;
+    remote.remove('cloudflareAccepted');remote.remove('driveState');
+  }
+  if(remote.containsKey('deliveryTiming')) {
+    final t=remote['deliveryTiming'];
+    if(t is! Map || t['version']!=1 || !t.containsKey('deliveryMillis') || !t.containsKey('observedAt') ||
+      t.keys.any((k)=>!{'version','deliveryMillis','observedAt','queueWaitMillis'}.contains(k)) ||
+      t.values.any((v)=>v is! int || v<0))return false;
+    remote.remove('deliveryTiming');
+  }
+  const uploadKeys={'uploadResumableVersion','uploadKey','sha256','sizeBytes','offset','committed'};
+  if(uploadKeys.any(remote.containsKey)) {
+    if(remote['uploadResumableVersion']!=1 || remote['committed']!=true ||
+      remote['sizeBytes'] is! int || remote['sizeBytes']<=0 || remote['sizeBytes']>20*1024*1024 ||
+      remote['offset']!=remote['sizeBytes'] || remote['sha256'] is! String ||
+      !RegExp(r'^[a-f0-9]{64}$').hasMatch(remote['sha256']))return false;
+    final key=sha256.convert(utf8.encode(jsonEncode([school,owner,'fee_receipt',remote['sha256']]))).toString();
+    if(remote['uploadKey']!=key)return false;
+    for(final key in uploadKeys)remote.remove(key);
+  }
+  return true;
+}
+
+bool identicalLegacyFeePublication(Map queued, Map cloud) {
+  if (!legacyFeePublicationCandidate(queued) || queued['schoolId'] != cloud['schoolId'] ||
+      cloud['id'] != queued['documentId'] || cloud['_syncDeleted'] == true ||
+      cloud['paidAt'] != null || cloud['receiptDocumentId'] != null) return false;
+  final local = Map<String,dynamic>.from(queued['data'] as Map);
+  if (local['schoolId'] != null && local['schoolId'] != queued['schoolId']) return false;
+  final uri = Uri.tryParse(local['driveUrl'] as String);
+  final file = uri == null ? null : RegExp(r'^/file/d/([A-Za-z0-9_-]{1,200})/view$').firstMatch(uri.path);
+  if (uri == null || uri.scheme != 'https' || uri.host != 'drive.google.com' ||
+      uri.userInfo.isNotEmpty || uri.hasPort || uri.hasQuery || uri.hasFragment || file == null ||
+      cloud['fileUrl'] != local['driveUrl'] || cloud['fileId'] != file[1]) return false;
+  for (final key in ['paymentId','receiptNo','studentId','feeIdentity','studentName','class','month','paymentMode','dateText','timeText']) {
+    if (local[key] is! String || (local[key] as String).isEmpty || local[key] != cloud[key]) return false;
+  }
+  final capture = int.tryParse((local['receiptNo'] as String).split('-').last);
+  if (capture == null) return false;
+  final at = DateTime.fromMillisecondsSinceEpoch(capture);
+  if (local['receiptNo'] != 'VS-${at.year}${at.month.toString().padLeft(2,'0')}-$capture' ||
+      local['dateText'] != '${at.day.toString().padLeft(2,'0')}/${at.month.toString().padLeft(2,'0')}/${at.year}' ||
+      local['timeText'] != '${at.hour.toString().padLeft(2,'0')}:${at.minute.toString().padLeft(2,'0')}') return false;
+  final paid = _canonical(local['paidAt']);
+  if (paid is! Map || paid['__vidya_type'] != 'timestamp' || paid['ms'] is! int ||
+      paid['ms'] < capture || paid['ms'] > capture + const Duration(hours:1).inMilliseconds) return false;
+  final expected = local['expectedAmount'], amount = local['installmentAmount'], total = local['totalPaid'], balance = local['balance'];
+  if ([expected,amount,total,balance].any((v)=>v is! num || !v.isFinite) ||
+      expected <= 0 || amount <= 0 || total < amount || total > expected || balance < 0 ||
+      (expected-total-balance).abs() > .001 || local['status'] != (total == expected ? 'PAID' : 'PARTIAL') || local['feeItems'] is! Map || (local['feeItems'] as Map).isEmpty) return false;
+  final feeValues = (local['feeItems'] as Map).values;
+  if (feeValues.any((v)=>v is! num || !v.isFinite || v < 0) ||
+      (feeValues.fold<double>(0,(sum,v)=>sum+(v as num).toDouble())-expected).abs() > .001) return false;
+  final remote = Map<String,dynamic>.from(cloud);
+  local['schoolId'] = queued['schoolId'];
+  local.remove('driveUrl'); local.remove('sheetUrl'); local.remove('paidAt');
+  if (local.containsKey('fileUrl')) { if(local['fileUrl'] != cloud['fileUrl']) return false; local.remove('fileUrl'); }
+  if (local.containsKey('fileId')) { if(local['fileId'] != cloud['fileId']) return false; local.remove('fileId'); }
+  remote.remove('fileUrl'); remote.remove('fileId');
+  if(!_legacyFeeUploadEnvelope(remote,queued['schoolId'] as String,queued['documentId'] as String))return false;
+  return sameSavedRecord('fee_payments',local,remote);
+}
+
 /// Only an identical complete value for the same logical record is disposable.
 /// Partial updates, deletes, recreation intents and owner/media changes retain
 /// their originals for explicit review. No name/phone similarity heuristic.
@@ -164,7 +250,7 @@ bool automaticDuplicateReadback(Map queued, Map cloud) {
       data is Map && (data['schoolId'] == null || data['schoolId'] == queued['schoolId']) &&
       !data.keys.any((key) => key.toString().startsWith('_syncRecreates')) &&
       (compareSyncVersions({...queued, 'data': {...data, 'schoolId': queued['schoolId']}}, cloud) == 'identical' ||
-        identicalFreshStudent(queued, cloud));
+        identicalFreshStudent(queued, cloud) || identicalLegacyFeePublication(queued, cloud));
 }
 
 /// Independently entered pupils have different generated identities/timestamps.
