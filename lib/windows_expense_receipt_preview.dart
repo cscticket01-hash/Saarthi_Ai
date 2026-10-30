@@ -10,7 +10,10 @@ import 'windows_receipt_print_dialog.dart';
 /// Read-only expense voucher generated from the exact existing expense row.
 /// Does not create a payment, a new expense, a sync operation or a Drive file.
 class WindowsExpenseReceiptPreview {
-  static Future<Uint8List> bytes(Map<String, dynamic> expense) async {
+  static Future<Uint8List> bytes(Map<String, dynamic> expense, {
+    String schoolName = 'SCHOOL EXPENSE',
+    String schoolAddress = '',
+  }) async {
     final amount = expense['amount'] is num
         ? (expense['amount'] as num).toDouble()
         : double.tryParse(expense['amount']?.toString() ?? '');
@@ -36,8 +39,10 @@ class WindowsExpenseReceiptPreview {
     pdf.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(42),
       build: (_) => [
-        pw.Center(child: pw.Text('VIDYA SAARTHI',
+        pw.Center(child: pw.Text(schoolName,
           style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold))),
+        if (schoolAddress.trim().isNotEmpty) pw.Center(child: pw.Text(schoolAddress,
+          style: pw.TextStyle(fontSize: 9))),
         pw.SizedBox(height: 5),
         pw.Center(child: pw.Text('SCHOOL EXPENSE RECEIPT',
           style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold))),
@@ -71,9 +76,19 @@ class WindowsExpenseReceiptPreview {
     final original = Map<String, dynamic>.from(expense);
     bool current() => profile == db.activeProfileId &&
         school == (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '');
+    Future<Uint8List> receipt() async {
+      if (!current()) throw StateError('School changed. Reopen receipt.');
+      final details = (await db.collection('school_config')
+          .doc('school_profile_cache').get()).data() ?? <String, dynamic>{};
+      if (!current()) throw StateError('School changed. Reopen receipt.');
+      return bytes(original,
+        schoolName: (details['schoolName'] ?? 'SCHOOL EXPENSE').toString(),
+        schoolAddress: (details['address'] ?? details['schoolAddress'] ?? '').toString(),
+      );
+    }
     return showDialog<void>(context: context,
       builder: (_) => WindowsReceiptPrintDialog(
-        receipt: bytes(original),
+        receipt: receipt(),
         title: 'Expense Receipt ${original['expenseId'] ?? ''}',
         subtitle: '${original['title'] ?? 'School Expense'} • ${original['dateText'] ?? ''}',
         isCurrent: current,
