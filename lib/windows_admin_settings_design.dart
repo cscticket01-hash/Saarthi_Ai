@@ -21,18 +21,25 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
   static const muted = Color(0xFFAABDD7);
 
   @override
-  Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Scaffold(
-    backgroundColor: WindowsAppearance.background(const Color(0xFF09172B)),
-    body: Container(
-      decoration:  BoxDecoration(gradient: LinearGradient(
-        begin: Alignment.topLeft, end: Alignment.bottomRight,
-        colors: [WindowsAppearance.resolve(Color(0xFF0B1B32)), WindowsAppearance.resolve(Color(0xFF071323))])),
-      child: LayoutBuilder(builder: (context, viewport) { WindowsAppearance.watch(context); return  SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(viewport.maxWidth < 600 ? 16 : 32, 24,
-          viewport.maxWidth < 600 ? 16 : 32, 28),
-        child: Center(child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+  Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
+    return Scaffold(
+      backgroundColor: WindowsAppearance.background(const Color(0xFF09172B)),
+      body: Container(
+        decoration: BoxDecoration(gradient: LinearGradient(
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+          colors: [WindowsAppearance.resolve(const Color(0xFF0B1B32)),
+            WindowsAppearance.resolve(const Color(0xFF071323))])),
+        child: LayoutBuilder(builder: (context, viewport) {
+          WindowsAppearance.watch(context);
+          // At the supported desktop size the content uses the entire viewport.
+          // On narrower/smaller windows retain accessible scrolling instead of
+          // clipping actions or shrinking typography.
+          final desktop = viewport.maxWidth >= 960 && viewport.maxHeight >= 830 &&
+              MediaQuery.textScalerOf(context).scale(14) <= 17;
+          final content = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                BackButton(color: WindowsAppearance.foreground(Color(0xFFC2D8FA))),
               const SizedBox(width: 12),
@@ -42,16 +49,16 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
                 Text('Manage your school preferences', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(muted), fontSize: 14)),
               ])),
             ]),
-            const SizedBox(height: 28),
+            SizedBox(height: desktop ? 14 : 28),
             _deviceTile(),
-            const SizedBox(height: 18),
+            SizedBox(height: desktop ? 10 : 18),
             _panel(icon: Icons.person_rounded, color: blue, title: 'Admin Profile',
               subtitle: 'Signed-in administrator account', child: _profile(context)),
-            const SizedBox(height: 18),
+            SizedBox(height: desktop ? 10 : 18),
             _panel(icon: Icons.calendar_month_rounded, color: blue, title: 'Academic Year',
               subtitle: 'Choose January or April as the session change month',
               child: _academic(context)),
-            const SizedBox(height: 18),
+            SizedBox(height: desktop ? 10 : 18),
             LayoutBuilder(builder: (context, size) {WindowsAppearance.watch(context);
               final passwords = _panel(icon: Icons.lock_outline_rounded, color: amber,
                 title: 'Password Management', subtitle: 'Manage section locks and passwords',
@@ -61,17 +68,27 @@ class WindowsAdminSettingsLayout extends StatelessWidget {
                 child: _action('Open Advanced Settings', Icons.shield_outlined, onAdvanced));
               if (size.maxWidth / MediaQuery.textScalerOf(context).scale(1) < 760) {
                 return Column(crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [passwords, const SizedBox(height: 18), advanced]);
+                  children: [passwords, SizedBox(height: desktop ? 10 : 18), advanced]);
               }
               return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Expanded(child: passwords), const SizedBox(width: 18), Expanded(child: advanced),
               ]);
             }),
-          ]),
-        )),
-      ); }),
-    ),
-  ); }
+            ],
+          );
+          final padding = EdgeInsets.fromLTRB(
+            viewport.maxWidth < 600 ? 16 : desktop ? 20 : 32,
+            desktop ? 12 : 24,
+            viewport.maxWidth < 600 ? 16 : desktop ? 20 : 32,
+            desktop ? 12 : 28,
+          );
+          return desktop
+              ? Padding(padding: padding, child: content)
+              : SingleChildScrollView(padding: padding, child: content);
+        }),
+      ),
+    );
+  }
 
   Widget _deviceTile() => Material(color: WindowsAppearance.background(Colors.transparent), child: Ink(
     decoration: _decoration(),
