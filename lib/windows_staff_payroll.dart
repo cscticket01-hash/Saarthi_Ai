@@ -160,8 +160,10 @@ class StaffPayroll {
     final doc = FirebaseFirestore.instance.collection('teacher_salary').doc(salaryRowId);
     final row = (await doc.get()).data();
     _sameSchool(profile);
-    if (row == null || row['id'] != salaryRowId && row['id'] != null) {
-      throw StateError('Salary record changed. Reopen Staff Salary.');
+    if (row == null || (row['id'] != salaryRowId && row['id'] != null) ||
+        (row['schoolId'] != null &&
+            row['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])) {
+      throw StateError('Salary record or school changed. Reopen Staff Salary.');
     }
     final payments = List<dynamic>.from(row['payments'] as List? ?? []);
     final matched = payments.where((v) => v is Map && v['id'] == paymentId).toList();
@@ -362,7 +364,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
             ],
           ));
         });
-    } finally { lock.dispose(); }
+    } finally {
+      // Dialog widgets remain mounted during their closing animation.
+      await Future<void>.delayed(const Duration(milliseconds:250));
+      lock.dispose();
+    }
     if (password == null || !mounted) return;
     StaffPayroll._sameSchool(_profile);
     final corrections = List<dynamic>.from(salary['paymentCorrections'] as List? ?? []);
@@ -399,7 +405,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           decoration:const InputDecoration(labelText:'Corrected recorded amount',prefixText:'₹ '),
           onChanged:(_)=>setD((){})),
         Builder(builder: (_) {
-          final candidate=int.tryParse('') ?? (() {
+          final candidate=(() {
             try {return StaffPayroll.money(amount.text);} catch (_) {return 0;}
           })();
           final change=candidate-effective(selected);
