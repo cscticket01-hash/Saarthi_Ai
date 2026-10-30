@@ -35,6 +35,7 @@ import 'windows_monthly_attendance.dart';
 import 'windows_analytics_identity.dart';
 import 'windows_expense_intent.dart';
 import 'windows_expense_history.dart';
+import 'windows_expense_receipt_preview.dart';
 import 'windows_exam_service.dart';
 import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
@@ -23181,11 +23182,14 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
     if (saved == true) await _load();
   }
 
-  Future<void> _delete(Map<String,dynamic> item) async {
-    final id = item['expenseId']?.toString() ?? '';
-    if (id.isEmpty) return;
-    await _call({'action':'delete_school_expense','expenseId':id});
-    await _load();
+  Future<void> _openReceipt(Map<String,dynamic> item) async {
+    _checkExpenseProfile();
+    try {
+      await WindowsExpenseReceiptPreview.open(context, item);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Expense receipt unavailable: $e')));
+    }
   }
 
   @override
@@ -23255,7 +23259,13 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                                     if (e['note']?.toString().trim().isNotEmpty == true) Text(e['note'].toString(), style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.white54),fontSize:10.5)),
                                   ])),
                                   Text('₹${(double.tryParse(e['amount']?.toString() ?? '') ?? 0).toStringAsFixed(2)}', style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.amberAccent),fontSize:16,fontWeight:FontWeight.w900)),
-                                  if (!widget.history) IconButton(onPressed:()=>_delete(e), icon:Icon(Icons.delete_outline_rounded,color:WindowsAppearance.foreground(Colors.redAccent))),
+                                  const SizedBox(width: 12),
+                                  OutlinedButton.icon(
+                                    key: ValueKey('expense-receipt-${e['expenseId'] ?? index}'),
+                                    onPressed: () => _openReceipt(e),
+                                    icon: const Icon(Icons.receipt_long_rounded, size: 17),
+                                    label: const Text('Receipt'),
+                                  ),
                                 ]),
                               );
                             },
