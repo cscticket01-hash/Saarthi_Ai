@@ -11,6 +11,7 @@ import 'windows_admin_settings_design.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
+import 'windows_fee_unpaid_filter.dart';
 import 'windows_fee_structure.dart';
 import 'windows_fee_receipt_preview.dart';
 import 'fitted_document_preview.dart';
@@ -10461,6 +10462,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String _selectedClass = 'All Classes';
   late String _selectedMonth;
   String? _activeStudentId;
+  String? _activeStudentClass;
   String _paymentMode = 'Cash';
   bool _isSavingPayment = false;
   final String _feesOriginProfile = FirebaseFirestore.instance.activeProfileId;
@@ -10696,6 +10698,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     _sessionReceiptPaymentId = null;
     _sessionReceiptStudentId = null;
     _activeStudentId = null;
+    _activeStudentClass = null;
     _activeFeeSettingsReady = false;
     _activeFeeSettingsMessage = null;
     _activeFeeAmounts = {};
@@ -10743,9 +10746,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         FirebaseFirestore.instance.activeProfileId == _feesOriginProfile;
     setState(() {
       _activeStudentId = studentDoc.id;
-      _selectedClass = studentClass;
-      _nameSearchController.text = studentName;
-      _rollSearchController.text = roll;
+      _activeStudentClass = studentClass;
+      // Do not collapse the unpaid queue to the selected student.
       _activeFeeSettingsReady = false;
       _activeFeeSettingsMessage = 'Loading fee settings...';
       _activeFeeAmounts = {};
@@ -11263,11 +11265,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
                   );
                   if (!mounted || _activeStudentId == null) return;
-                  final currentClass = _selectedClass;
+                  final currentClass = _activeStudentClass;
                   final currentStudent = _activeStudentId;
                   try {
                     final updated = await _getClassFeeSettings(currentClass);
-                    if (!mounted || currentStudent != _activeStudentId || currentClass != _selectedClass) return;
+                    if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
                     setState(() {
                       _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
                       _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
@@ -11310,9 +11312,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             ),
           ),
           const SizedBox(height: 4),
-          SizedBox(
-            height: 255,
-            child: ListView.separated(
+          Expanded(
+             child: ListView.separated(
               itemCount: _feeHeads.length,
               separatorBuilder: (_, __) =>  Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
               itemBuilder: (context, index) {
@@ -11644,7 +11645,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     Text(
                       studentSelected
                           ? '$studentClass  •  Roll No: $roll  •  Month: ${_monthName(_selectedMonth)}'
-                          : 'Name ya Roll No search karein, phir neeche matching student select karein.',
+                          : 'Left panel se unpaid student select karein, ya search use karein.',
                       style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                     if (feeStudentUid.isNotEmpty) ...[
