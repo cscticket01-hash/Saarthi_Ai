@@ -115,7 +115,10 @@ class WindowsRepairMemory {
       }
       return changed;
     }
-    final category = categories.contains(event['failureCategory'])
+    // A verified duplicate resolves the original conflict; do not split it
+    // into an unrelated 'verifiedDuplicate' pattern or forget prior evidence.
+    final category = stage == 'duplicateReconciled' ? 'conflict'
+      : categories.contains(event['failureCategory'])
       ? event['failureCategory'] as String
       : {'conflict','duplicateReconciled'}.contains(stage) ||
         stage=='repairDiagnosed' && verifiedOutcomes.contains(event['outcome'])
