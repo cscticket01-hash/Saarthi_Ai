@@ -24,7 +24,16 @@ class WindowsDeviceDirectoryCache {
           seen>8640000000000000 || row['name'] is! String || (row['name'] as String).length>100) {
         throw const FormatException('Invalid device response.');
       }
-      rows.add({for(final key in ['deviceIdentity','name','status','current','lastSeenAt','activity']) key:row[key]});
+      // Store only a bounded, validated display hint; never access credentials.
+      final type = row['connectionType'];
+      final seenConnection = row['connectionSeenAt'];
+      rows.add({
+        for(final key in ['deviceIdentity','name','status','current','lastSeenAt','activity'])
+          key:row[key],
+        'connectionType':type=='WiFi'||type=='LAN' ? type : 'Unknown',
+        'connectionSeenAt': seenConnection is int && seenConnection > 0 &&
+                seenConnection <= 8640000000000000 ? seenConnection : null,
+      });
     }
     if(rows.where((r)=>r['current']==true && r['status']=='active').length!=1 ||
         rows.where((r)=>r['status']=='active').length>5) {
