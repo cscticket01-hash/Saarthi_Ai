@@ -127,6 +127,7 @@ class SchoolCloudEngine extends ChangeNotifier {
   int _failures = 0;
   DateTime? _lastPresence;
   bool _presenceRunning=false;
+  bool _presenceWasOffline=false;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
   /// Local records remain mounted and visually readable when the configured
@@ -227,6 +228,7 @@ class SchoolCloudEngine extends ChangeNotifier {
     _verifiedServerTime = null;
     _deviceLeaseExpiry=0;
     _deviceEnforcedSeen=false;
+    _presenceWasOffline=false;
     error = null;
     _notify();
     try {
@@ -289,9 +291,18 @@ class SchoolCloudEngine extends ChangeNotifier {
     final origin=identity;
     if(origin==null)return;
     try {
+      // Presence only confirms transport; it does NOT extend the signed
+      // licence period. A recovered connection triggers an authoritative
+      // session verification immediately, then normal checks are throttled.
       await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});
-      await refreshAfterNetworkUse();
-    } catch(_){await verify();}
+      final recovered=_presenceWasOffline;
+      _presenceWasOffline=false;
+      if (_requireDailyOnline && recovered) await verifyNow();
+      else await refreshAfterNetworkUse();
+    } catch(_) {
+      _presenceWasOffline=true;
+      await verify();
+    }
 
   }
 
