@@ -5,10 +5,67 @@ import 'package:crypto/crypto.dart';
 /// credentials or executes code. Existing repair owners retain all authority.
 class WindowsRepairMemory {
   static const limit = 100;
+  // Compact repair patterns survive the 24-hour per-operation display expiry.
+  // A fixed schema limits storage and cannot encode school, record or person IDs.
+  static const patternLimit = 1000;
+  static const _patternModules = {'students_directory','teachers_directory',
+    'school_notices','school_calendar','attendance_records','attendance_logs',
+    'teacher_attendance','exam_results','fee_payments','fee_ledger',
+    'school_expenses','teacher_salary','school_config','school_settings','documents'};
+  static const _knownCodes = {'UNCLASSIFIED','RECORD_REVISION_CONFLICT',
+    'OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT',
+    'SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT',
+    'SCRIPT_TIMEOUT','SCRIPT_QUOTA_EXCEEDED','SCRIPT_PERMISSION_DENIED',
+    'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+    'FIELD_DELTA_UNAVAILABLE','ACK_UNVERIFIED','SCRIPT_TRANSPORT_ERROR',
+    'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_MIGRATION_PENDING',
+    'SCRIPT_MIGRATION_CONFLICT','SCRIPT_STORAGE_NOT_PREPARED',
+    'SCRIPT_JSON_READBACK_FAILED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED'};
   final _entries = <String, Map<String, dynamic>>{};
+  final _patterns = <String, Map<String, dynamic>>{};
+  List<Map<String,dynamic>> get patterns =>
+    _patterns.values.map((e)=>Map<String,dynamic>.from(e)).toList();
+  static String _code(Object? code) =>
+    code is String && _knownCodes.contains(code) ? code : 'UNCLASSIFIED';
+  // No arbitrary error text, script URL, data, record ID or operation ID.
+  void _rememberPattern(Map<String,dynamic> entry, int now, {required bool resolved}) {
+    final module=entry['collection'],category=entry['category'];
+    if(!_patternModules.contains(module)||!categories.contains(category))return;
+    final code=_code(entry['failureCode']),key='$module:$category:$code';
+    final previous=_patterns[key];
+    final p=previous==null?<String,dynamic>{
+      'collection':module,'category':category,'failureCode':code,'firstAt':now,
+      'lastAt':now,'observations':0,'verifiedRepairs':0,'recurrences':0,
+      'status':'detected',
+    }:Map<String,dynamic>.from(previous);
+    if(resolved){
+      p['verifiedRepairs']=(p['verifiedRepairs'] as int)+1;
+      p['lastResolvedAt']=now;
+      p['status']='resolved';
+    }else{
+      p['observations']=(p['observations'] as int)+1;
+      if(p['status']=='resolved'){
+        p['recurrences']=(p['recurrences'] as int)+1;
+        p['status']='recurred';
+      }else if(p['status']!='recurred')p['status']='detected';
+    }
+    p['lastAt']=now;
+    if(entry['resolvedInVersion'] is String)p['resolvedInVersion']=entry['resolvedInVersion'];
+    _patterns.remove(key);_patterns[key]=p;
+    if(_patterns.length>patternLimit){
+      // Prefer retaining proven recipes; only bounded oldest patterns expire.
+      final oldest=_patterns.entries.toList()..sort((a,b){
+        final aScore=(a.value['verifiedRepairs'] as int)>0?1:0;
+        final bScore=(b.value['verifiedRepairs'] as int)>0?1:0;
+        if(aScore!=bScore)return aScore.compareTo(bScore);
+        return (a.value['lastAt'] as int).compareTo(b.value['lastAt'] as int);
+      });
+      _patterns.remove(oldest.first.key);
+    }
+  }
   List<Map<String, dynamic>> get entries =>
       _entries.values.map((e) => Map<String, dynamic>.from(e)).toList();
-  void clear() => _entries.clear();
+  void clear() {_entries.clear();_patterns.clear();}
   void pruneResolved(int now) => _entries.removeWhere((_,e)=>e['status']=='resolved'&&
     e['lastAt'] is int&&now>=e['lastAt']&&now-e['lastAt']>=const Duration(hours:24).inMilliseconds);
   static const issueStages = {'retry', 'conflict', 'needsAttention',
@@ -54,6 +111,7 @@ class WindowsRepairMemory {
           final versions = <String>{...((entry['observedVersions'] as List?) ?? []).whereType<String>(), appVersion}.toList();
           entry['observedVersions'] = versions.length > 8 ? versions.sublist(versions.length - 8) : versions;
         }
+        _rememberPattern(entry,now,resolved:true);
       }
       return changed;
     }
@@ -69,9 +127,12 @@ class WindowsRepairMemory {
       'key': key, 'scope': identity, 'schoolId': school,
       'collection': _token(event['collection']) ?? 'unknown',
       'recordId': _token(event['documentId']) ?? _token(event['queueId']),
-      'category': category, 'firstAt': now, 'observations': 0,
+      'category': category, 'failureCode': _code(event['failureCode']),
+      'firstAt': now, 'observations': 0,
       'verifiedRepairs': 0, 'recurrences': 0,
     };
+    if(entry['failureCode']=='UNCLASSIFIED' && _code(event['failureCode'])!='UNCLASSIFIED')
+      entry['failureCode']=_code(event['failureCode']);
     // Repeated log emission is an observation, not a new repair attempt.
     entry['observations'] = (entry['observations'] as int) + 1;
     if (previous?['status'] == 'resolved' && !verified) {
@@ -97,15 +158,17 @@ class WindowsRepairMemory {
       : {'networkPath', 'timeout', 'server', 'quota'}.contains(category)
       ? 'retry_original_with_backoff' : 'review_without_overwrite';
     _entries.remove(key); _entries[key] = entry;
+    _rememberPattern(entry,now,resolved:verified && previous?['status']!='resolved');
     while (_entries.length > limit) { _entries.remove(_entries.keys.first); }
     return true;
   }
   Map<String, dynamic> snapshot(String school) => {
-    'version': 1, 'schoolId': school, 'entries': entries,
+    'version': 2, 'schoolId': school, 'entries': entries,
+    'patterns': patterns,
   };
   void restore(Object? raw, String school) {
     clear();
-    if (raw is! Map || raw['version'] != 1 || raw['schoolId'] != school || raw['entries'] is! List) return;
+    if (raw is! Map || !{1,2}.contains(raw['version']) || raw['schoolId'] != school || raw['entries'] is! List) return;
     for (final value in (raw['entries'] as List).take(limit)) {
       if (value is! Map || value['schoolId'] != school ||
           !RegExp(r'^[a-f0-9]{64}$').hasMatch(value['key']?.toString() ?? '') ||
@@ -123,6 +186,7 @@ class WindowsRepairMemory {
         'observedVersions': value['observedVersions'] is List
           ? (value['observedVersions'] as List).map(_version).whereType<String>().take(8).toList() : <String>[],
         'collection': _token(value['collection']) ?? 'unknown',
+        'failureCode':_code(value['failureCode']),
         'recordId': _token(value['recordId']),
         'outcome': _token(value['outcome'], max:100) ?? 'unknown',
         'learnedAction': {'retain_verified_cloud','retain_verified_evidence',
@@ -131,6 +195,31 @@ class WindowsRepairMemory {
         if (value['resolvedAt'] is int && value['resolvedAt'] >= 0) 'resolvedAt': value['resolvedAt'],
       };
       _entries[entry['key'] as String] = entry;
+    }
+    if(raw['version']==2 && raw['patterns'] is List){
+      for(final value in (raw['patterns'] as List).take(patternLimit)){
+        if(value is! Map || !_patternModules.contains(value['collection']) ||
+            !categories.contains(value['category']) ||
+            !_knownCodes.contains(value['failureCode']) ||
+            !{'detected','recurred','resolved'}.contains(value['status']) ||
+            ['firstAt','lastAt','observations','verifiedRepairs','recurrences']
+              .any((k)=>value[k] is! int || value[k]<0) ||
+            value['lastAt']<value['firstAt'] ||
+            value['lastResolvedAt']!=null && (value['lastResolvedAt'] is! int || value['lastResolvedAt']<0))
+          continue;
+        final p=<String,dynamic>{
+          for(final k in ['collection','category','failureCode','status',
+            'firstAt','lastAt','observations','verifiedRepairs','recurrences'])k:value[k],
+          if(value['lastResolvedAt'] is int)'lastResolvedAt':value['lastResolvedAt'],
+          if(_version(value['resolvedInVersion'])!=null)'resolvedInVersion':value['resolvedInVersion'],
+        };
+        _patterns['${p['collection']}:${p['category']}:${p['failureCode']}']=p;
+      }
+    }else{
+      // Backward-compatible upgrade of older v1 local snapshots.
+      for(final e in _entries.values) {
+        _rememberPattern(e,e['lastAt'] as int,resolved:e['status']=='resolved');
+      }
     }
   }
 }
