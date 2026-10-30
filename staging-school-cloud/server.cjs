@@ -101,9 +101,15 @@ function managedFeatureOptions(env,testSchoolId) {
  const deviceManagementEnabled=managementFlag==='true';
  const deviceAccessEnforced=flag('SAARTHI_TEST_DEVICE_ACCESS_ENFORCED');
  const studentImportEnabled=flag('SAARTHI_TEST_STUDENT_IMPORT_ENABLED');
+ // A 24-hour signed device lease is TEST-only until all offline/read-only
+ // physical acceptance tests pass. Default remains 15 minutes.
+ const dailyDeviceLease=flag('SAARTHI_TEST_DAILY_ONLINE_WINDOW');
+ if(dailyDeviceLease&&!deviceAccessEnforced)
+  throw Error('Daily device window requires isolated enforced PC device proof');
  if(deviceAccessEnforced&&!env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY)throw Error('TEST offline signing key required');
  return {deviceAccessEnforced,studentImportEnabled,...(deviceEnrollmentEnabled?{deviceEnrollmentEnabled:true}:{}),...(deviceManagementEnabled?{deviceManagementEnabled:true}:{}),
-  ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{})};
+  ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{}),
+  ...(dailyDeviceLease?{deviceOfflineWindowMs:86400000}:{})};
 }
 function fromEnvironment(env) {
   const testSchoolId=isolatedTestSchool(env);
@@ -128,7 +134,7 @@ function fromEnvironment(env) {
   const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
     ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,edgeRecordParallelism:env.SAARTHI_EDGE_RECORD_PARALLELISM==='2'?2:1,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
