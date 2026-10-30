@@ -116,6 +116,7 @@ Map<String, Map<String, dynamic>> windowsSyncLanes(
 
 String documentFailureExplanation(Map row) {
   const messages = {
+    'FIELD_DELTA_UNAVAILABLE':'Field-only sync support or a verified baseline is required. The saved edit is retained.',
     'RECORD_LOCAL_STORAGE_IO': 'Local database or credential access failed. The original request is retained for bounded retry.',
     'ACK_UNVERIFIED':
         'Server acknowledgement or readback did not verify. Pending retained.',
