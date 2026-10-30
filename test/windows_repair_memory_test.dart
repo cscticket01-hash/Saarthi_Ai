@@ -6,6 +6,8 @@ import '../lib/windows_sync_recovery.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_repair_memory.dart';
+import '../lib/windows_learned_sync_rules.dart';
+import '../lib/shared_repair_policy.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -76,6 +78,67 @@ void main() {
     expect(memory.entries.single['status'],'resolved');
     expect(memory.entries.single['verifiedRepairs'],1);
   });
+
+  test('verified repair patterns survive 24-hour history cleanup and process restart',(){
+    final memory=WindowsRepairMemory();
+    memory.observe(event('conflict',category:'conflict'),school,1);
+    memory.observe(event('verified',category:'conflict'),school,2);
+    memory.observe(event('verified',category:'conflict'),school,3);
+    expect(memory.patterns.single['verifiedRepairs'],1,reason:'Same operation counted once');
+    final legacy={'version':1,'schoolId':school,'entries':memory.snapshot(school)['entries']};
+    expect((WindowsRepairMemory()..restore(legacy,school)).patterns.single['verifiedRepairs'],1);
+    memory.pruneResolved(86400003);
+    expect(memory.entries,isEmpty);
+    expect(memory.patterns.single['status'],'resolved');
+    final saved=jsonDecode(jsonEncode(memory.snapshot(school)));
+    final restored=WindowsRepairMemory()..restore(saved,school);
+    expect(restored.patterns.single['verifiedRepairs'],1);
+    expect((WindowsRepairMemory()..restore(saved,'another-school')).patterns,isEmpty);
+    final rules=WindowsLearnedSyncRules()..seedVerified([
+      for(final p in restored.patterns){...p,'schoolId':school}
+    ],school);
+    expect(rules.recommend(school,'teachers_directory','conflict'),'verify_original');
+    expect(rules.recommend('another-school','teachers_directory','conflict'),isNull);
+  });
+  test('duplicate reconciliation closes the original conflict pattern, not a new success category',(){
+    final memory=WindowsRepairMemory();
+    memory.observe(event('conflict',category:'conflict'),school,10);
+    memory.observe(event('duplicateReconciled',category:'verifiedDuplicate'),school,11);
+    expect(memory.entries.length,1);
+    expect(memory.entries.single['status'],'resolved');
+    expect(memory.patterns.length,1);
+    expect(memory.patterns.single['category'],'conflict');
+    expect(memory.patterns.single['verifiedRepairs'],1);
+    expect(sharedRepairObservations(memory.patterns),[
+      {'module':'teachers_directory','category':'conflict','outcome':'resolved'},
+    ]);
+  });
+
+  test('permanent shared patterns contain only allowlisted generic fields',(){
+    final memory=WindowsRepairMemory();
+    memory.observe({...event('conflict',op:'private-operation-987',id:'student-secret',category:'conflict'),
+      'failureCode':'PRIVATE_STUDENT_SECRET','password':'do-not-share',
+      'token':'do-not-share','lastError':'personal data'},school,10);
+    memory.observe(event('verified',op:'private-operation-987',id:'student-secret',category:'conflict'),school,11);
+    final pattern=jsonEncode(memory.patterns);
+    for(final private in ['private-operation','student-secret','do-not-share',school,'lastError','password','token']) {
+      expect(pattern, isNot(contains(private)));
+    }
+    expect(memory.patterns.single['failureCode'],'UNCLASSIFIED');
+    expect(sharedRepairObservations(memory.patterns),[
+      {'module':'teachers_directory','category':'conflict','outcome':'resolved'},
+    ]);
+    memory.observe({...event('duplicateReconciled',id:'second-record',op:'second-operation'),
+      'failureCategory':null},school,12);
+    expect(memory.patterns.any((p)=>p['category']=='conflict'&&p['verifiedRepairs']>=1),isTrue);
+    final invalid=jsonDecode(jsonEncode(memory.snapshot(school)));
+    (invalid['patterns'] as List).add({'collection':'teachers_directory',
+      'category':'conflict','failureCode':'INJECT_CODE','status':'resolved',
+      'firstAt':1,'lastAt':2,'observations':1,'verifiedRepairs':1,'recurrences':0});
+    final restored=WindowsRepairMemory()..restore(invalid,school);
+    expect(restored.patterns.every((p)=>p['failureCode']=='UNCLASSIFIED'),isTrue);
+  });
+
   test('unchanged diagnosed conflict cools down only with known unchanged cloud evidence', () {
     final prior={'outcome':'review_required','inputSignature':'sig','cloudManifestRevision':'head','verifiedReadbackAt':10};
     bool skip({String sig='sig',String? cloud='head',int at=20,bool manual=false})=>

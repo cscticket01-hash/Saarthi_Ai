@@ -22,3 +22,164 @@ The client verifies the pinned Ed25519 key, protocol, purpose, signature, timest
 4. Subsequent supported rule changes arrive remotely without another installer. New native functionality, new repair action types, database changes or key-pin replacement still require an app release.
 
 This implementation does not claim production activation, real-school throughput, measured speed gains, or automatic resolution of every sync error.
+
+
+## Permanent local repair-pattern memory (v2 snapshots)
+
+Each school profile keeps two separate local views in its existing durable
+`_windows_sync_status/recovery` record:
+
+- **Short-lived evidence:** at most 100 scoped per-operation observations. A
+  verified-resolved display entry expires after 24 hours; unresolved evidence
+  and the original durable outbox/receipts are never cleared by this cleanup.
+- **Durable pattern catalog:** at most 1,000 compact
+  `collection/category/allowlistedFailureCode` patterns with first/last seen
+  timestamps, recurring observations, and verified resolution counts. **No
+  automatic age-based deletion**. When storage reaches the 1,000-pattern bound,
+  the oldest unverified pattern is evicted before a verified one. All fields
+  are checked during restore; version-1 local snapshots are upgraded without
+  resetting queues. Application upgrades and ordinary restarts reuse the
+  same school-isolated local store.
+
+Patterns are observations, not executable recipes. A `verified` event must
+match an existing school-scoped pending operation before a new verified repair
+is counted. Repeated success messages for the same operation do not increase
+the count. An unresolved conflict, generic request success, or expired cache
+never grants a cloud ACK, changes payment amounts, or authorizes overwrites.
+
+The already existing `WindowsLearnedSyncRules` stores allowed deterministic
+actions independently of display events and seeds missing **safe** rules from
+previously verified pattern evidence after restart. This does **not** add
+unrestricted new repair actions.
+
+### Sharing to other schools
+
+At most once per hour when the shared-repair service is configured, the
+Windows client submits **only recently observed patterns** reduced to
+`module/category/outcome` enums by `sharedRepairObservations`. No
+school/record/operation IDs, error text, personal details, payment values, or
+credentials enter this payload. The broker aggregates untrusted, bounded
+category observations across licensed schools. A school cannot retrieve
+another school's records or source hash.
+
+An observed solution in School A **does not automatically become executable
+code in School B**. Cross-school action changes continue to require an
+already-supported bounded handler, verified CI evidence, developer approval,
+a signed policy and rollout checks. The Windows client validates the policy
+before applying it; unsigned/unconfigured policy falls back to local compiled
+behavior. This distinction is necessary to prevent one compromised device
+from pushing unsafe financial repairs to all schools.
+
+This change does not modify the school-owned Apps Script, transfer business
+data to the learning service, activate missing production signing secrets,
+or replace real-device and school-cloud acceptance tests.
+
+
+## Server-authoritative permanence, clean installation and cross-school rollout
+
+The central broker now archives every published, cryptographically signed repair
+policy at the protected, server-only Firestore path
+`repair_knowledge/version-<sequence>`, separately from the current
+`repair_knowledge/published` head. Every renewal and evidence-expiry kill switch
+gets a new immutable sequence. The publication archive is not stored in school
+Drive or dependent on a particular PC; uninstall, in-app reset and Windows
+reinstallation cannot erase the server records. Deleting the central backend
+itself, provider retention changes or administrative deletion are separate
+disaster-recovery risks; include this collection in central backups.
+
+The 24-hour Windows "Smart Repair History" is only a recent, school-scoped UI
+view. The existing local v2 pattern catalog and signed remote-policy cache are
+non-authoritative *copies* used to avoid repeated offline diagnostics. The
+canonical, device-independent approved policy lives on the broker. Fresh app
+installs and older compatible clients pull the current signed rules from the
+same school-authenticated endpoint when online. A client release is still
+required for a new native repair algorithm or signing-key rotation. No raw
+student names, fee amounts, Drive URLs, operation IDs or school IDs leave a
+school in the shared observation payload.
+
+Untrusted school observations do not grant publication authority. A reviewed
+repair only reaches another school after the server has independently
+verified the fix, obtained protected CI evidence, the developer has approved
+a compatible policy, and the signed rollout has passed. This avoids remote
+code execution or cross-school data leakage.
+
+## Staged Windows 24-hour online authorization policy
+
+The managed-school Windows client has a new opt-in build control:
+`--dart-define=SAARTHI_WINDOWS_REQUIRE_DAILY_ONLINE=true`. With that policy
+enabled, the existing authenticated server `managed/session` proof gives at
+most 24 hours of offline **interactive** access, subject to the *shorter*
+licence or signed device-lease expiry. At the deadline the already-mounted
+dashboard remains visible but becomes read-only: an explicit "Internet
+unavailable, please connect internet" notice appears; pointer and keyboard
+interaction and manual/automatic Sync Engine admission stop, without
+deleting any local business records, outbox items or media. Pressing
+"Verify online" attempts the same authenticated school verification; a
+successful fresh proof resumes normal interaction.
+
+Existing production Windows builds intentionally keep their current
+offline behavior until the guarded rollout is enabled and tested. This
+read-only UI barrier does not constitute tamper-proof DRM. Managed broker
+authorization/licence/device checks are still the server-side authority;
+a modified client may bypass local UI restrictions, so financial and data
+operations must always be authenticated/authorized on the server. New
+installations without an existing verified school identity cannot claim a
+24-hour offline grant. Genuine blocked/expired licence states remain
+separately denied, not mistaken for an internet outage.
+
+24 hours is a *verification interval*, not a guarantee of constant network
+availability. If the network is unavailable after that interval, normal
+business interaction remains locked until verification succeeds. Physical
+Windows rollback/clock-change, power-loss, multi-PC, printer, account lock,
+backup/restore, and device-revocation tests must pass before release.
+
+
+### Device-lease compatibility for daily read-only mode
+
+The currently enforced Windows device authorization token has a **15-minute**
+signed offline lifetime, independent of the old 72-hour licence cache. A
+client-side 24-hour UI check alone cannot lengthen this token. The server-side
+`createManagedDeviceAccess` now supports either its existing 15-minute
+default or an explicitly configured 24-hour signed window; the Windows Ed25519
+verifier permits the longer lifetime **only** in the daily-online build.
+The TEST broker exposes `SAARTHI_TEST_DAILY_ONLINE_WINDOW=true` solely when
+isolated TEST mode and signed device enforcement are both active. The server
+still re-checks device registry, membership and school entitlement on **every**
+actual online request. Offline revocation cannot be instantaneous; widening
+the signed offline window may increase exposure to a revoked device, which
+requires a documented production security decision.
+
+A production 24-hour enforcement rollout needs a corresponding vetted server
+device-lease configuration, production signing-key/pin verification and
+physical 24-hour expiration/recovery tests. A new client paired to the old
+15-minute server lease will still lose device authorization at 15 minutes;
+that must not be mislabeled as successful 24-hour acceptance.
+
+
+### Automatic daily proof renewal and 3-second disclaimer
+
+The Windows dashboard opens immediately from the existing verified same-school
+cache, without a new full cloud/Drive sync. If its 24-hour last **successful
+authenticated school-session** proof has elapsed, background sync admission
+and all pointer/keyboard interaction become read-only immediately, preserving
+the dashboard and local records. The visible "Internet unavailable, please
+connect internet" disclaimer is delayed for **3 seconds** after the expired
+dashboard first mounts; this is *not* a three-second security grace period.
+
+A successful server-side `managed/session` renewal (including the server time,
+school identity, current entitlement and any enforced device proof) replaces
+the old lease. Any legitimate online activity may initiate that renewal:
+Windows clicks, Sync Engine network use, authenticated presence, the startup
+verification, and 60-second scheduler ticks while the app is open.
+Network-unavailable retries are bounded; successful online verification occurs
+without manual Sync Now and without mutating any school business data. The
+deadline starts afresh at the server-authenticated timestamp, not when the
+network icon merely reports "connected". The existing read-only dashboard
+unlocks on successful verification; an app update is not required after that.
+
+For resource control, online activity uses a 15-minute minimum recheck
+interval and periodic online revalidation at most hourly. When the school is
+offline and has a failed verification, bounded retries use 1, 2 and 5-minute
+spacing, so extremely brief internet availability cannot be guaranteed to
+renew the lease. Genuine revocation, licence expiry and invalid device proof
+remain server-authoritative and cannot be converted to offline renewal.

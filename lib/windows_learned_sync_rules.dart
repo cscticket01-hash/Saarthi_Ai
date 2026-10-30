@@ -50,7 +50,7 @@ class WindowsLearnedSyncRules {
     return true;
   }
   void seedVerified(Iterable<Map<String,dynamic>> memory,String school){
-    if(_rules.isNotEmpty)return;
+    // Add newly verified patterns without replacing existing learned rules.
     for(final e in memory){
       final module=e['collection'],category=e['category']=='verifiedDuplicate'?'conflict':e['category'];
       if(e['schoolId']!=school||e['status']!='resolved'||(e['verifiedRepairs'] as num? ?? 0)<=0||!modules.contains(module)||!{...transient,'conflict'}.contains(category))continue;

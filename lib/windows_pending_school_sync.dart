@@ -328,6 +328,7 @@ class WindowsPendingSchoolSync {
       String queueId,
       Map<String, dynamic> item, {
       String? category,
+      String? failureCode,
       DateTime? retryAt,
       int? elapsedMicros,
     }) {
@@ -346,6 +347,8 @@ class WindowsPendingSchoolSync {
               stage == 'retry' &&
               recoverablePendingCategories.contains(category),
           if (category != null) 'failureCategory': category,
+          if (failureCode != null && RegExp(r'^[A-Z0-9_]{5,64}$').hasMatch(failureCode))
+            'failureCode': failureCode,
           if (retryAt != null) 'retryAt': retryAt.millisecondsSinceEpoch,
           if (elapsedMicros != null) 'elapsedMicros': elapsedMicros,
         });
@@ -618,6 +621,7 @@ class WindowsPendingSchoolSync {
           queued.id,
           item,
           category: decision.kind.name,
+          failureCode: code,
           retryAt: retryAt,
           elapsedMicros: watch.elapsedMicroseconds,
         );

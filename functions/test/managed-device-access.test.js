@@ -1,13 +1,13 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {generateKeyPairSync,createHash}=require('node:crypto');
-const {createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS}=require('../managed-device-access');
+const {createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS,DAILY_OFFLINE_MS}=require('../managed-device-access');
 const {generateDeviceCredential,createManagedDeviceRegistry}=require('../managed-device-registry');
 const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),keys=generateKeyPairSync('ed25519');
 const hash=value=>createHash('sha256').update(value).digest('hex');
-function fixture(enforced=true,managementEnabled=false,enrollmentEnabled=false){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
+function fixture(enforced=true,managementEnabled=false,enrollmentEnabled=false,offlineWindowMs=MAX_OFFLINE_MS){let time=1000000,tail=Promise.resolve();const rows=new Map(),audit=[];
  const store={transaction(school,work){const result=tail.then(async()=>{const change=await work(rows.has(school)?structuredClone(rows.get(school)):null);rows.set(school,structuredClone(change.state));if(change.audit)audit.push(change.audit);return change.result;});tail=result.catch(()=>{});return result;}};
- const access=createManagedDeviceAccess({store,enforced,managementEnabled,enrollmentEnabled,offlinePrivateKey:keys.privateKey,now:()=>time});
+ const access=createManagedDeviceAccess({store,enforced,managementEnabled,enrollmentEnabled,offlinePrivateKey:keys.privateKey,now:()=>time,offlineWindowMs});
  const identity={schoolId:A,uid:'school-admin',authenticatedAt:time};
  const entitlement={allowed:true,expiresAt:time+86400000};
  const proof=n=>({'x-vidya-device-id':String(n).padStart(32,'0'),'x-vidya-device-credential':generateDeviceCredential()});
@@ -55,6 +55,19 @@ test('offline lease is signature/context/generation bound and expires within15mi
  f.setTime(result.offlineExpiresAt);assert.throws(()=>verifyOfflineDeviceLease(result.offlineLease,context),{code:'INVALID_OFFLINE_DEVICE_LEASE'});
  f.setTime(1000000);const shorter=(await f.call('managed/device/check',headers,{},f.identity,{allowed:true,expiresAt:f.time()+5000})).result;
  assert.equal(shorter.offlineExpiresAt,f.time()+5000);
+});
+test('opt-in daily offline device lease remains signed, identity-bound and capped at 24 hours',async()=>{
+ const f=fixture(true,false,false,DAILY_OFFLINE_MS),headers=f.proof(1);
+ const result=(await f.call('managed/device/register',headers)).result;
+ const context={publicKey:keys.publicKey,schoolId:A,uid:f.identity.uid,
+  deviceIdentity:result.device.deviceIdentity,generationHash:result.device.generationHash,now:f.time};
+ assert.equal(result.offlineExpiresAt,f.time()+DAILY_OFFLINE_MS);
+ assert.equal(verifyOfflineDeviceLease(result.offlineLease,{...context,maxOfflineMs:DAILY_OFFLINE_MS}).expiresAt,result.offlineExpiresAt);
+ assert.throws(()=>verifyOfflineDeviceLease(result.offlineLease,context),{code:'INVALID_OFFLINE_DEVICE_LEASE'});
+ assert.throws(()=>verifyOfflineDeviceLease(result.offlineLease,{...context,maxOfflineMs:DAILY_OFFLINE_MS,schoolId:B}),{code:'INVALID_OFFLINE_DEVICE_LEASE'});
+ f.setTime(result.offlineExpiresAt);
+ assert.throws(()=>verifyOfflineDeviceLease(result.offlineLease,{...context,maxOfflineMs:DAILY_OFFLINE_MS}),{code:'INVALID_OFFLINE_DEVICE_LEASE'});
+ assert.throws(()=>createManagedDeviceAccess({store:f.store,enforced:true,offlinePrivateKey:keys.privateKey,offlineWindowMs:2*DAILY_OFFLINE_MS}),/Unsupported/);
 });
 test('stale password authentication cannot admit new PC; same active retry remains idempotent',async()=>{
  const f=fixture(),headers=f.proof(1);await f.call('managed/device/register',headers);

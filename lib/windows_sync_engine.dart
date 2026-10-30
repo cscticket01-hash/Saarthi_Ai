@@ -1,5 +1,6 @@
 import 'windows_sync_evidence.dart';
 import 'windows_learned_sync_rules.dart';
+import 'windows_daily_access_guard.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
@@ -218,7 +219,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   void _admitBatch() {
-    if (isPaused) throw const _SyncAdmissionPaused();
+    // Check on every batch boundary too: a 24-hour proof can expire while a
+    // background cycle is running. Never admit the next financial/file write
+    // after the deadline. Original pending operations stay untouched.
+    if (isPaused || WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId))
+      throw const _SyncAdmissionPaused();
   }
 
   bool _syncing = false;
@@ -559,6 +564,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
       'repairMemory': repairMemory.entries,
+      'permanentRepairPatternCount': repairMemory.patterns.length,
       'learnedRuleCount':learnedSyncRules.rules.length,
     };
   }
@@ -1167,6 +1173,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     bool localMutation = false,
   }) {
     if (!_initialized ||
+        WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId) ||
         _syncBlocked ||
         _resetPaused ||
         isPaused ||
@@ -1627,7 +1634,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final storedHistory = storedRecovery?['events'];
     repairMemory.restore(storedRecovery?['repairMemory'], _activeSchoolSyncId);
     learnedSyncRules.restore(storedRecovery?['learnedRules'],_activeSchoolSyncId);
-    learnedSyncRules.seedVerified(repairMemory.entries,_activeSchoolSyncId);
+    learnedSyncRules.seedVerified([
+      ...repairMemory.entries,
+      for(final p in repairMemory.patterns)
+        {...p,'schoolId':_activeSchoolSyncId},
+    ],_activeSchoolSyncId);
     final savedTransfer=(await FirebaseFirestore.instance.collection('_windows_sync_status').doc('last-transfer').get()).data();
     if(FirebaseFirestore.instance.activeProfileId!=profile.profileId)return;
     verifiedTransferTiming.restore(savedTransfer,_activeSchoolSyncId);
@@ -1910,6 +1921,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   Future<void> syncNow({bool verifyInventory = false}) async {
+    if (WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId)) {
+      // A verified but expired school must reconnect; retain the entire
+      // original durable queue and never send through a cached session.
+      state.value = SchoolCloudState.offline;
+      return;
+    }
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
       return;
 
@@ -1919,7 +1936,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return;
     }
     _syncing = true;
-    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,repairMemory.entries));
+    // Share only sanitized, recently observed pattern metadata. Signed and
+    // independently approved remote policies remain the sole action authority.
+    final recentPatterns=repairMemory.patterns.where((p){
+      final at=p['lastAt'];
+      final now=DateTime.now().millisecondsSinceEpoch;
+      return at is int && at<=now && now-at<=const Duration(hours:1).inMilliseconds;
+    }).toList()..sort((a,b)=>(b['lastAt'] as int).compareTo(a['lastAt'] as int));
+    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,recentPatterns));
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
       now: now,
@@ -1953,11 +1977,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         return;
       }
       if (central['managed'] == true) {
+        // Sync activity verifies the school session on the broker, not a
+        // fabricated local online flag. Reuse the mounted dashboard's state.
+        await SchoolCloudEngine.current.refreshAfterNetworkUse();
         ManagedSchoolSession.verifyBuildEndpoint(
           central['endpoint']?.toString() ?? '',
         );
-        if (SchoolCloudEngine.instance.identity != null &&
-            !SchoolCloudEngine.instance.canOpen)
+        if (SchoolCloudEngine.current.identity != null &&
+            !SchoolCloudEngine.current.canOpen)
           throw StateError('School access requires verification.');
         if (central['storageReady'] != true)
           throw StateError(
@@ -2664,7 +2691,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _failures = 0;
     _manualSync = true;
     try {
-      await SchoolCloudEngine.instance.verify();
+      await SchoolCloudEngine.current.verify();
       await syncNow();
     } finally {
       _manualSync = false;
@@ -2718,9 +2745,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       ManagedSchoolSession.verifyBuildEndpoint(
         central['endpoint']?.toString() ?? '',
       );
-      await SchoolCloudEngine.instance.verify();
-      if (SchoolCloudEngine.instance.identity != null &&
-          !SchoolCloudEngine.instance.canOpen) {
+      await SchoolCloudEngine.current.verify();
+      if (SchoolCloudEngine.current.identity != null &&
+          !SchoolCloudEngine.current.canOpen) {
         throw StateError('School authorization needs verification.');
       }
       _admitBatch();

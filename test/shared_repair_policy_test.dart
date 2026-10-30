@@ -64,6 +64,21 @@ void main(){
     expect(jsonEncode(observations),isNot(contains('private-')));
     expect(sharedRepairObservations([{'collection':'unsupported','category':'timeout','status':'resolved'}]),isEmpty);
   });
+  test('cross-school diagnostic fingerprint exports only fixed public enums',(){
+    final events=[
+      {'collection':'fee_payments','category':'conflict','status':'resolved',
+       'failureCode':'RECORD_REVISION_CONFLICT','studentId':'private-id'},
+      {'collection':'fee_payments','category':'conflict','status':'reviewRequired',
+       'failureCode':'student-name-and-amount'},
+    ];
+    final safe=sharedRepairObservations(events);
+    expect(safe,[
+      {'module':'fee_payments','category':'conflict','outcome':'resolved','code':'RECORD_REVISION_CONFLICT'},
+      {'module':'fee_payments','category':'conflict','outcome':'detected'},
+    ]);
+    expect(jsonEncode(safe),isNot(contains('private-id')));
+    expect(jsonEncode(safe),isNot(contains('student-name')));
+  });
   test('canary assignment is stable and rules remain within declared scope',()async{
     final b=body();(b['rules'] as List).single['rolloutPercent']=25;
     final p=await check(await sign(b));

@@ -101,9 +101,15 @@ function managedFeatureOptions(env,testSchoolId) {
  const deviceManagementEnabled=managementFlag==='true';
  const deviceAccessEnforced=flag('SAARTHI_TEST_DEVICE_ACCESS_ENFORCED');
  const studentImportEnabled=flag('SAARTHI_TEST_STUDENT_IMPORT_ENABLED');
+ // A 24-hour signed device lease is TEST-only until all offline/read-only
+ // physical acceptance tests pass. Default remains 15 minutes.
+ const dailyDeviceLease=flag('SAARTHI_TEST_DAILY_ONLINE_WINDOW');
+ if(dailyDeviceLease&&!deviceAccessEnforced)
+  throw Error('Daily device window requires isolated enforced PC device proof');
  if(deviceAccessEnforced&&!env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY)throw Error('TEST offline signing key required');
  return {deviceAccessEnforced,studentImportEnabled,...(deviceEnrollmentEnabled?{deviceEnrollmentEnabled:true}:{}),...(deviceManagementEnabled?{deviceManagementEnabled:true}:{}),
-  ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{})};
+  ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{}),
+  ...(dailyDeviceLease?{deviceOfflineWindowMs:86400000}:{})};
 }
 function fromEnvironment(env) {
   const testSchoolId=isolatedTestSchool(env);

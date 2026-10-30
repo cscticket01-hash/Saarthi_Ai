@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_daily_access_guard.dart';
 import 'dart:async';
 
 import 'school_cloud_engine.dart';
@@ -29,16 +30,23 @@ class WindowsManagedSchoolGate extends StatefulWidget {
 
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   late final SchoolCloudEngine engine;
+  late final bool Function(String) _dailyAdmissionBlocked;
   bool routed = false;
   bool _activatingLicence = false;
   bool _continuingTrial = false;
   String? error;
   final licence = TextEditingController();
   Timer? expiryTimer;
+  Timer? _dailyDisclaimerTimer;
+  bool _showDailyDisclaimer = false;
   @override
   void initState() {
     super.initState();
     engine = widget.engine ?? SchoolCloudEngine();
+    SchoolCloudEngine.mount(engine);
+    _dailyAdmissionBlocked = (school) =>
+      engine.identity?['schoolId'] == school && engine.dailyOnlineReadOnly;
+    WindowsDailyAccessGuard.install(_dailyAdmissionBlocked);
     engine.addListener(updated);
     WindowsSyncEngine.instance.state.addListener(updated);
     WindowsServiceStatus.instance.addListener(updated);
@@ -50,7 +58,22 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   }
 
   void updated() {
+    if (!engine.dailyOnlineReadOnly) {
+      _dailyDisclaimerTimer?.cancel();
+      _dailyDisclaimerTimer = null;
+      _showDailyDisclaimer = false;
+    }
     if (mounted) setState(() {});
+  }
+
+  void _queueDailyDisclaimer() {
+    if (_dailyDisclaimerTimer != null || _showDailyDisclaimer) return;
+    _dailyDisclaimerTimer = Timer(const Duration(seconds: 3), () {
+      _dailyDisclaimerTimer = null;
+      if (mounted && engine.dailyOnlineReadOnly) {
+        setState(() => _showDailyDisclaimer = true);
+      }
+    });
   }
 
   void sessionChanged() {
@@ -71,6 +94,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   @override
   void dispose() {
     expiryTimer?.cancel();
+    _dailyDisclaimerTimer?.cancel();
+    SchoolCloudEngine.unmount(engine);
+    WindowsDailyAccessGuard.uninstall(_dailyAdmissionBlocked);
     engine.removeListener(updated);
     engine.dispose();
     WindowsSyncEngine.instance.state.removeListener(updated);
@@ -119,6 +145,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
           ),
         ),
       );
+    // Mount the actual dashboard even after 24 hours. The guard blocks input
+    // immediately, but the informational banner arrives 3 seconds later.
+    if (engine.dailyOnlineReadOnly) _queueDailyDisclaimer();
     if (!engine.canOpen && engine.access?['allowed'] == true &&
         engine.access?['registrationState'] == 'new' &&
         engine.access?['status'] == 'licensed' &&
@@ -129,7 +158,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
         unawaited(engine.verify());
       });
     }
-    if (!engine.canOpen) {
+    if (!engine.canOpen && !engine.dailyOnlineReadOnly) {
       final s = engine.access;
       if (s == null)
         return Scaffold(
@@ -223,8 +252,33 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
       );
     }
     final s = engine.access!;
+    final readOnly = engine.dailyOnlineReadOnly;
     return Column(
       children: [
+        if (readOnly && _showDailyDisclaimer)
+          Material(
+            key: const ValueKey('daily-online-verification-disclaimer'),
+            color: WindowsAppearance.background(const Color(0xFF5A2630)),
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                child: Row(children: [
+                  const Icon(Icons.wifi_off, color: Colors.white),
+                  const SizedBox(width: 12),
+                  const Expanded(child: Text(
+                    'Internet unavailable, please connect internet. '
+                    '24-hour verification expired. Data remains visible, '
+                    'but entry, edit, delete, search, print and sync are disabled.',
+                    style: TextStyle(color: Colors.white))),
+                  OutlinedButton(
+                    onPressed: engine.verifyNow,
+                    child: const Text('Verify online'),
+                  ),
+                ]),
+              ),
+            ),
+          ),
         if (s['status'] == 'trial')
           Material(
             color: WindowsAppearance.background(Colors.red.shade900),
@@ -246,9 +300,16 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
             ),
           ),
         Expanded(
-          child: KeyedSubtree(
-            key: ValueKey(s['schoolId']),
-            child: widget.child,
+          child: FocusScope(
+            canRequestFocus: !readOnly,
+            descendantsAreFocusable: !readOnly,
+            child: AbsorbPointer(
+              absorbing: readOnly,
+              child: KeyedSubtree(
+                key: ValueKey(s['schoolId']),
+                child: widget.child,
+              ),
+            ),
           ),
         ),
       ],

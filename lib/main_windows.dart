@@ -4,6 +4,7 @@ import 'windows_student_import.dart';
 import 'windows_clean_install_entry.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_managed_school_gate.dart';
+import 'school_cloud_engine.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
@@ -49,6 +50,9 @@ class _WindowsActivityMonitorState extends State<WindowsActivityMonitor> {
     onPointerDown: (event) {
       if (event.kind == PointerDeviceKind.mouse) {
         (widget.onActivity ?? windows_html.document.dispatchClick)();
+        // A normal user click can promptly renew a stale online session.
+        // Internal throttling avoids a server request for every click.
+        unawaited(SchoolCloudEngine.current.refreshAfterNetworkUse());
       }
     },
     child: widget.child,

@@ -69,7 +69,10 @@ class ManagedDeviceCredentials {
   /// An opaque token or a key returned beside it never grants offline access.
   static Future<bool> verifyLease(String token, {required String schoolId, required String uid,
       required String deviceIdentity, required String generationHash, required int now,
-      String publicKey=leasePublicKey}) async {
+      String publicKey=leasePublicKey,
+      int maxOfflineMs=const bool.fromEnvironment(
+        'SAARTHI_WINDOWS_REQUIRE_DAILY_ONLINE', defaultValue:false)
+          ? 86400000 : 900000}) async {
     try {
       if(token.length>4096 || publicKey.isEmpty || now<0 || now>9007199254740991) return false;
       final parts=token.split('.');
@@ -84,7 +87,7 @@ class ManagedDeviceCredentials {
       if(payload is! Map || payload['version']!=1 || payload['purpose']!='vidya-pc-offline' || payload['schoolId']!=schoolId ||
           payload['uid']!=uid || payload['deviceIdentity']!=deviceIdentity || payload['generationHash']!=generationHash) return false;
       final issued=payload['issuedAt'], expiry=payload['expiresAt'];
-      return issued is int && expiry is int && issued<=9007199254740991 && expiry<=9007199254740991 && issued>=0 && issued<=now && expiry>now && expiry>issued && expiry-issued<=900000;
+      return issued is int && expiry is int && issued<=9007199254740991 && expiry<=9007199254740991 && issued>=0 && issued<=now && expiry>now && expiry>issued && [900000,86400000].contains(maxOfflineMs) && expiry-issued<=maxOfflineMs;
     } catch(_) { return false; }
   }
 }

@@ -29,7 +29,10 @@ class SchoolCloudEngine extends ChangeNotifier {
     DateTime Function()? clock,
     Duration Function()? elapsed,
     Future<bool> Function(Map<String,dynamic>, Map<String,dynamic>, int)? verifyDeviceLease,
-  }) : _elapsed = elapsed ?? _monotonicClock(),
+    bool requireDailyOnline = const bool.fromEnvironment(
+      'SAARTHI_WINDOWS_REQUIRE_DAILY_ONLINE', defaultValue: false),
+  }) : _requireDailyOnline = requireDailyOnline,
+       _elapsed = elapsed ?? _monotonicClock(),
        _useServerClock = clock == null || elapsed != null,
        _deviceVerifier = verifyDeviceLease ?? _verifyDeviceLease,
        _read = readIdentity ?? CentralSchoolCloud.saved,
@@ -57,6 +60,14 @@ class SchoolCloudEngine extends ChangeNotifier {
              expectedUid: identity['uid'],
            ));
   static final instance = SchoolCloudEngine();
+  // The mounted Windows gate is authoritative for daily-online admission.
+  // Do not create an unrelated session for Sync Now / recovery actions.
+  static SchoolCloudEngine? _mounted;
+  static SchoolCloudEngine get current => _mounted ?? instance;
+  static void mount(SchoolCloudEngine value) => _mounted = value;
+  static void unmount(SchoolCloudEngine value) {
+    if (identical(_mounted, value)) _mounted = null;
+  }
   final Future<Map<String, dynamic>> Function() _read, _verify;
   final Future<void> Function(Map<String, dynamic>, Map<String, dynamic>)
   _persist;
@@ -75,6 +86,9 @@ class SchoolCloudEngine extends ChangeNotifier {
   int get _accessNow => _verifiedServerTime == null
       ? _clock().millisecondsSinceEpoch
       : _verifiedServerTime! + (_elapsed() - _verifiedElapsed).inMilliseconds;
+  final bool _requireDailyOnline;
+  bool get requireDailyOnline => _requireDailyOnline;
+  static const dailyOnlineWindow = Duration(hours: 24);
   final Future<bool> Function(Map<String,dynamic>,Map<String,dynamic>,int) _deviceVerifier;
   int _deviceLeaseExpiry=0;
   bool _deviceEnforcedSeen=false;
@@ -113,8 +127,24 @@ class SchoolCloudEngine extends ChangeNotifier {
   int _failures = 0;
   DateTime? _lastPresence;
   bool _presenceRunning=false;
+  bool _presenceWasOffline=false;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
+  /// Local records remain mounted and visually readable when the configured
+  /// 24-hour online window has expired. This is NOT an access grant: every
+  /// mutation, search, print, sync and navigation control must remain disabled.
+  /// Revoked or expired school accounts never enter this read-only path.
+  bool get dailyOnlineReadOnly {
+    if (!_requireDailyOnline || !_localReady || identity == null ||
+        access == null || !sameIdentity(access!, identity!)) return false;
+    final issued = access!['serverTime'];
+    if (issued is! num || issued <= 0 ||
+        access!['allowed'] != true ||
+        !(access!['status'] == 'trial' || access!['activated'] == true) ||
+        accessExpired) return false;
+    return _accessNow - issued.toInt() >= dailyOnlineWindow.inMilliseconds &&
+        issued.toInt() <= _accessNow + 300000;
+  }
   bool get accessExpired =>
       (access?['expiresAt'] as num? ?? 0) <= _accessNow;
   bool get trialAvailable => access?['status'] == 'trial' &&
@@ -145,7 +175,9 @@ class SchoolCloudEngine extends ChangeNotifier {
       (access!['status'] == 'trial' || access!['activated'] == true) &&
       (access!['expiresAt'] as num? ?? 0) > _accessNow &&
       _accessNow - (access!['serverTime'] as num? ?? 0) <
-          (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72)).inMilliseconds &&
+          (_requireDailyOnline
+            ? dailyOnlineWindow
+            : (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72))).inMilliseconds &&
       (access!['serverTime'] as num? ?? 0) <=
           _accessNow + 300000 &&
       (_verifiedServerTime != null || (identity!['lastLocalSeenAt'] as num? ?? 0) <=
@@ -196,6 +228,7 @@ class SchoolCloudEngine extends ChangeNotifier {
     _verifiedServerTime = null;
     _deviceLeaseExpiry=0;
     _deviceEnforcedSeen=false;
+    _presenceWasOffline=false;
     error = null;
     _notify();
     try {
@@ -237,7 +270,12 @@ class SchoolCloudEngine extends ChangeNotifier {
       unawaited(verify());
       _retry = Timer.periodic(const Duration(seconds: 60), (_) {
         _notify();
-        final due = Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
+        // Daily access: check at least hourly while online; when the network
+        // disappears retry at bounded 1/2/5-minute intervals. A reconnect
+        // should renew the lease without requiring a full business sync.
+        final due = _requireDailyOnline
+          ? Duration(minutes: _failures == 0 ? 60 : (_failures == 1 ? 1 : _failures == 2 ? 2 : 5))
+          : Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
         if (_lastVerifyAttempt == null || _clock().difference(_lastVerifyAttempt!) >= due) unawaited(verify());
         else if(canOpen && !_presenceRunning && (_lastPresence==null || _clock().difference(_lastPresence!)>=const Duration(seconds:60))) {
           _presenceRunning=true;_lastPresence=_clock();
@@ -252,8 +290,20 @@ class SchoolCloudEngine extends ChangeNotifier {
     if(token is! String || token.isEmpty){await verify();return;} // Older broker compatibility.
     final origin=identity;
     if(origin==null)return;
-    try {await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});}
-    catch(_){await verify();}
+    try {
+      // Presence only confirms transport; it does NOT extend the signed
+      // licence period. A recovered connection triggers an authoritative
+      // session verification immediately, then normal checks are throttled.
+      await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});
+      final recovered=_presenceWasOffline;
+      _presenceWasOffline=false;
+      if (_requireDailyOnline && recovered) await verifyNow();
+      else await refreshAfterNetworkUse();
+    } catch(_) {
+      _presenceWasOffline=true;
+      await verify();
+    }
+
   }
 
   Future<void> _checkpoint(int generation) async {
@@ -266,6 +316,27 @@ class SchoolCloudEngine extends ChangeNotifier {
 
   Future<void> verify() => _verificationTask ??=
       _verifyAccess().whenComplete(() => _verificationTask = null);
+
+  /// Explicit retry must not merely join an earlier failed startup request.
+  /// No untrusted connectivity flag may extend the offline allowance.
+  Future<void> verifyNow() async {
+    final prior = _verificationTask;
+    if (prior != null) await prior;
+    if (!_disposed) await verify();
+  }
+
+  /// Sync/UI network activity can prompt an authenticated lease renewal.
+  /// This is a separate managed/session call; a network ping, queue ACK or
+  /// presence notification is NOT itself valid licence verification.
+  Future<void> refreshAfterNetworkUse() async {
+    if (!_requireDailyOnline || !_localReady || identity == null ||
+        _disposed || _verificationTask != null) return;
+    final at = _lastVerifyAttempt;
+    final interval = _failures == 0
+      ? const Duration(minutes:15) : const Duration(minutes:1);
+    if (at != null && _clock().difference(at) < interval) return;
+    await verify();
+  }
 
   Future<void> _verifyAccess() async {
     if (_verifying || identity == null || _disposed) return;

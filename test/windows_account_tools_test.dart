@@ -88,6 +88,16 @@ void main() {
     expect(await verify(token,pin:''),isFalse);
     expect(await verify(await sign({...payload,'expiresAt':901001})),isFalse);
     expect(await verify(await sign({...payload,'purpose':'another-purpose'})),isFalse);
+    // A 24-hour lease is accepted only by explicitly staged clients.
+    final daily=await sign({...payload,'expiresAt':86401000});
+    expect(await verify(daily),isFalse);
+    expect(await ManagedDeviceCredentials.verifyLease(daily,schoolId:school,
+      uid:'admin',deviceIdentity:'device',generationHash:'generation',
+      now:2000,publicKey:key,maxOfflineMs:86400000),isTrue);
+    expect(await ManagedDeviceCredentials.verifyLease(daily,schoolId:school,
+      uid:'admin',deviceIdentity:'device',generationHash:'generation',
+      now:86401000,publicKey:key,maxOfflineMs:86400000),isFalse);
+
     final parts=token.split('.');
     final tampered=base64UrlEncode(utf8.encode(jsonEncode({...payload,'uid':'attacker'}))).replaceAll('=', '');
     expect(await verify('$tampered.${parts[1]}'),isFalse);

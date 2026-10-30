@@ -18,6 +18,29 @@ test('reviewed evidence, CAS, signature and common A/B envelope without school d
  await assert.rejects(publish(f,{enabled:true,rules:[{...p.rules[0],value:600}]},1),e=>e.code==='REPAIR_KNOWLEDGE_EVIDENCE');
  assert.equal(f.sent.length,0);
 });
+test('permanent signed server history survives client reset and delivers latest approved policy to school B',async()=>{
+ const f=setup();
+ const first=await publish(f);
+ const immutable=structuredClone(f.docs.get('repair_knowledge/version-1'));
+ assert.equal(immutable.sequence,1);
+ assert.equal(immutable.policyHash,policyHash(p));
+ assert.equal(immutable.envelope.payload,first.envelope.payload);
+ const a=await pull(f,'A');
+ const b=await pull(f,'B');
+ assert.deepEqual(a.envelope,b.envelope);
+ // A removed/reinstalled client is represented by a fresh authenticated pull,
+ // not by restoring a Windows-local memory snapshot.
+ const newClient=await pull(f,'A');
+ assert.deepEqual(newClient.envelope,a.envelope);
+ const disabled=await publish(f,{enabled:false,rules:[]},1);
+ assert.equal(disabled.sequence,2);
+ assert.deepEqual(f.docs.get('repair_knowledge/version-1'),immutable);
+ assert.equal(f.docs.get('repair_knowledge/version-2').sequence,2);
+ assert.equal(unpack((await pull(f,'B')).envelope).enabled,false);
+ assert.equal(f.docs.get('repair_knowledge/version-1').policy.enabled,true);
+ const stored=JSON.stringify(f.docs.get('repair_knowledge/version-1'));
+ assert(!stored.includes(A)&&!stored.includes(B));
+});
 test('school and licence isolation precedes knowledge routes; schools cannot publish',async()=>{
  const f=setup();await publish(f);
  await assert.rejects(f.call({action:'developer/managed/repair-knowledge/publish',publication:{expectedSequence:1,policy:{enabled:false,rules:[]}}}),e=>e.status===403);
@@ -32,6 +55,23 @@ test('strict telemetry whitelist, deduplication and untrusted reports never publ
  await pull(f,'A',obs);await pull(f,'A',obs);await pull(f,'B',obs);
  const catalog=f.docs.get('repair_knowledge/catalog'),row=Object.values(catalog.patterns)[0];assert.equal(row.observations,2);assert.equal(row.untrusted,true);
  assert(!JSON.stringify(catalog).includes(A));assert(!JSON.stringify(catalog).includes(B));assert.equal(f.docs.get('repair_knowledge/published').sequence,1);
+});
+test('server retains sanitized error fingerprints but rejects custom injected error codes',async()=>{
+ const f=setup();await publish(f);
+ const observed={batchId:'a'.repeat(64),reports:[
+  {module:'fee_payments',category:'conflict',outcome:'resolved',code:'RECORD_REVISION_CONFLICT'}
+ ]};
+ const response=await pull(f,'A',observed);
+ assert.equal(response.schoolId,A);
+ const entries=Object.values(f.docs.get('repair_knowledge/catalog').patterns);
+ assert.equal(entries.length,1);assert.equal(entries[0].code,'RECORD_REVISION_CONFLICT');
+ assert.equal(entries[0].untrusted,true);
+ await assert.rejects(pull(f,'B',{batchId:'b'.repeat(64),
+  reports:[{module:'fee_payments',category:'conflict',outcome:'resolved',
+   code:'student-private-amount-900'}]}),e=>e.status===400);
+ assert(!JSON.stringify(entries).includes(A));
+ assert(!JSON.stringify(entries).includes(B));
+ assert(!JSON.stringify(entries).includes('student-private-amount'));
 });
 test('disabled default, action/schema bounds and signed kill switch',async()=>{
  const f=fixture();await assert.rejects(pull(f),e=>e.code==='REPAIR_KNOWLEDGE_DISABLED');

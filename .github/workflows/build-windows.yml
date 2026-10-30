@@ -72,6 +72,7 @@ jobs:
         shell: powershell
         run: |
           python .github/scripts/test_windows_single_instance.py
+          python .github/scripts/test_windows_background_installer.py
           python .github/scripts/configure_windows_single_instance.py
 
       - name: Verify Dedicated Windows Source
@@ -358,9 +359,13 @@ jobs:
           [Files]
           Source: "$release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+          [Tasks]
+          Name: "backgroundsync"; Description: "Automatically sync Vidya Saarthi in the background after Windows sign-in"; Flags: checkedonce
+
           [Icons]
           Name: "{group}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
           Name: "{autodesktop}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
+          Name: "{userstartup}\Vidya Saarthi Background Sync"; Filename: "{app}\$($exe.Name)"; Parameters: "--saarthi-background"; WorkingDir: "{app}"; Tasks: backgroundsync
 
           [Run]
           Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
