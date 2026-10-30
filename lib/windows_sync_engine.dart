@@ -1,5 +1,6 @@
 import 'windows_sync_evidence.dart';
 import 'windows_learned_sync_rules.dart';
+import 'windows_daily_access_guard.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
@@ -1168,6 +1169,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     bool localMutation = false,
   }) {
     if (!_initialized ||
+        WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId) ||
         _syncBlocked ||
         _resetPaused ||
         isPaused ||
@@ -1915,6 +1917,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   Future<void> syncNow({bool verifyInventory = false}) async {
+    if (WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId)) {
+      // A verified but expired school must reconnect; retain the entire
+      // original durable queue and never send through a cached session.
+      state.value = SchoolCloudState.offline;
+      return;
+    }
     if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
       return;
 
