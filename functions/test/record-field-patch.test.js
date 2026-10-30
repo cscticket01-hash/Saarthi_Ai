@@ -49,3 +49,15 @@ test('patch cannot create, resurrect, change identity or remove school profile i
  assert.equal(r.send(r.patch(profile,{schoolName:'Corrected School'},[],'school_config','school_profile_cache')).success,true);
  assert.equal(r.send(r.patch(r.read('school_config','school_profile_cache'),{schoolName:''},[],'school_config','school_profile_cache')).success,false);
 });
+test('verified recreated generation accepts exact-revision field edits and rejects stale generation edits',()=>{
+ const r=rig();
+ const base={schoolId:A,teacherId:'T1',name:'Before',_syncRevision:'recreated-revision',_syncRecreatesDeletedRevision:'old-deletion',_syncFieldRevisions:{name:'recreated-revision'}};
+ const make=expected=>({operation:'write',syncProtocol:2,collection:'teachers_directory',id:'Teacher_9999999999',
+  expectedRecordRevision:expected,data:{schoolId:A,_syncFieldPatch:{version:1,set:{name:'Corrected'},remove:[],
+   before:{name:{exists:true,revision:'recreated-revision'}},identity:{teacherId:'T1'}}}});
+ const existing={schoolId:A,id:'Teacher_9999999999',data:base};
+ const updated=r.f.context.VS_applyFieldPatch(make('recreated-revision'),existing,A);
+ assert.equal(updated.name,'Corrected');assert.equal(updated.teacherId,'T1');
+ assert.equal(updated._syncRecreatesDeletedRevision,'old-deletion');
+ assert.throws(()=>r.f.context.VS_applyFieldPatch(make('previous-generation'),existing,A),/Record revision conflict/);
+});
