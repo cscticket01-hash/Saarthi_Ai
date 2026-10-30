@@ -112,9 +112,9 @@ class ManagedSchoolSession {
       if(auth['idToken'] is! String||auth['refreshToken'] is! String||auth['localId'] is! String)throw StateError('School login failed');
       await ManagedDeviceCredentials.proof(accountUid:auth['localId'],endpoint:endpoint);
       final authenticated=CentralSchoolCloud(client:ManagedDeviceClient(cloud.client,endpoint,accountUid:auth['localId']),endpoint:endpoint,closeClient:false);
+      final registration = {...deviceRegistrationBody(),
+        ...await WindowsNetworkConnection.reportedMetadata()};
       try {
-        final registration = {...deviceRegistrationBody(),
-          ...await WindowsNetworkConnection.reportedMetadata()};
         verifyDeviceRegistration(await authenticated.api(registration,token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
       } on CentralCloudException catch(e) {
         // Compatibility only when this feature is explicitly inactive server-side.
