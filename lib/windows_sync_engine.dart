@@ -559,6 +559,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
       'repairMemory': repairMemory.entries,
+      'permanentRepairPatternCount': repairMemory.patterns.length,
       'learnedRuleCount':learnedSyncRules.rules.length,
     };
   }
@@ -1627,7 +1628,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final storedHistory = storedRecovery?['events'];
     repairMemory.restore(storedRecovery?['repairMemory'], _activeSchoolSyncId);
     learnedSyncRules.restore(storedRecovery?['learnedRules'],_activeSchoolSyncId);
-    learnedSyncRules.seedVerified(repairMemory.entries,_activeSchoolSyncId);
+    learnedSyncRules.seedVerified([
+      ...repairMemory.entries,
+      for(final p in repairMemory.patterns)
+        {...p,'schoolId':_activeSchoolSyncId},
+    ],_activeSchoolSyncId);
     final savedTransfer=(await FirebaseFirestore.instance.collection('_windows_sync_status').doc('last-transfer').get()).data();
     if(FirebaseFirestore.instance.activeProfileId!=profile.profileId)return;
     verifiedTransferTiming.restore(savedTransfer,_activeSchoolSyncId);
@@ -1919,7 +1924,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return;
     }
     _syncing = true;
-    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,repairMemory.entries));
+    // Share only sanitized, recently observed pattern metadata. Signed and
+    // independently approved remote policies remain the sole action authority.
+    final recentPatterns=repairMemory.patterns.where((p){
+      final at=p['lastAt'];
+      final now=DateTime.now().millisecondsSinceEpoch;
+      return at is int && at<=now && now-at<=const Duration(hours:1).inMilliseconds;
+    }).toList();
+    unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,recentPatterns));
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
       now: now,
