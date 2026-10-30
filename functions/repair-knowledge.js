@@ -3,6 +3,18 @@ const {createPrivateKey,createHash,createHmac,sign}=require('node:crypto');
 const PROTOCOL=1,DAY=86400000;
 const MODULES=new Set(['all','students_directory','teachers_directory','documents','fee_ledger','fee_payments','school_expenses','school_notices','attendance_records','exams','exam_results','school_config']);
 const CATEGORIES=new Set(['networkPath','timeout','server','quota','conflict','configuration','validation','fileMissing','unknown','idCardInputs']);
+// A versioned server catalog can remember a sanitized error fingerprint,
+ // never arbitrary client text, payment data or code to execute.
+const CODES=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT',
+ 'SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT',
+ 'SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_TIMEOUT',
+ 'SCRIPT_QUOTA_EXCEEDED','SCRIPT_PERMISSION_DENIED',
+ 'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+ 'FIELD_DELTA_UNAVAILABLE','ACK_UNVERIFIED','SCRIPT_TRANSPORT_ERROR',
+ 'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR',
+ 'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT',
+ 'SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_JSON_READBACK_FAILED',
+ 'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED']);
 const ACTIONS={retry_floor:[5,900],record_probe_cooldown:[300,3600],card_probe_cooldown:[120,3600],batch_cap:[2,10]};
 const hash=v=>createHash('sha256').update(v).digest('hex');
 function fail(status,code){throw Object.assign(Error(code),{status,code,publicMessage:true});}
@@ -21,15 +33,19 @@ function policy(input){
 const policyHash=p=>hash(JSON.stringify(policy(p)));
 function reports(input){
  if(!Array.isArray(input)||input.length>20)fail(400,'REPAIR_KNOWLEDGE_REPORT');
- return input.map(r=>{exact(r,['module','category','outcome']);
-  if(!MODULES.has(r.module)||r.module==='all'||!CATEGORIES.has(r.category)||!['detected','retry','resolved','recurred'].includes(r.outcome))fail(400,'REPAIR_KNOWLEDGE_REPORT');
-  return {module:r.module,category:r.category,outcome:r.outcome};
+ return input.map(r=>{exact(r,['module','category','outcome','code']);
+  if(!MODULES.has(r.module)||r.module==='all'||!CATEGORIES.has(r.category)||!['detected','retry','resolved','recurred'].includes(r.outcome)||
+   (r.code!==undefined&&!CODES.has(r.code)))fail(400,'REPAIR_KNOWLEDGE_REPORT');
+  return {module:r.module,category:r.category,outcome:r.outcome,...(r.code?{code:r.code}:{})};
  });
 }
 function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='repair-v1',reportSalt}={}){
  let key,configured=enabled;
  if(enabled){try{key=createPrivateKey(privateKey);if(key.asymmetricKeyType!=='ed25519'||!/^[a-zA-Z0-9_-]{1,64}$/.test(keyId)||typeof reportSalt!=='string'||reportSalt.length<32)throw Error();}catch{configured=false;key=undefined;}}
  const head=()=>db.doc('repair_knowledge/published');
+ // Source of truth survives Windows uninstall, app reset and device replacement.
+ // Protected server-only version docs are append-only, never client-written.
+ const versionRef=sequence=>db.doc('repair_knowledge/version-'+sequence);
  function envelope(sequence,p,proofExpiresAt){
   const issuedAt=now();const expiresAt=Math.min(issuedAt+DAY,proofExpiresAt||issuedAt+DAY);
   const payload=Buffer.from(JSON.stringify({protocol:PROTOCOL,purpose:'vidya-sync-repair',sequence,issuedAt,expiresAt,...p})).toString('base64url');
@@ -47,7 +63,14 @@ function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='
    const usable=!p.enabled||proof(proofRow?.data(),p);
    if(usable&&old.expiresAt>now()+3600000)return old.envelope;
    const next=usable?p:{enabled:false,rules:[]},sequence=old.sequence+1,e=envelope(sequence,next,usable&&next.enabled?proofRow.data().expiresAt:undefined);
-   tx.set(r,{...old,sequence,policy:next,envelope:e,expiresAt:JSON.parse(Buffer.from(e.payload,'base64url')).expiresAt});return e;
+   const archive=versionRef(sequence);
+   if((await tx.get(archive)).exists)fail(409,'REPAIR_KNOWLEDGE_ARCHIVE_CONFLICT');
+   const expiresAt=JSON.parse(Buffer.from(e.payload,'base64url')).expiresAt;
+   const publication={...old,sequence,policy:next,envelope:e,expiresAt};
+   tx.set(archive,{protocol:PROTOCOL,sequence,policy:next,envelope:e,
+     policyHash:policyHash(next),publishedAt:now(),evidenceId:next.enabled?old.evidenceId:null,
+     previousSequence:old.sequence,disabledByExpiredEvidence:!usable});
+   tx.set(r,publication);return e;
   });
  }
  async function ingest(identity,body){
@@ -63,7 +86,7 @@ function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='
    const count=p.hour===hour?p.count:0;if(count>=6)fail(429,'REPAIR_KNOWLEDGE_REPORT_LIMIT');
    const patterns={...(catalog.data()?.patterns||{})};
    for(const row of rows){const id=hash(JSON.stringify(row));
-    if(!patterns[id]&&Object.keys(patterns).length>=200)continue;
+    if(!patterns[id]&&Object.keys(patterns).length>=1000)continue;
     patterns[id]={...row,observations:Math.min(1000000000,(patterns[id]?.observations||0)+1),lastHour:hour,untrusted:true};
    }
    tx.set(sourceRef,{hour,count:count+1,batchIds:[...ids,body.batchId]});tx.set(catalogRef,{protocol:PROTOCOL,patterns});
@@ -89,10 +112,16 @@ function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='
     if(sequence!==input.expectedSequence)fail(409,'REPAIR_KNOWLEDGE_VERSION_CONFLICT');
     if(p.enabled&&!proof(evidence?.data(),p))fail(409,'REPAIR_KNOWLEDGE_EVIDENCE');
     const e=envelope(sequence+1,p,p.enabled?evidence.data().expiresAt:undefined);
-    tx.set(r,{sequence:sequence+1,policy:p,evidenceId:p.enabled?input.evidenceId:null,envelope:e,
-      expiresAt:JSON.parse(Buffer.from(e.payload,'base64url')).expiresAt,publishedBy:uid});return {sequence:sequence+1,envelope:e};
+    const archive=versionRef(sequence+1);
+    if((await tx.get(archive)).exists)fail(409,'REPAIR_KNOWLEDGE_ARCHIVE_CONFLICT');
+    const expiresAt=JSON.parse(Buffer.from(e.payload,'base64url')).expiresAt;
+    const record={protocol:PROTOCOL,sequence:sequence+1,policy:p,
+      policyHash:policyHash(p),evidenceId:p.enabled?input.evidenceId:null,
+      envelope:e,expiresAt,publishedBy:uid,publishedAt:now(),previousSequence:sequence};
+    tx.set(archive,record);
+    tx.set(r,record);return {sequence:sequence+1,envelope:e};
    });
   }
  };
 }
-module.exports={createRepairKnowledge,policy,policyHash,reports,MODULES,CATEGORIES,ACTIONS};
+module.exports={createRepairKnowledge,policy,policyHash,reports,MODULES,CATEGORIES,CODES,ACTIONS};
