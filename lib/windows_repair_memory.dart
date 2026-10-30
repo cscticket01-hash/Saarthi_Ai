@@ -17,7 +17,7 @@ class WindowsRepairMemory {
     'verified_published_card_retained'};
   static const categories = {'networkPath', 'timeout', 'server', 'quota',
     'authorization', 'configuration', 'conflict', 'validation', 'fileMissing',
-    'unknown', 'idCardInputs', 'recoverable', 'verifiedDuplicate'};
+    'localStorage', 'unknown', 'idCardInputs', 'recoverable', 'verifiedDuplicate'};
   static String? _token(Object? value, {int max = 200}) => value is String &&
       value.isNotEmpty && value.length <= max &&
       !RegExp(r'[\x00-\x1f/\\]').hasMatch(value) ? value : null;

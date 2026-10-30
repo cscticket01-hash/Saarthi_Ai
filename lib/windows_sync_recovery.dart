@@ -24,6 +24,26 @@ class IdCardPreparationFailure extends StateError {
   final Object cause;
 }
 
+/// A record request reads local database/credential files, not a document
+/// attachment. Keep its I/O failure distinct from a missing upload original.
+class RecordLocalStorageFailure implements Exception {
+  const RecordLocalStorageFailure(this.cause);
+  final FileSystemException cause;
+  @override String toString() => 'Local record storage access failed. Original request retained.';
+}
+
+/// Only the known text-notice schema can repair the old fileMissing label.
+/// A file-bearing record must keep its original missing-file protection.
+bool textOnlyNoticeRequest(Map item) {
+  if(item['collection']!='school_notices'||!{'set','update'}.contains(item['operation']))return false;
+  bool text(Map data)=>data['title'] is String&&data['description'] is String&&
+    data.keys.every((k)=>{'title','description','category','timestamp','lastEdited',
+      'deliveryStatus','schoolId','id'}.contains(k)||k is String&&k.startsWith('_sync'))&&
+    data.values.every((v)=>v==null||v is String||v is num||v is bool);
+  return item['data'] is Map&&text(item['data'])&&
+    (item['wireData']==null||item['wireMode']=='snapshot2'&&item['wireData'] is Map&&text(item['wireData']));
+}
+
 /// A successful transport response without a verified revision is not an ACK.
 /// Retry retains the same operation ID so the server can return its prior receipt.
 class MissingSyncAcknowledgement implements Exception {
@@ -85,7 +105,9 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
   final decision = windowsSyncRecovery(error);
   return {
     'failureStage':stage,
-    'failureCode':error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
+    if(error is RecordLocalStorageFailure && error.cause.osError?.errorCode != null)
+      'failureOsErrorCode':error.cause.osError!.errorCode,
+    'failureCode':error is RecordLocalStorageFailure ? 'RECORD_LOCAL_STORAGE_IO' : error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
       error is CentralCloudException && const {
         'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
         'OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED',
@@ -104,6 +126,7 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
   };
 }
 const recoverablePendingCategories = {
+  'localStorage',
   'networkPath',
   'timeout',
   'server',
@@ -127,6 +150,8 @@ bool networkRecoveryCandidate(Map item) =>
     {'networkPath','timeout'}.contains(item['failureCategory']);
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is RecordLocalStorageFailure) return const SyncRecoveryDecision(
+    SyncFailureKind.localStorage,retry:true);
   if (error is IdCardPreparationFailure) {
     return windowsSyncRecovery(error.cause);
   }

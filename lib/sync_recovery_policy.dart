@@ -10,6 +10,7 @@ enum SyncFailureKind {
   conflict,
   validation,
   fileMissing,
+  localStorage,
   unknown,
 }
 
@@ -83,6 +84,7 @@ class SyncRecoveryDecision {
       'School storage configuration needs administrator attention.',
     SyncFailureKind.conflict => 'Versions conflict. Administrator review is required; both copies are retained.',
     SyncFailureKind.validation => 'Invalid pending data. Correct the record before retrying.',
+    SyncFailureKind.localStorage => 'Local storage or credentials could not be accessed. Pending data is retained; retry is bounded.',
     SyncFailureKind.fileMissing => 'Pending file could not be read. Restore access to the original file before retrying.',
     SyncFailureKind.unknown =>
       'Sync needs diagnosis. Pending data is retained.',

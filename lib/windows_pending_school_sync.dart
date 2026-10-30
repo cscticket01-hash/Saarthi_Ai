@@ -3,6 +3,7 @@ import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_sync_comparison.dart';
 import 'dart:async';
+import 'dart:io';
 
 import 'windows_local_firestore.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -452,6 +453,34 @@ class WindowsPendingSchoolSync {
           continue; // A newer durable edit owns this row now.
         item = migrated;
       }
+      // Older clients called every filesystem error a missing attachment.
+      // Text notices have no attachment. Reopen once, preserving the exact
+      // immutable operation, revision and prepared wire request for server CAS.
+      if(item['syncState']=='needsAttention'&&item['failureCategory']=='fileMissing'&&
+          textOnlyNoticeRequest(item)&&(item['retryCount'] as num? ?? 0)<automaticRecordRetryLimit&&
+          item['schoolId']==db.activeProfileIdentity['schoolSyncId']&&
+          item['operationId'] is String&&RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['operationId'])&&
+          item['baseCloudRevision'] is String) {
+        final journal=db.collection('_windows_sync_status').doc('repair-${item['operationId']}');
+        final prior=(await journal.get()).data();unchanged();
+        if(prior==null||prior['schoolId']==item['schoolId']&&prior['operationId']==item['operationId']) {
+          if(prior?['noticeFileClassificationVersion']!=1) {
+            await journal.set({'schoolId':item['schoolId'],'operationId':item['operationId'],
+              'noticeFileClassificationVersion':1,'originalFailureCategory':'fileMissing'},const SetOptions(merge:true));
+            unchanged();
+            final admitted=await db.recordOutboxFailure(queued.reference,item,state:'retry',
+              failureCategory:'localStorage',retryAtMillis:DateTime.now().millisecondsSinceEpoch,
+              error:'Text notice has no local attachment. Original request retained for bounded storage retry.',
+              diagnostic:{'failureStage':'recordRequestAndAck','failureCode':'RECORD_LOCAL_STORAGE_IO'});
+            unchanged();
+            if(!admitted)continue;
+            final current=(await queued.reference.get()).data();unchanged();
+            if(current==null||current['operationId']!=item['operationId'])continue;
+            item=current;
+            report('automaticRepair',queued.id,item,category:'localStorage');
+          }
+        }
+      }
       if (recoverablePendingAttention(
         item,
         explicitRetry: onlyOperationId != null,
@@ -554,8 +583,10 @@ class WindowsPendingSchoolSync {
           report('waitingForResponse', queued.id, item);
           await response;
         }
-      } catch (e) {
+      } catch (caught, stack) {
         unchanged();
+        final e = caught is FileSystemException && caught is! PendingDocumentFileFailure &&
+            collection!='documents' ? RecordLocalStorageFailure(caught) : caught;
         final decision = windowsSyncRecovery(e);
         final recordConflict =
             isRecordSyncConflict(e) ||
@@ -613,7 +644,7 @@ class WindowsPendingSchoolSync {
           firstDeferred ??= e;
           continue; // Independent rows must not be starved by a conflict.
         }
-        rethrow;
+        Error.throwWithStackTrace(e,stack);
       }
       unchanged();
       await db.acknowledgeOutbox(
