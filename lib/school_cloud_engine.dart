@@ -29,7 +29,10 @@ class SchoolCloudEngine extends ChangeNotifier {
     DateTime Function()? clock,
     Duration Function()? elapsed,
     Future<bool> Function(Map<String,dynamic>, Map<String,dynamic>, int)? verifyDeviceLease,
-  }) : _elapsed = elapsed ?? _monotonicClock(),
+    bool requireDailyOnline = const bool.fromEnvironment(
+      'SAARTHI_WINDOWS_REQUIRE_DAILY_ONLINE', defaultValue: false),
+  }) : _requireDailyOnline = requireDailyOnline,
+       _elapsed = elapsed ?? _monotonicClock(),
        _useServerClock = clock == null || elapsed != null,
        _deviceVerifier = verifyDeviceLease ?? _verifyDeviceLease,
        _read = readIdentity ?? CentralSchoolCloud.saved,
@@ -75,6 +78,8 @@ class SchoolCloudEngine extends ChangeNotifier {
   int get _accessNow => _verifiedServerTime == null
       ? _clock().millisecondsSinceEpoch
       : _verifiedServerTime! + (_elapsed() - _verifiedElapsed).inMilliseconds;
+  final bool _requireDailyOnline;
+  static const dailyOnlineWindow = Duration(hours: 24);
   final Future<bool> Function(Map<String,dynamic>,Map<String,dynamic>,int) _deviceVerifier;
   int _deviceLeaseExpiry=0;
   bool _deviceEnforcedSeen=false;
@@ -115,6 +120,21 @@ class SchoolCloudEngine extends ChangeNotifier {
   bool _presenceRunning=false;
   bool get hasIdentity => identity != null;
   bool get canOpen => _localReady && _leaseUsable;
+  /// Local records remain mounted and visually readable when the configured
+  /// 24-hour online window has expired. This is NOT an access grant: every
+  /// mutation, search, print, sync and navigation control must remain disabled.
+  /// Revoked or expired school accounts never enter this read-only path.
+  bool get dailyOnlineReadOnly {
+    if (!_requireDailyOnline || !_localReady || identity == null ||
+        access == null || !sameIdentity(access!, identity!)) return false;
+    final issued = access!['serverTime'];
+    if (issued is! num || issued <= 0 ||
+        access!['allowed'] != true ||
+        !(access!['status'] == 'trial' || access!['activated'] == true) ||
+        accessExpired) return false;
+    return _accessNow - issued.toInt() >= dailyOnlineWindow.inMilliseconds &&
+        issued.toInt() <= _accessNow + 300000;
+  }
   bool get accessExpired =>
       (access?['expiresAt'] as num? ?? 0) <= _accessNow;
   bool get trialAvailable => access?['status'] == 'trial' &&
@@ -145,7 +165,9 @@ class SchoolCloudEngine extends ChangeNotifier {
       (access!['status'] == 'trial' || access!['activated'] == true) &&
       (access!['expiresAt'] as num? ?? 0) > _accessNow &&
       _accessNow - (access!['serverTime'] as num? ?? 0) <
-          (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72)).inMilliseconds &&
+          (_requireDailyOnline
+            ? dailyOnlineWindow
+            : (access!['status'] == 'trial' ? const Duration(days:5) : const Duration(hours:72))).inMilliseconds &&
       (access!['serverTime'] as num? ?? 0) <=
           _accessNow + 300000 &&
       (_verifiedServerTime != null || (identity!['lastLocalSeenAt'] as num? ?? 0) <=
