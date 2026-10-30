@@ -99,7 +99,7 @@ void main(){
   }
   test('legacy published card survives a nonvisual edit without rendering, uploading, or changing registration',()async{
     FlutterSecureStorage.setMockInitialValues({CentralSchoolCloud.key:jsonEncode({'managed':true,'schoolId':school,
-      'uid':'owner','projectId':platformProjectId,'endpoint':endpoint})});
+      'uid':'owner','projectId':platformProjectId,'endpoint':endpoint,'folderId':'managed','firebaseRefreshToken':'test'})});
     final before=person('r1'),after={...person('r2'),'salary':200};
     final profile={'schoolName':'School','address':'Main Road'};
     await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()async{
