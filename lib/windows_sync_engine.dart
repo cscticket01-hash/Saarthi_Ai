@@ -2891,8 +2891,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // Persist before the outbox ACK can remove its only recovery source.
         Map<String,dynamic>? priorPerson;
         if({'students_directory','teachers_directory'}.contains(item['collection'])) {
-          final key=base64Url.encode(utf8.encode([item['collection'],item['documentId']].join(r'
-'))).replaceAll('=','');
+          final key=base64Url.encode(utf8.encode([item['collection'],item['documentId']].join(r'\n'))).replaceAll('=','');
           final baseline=(await FirebaseFirestore.instance.collection('_windows_sync_baselines').doc(key).get()).data();
           final candidate=baseline?['record']??item['fieldPatchBase'];
           if(candidate is Map&&candidate['schoolId']==school&&candidate['_syncRevision']==item['baseCloudRevision'])
