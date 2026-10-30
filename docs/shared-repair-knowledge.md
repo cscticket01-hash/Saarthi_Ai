@@ -73,3 +73,62 @@ from pushing unsafe financial repairs to all schools.
 This change does not modify the school-owned Apps Script, transfer business
 data to the learning service, activate missing production signing secrets,
 or replace real-device and school-cloud acceptance tests.
+
+
+## Server-authoritative permanence, clean installation and cross-school rollout
+
+The central broker now archives every published, cryptographically signed repair
+policy at the protected, server-only Firestore path
+`repair_knowledge/version-<sequence>`, separately from the current
+`repair_knowledge/published` head. Every renewal and evidence-expiry kill switch
+gets a new immutable sequence. The publication archive is not stored in school
+Drive or dependent on a particular PC; uninstall, in-app reset and Windows
+reinstallation cannot erase the server records. Deleting the central backend
+itself, provider retention changes or administrative deletion are separate
+disaster-recovery risks; include this collection in central backups.
+
+The 24-hour Windows "Smart Repair History" is only a recent, school-scoped UI
+view. The existing local v2 pattern catalog and signed remote-policy cache are
+non-authoritative *copies* used to avoid repeated offline diagnostics. The
+canonical, device-independent approved policy lives on the broker. Fresh app
+installs and older compatible clients pull the current signed rules from the
+same school-authenticated endpoint when online. A client release is still
+required for a new native repair algorithm or signing-key rotation. No raw
+student names, fee amounts, Drive URLs, operation IDs or school IDs leave a
+school in the shared observation payload.
+
+Untrusted school observations do not grant publication authority. A reviewed
+repair only reaches another school after the server has independently
+verified the fix, obtained protected CI evidence, the developer has approved
+a compatible policy, and the signed rollout has passed. This avoids remote
+code execution or cross-school data leakage.
+
+## Staged Windows 24-hour online authorization policy
+
+The managed-school Windows client has a new opt-in build control:
+`--dart-define=SAARTHI_WINDOWS_REQUIRE_DAILY_ONLINE=true`. With that policy
+enabled, the existing authenticated server `managed/session` proof gives at
+most 24 hours of offline **interactive** access, subject to the *shorter*
+licence or signed device-lease expiry. At the deadline the already-mounted
+dashboard remains visible but becomes read-only: an explicit "Internet
+unavailable, please connect internet" notice appears; pointer and keyboard
+interaction and manual/automatic Sync Engine admission stop, without
+deleting any local business records, outbox items or media. Pressing
+"Verify online" attempts the same authenticated school verification; a
+successful fresh proof resumes normal interaction.
+
+Existing production Windows builds intentionally keep their current
+offline behavior until the guarded rollout is enabled and tested. This
+read-only UI barrier does not constitute tamper-proof DRM. Managed broker
+authorization/licence/device checks are still the server-side authority;
+a modified client may bypass local UI restrictions, so financial and data
+operations must always be authenticated/authorized on the server. New
+installations without an existing verified school identity cannot claim a
+24-hour offline grant. Genuine blocked/expired licence states remain
+separately denied, not mistaken for an internet outage.
+
+24 hours is a *verification interval*, not a guarantee of constant network
+availability. If the network is unavailable after that interval, normal
+business interaction remains locked until verification succeeds. Physical
+Windows rollback/clock-change, power-loss, multi-PC, printer, account lock,
+backup/restore, and device-revocation tests must pass before release.
