@@ -855,9 +855,9 @@ class WindowsAppUpdateCard extends StatelessWidget {
       valueListenable: WindowsUpdateService.state,
       builder: (context, state, _) {WindowsAppearance.watch(context);
         final update = state.update;
-        final progressText = state.progress == null
-            ? ''
-            : ' ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
+        final progressPercent = state.launching ? '100%'
+            : state.progress == null ? null
+            : '${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
 
         return WindowsSettingsCard(
           icon: Icons.file_download_outlined,
@@ -882,6 +882,15 @@ class WindowsAppUpdateCard extends StatelessWidget {
                     fontSize: 15, height: 1.4,
                   ),
                 )),
+                  if ((state.downloading || state.launching) && progressPercent != null) ...[
+                    const SizedBox(width: 12),
+                    Text(progressPercent,
+                      key: const ValueKey('app-update-progress-percent'),
+                      style: TextStyle(fontFamily: 'Segoe UI',
+                        color: WindowsAppearance.foreground(const Color(0xFF9DB9E8)),
+                        fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ],
                 ]),
                 const SizedBox(height: 10),
               ],
@@ -889,16 +898,6 @@ class WindowsAppUpdateCard extends StatelessWidget {
                 LinearProgressIndicator(
                   value: state.launching ? 1 : state.progress,
                   minHeight: 7,
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  state.launching
-                      ? 'Download complete. Installer open ho raha hai...'
-                      : 'Downloading$progressText • Page change karne par bhi download continue rahega.',
-                  style:  TextStyle(fontFamily: 'Segoe UI', 
-                    color: WindowsAppearance.foreground(Colors.white54),
-                    fontSize: 10,
-                  ),
                 ),
                 const SizedBox(height: 10),
               ],
@@ -913,13 +912,12 @@ class WindowsAppUpdateCard extends StatelessWidget {
                 : const Icon(Icons.refresh_rounded, size: 20),
               label: state.checking ? 'Checking...' : 'Check for Update',
             ),
-            if (update?.updateAvailable == true) ...[
+            if (update?.updateAvailable == true && !state.downloading && !state.launching) ...[
               const SizedBox(height: 12),
               WindowsSettingsButton(
                 onPressed: state.busy ? null : _install,
                 icon: const Icon(Icons.download_rounded, size: 20),
-                label: state.downloading ? 'Downloading$progressText'
-                  : state.launching ? 'Opening Installer...' : 'Download & Install',
+                label: 'Download & Install',
               ),
             ],
           ]),
