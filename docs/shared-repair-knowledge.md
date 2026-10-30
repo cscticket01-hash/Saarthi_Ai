@@ -154,3 +154,32 @@ device-lease configuration, production signing-key/pin verification and
 physical 24-hour expiration/recovery tests. A new client paired to the old
 15-minute server lease will still lose device authorization at 15 minutes;
 that must not be mislabeled as successful 24-hour acceptance.
+
+
+### Automatic daily proof renewal and 3-second disclaimer
+
+The Windows dashboard opens immediately from the existing verified same-school
+cache, without a new full cloud/Drive sync. If its 24-hour last **successful
+authenticated school-session** proof has elapsed, background sync admission
+and all pointer/keyboard interaction become read-only immediately, preserving
+the dashboard and local records. The visible "Internet unavailable, please
+connect internet" disclaimer is delayed for **3 seconds** after the expired
+dashboard first mounts; this is *not* a three-second security grace period.
+
+A successful server-side `managed/session` renewal (including the server time,
+school identity, current entitlement and any enforced device proof) replaces
+the old lease. Any legitimate online activity may initiate that renewal:
+Windows clicks, Sync Engine network use, authenticated presence, the startup
+verification, and 60-second scheduler ticks while the app is open.
+Network-unavailable retries are bounded; successful online verification occurs
+without manual Sync Now and without mutating any school business data. The
+deadline starts afresh at the server-authenticated timestamp, not when the
+network icon merely reports "connected". The existing read-only dashboard
+unlocks on successful verification; an app update is not required after that.
+
+For resource control, online activity uses a 15-minute minimum recheck
+interval and periodic online revalidation at most hourly. When the school is
+offline and has a failed verification, bounded retries use 1, 2 and 5-minute
+spacing, so extremely brief internet availability cannot be guaranteed to
+renew the lease. Genuine revocation, licence expiry and invalid device proof
+remain server-authoritative and cannot be converted to offline renewal.
