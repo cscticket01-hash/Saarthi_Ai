@@ -240,7 +240,7 @@ void main() {
     expect(e.canOpen,false);
     expect(e.dailyOnlineReadOnly,true);
     allowOnline=true;
-    await e.verify();
+    await e.verifyNow();
     expect(e.canOpen,true);
     expect(e.dailyOnlineReadOnly,false);
     e.dispose();
@@ -260,13 +260,75 @@ void main() {
       child:ElevatedButton(onPressed:()=>clicked++,child:const Text('Collect payment')),
     )));
     await tester.pump();await tester.pump();
-    expect(find.byKey(const ValueKey('daily-online-verification-disclaimer')),findsOneWidget);
+    // Dashboard opens straight away. First 3 seconds are still read-only:
+    // showing the warning later does not grant an unauthorized grace period.
     expect(find.text('Collect payment'),findsOneWidget);
+    expect(find.byKey(const ValueKey('daily-online-verification-disclaimer')),findsNothing);
     await tester.tap(find.text('Collect payment'),warnIfMissed:false);
     await tester.pump();
     expect(clicked,0);
+    await tester.pump(const Duration(milliseconds: 2900));
+    expect(find.byKey(const ValueKey('daily-online-verification-disclaimer')),findsNothing);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('daily-online-verification-disclaimer')),findsOneWidget);
+    expect(find.textContaining('Internet unavailable, please connect internet'),findsOneWidget);
     expect(find.text('Verify online'),findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test('online during the 24-hour window automatically renews authenticated server lease',()async{
+    var clock=now.add(const Duration(hours:23));
+    var online=false;
+    var verified=0;
+    var snapshot=identity(access());
+    final e=SchoolCloudEngine(
+      readIdentity:()async=>snapshot,clock:()=>clock,requireDailyOnline:true,
+      activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},
+      persist:(a,b)async{snapshot={...snapshot,'verifiedAccess':b};},
+      verify:()async{
+        verified++;
+        if(!online)throw const SocketException('network is down');
+        return {...access(),'serverTime':clock.millisecondsSinceEpoch};
+      },
+    );
+    await e.restore();
+    await Future<void>.delayed(Duration.zero);
+    expect(e.canOpen,true);
+    // No full sync needed: ordinary authenticated network activity is enough.
+    online=true;
+    clock=clock.add(const Duration(minutes:2));
+    await e.refreshAfterNetworkUse();
+    expect(e.canOpen,true);
+    expect(e.dailyOnlineReadOnly,false);
+    expect(e.access?['serverTime'],clock.millisecondsSinceEpoch);
+    expect(verified,greaterThanOrEqualTo(2));
+    online=false;
+    clock=clock.add(const Duration(hours:23));
+    expect(e.canOpen,true);
+    clock=clock.add(const Duration(hours:1));
+    expect(e.canOpen,false);
+    expect(e.dailyOnlineReadOnly,true);
+    e.dispose();
+  });
+
+  test('ping or failed cloud verification never reset the 24-hour server deadline',()async{
+    var clock=now.add(const Duration(hours:23));
+    var responses=0;
+    final saved=identity(access());
+    final e=SchoolCloudEngine(
+      readIdentity:()async=>saved,clock:()=>clock,requireDailyOnline:true,
+      activateLocal:()async{},legacyAccess:()async=>null,touchClock:(a,b)async{},
+      persist:(a,b)async{},
+      verify:()async{responses++;throw const SocketException('dns failure');},
+    );
+    await e.restore();
+    await Future<void>.delayed(Duration.zero);
+    clock=clock.add(const Duration(hours:1));
+    expect(e.canOpen,false);
+    await e.verifyNow();
+    expect(responses,greaterThanOrEqualTo(1));
+    expect(e.dailyOnlineReadOnly,true);
+    e.dispose();
   });
 
   test('cached paid licence cannot remain offline indefinitely',()async {
