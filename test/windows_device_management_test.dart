@@ -14,8 +14,8 @@ void main() {
   setUp(()=>SharedPreferences.setMockInitialValues({}));
   final own = 'a' * 64, other = 'b' * 64;
   Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
-    {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000},
-    {'deviceIdentity':other,'name':'Accounts PC','status':revoked ? 'revoked':'active','current':false,'activity':revoked ? 'revoked':'unknown','lastSeenAt':1792359600000},
+    {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000,'connectionType':'WiFi','connectionSeenAt':1792363200000},
+    {'deviceIdentity':other,'name':'Accounts PC','status':revoked ? 'revoked':'active','current':false,'activity':revoked ? 'revoked':'unknown','lastSeenAt':1792359600000,'connectionType':'LAN','connectionSeenAt':1792359600000},
   ]};
   Future<void> close(WidgetTester tester) async => tester.pumpWidget(const SizedBox());
   testWidgets('verified counts, current-PC protection and real revoke readback', (tester) async {
@@ -32,6 +32,9 @@ void main() {
     expect(find.text('Authorized PCs: 2 / 5   |   Recently active: 1'),findsOneWidget);
     expect(find.text('This PC'),findsOneWidget);
     expect(find.text('Revoke'),findsOneWidget);
+    expect(find.text('Connectivity'),findsOneWidget);
+    expect(find.text('Wi-Fi'),findsOneWidget);
+    expect(find.text('LAN'),findsOneWidget);
     await tester.tap(find.text('Revoke')); await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
     expect(writes,1); expect(reads,2);
@@ -64,7 +67,10 @@ void main() {
     final rows=WindowsDeviceDirectoryCache.validate(response()['devices']);
     rows.first['credential']='must-not-save';
     await WindowsDeviceDirectoryCache.write(scope,rows);
-    expect((await WindowsDeviceDirectoryCache.read(scope)).length,2);
+    final saved=await WindowsDeviceDirectoryCache.read(scope);
+    expect(saved.length,2);
+    expect(saved.first['connectionType'],'WiFi');
+    expect(saved.last['connectionType'],'LAN');
     final prefs=await SharedPreferences.getInstance();
     expect(prefs.getString(prefs.getKeys().single),isNot(contains('must-not-save')));
     expect(await WindowsDeviceDirectoryCache.read('different-scope'),isEmpty);
@@ -129,6 +135,7 @@ void main() {
     expect(find.text('School Office PC'),findsOneWidget);
     expect(find.text('Recently active'),findsNothing);
     expect(find.textContaining('Saved device list'),findsOneWidget);
+    expect(find.text('Wi-Fi'),findsOneWidget);
     expect(find.byType(LinearProgressIndicator),findsNothing);
     final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke'));
     expect(revoke.onPressed,isNull);
