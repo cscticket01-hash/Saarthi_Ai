@@ -96,6 +96,18 @@ test('new managed rollout flags are strict and isolated TEST only',()=>{
   {deviceAccessEnforced:true,studentImportEnabled:true,deviceOfflinePrivateKey:'synthetic-key'});
 });
 
+test('daily online device lease requires isolated TEST school and enforced signing',()=>{
+ const school='vs-'+'a'.repeat(32);
+ assert.throws(()=>managedFeatureOptions({SAARTHI_TEST_DAILY_ONLINE_WINDOW:'true'},null));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_TEST_DAILY_ONLINE_WINDOW:'true'},school));
+ assert.throws(()=>managedFeatureOptions({SAARTHI_TEST_DAILY_ONLINE_WINDOW:'TRUE'},school));
+ assert.deepEqual(managedFeatureOptions({
+  SAARTHI_TEST_DAILY_ONLINE_WINDOW:'true',
+  SAARTHI_TEST_DEVICE_ACCESS_ENFORCED:'true',
+  SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY:'test-signing-key',
+ },school),{deviceAccessEnforced:true,studentImportEnabled:false,
+  deviceOfflinePrivateKey:'test-signing-key',deviceOfflineWindowMs:86400000});
+});
 test('management rollout is explicit and does not turn on TEST offline enforcement',()=>{
  assert.deepEqual(managedFeatureOptions({SAARTHI_DEVICE_MANAGEMENT_ENABLED:'true'},null),
   {deviceAccessEnforced:false,studentImportEnabled:false,deviceManagementEnabled:true});
