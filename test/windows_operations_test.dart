@@ -729,6 +729,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Record payment'), findsOneWidget);
     expect(find.text('Payment history'), findsOneWidget);
+    expect(find.text('Modify Payment • App Lock'), findsNothing); // no payment yet
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Net payroll'), findsOneWidget);
@@ -745,7 +746,9 @@ void main() {
       }
       expect(find.byType(Dialog), findsOneWidget);
       expect(find.byType(FittedDocumentPreview), findsOneWidget);
-      expect(find.text('Print Payslip'), findsOneWidget);
+      expect(find.text('Print'), findsOneWidget);
+      expect(find.text('Save PDF'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
       await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
     } finally { PrintingPlatform.instance = nativePrinting; }
