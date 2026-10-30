@@ -120,6 +120,7 @@ class WindowsRepairMemory {
       : stage == 'conflict' ? 'conflict' : 'unknown';
     final key = _hash([identity, category]);
     final previous = _entries[key];
+    final wasResolved=previous?['status']=='resolved';
     final outcome = _token(event['outcome'], max: 100) ?? stage.toString();
     final verified = stage == 'duplicateReconciled' ||
       stage == 'repairDiagnosed' && verifiedOutcomes.contains(outcome);
@@ -158,7 +159,7 @@ class WindowsRepairMemory {
       : {'networkPath', 'timeout', 'server', 'quota'}.contains(category)
       ? 'retry_original_with_backoff' : 'review_without_overwrite';
     _entries.remove(key); _entries[key] = entry;
-    _rememberPattern(entry,now,resolved:verified && previous?['status']!='resolved');
+    _rememberPattern(entry,now,resolved:verified && !wasResolved);
     while (_entries.length > limit) { _entries.remove(_entries.keys.first); }
     return true;
   }
