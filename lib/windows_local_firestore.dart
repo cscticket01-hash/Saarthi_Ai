@@ -12,6 +12,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import 'windows_local_storage.dart';
+import 'windows_json_replace_retry.dart';
 import 'storage/windows_sqlite_store.dart';
 import 'windows_runtime_flags.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -2636,10 +2637,12 @@ class _LocalSchoolDatabase {
       );
 
       if (await file.exists()) {
-        try {
-          await file.copy(backup.path);
-        } catch (_) {}
-        await file.delete();
+        // Never remove the only verified original without a durable rollback.
+        // If another Windows process temporarily locks this legacy JSON file,
+        // retry only that precise OS error; do not mark the exam as saved until
+        // the pending generation has replaced it successfully.
+        await file.copy(backup.path);
+        await retryLockedDatabaseDelete(() => file.delete().then((_) {}));
       }
 
       await pending.rename(file.path);
