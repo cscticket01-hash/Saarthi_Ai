@@ -26,6 +26,10 @@ class IdCardPreparationFailure extends StateError {
 
 /// A record request reads local database/credential files, not a document
 /// attachment. Keep its I/O failure distinct from a missing upload original.
+class FieldDeltaUnavailable extends StateError {
+  FieldDeltaUnavailable():super('Field-only sync support and a verified record baseline are required. Pending edit retained.');
+}
+
 class RecordLocalStorageFailure implements Exception {
   const RecordLocalStorageFailure(this.cause);
   final FileSystemException cause;
@@ -107,7 +111,7 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
     'failureStage':stage,
     if(error is RecordLocalStorageFailure && error.cause.osError?.errorCode != null)
       'failureOsErrorCode':error.cause.osError!.errorCode,
-    'failureCode':error is RecordLocalStorageFailure ? 'RECORD_LOCAL_STORAGE_IO' : error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
+    'failureCode':error is FieldDeltaUnavailable ? 'FIELD_DELTA_UNAVAILABLE' : error is RecordLocalStorageFailure ? 'RECORD_LOCAL_STORAGE_IO' : error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
       error is CentralCloudException && const {
         'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
         'OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED',
@@ -150,6 +154,8 @@ bool networkRecoveryCandidate(Map item) =>
     {'networkPath','timeout'}.contains(item['failureCategory']);
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
+  if (error is FieldDeltaUnavailable) return const SyncRecoveryDecision(
+    SyncFailureKind.server,retry:true,independentRecords:true);
   if (error is RecordLocalStorageFailure) return const SyncRecoveryDecision(
     SyncFailureKind.localStorage,retry:true);
   if (error is IdCardPreparationFailure) {
