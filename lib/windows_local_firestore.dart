@@ -1775,6 +1775,8 @@ class _LocalSchoolDatabase {
     // Snapshot before queueing: callers cannot alter the comparison while waiting.
     final encodedExpected = _encodeMap(expected);
     final safeDiagnostic = {
+      if(diagnostic?['failureOsErrorCode'] is int && diagnostic!['failureOsErrorCode']>=0 && diagnostic['failureOsErrorCode']<=65535)
+        'failureOsErrorCode':diagnostic['failureOsErrorCode'],
       if(diagnostic?['failureStage']=='recordRequestAndAck') 'failureStage':'recordRequestAndAck',
       if(diagnostic?['failureCode'] is String && RegExp(r'^[A-Za-z0-9_]{1,80}$').hasMatch(diagnostic!['failureCode']))
         'failureCode':diagnostic['failureCode'],
@@ -1805,6 +1807,7 @@ class _LocalSchoolDatabase {
           'syncState':state,'lastError':error,
           if(diagnostic!=null) ...{
             'failureStage':safeDiagnostic['failureStage'],
+            'failureOsErrorCode':safeDiagnostic['failureOsErrorCode'],
             'failureCode':safeDiagnostic['failureCode'],
             'failureHttpStatus':safeDiagnostic['failureHttpStatus'],
           },
