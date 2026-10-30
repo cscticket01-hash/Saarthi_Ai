@@ -132,3 +132,25 @@ availability. If the network is unavailable after that interval, normal
 business interaction remains locked until verification succeeds. Physical
 Windows rollback/clock-change, power-loss, multi-PC, printer, account lock,
 backup/restore, and device-revocation tests must pass before release.
+
+
+### Device-lease compatibility for daily read-only mode
+
+The currently enforced Windows device authorization token has a **15-minute**
+signed offline lifetime, independent of the old 72-hour licence cache. A
+client-side 24-hour UI check alone cannot lengthen this token. The server-side
+`createManagedDeviceAccess` now supports either its existing 15-minute
+default or an explicitly configured 24-hour signed window; the Windows Ed25519
+verifier permits the longer lifetime **only** in the daily-online build.
+The TEST broker exposes `SAARTHI_TEST_DAILY_ONLINE_WINDOW=true` solely when
+isolated TEST mode and signed device enforcement are both active. The server
+still re-checks device registry, membership and school entitlement on **every**
+actual online request. Offline revocation cannot be instantaneous; widening
+the signed offline window may increase exposure to a revoked device, which
+requires a documented production security decision.
+
+A production 24-hour enforcement rollout needs a corresponding vetted server
+device-lease configuration, production signing-key/pin verification and
+physical 24-hour expiration/recovery tests. A new client paired to the old
+15-minute server lease will still lose device authorization at 15 minutes;
+that must not be mislabeled as successful 24-hour acceptance.
