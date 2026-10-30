@@ -1,0 +1,41 @@
+name: Production broker repair-memory compatibility
+on:
+  pull_request:
+    branches: [windows/easy-connect-draft]
+    paths:
+      - 'functions/**'
+      - 'staging-school-cloud/server.cjs'
+      - '.github/workflows/production-broker-repair-review.yml'
+  push:
+    branches: [windows/easy-connect-draft]
+    paths:
+      - 'functions/**'
+      - 'staging-school-cloud/server.cjs'
+      - '.github/workflows/production-broker-repair-review.yml'
+permissions:
+  contents: read
+jobs:
+  repair-broker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install production broker dependencies
+        run: npm --prefix functions install --ignore-scripts
+      - name: Run all deterministic backend tests (no real-school writes)
+        run: npm --prefix functions test
+      - name: Check production broker module and staged policy flag defaults
+        run: |
+          node --check functions/managed-schools.js
+          node --check functions/repair-knowledge.js
+          node --check functions/managed-device-access.js
+          node --check staging-school-cloud/server.cjs
+          node - <<'NODE'
+          const assert=require('node:assert/strict');
+          const {MAX_OFFLINE_MS,DAILY_OFFLINE_MS}=require('./functions/managed-device-access');
+          assert.equal(MAX_OFFLINE_MS,900000);
+          assert.equal(DAILY_OFFLINE_MS,86400000);
+          NODE
