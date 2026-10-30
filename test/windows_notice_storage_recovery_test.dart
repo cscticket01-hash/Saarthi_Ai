@@ -37,6 +37,7 @@ void main() {
       final retained=(await ref.get()).data()!;
       expect(retained['failureCategory'],'localStorage');
       expect(retained['failureCode'],'RECORD_LOCAL_STORAGE_IO');
+      expect(retained['failureOsErrorCode'],32);
       expect(retained['lastError'].toString(),isNot(contains('private-database-path')));
       expect(retained['baseCloudRevision'],original['baseCloudRevision']);
       expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
