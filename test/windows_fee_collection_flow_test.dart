@@ -12,6 +12,7 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_fee_receipt_preview.dart';
 import '../lib/windows_person_avatar.dart';
 import '../lib/windows_fee_structure.dart';
+import '../lib/windows_fee_unpaid_filter.dart';
 import '../lib/windows_local_firestore.dart' as local;
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
@@ -253,6 +254,65 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  test('unpaid list is a read-only filter: any partial/full payment hides student', () {
+    expect(showInUnpaidStudentList(null), true);
+    expect(showInUnpaidStudentList({'totalPaid':0,'status':'DUE'}), true);
+    expect(showInUnpaidStudentList({'totalPaid':50,'status':'PARTIAL'}), false);
+    expect(showInUnpaidStudentList({'totalPaid':200,'status':'PAID'}), false);
+    expect(showInUnpaidStudentList({'totalPaid':'0','lastPaymentId':'paid-first'}), false);
+    expect(showInUnpaidStudentList({'status':'PARTIAL PAID'}), false);
+  });
+
+  testWidgets('three equal-height viewport panels; unpaid queue updates but WhatsApp receipt remains', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1649, 875));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      await db.collection('students_directory').doc('S2').set({
+        'schoolId':school,'name':'Student Two','class':'Class 1','rollNo':'2',
+      });
+    });
+    await tester.pumpWidget(const MaterialApp(home: FeesCollectionScreen()));
+    Future<void> flush() async {
+      for (var i = 0; i < 30; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds:20)));
+        await tester.pump(const Duration(milliseconds:60));
+      }
+    }
+    await flush();
+    final left=find.byKey(const ValueKey('fees-unpaid-panel'));
+    final middle=find.byKey(const ValueKey('fees-structure-panel'));
+    final right=find.byKey(const ValueKey('fees-payment-panel'));
+    expect(left,findsOneWidget);
+    expect(middle,findsOneWidget);
+    expect(right,findsOneWidget);
+    expect(tester.getSize(left).height,tester.getSize(middle).height);
+    expect(tester.getSize(middle).height,tester.getSize(right).height);
+    expect(find.byKey(const ValueKey('fees-unpaid-student-list')),findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-student-S1')),findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
+    expect(find.text('WhatsApp Receipt'),findsOneWidget);
+    expect(find.text('Print Receipt'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+
+    // This is just a local ledger stream update. It must not create/remove
+    // records, auto-sync payments or hide the existing receipt controls.
+    await tester.runAsync(() async {
+      await db.collection('fee_ledger').doc('partial-S1').set({
+        'month':'${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2,'0')}',
+        'studentId':'S1','studentName':'Student One',
+        'rollNo':'1','parentContact':'','totalPaid':50.0,
+        'expectedAmount':200.0,'status':'PARTIAL',
+        'lastPaymentId':'receipt-for-S1',
+      });
+    });
+    await flush();
+    expect(find.byKey(const ValueKey('fees-student-S1')),findsNothing);
+    expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
+    expect(find.text('WhatsApp Receipt'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('list selection works without search and a new name clears previous roll/class', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -277,7 +337,7 @@ void main() {
     await tester.ensureVisible(row);
     await tester.tap(row);
     await flush();
-    expect(find.byKey(const ValueKey('fees-class-Class 1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-class-All Classes')), findsOneWidget);
     expect(find.byKey(const ValueKey('fees-avatar-S1')), findsOneWidget);
     expect(tester.widget<WindowsPersonAvatar>(find.byKey(const ValueKey('fees-avatar-S1'))).person['name'], 'Student One');
     await tester.enterText(find.byKey(const ValueKey('fees-name-search')), 'Student Two');
@@ -288,7 +348,7 @@ void main() {
     await tester.ensureVisible(second);
     await tester.tap(second);
     await flush();
-    expect(find.byKey(const ValueKey('fees-class-Class 2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fees-class-All Classes')), findsOneWidget);
     expect(find.byKey(const ValueKey('fees-avatar-S2')), findsOneWidget);
     final selectAll = find.byType(Checkbox).first;
     await tester.ensureVisible(selectAll);
