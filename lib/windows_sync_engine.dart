@@ -1973,11 +1973,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         return;
       }
       if (central['managed'] == true) {
+        // Sync activity verifies the school session on the broker, not a
+        // fabricated local online flag. Reuse the mounted dashboard's state.
+        await SchoolCloudEngine.current.refreshAfterNetworkUse();
         ManagedSchoolSession.verifyBuildEndpoint(
           central['endpoint']?.toString() ?? '',
         );
-        if (SchoolCloudEngine.instance.identity != null &&
-            !SchoolCloudEngine.instance.canOpen)
+        if (SchoolCloudEngine.current.identity != null &&
+            !SchoolCloudEngine.current.canOpen)
           throw StateError('School access requires verification.');
         if (central['storageReady'] != true)
           throw StateError(
@@ -2684,7 +2687,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _failures = 0;
     _manualSync = true;
     try {
-      await SchoolCloudEngine.instance.verify();
+      await SchoolCloudEngine.current.verify();
       await syncNow();
     } finally {
       _manualSync = false;
@@ -2738,9 +2741,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       ManagedSchoolSession.verifyBuildEndpoint(
         central['endpoint']?.toString() ?? '',
       );
-      await SchoolCloudEngine.instance.verify();
-      if (SchoolCloudEngine.instance.identity != null &&
-          !SchoolCloudEngine.instance.canOpen) {
+      await SchoolCloudEngine.current.verify();
+      if (SchoolCloudEngine.current.identity != null &&
+          !SchoolCloudEngine.current.canOpen) {
         throw StateError('School authorization needs verification.');
       }
       _admitBatch();
