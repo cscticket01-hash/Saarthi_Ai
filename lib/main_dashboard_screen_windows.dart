@@ -11423,9 +11423,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: LayoutBuilder(
+        builder: (context, panelSize) => SingleChildScrollView(
+          key: const ValueKey('fees-payment-details-scroll'),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: panelSize.maxHeight),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
            Row(
             children: [
               Icon(Icons.account_balance_wallet_outlined, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
@@ -11561,7 +11567,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ),
             ),
           ),
-        ],
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
