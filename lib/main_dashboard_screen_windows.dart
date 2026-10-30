@@ -11595,8 +11595,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   Widget _mainPaymentPanel(
     QueryDocumentSnapshot<Map<String, dynamic>>? studentDoc,
-    Map<String, dynamic>? ledger,
-  ) {
+    Map<String, dynamic>? ledger, {
+    required Widget unpaidStudentPanel,
+  }) {
     final studentSelected = studentDoc != null;
     final student = studentDoc?.data() ?? <String, dynamic>{};
     final name = student['name']?.toString().trim() ?? '';
@@ -11694,49 +11695,62 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             ],
           ),
           const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {WindowsAppearance.watch(context);
-              final wide = constraints.maxWidth >= 1100;
-              final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
-              final feePanel = _feeStructurePanel(
-                studentSelected: studentSelected,
-                settingsReady: studentSelected && _activeFeeSettingsReady,
-                alreadyPaid: alreadyPaid,
-                oldExpected: oldExpected,
-              );
-              final paymentPanel = _paymentDetailsPanel(
-                studentSelected: studentSelected,
-                settingsReady: studentSelected && _activeFeeSettingsReady,
-                alreadyPaid: alreadyPaid,
-                expected: expected,
-                paid: oldPaid,
-                remaining: remaining,
-                ledger: ledger,
-                studentDoc: studentDoc,
-              );
-
-              if (wide) {
-                return SizedBox(
-                  height: panelHeight,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(flex: 6, child: feePanel),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 5, child: paymentPanel),
-                    ],
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                WindowsAppearance.watch(context);
+                // Desktop: three equal-width panels fit the usable viewport.
+                // Only extremely narrow windows scroll this strip horizontally.
+                final width = constraints.maxWidth < 1020
+                    ? 1020.0 : constraints.maxWidth;
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: width,
+                    height: constraints.maxHeight,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-unpaid-panel'),
+                            child: unpaidStudentPanel,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-structure-panel'),
+                            child: _feeStructurePanel(
+                              studentSelected: studentSelected,
+                              settingsReady: studentSelected && _activeFeeSettingsReady,
+                              alreadyPaid: alreadyPaid,
+                              oldExpected: oldExpected,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-payment-panel'),
+                            child: _paymentDetailsPanel(
+                              studentSelected: studentSelected,
+                              settingsReady: studentSelected && _activeFeeSettingsReady,
+                              alreadyPaid: alreadyPaid,
+                              expected: expected,
+                              paid: oldPaid,
+                              remaining: remaining,
+                              ledger: ledger,
+                              studentDoc: studentDoc,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
-              }
-
-              return Column(
-                children: [
-                  SizedBox(height: panelHeight, child: feePanel),
-                  const SizedBox(height: 12),
-                  SizedBox(height: panelHeight, child: paymentPanel),
-                ],
-              );
-            },
+              },
+            ),
           ),
         ],
       ),
