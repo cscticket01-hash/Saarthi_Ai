@@ -30,6 +30,29 @@ Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolNam
         ['Basic pay',money(amount('basicPaise'))],['Allowances',money(amount('allowancePaise'))],['Bonus',money(amount('bonusPaise'))],
         ['Overtime',money(amount('overtimePaise'))],['Deductions',money(amount('deductionPaise'))],['NET SALARY',money(net)]]),
       pw.SizedBox(height:16),table([['Payment summary','Amount'],['Paid',money(paid)],['Balance',money(net-paid)],['Status','${row['status']??'Pending'}']]),
+      if ((row['paymentCorrections'] as List? ?? []).isNotEmpty) ...[
+        pw.SizedBox(height:18),
+        pw.Text('PAYMENT CORRECTION AUDIT',style:pw.TextStyle(color:ink,fontSize:13,fontWeight:pw.FontWeight.bold)),
+        pw.SizedBox(height:8),
+        ...((row['paymentCorrections'] as List? ?? []).whereType<Map>()).map((entry) {
+          final original=(entry['originalPaise'] as num?)?.toInt() ?? 0;
+          final previous=(entry['previousPaise'] as num?)?.toInt() ?? original;
+          final revised=(entry['correctedPaise'] as num?)?.toInt() ?? 0;
+          final change=revised-previous;
+          final reason=entry['reason']?.toString() ?? '';
+          return pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[
+            table([
+              ['Original entry','Previous value','Corrected value','Adjustment'],
+              [money(original),money(previous),money(revised),money(change)],
+            ]),
+            pw.SizedBox(height:5),
+            pw.Text('Correction by: ${entry['authorizedBy'] ?? 'School Admin'}',style:const pw.TextStyle(fontSize:9)),
+            pw.SizedBox(height:4),
+            pw.Text('Reason: $reason',style:const pw.TextStyle(fontSize:9)),
+            pw.SizedBox(height:12),
+          ]);
+        }),
+      ],
       pw.SizedBox(height:12),pw.Text('A payslip summarises this salary record. It does not record a new payment.',style:const pw.TextStyle(fontSize:9,color:PdfColors.grey700)),
       pw.SizedBox(height:36),pw.Row(mainAxisAlignment:pw.MainAxisAlignment.spaceBetween,children:[pw.Text('Employee signature: ______________'),pw.Text('Authorised signature: ______________')]),
     ]));
