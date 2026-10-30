@@ -60,6 +60,14 @@ class SchoolCloudEngine extends ChangeNotifier {
              expectedUid: identity['uid'],
            ));
   static final instance = SchoolCloudEngine();
+  // The mounted Windows gate is authoritative for daily-online admission.
+  // Do not create an unrelated session for Sync Now / recovery actions.
+  static SchoolCloudEngine? _mounted;
+  static SchoolCloudEngine get current => _mounted ?? instance;
+  static void mount(SchoolCloudEngine value) => _mounted = value;
+  static void unmount(SchoolCloudEngine value) {
+    if (identical(_mounted, value)) _mounted = null;
+  }
   final Future<Map<String, dynamic>> Function() _read, _verify;
   final Future<void> Function(Map<String, dynamic>, Map<String, dynamic>)
   _persist;
@@ -79,6 +87,7 @@ class SchoolCloudEngine extends ChangeNotifier {
       ? _clock().millisecondsSinceEpoch
       : _verifiedServerTime! + (_elapsed() - _verifiedElapsed).inMilliseconds;
   final bool _requireDailyOnline;
+  bool get requireDailyOnline => _requireDailyOnline;
   static const dailyOnlineWindow = Duration(hours: 24);
   final Future<bool> Function(Map<String,dynamic>,Map<String,dynamic>,int) _deviceVerifier;
   int _deviceLeaseExpiry=0;
@@ -259,7 +268,12 @@ class SchoolCloudEngine extends ChangeNotifier {
       unawaited(verify());
       _retry = Timer.periodic(const Duration(seconds: 60), (_) {
         _notify();
-        final due = Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
+        // Daily access: check at least hourly while online; when the network
+        // disappears retry at bounded 1/2/5-minute intervals. A reconnect
+        // should renew the lease without requiring a full business sync.
+        final due = _requireDailyOnline
+          ? Duration(minutes: _failures == 0 ? 60 : (_failures == 1 ? 1 : _failures == 2 ? 2 : 5))
+          : Duration(minutes: _failures == 0 ? 15 : (1 << _failures.clamp(0,5)));
         if (_lastVerifyAttempt == null || _clock().difference(_lastVerifyAttempt!) >= due) unawaited(verify());
         else if(canOpen && !_presenceRunning && (_lastPresence==null || _clock().difference(_lastPresence!)>=const Duration(seconds:60))) {
           _presenceRunning=true;_lastPresence=_clock();
@@ -274,8 +288,11 @@ class SchoolCloudEngine extends ChangeNotifier {
     if(token is! String || token.isEmpty){await verify();return;} // Older broker compatibility.
     final origin=identity;
     if(origin==null)return;
-    try {await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});}
-    catch(_){await verify();}
+    try {
+      await ManagedSchoolSession.callForSchool(origin['schoolId'],'managed/presence',{'presenceToken':token});
+      await refreshAfterNetworkUse();
+    } catch(_){await verify();}
+
   }
 
   Future<void> _checkpoint(int generation) async {
@@ -288,6 +305,27 @@ class SchoolCloudEngine extends ChangeNotifier {
 
   Future<void> verify() => _verificationTask ??=
       _verifyAccess().whenComplete(() => _verificationTask = null);
+
+  /// Explicit retry must not merely join an earlier failed startup request.
+  /// No untrusted connectivity flag may extend the offline allowance.
+  Future<void> verifyNow() async {
+    final prior = _verificationTask;
+    if (prior != null) await prior;
+    if (!_disposed) await verify();
+  }
+
+  /// Sync/UI network activity can prompt an authenticated lease renewal.
+  /// This is a separate managed/session call; a network ping, queue ACK or
+  /// presence notification is NOT itself valid licence verification.
+  Future<void> refreshAfterNetworkUse() async {
+    if (!_requireDailyOnline || !_localReady || identity == null ||
+        _disposed || _verificationTask != null) return;
+    final at = _lastVerifyAttempt;
+    final interval = _failures == 0
+      ? const Duration(minutes:15) : const Duration(minutes:1);
+    if (at != null && _clock().difference(at) < interval) return;
+    await verify();
+  }
 
   Future<void> _verifyAccess() async {
     if (_verifying || identity == null || _disposed) return;
