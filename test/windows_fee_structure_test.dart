@@ -166,20 +166,24 @@ void main() {
       }
       await tester.pumpWidget(const MaterialApp(home:FeesCollectionScreen()));
       await waitFor(tester,find.text('Fees Collection'));
-      await waitFor(tester,find.text('Synthetic Fee Pupil'));
-      if (existingPayment) await waitFor(tester,find.text('PARTIAL'));
-      await tester.enterText(find.widgetWithText(TextField,'Student Name'),'Synthetic Fee Pupil');
-      await tester.pump();
-      await tester.ensureVisible(find.text('Synthetic Fee Pupil').last);
-      await tester.runAsync(()=>tester.tap(find.text('Synthetic Fee Pupil').last));
-      await waitFor(tester,find.text(existingPayment ? 'Original Tuition' : 'Transport'));
-      expect(find.text('Tuition Fees'),findsNothing);
       if(existingPayment) {
-        expect(find.text('Monthly Tuition'),findsNothing);
+        // The new left panel lists ONLY students with zero payments.
+        // Partial payments are hidden without touching the original ledger,
+        // even if the fee structure has since been edited/removed.
+        await waitFor(tester,find.text('Available Students (0)'));
+        expect(find.byKey(const ValueKey('fees-student-fee-pupil')),findsNothing);
+        expect(find.text('WhatsApp Receipt'),findsOneWidget);
         final original=await io(tester,()=>db.collection('fee_ledger').doc('partial').get());
         expect(original!.data()?['feeItems'],{'Original Tuition':125.5});
         expect(original.data()?['totalPaid'],50);
       } else {
+        await waitFor(tester,find.text('Synthetic Fee Pupil'));
+        await tester.enterText(find.widgetWithText(TextField,'Student Name'),'Synthetic Fee Pupil');
+        await tester.pump();
+        await tester.ensureVisible(find.text('Synthetic Fee Pupil').last);
+        await tester.runAsync(()=>tester.tap(find.text('Synthetic Fee Pupil').last));
+        await waitFor(tester,find.text('Transport'));
+        expect(find.text('Tuition Fees'),findsNothing);
         expect(find.text('Monthly Tuition'),findsOneWidget);
       }
       await tester.pumpWidget(const SizedBox());await tester.pump();

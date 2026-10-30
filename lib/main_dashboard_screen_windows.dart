@@ -11,6 +11,7 @@ import 'windows_admin_settings_design.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
+import 'windows_fee_unpaid_filter.dart';
 import 'windows_fee_structure.dart';
 import 'windows_fee_receipt_preview.dart';
 import 'fitted_document_preview.dart';
@@ -10461,6 +10462,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String _selectedClass = 'All Classes';
   late String _selectedMonth;
   String? _activeStudentId;
+  String? _activeStudentClass;
   String _paymentMode = 'Cash';
   bool _isSavingPayment = false;
   final String _feesOriginProfile = FirebaseFirestore.instance.activeProfileId;
@@ -10696,6 +10698,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     _sessionReceiptPaymentId = null;
     _sessionReceiptStudentId = null;
     _activeStudentId = null;
+    _activeStudentClass = null;
     _activeFeeSettingsReady = false;
     _activeFeeSettingsMessage = null;
     _activeFeeAmounts = {};
@@ -10743,9 +10746,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         FirebaseFirestore.instance.activeProfileId == _feesOriginProfile;
     setState(() {
       _activeStudentId = studentDoc.id;
-      _selectedClass = studentClass;
-      _nameSearchController.text = studentName;
-      _rollSearchController.text = roll;
+      _activeStudentClass = studentClass;
+      // Do not collapse the unpaid queue to the selected student.
       _activeFeeSettingsReady = false;
       _activeFeeSettingsMessage = 'Loading fee settings...';
       _activeFeeAmounts = {};
@@ -11191,15 +11193,59 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
               Icon(Icons.receipt_long_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
               const SizedBox(width: 8),
                Text(
                 'Fee Structure',
                 style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(width: 10),
+                  const Spacer(),
+              TextButton.icon(
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
+                  );
+                  if (!mounted || _activeStudentId == null) return;
+                  final currentClass = _activeStudentClass ?? '';
+                  final currentStudent = _activeStudentId;
+                  try {
+                    final updated = await _getClassFeeSettings(currentClass);
+                    if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
+                    setState(() {
+                      _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
+                      _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
+                      if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
+                        _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
+                      }
+                      if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
+                        _selectedFeeHeads.clear();
+                        _receivedAmountController.clear();
+                      }
+                    });
+                  } catch (error) {
+                    if (!mounted) return;
+                    setState(() {
+                      _activeFeeSettingsReady = false;
+                      _activeFeeSettingsMessage = 'Reload fee settings before collecting payment.';
+                      _selectedFeeHeads.clear();
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee settings load error: $error')));
+                  }
+                },
+                icon: const Icon(Icons.settings_rounded, size: 16),
+                label: const Text('Settings'),
+              ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
               Expanded(
                 child: Text(
                   studentSelected
@@ -11255,42 +11301,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
-                  );
-                  if (!mounted || _activeStudentId == null) return;
-                  final currentClass = _selectedClass;
-                  final currentStudent = _activeStudentId;
-                  try {
-                    final updated = await _getClassFeeSettings(currentClass);
-                    if (!mounted || currentStudent != _activeStudentId || currentClass != _selectedClass) return;
-                    setState(() {
-                      _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
-                      _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
-                      if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
-                        _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
-                      }
-                      if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
-                        _selectedFeeHeads.clear();
-                        _receivedAmountController.clear();
-                      }
-                    });
-                  } catch (error) {
-                    if (!mounted) return;
-                    setState(() {
-                      _activeFeeSettingsReady = false;
-                      _activeFeeSettingsMessage = 'Reload fee settings before collecting payment.';
-                      _selectedFeeHeads.clear();
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee settings load error: $error')));
-                  }
-                },
-                icon: const Icon(Icons.settings_rounded, size: 16),
-                label: const Text('Settings'),
+                ],
               ),
             ],
           ),
@@ -11310,9 +11321,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             ),
           ),
           const SizedBox(height: 4),
-          SizedBox(
-            height: 255,
-            child: ListView.separated(
+          Expanded(
+             child: ListView.separated(
               itemCount: _feeHeads.length,
               separatorBuilder: (_, __) =>  Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
               itemBuilder: (context, index) {
@@ -11422,9 +11432,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: LayoutBuilder(
+        builder: (context, panelSize) => SingleChildScrollView(
+          key: const ValueKey('fees-payment-details-scroll'),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: panelSize.maxHeight),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
            Row(
             children: [
               Icon(Icons.account_balance_wallet_outlined, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
@@ -11560,32 +11576,47 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               ),
             ),
           ),
-        ],
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
 
   Widget _paymentModeButton(String value, IconData icon, bool enabled) {
     final selected = _paymentMode == value;
-    return OutlinedButton.icon(
+    return OutlinedButton(
       style: OutlinedButton.styleFrom(
         foregroundColor: selected ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white60),
         backgroundColor: WindowsAppearance.background(selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent),
         side: BorderSide(
           color: selected ? const Color(0xFF00D9A5) : WindowsAppearance.outline(Colors.white12),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
       ),
-      onPressed: enabled && !_isSavingPayment ? () => setState(() => _paymentMode = value) : null,
-      icon: Icon(icon, size: 17),
-      label: Text(value, overflow: TextOverflow.ellipsis),
+      onPressed: enabled && !_isSavingPayment
+          ? () => setState(() => _paymentMode = value) : null,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 15),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11)),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _mainPaymentPanel(
     QueryDocumentSnapshot<Map<String, dynamic>>? studentDoc,
-    Map<String, dynamic>? ledger,
-  ) {
+    Map<String, dynamic>? ledger, {
+    required Widget unpaidStudentPanel,
+  }) {
     final studentSelected = studentDoc != null;
     final student = studentDoc?.data() ?? <String, dynamic>{};
     final name = student['name']?.toString().trim() ?? '';
@@ -11644,7 +11675,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     Text(
                       studentSelected
                           ? '$studentClass  •  Roll No: $roll  •  Month: ${_monthName(_selectedMonth)}'
-                          : 'Name ya Roll No search karein, phir neeche matching student select karein.',
+                          : 'Left panel se unpaid student select karein, ya search use karein.',
                       style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10.5),
                     ),
                     if (feeStudentUid.isNotEmpty) ...[
@@ -11683,49 +11714,186 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             ],
           ),
           const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {WindowsAppearance.watch(context);
-              final wide = constraints.maxWidth >= 1100;
-              final panelHeight = 500.0 * MediaQuery.textScalerOf(context).scale(14) / 14;
-              final feePanel = _feeStructurePanel(
-                studentSelected: studentSelected,
-                settingsReady: studentSelected && _activeFeeSettingsReady,
-                alreadyPaid: alreadyPaid,
-                oldExpected: oldExpected,
-              );
-              final paymentPanel = _paymentDetailsPanel(
-                studentSelected: studentSelected,
-                settingsReady: studentSelected && _activeFeeSettingsReady,
-                alreadyPaid: alreadyPaid,
-                expected: expected,
-                paid: oldPaid,
-                remaining: remaining,
-                ledger: ledger,
-                studentDoc: studentDoc,
-              );
-
-              if (wide) {
-                return SizedBox(
-                  height: panelHeight,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(flex: 6, child: feePanel),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 5, child: paymentPanel),
-                    ],
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                WindowsAppearance.watch(context);
+                // Desktop: three equal-width panels fit the usable viewport.
+                // Only extremely narrow windows scroll this strip horizontally.
+                final width = constraints.maxWidth < 1020
+                    ? 1020.0 : constraints.maxWidth;
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: width,
+                    height: constraints.maxHeight,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-unpaid-panel'),
+                            child: unpaidStudentPanel,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-structure-panel'),
+                            child: _feeStructurePanel(
+                              studentSelected: studentSelected,
+                              settingsReady: studentSelected && _activeFeeSettingsReady,
+                              alreadyPaid: alreadyPaid,
+                              oldExpected: oldExpected,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: const ValueKey('fees-payment-panel'),
+                            child: _paymentDetailsPanel(
+                              studentSelected: studentSelected,
+                              settingsReady: studentSelected && _activeFeeSettingsReady,
+                              alreadyPaid: alreadyPaid,
+                              expected: expected,
+                              paid: oldPaid,
+                              remaining: remaining,
+                              ledger: ledger,
+                              studentDoc: studentDoc,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
-              }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-              return Column(
+  Widget _unpaidStudentCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+    Map<String, dynamic>? ledger, {
+    required bool canSelect,
+  }) {
+    final student = studentDoc.data();
+    final name = student['name']?.toString() ?? 'Student';
+    final studentClass = student['class']?.toString() ?? '';
+    final roll = student['rollNo']?.toString() ?? '';
+    final selected = _activeStudentId == studentDoc.id;
+    return InkWell(
+      key: ValueKey('fees-student-${studentDoc.id}'),
+      borderRadius: BorderRadius.circular(11),
+      onTap: canSelect && !_isSavingPayment
+          ? () => _openInlineCollector(studentDoc, ledger)
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: WindowsAppearance.background(
+            selected ? const Color(0xFF183139) : const Color(0xFF172229)),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFF00D9A5).withOpacity(0.65)
+                : WindowsAppearance.outline(Colors.white12)),
+        ),
+        child: Row(
+          children: [
+            WindowsPersonAvatar(person: student, radius: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(height: panelHeight, child: feePanel),
-                  const SizedBox(height: 12),
-                  SizedBox(height: panelHeight, child: paymentPanel),
+                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Segoe UI',
+                      color: WindowsAppearance.foreground(Colors.white),
+                      fontWeight: FontWeight.w700, fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Text('$studentClass  •  Roll $roll',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Segoe UI',
+                      color: WindowsAppearance.foreground(Colors.white54),
+                      fontSize: 10)),
                 ],
-              );
-            },
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(selected ? Icons.check_circle_rounded
+                : Icons.chevron_right_rounded,
+              size: 20, color: selected
+                  ? WindowsAppearance.foreground(const Color(0xFF00D9A5))
+                  : WindowsAppearance.foreground(Colors.white38)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _unpaidStudentPanel(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> unpaid,
+    Map<String, dynamic>? Function(QueryDocumentSnapshot<Map<String, dynamic>>)
+        ledgerForStudent,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xFF0E1B22)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.groups_2_rounded,
+              color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
+              size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Available Students (${unpaid.length})',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontFamily: 'Segoe UI',
+                color: WindowsAppearance.foreground(Colors.white),
+                fontSize: 14, fontWeight: FontWeight.w800))),
+          ]),
+          const SizedBox(height: 6),
+          Text('Jinhone is month abhi koi payment nahi diya.',
+            maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontFamily: 'Segoe UI',
+              color: WindowsAppearance.foreground(Colors.white54),
+              fontSize: 10)),
+          const SizedBox(height: 10),
+          Divider(height: 1, color: WindowsAppearance.outline(Colors.white10)),
+          Expanded(
+            child: !_localLedgerReady
+                ? Center(child: Text('Loading local fee ledger...',
+                    style: TextStyle(
+                      color: WindowsAppearance.foreground(Colors.white54))))
+                : unpaid.isEmpty
+                    ? Center(child: Text('No unpaid students',
+                        style: TextStyle(
+                          color: WindowsAppearance.foreground(Colors.white54))))
+                    : ListView.separated(
+                        key: const ValueKey('fees-unpaid-student-list'),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        itemCount: unpaid.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 7),
+                        itemBuilder: (context, index) {
+                          final student = unpaid[index];
+                          return _unpaidStudentCard(
+                            student, ledgerForStudent(student),
+                            canSelect: _localLedgerReady,
+                          );
+                        },
+                      ),
           ),
         ],
       ),
@@ -11955,9 +12123,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               final activeLedger = activeStudentDoc == null || !ledgerSnapshot.hasData || !_studentUidConfigLoaded
                   ? null
                   : ledgerForStudent(activeStudentDoc);
+              // The no-payment queue hides both partial and full payments;
+              // active receipt/print actions remain available after collection.
+              final unpaidStudents = _localLedgerReady
+                  ? filtered.where((student) =>
+                      showInUnpaidStudentList(ledgerForStudent(student))).toList()
+                  : <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+
+              return Padding(
+                padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
                     Wrap(
@@ -12186,60 +12361,12 @@ child: Row(
 ),
 ),
                     const SizedBox(height: 12),
-                    _mainPaymentPanel(activeStudentDoc, activeLedger),
-                    const SizedBox(height: 12),
-                    Container(
-                        decoration: BoxDecoration(
-                          color: WindowsAppearance.background(const Color(0xFF101D24)),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-                        ),
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.groups_2_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 19),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Student List (${filtered.length} result${filtered.length == 1 ? '' : 's'})',
-                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w800),
-                                  ),
-                                  const Spacer(),
-                                  Text(
-                                    searchStarted
-                                        ? 'Matching student select karein'
-                                        : 'Select a student from the list or search by name / roll number',
-                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
-                                  ),
-                                ],
-                              ),
-                            ),
-                             Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
-                            Container(
-                              child: filtered.isEmpty
-                                  ?  Center(
-                                      child: Text('No students found', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
-                                    )
-                                  : ListView.separated(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      padding: const EdgeInsets.all(10),
-                                      itemCount: filtered.length,
-                                      separatorBuilder: (_, __) => const SizedBox(height: 7),
-                                      itemBuilder: (context, index) {
-                                        final student = filtered[index];
-                                        return _studentCard(
-                                          student,
-                                          ledgerForStudent(student),
-                                          canSelect: _localLedgerReady,
-                                        );
-                                      },
-                                    ),
-                            ),
-                          ],
-                        ),
+                    Expanded(
+                      child: _mainPaymentPanel(
+                        activeStudentDoc, activeLedger,
+                        unpaidStudentPanel: _unpaidStudentPanel(
+                          unpaidStudents, ledgerForStudent),
+                      ),
                     ),
                   ],
                 ),
