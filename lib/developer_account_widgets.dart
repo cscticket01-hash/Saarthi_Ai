@@ -42,7 +42,7 @@ class _AppDownloadButtonsState extends State<AppDownloadButtons>{
         final response=await http.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100')).timeout(const Duration(seconds:8));
         if(response.statusCode==200){
           final selected=latestReleasedInstaller(jsonDecode(response.body) as List,platform);
-          if(selected!=null)chosen=Uri.tryParse(selected);
+          if(selected!=null)chosen=selected;
         }
       }catch(_){ /* Retain the static, already-published download fallback. */ }
       chosen??=Uri.base.resolve(platform=='windows'?'/downloads/windows.exe':'/downloads/android.apk');
