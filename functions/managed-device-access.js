@@ -1,7 +1,7 @@
 'use strict';
 const {createPrivateKey,createPublicKey,sign,verify}=require('node:crypto');
 const {createManagedDeviceRegistry}=require('./managed-device-registry');
-const MAX_OFFLINE_MS=15*60*1000;
+const MAX_OFFLINE_MS=15*60*1000,DAILY_OFFLINE_MS=24*60*60*1000;
 function reject(status,code){const error=new Error(code);error.status=status;error.code=code;error.publicMessage=true;throw error;}
 function header(req,key){const value=req?.headers?.[key];if(typeof value!=='string')reject(401,'DEVICE_PROOF_REQUIRED');return value;}
 /** Insert ONLY after existing identity(req, body.schoolId) has checked Firebase
@@ -9,7 +9,12 @@ function header(req,key){const value=req?.headers?.[key];if(typeof value!=='stri
  * a request's asserted identity here. Mobile/developer routes run before this.
  * Enabling enforcement must be an explicit TEST-approved server configuration.
  */
-function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,enrollmentEnabled=false,offlinePrivateKey,now=Date.now}){
+function createManagedDeviceAccess({store,enforced=false,managementEnabled=false,enrollmentEnabled=false,
+ offlinePrivateKey,now=Date.now,offlineWindowMs=MAX_OFFLINE_MS}){
+ // The long device token is an explicit, reviewed rollout: existing brokers
+ // keep 15-minute revocation exposure until the daily gate is enabled.
+ if(![MAX_OFFLINE_MS,DAILY_OFFLINE_MS].includes(offlineWindowMs))
+  throw new Error('Unsupported offline device lease interval');
  let key;
  if(enforced){if(!offlinePrivateKey)throw new Error('Offline device signing key required for enforced rollout');
   key=typeof offlinePrivateKey==='string'||Buffer.isBuffer(offlinePrivateKey)?createPrivateKey(offlinePrivateKey):offlinePrivateKey;
@@ -17,7 +22,7 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
  function context(identity,body){if(!/^vs-[a-f0-9]{32}$/.test(identity?.schoolId)||typeof identity.uid!=='string'||!identity.uid)reject(403,'DEVICE_VERIFIED_IDENTITY_REQUIRED');
   if(body.schoolId!==undefined&&body.schoolId!==identity.schoolId)reject(403,'DEVICE_SCHOOL_MISMATCH');
   return {...identity,role:'school_admin'};}
- function lease(auth,device,entitlement){const issuedAt=now(),expiresAt=Math.min(Number(entitlement.expiresAt),issuedAt+MAX_OFFLINE_MS);
+ function lease(auth,device,entitlement){const issuedAt=now(),expiresAt=Math.min(Number(entitlement.expiresAt),issuedAt+offlineWindowMs);
   if(entitlement.allowed!==true||!Number.isSafeInteger(expiresAt)||expiresAt<=issuedAt)reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
   const data={version:1,purpose:'vidya-pc-offline',schoolId:auth.schoolId,uid:auth.uid,deviceIdentity:device.deviceIdentity,generationHash:device.generationHash,issuedAt,expiresAt};
   const payload=Buffer.from(JSON.stringify(data)).toString('base64url');return {offlineLease:payload+'.'+sign(null,Buffer.from(payload),key).toString('base64url'),offlineExpiresAt:expiresAt,device};}
@@ -78,11 +83,13 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
  }};
 }
 /** Pure signature/context check for independently cached OFFLINE access only.
- * This cannot prove immediate offline revocation: max15min limits that window.
+ * This cannot prove immediate offline revocation: validity is bound by the
+ * server-signed 15-minute default or explicitly enabled 24-hour window.
  * Online routes MUST call authorize and check current registry, never this.
  * Windows must pin the configured Ed25519 public key and expected generation.
  */
-function verifyOfflineDeviceLease(token,{publicKey,schoolId,uid,deviceIdentity,generationHash,now=Date.now}){
+function verifyOfflineDeviceLease(token,{publicKey,schoolId,uid,deviceIdentity,generationHash,now=Date.now,maxOfflineMs=MAX_OFFLINE_MS}){
+ if(![MAX_OFFLINE_MS,DAILY_OFFLINE_MS].includes(maxOfflineMs))reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
  if(typeof token!=='string'||token.length>4096)reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
  const parts=token.split('.');if(parts.length!==2||! /^[A-Za-z0-9_-]+$/.test(parts[0])||! /^[A-Za-z0-9_-]{86}$/.test(parts[1]))reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
  try{const key=typeof publicKey==='string'||Buffer.isBuffer(publicKey)?createPublicKey(publicKey):publicKey;
@@ -91,7 +98,7 @@ function verifyOfflineDeviceLease(token,{publicKey,schoolId,uid,deviceIdentity,g
  let payload;try{payload=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));}catch{reject(401,'INVALID_OFFLINE_DEVICE_LEASE');}
  const t=now();if(!Number.isSafeInteger(t)||t<0)reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
  if(payload.version!==1||payload.purpose!=='vidya-pc-offline'||payload.schoolId!==schoolId||payload.uid!==uid||payload.deviceIdentity!==deviceIdentity||payload.generationHash!==generationHash||
-  !Number.isSafeInteger(payload.issuedAt)||!Number.isSafeInteger(payload.expiresAt)||payload.issuedAt>t||payload.expiresAt<=t||payload.expiresAt<=payload.issuedAt||payload.expiresAt-payload.issuedAt>MAX_OFFLINE_MS)reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
+  !Number.isSafeInteger(payload.issuedAt)||!Number.isSafeInteger(payload.expiresAt)||payload.issuedAt>t||payload.expiresAt<=t||payload.expiresAt<=payload.issuedAt||payload.expiresAt-payload.issuedAt>maxOfflineMs)reject(401,'INVALID_OFFLINE_DEVICE_LEASE');
  return payload;
 }
-module.exports={createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS};
+module.exports={createManagedDeviceAccess,verifyOfflineDeviceLease,MAX_OFFLINE_MS,DAILY_OFFLINE_MS};
