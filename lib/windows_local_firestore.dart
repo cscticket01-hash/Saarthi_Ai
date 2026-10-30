@@ -2314,8 +2314,15 @@ class _LocalSchoolDatabase {
     final blocked = previous is Map &&
         {'conflict','needsAttention'}.contains(previous['syncState']) &&
         !explicitDirectorySave && !correctedValidation && !isDelete;
+    final expectedBase=previous is Map?previous['baseCloudRevision']:
+      baselineEntry is Map?baselineEntry['revision']:beforeSave?['_syncRevision'];
+    final retainedBase=previous is Map?previous['fieldPatchBase']:null;
     final baseRecord=baselineEntry is Map && baselineEntry['record'] is Map
-      ? _decodeMap(Map<String,dynamic>.from(baselineEntry['record'])) : null;
+      ? _decodeMap(Map<String,dynamic>.from(baselineEntry['record']))
+      : retainedBase is Map && retainedBase['_syncRevision']==expectedBase
+      ? _decodeMap(Map<String,dynamic>.from(retainedBase))
+      : previous is! Map && beforeSave?['_syncRevision']==expectedBase && expectedBase is String && expectedBase.isNotEmpty
+      ? _decodeMap(Map<String,dynamic>.from(beforeSave!)) : null;
     final changes=!isDelete && baseRecord!=null && finalDocs[operation.documentId] is Map
       ? buildRecordFieldPatch(operation.collection,baseRecord,
           _decodeMap(Map<String,dynamic>.from(finalDocs[operation.documentId] as Map))) : null;
@@ -2324,9 +2331,12 @@ class _LocalSchoolDatabase {
       'schoolId': _activeIdentity['schoolSyncId'] ?? '',
       'baseCloudRevision': explicitDirectorySave ? previous['directoryConflictBase']['revision'] :
           previous is Map ? previous['baseCloudRevision'] ?? '' :
-          baselineEntry is Map ? baselineEntry['revision'] ?? '' : '',
+          baselineEntry is Map ? baselineEntry['revision'] ?? '' : expectedBase ?? '',
       'syncState':blocked ? previous['syncState'] : 'pending', 'retryCount':0,
+      if(!isDelete&&beforeSave!=null)'updateIntent':true,
       if(changes!=null)'fieldPatch':_encodeMap(changes),
+      if(changes!=null && baseRecord!=null && (baselineEntry is! Map || baselineEntry['record'] is! Map))
+        'fieldPatchBase':_encodeMap(baseRecord),
       if(!isDelete && (previous is Map && previous['createIntent']==true ||
           previous is! Map && beforeSave==null && (baselineEntry is! Map || (baselineEntry['revision']??'')=='')))
         'createIntent':true,
