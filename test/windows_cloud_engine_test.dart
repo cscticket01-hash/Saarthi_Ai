@@ -220,6 +220,55 @@ void main() {
       }
     },
   );
+  test('staged 24-hour daily verification becomes read-only without deleting school access',()async{
+    var clock=now.add(const Duration(hours:23));
+    var allowOnline=false;
+    final snapshot=identity(access());
+    final e=SchoolCloudEngine(
+      readIdentity:()async=>snapshot,clock:()=>clock,requireDailyOnline:true,
+      activateLocal:()async{},legacyAccess:()async=>null,
+      touchClock:(a,b)async{},persist:(a,b)async{},
+      verify:()async{
+        if(!allowOnline)throw const SocketException('offline');
+        return {...access(),'serverTime':clock.millisecondsSinceEpoch};
+      },
+    );
+    await e.restore();
+    expect(e.canOpen,true);
+    expect(e.dailyOnlineReadOnly,false);
+    clock=now.add(const Duration(hours:24));
+    expect(e.canOpen,false);
+    expect(e.dailyOnlineReadOnly,true);
+    allowOnline=true;
+    await e.verify();
+    expect(e.canOpen,true);
+    expect(e.dailyOnlineReadOnly,false);
+    e.dispose();
+  });
+
+  testWidgets('24-hour offline mode displays disclaimer and disables school controls', (tester)async{
+    var clock=now.add(const Duration(hours:24));
+    var clicked=0;
+    final e=SchoolCloudEngine(
+      readIdentity:()async=>identity(access()),clock:()=>clock,
+      requireDailyOnline:true,activateLocal:()async{},
+      legacyAccess:()async=>null,touchClock:(a,b)async{},
+      persist:(a,b)async{},verify:()async=>throw const SocketException('offline'),
+    );
+    await tester.pumpWidget(MaterialApp(home:WindowsManagedSchoolGate(
+      engine:e,legacy:const Text('Legacy'),
+      child:ElevatedButton(onPressed:()=>clicked++,child:const Text('Collect payment')),
+    )));
+    await tester.pump();await tester.pump();
+    expect(find.byKey(const ValueKey('daily-online-verification-disclaimer')),findsOneWidget);
+    expect(find.text('Collect payment'),findsOneWidget);
+    await tester.tap(find.text('Collect payment'),warnIfMissed:false);
+    await tester.pump();
+    expect(clicked,0);
+    expect(find.text('Verify online'),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('cached paid licence cannot remain offline indefinitely',()async {
     final lease={...access(),'serverTime':now.subtract(const Duration(hours:73)).millisecondsSinceEpoch};
     final e=engine(identity(lease));await e.restore();expect(e.canOpen,false);e.dispose();
