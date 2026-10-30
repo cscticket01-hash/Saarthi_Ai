@@ -11587,18 +11587,28 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   Widget _paymentModeButton(String value, IconData icon, bool enabled) {
     final selected = _paymentMode == value;
-    return OutlinedButton.icon(
+    return OutlinedButton(
       style: OutlinedButton.styleFrom(
         foregroundColor: selected ? const Color(0xFF00D9A5) : WindowsAppearance.resolve(Colors.white60),
         backgroundColor: WindowsAppearance.background(selected ? const Color(0xFF00A884).withOpacity(0.12) : Colors.transparent),
         side: BorderSide(
           color: selected ? const Color(0xFF00D9A5) : WindowsAppearance.outline(Colors.white12),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
       ),
-      onPressed: enabled && !_isSavingPayment ? () => setState(() => _paymentMode = value) : null,
-      icon: Icon(icon, size: 17),
-      label: Text(value, overflow: TextOverflow.ellipsis),
+      onPressed: enabled && !_isSavingPayment
+          ? () => setState(() => _paymentMode = value) : null,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 15),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11)),
+          ),
+        ],
+      ),
     );
   }
 
