@@ -1930,7 +1930,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       final at=p['lastAt'];
       final now=DateTime.now().millisecondsSinceEpoch;
       return at is int && at<=now && now-at<=const Duration(hours:1).inMilliseconds;
-    }).toList();
+    }).toList()..sort((a,b)=>(b['lastAt'] as int).compareTo(a['lastAt'] as int));
     unawaited(WindowsSharedRepairKnowledge.refresh(_activeSchoolSyncId,recentPatterns));
     final now = DateTime.now();
     final scheduledCheck = windowsIntegrityAuditDue(
