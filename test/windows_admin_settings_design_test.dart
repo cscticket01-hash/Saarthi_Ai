@@ -30,6 +30,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Student Import Sheet'),findsNothing);
       expect(find.text('school@example.com'),findsOneWidget);
+      if (spec.$1.width >= 960 && spec.$1.height >= 830 && spec.$2 == 1.0) {
+        expect(find.byType(SingleChildScrollView), findsNothing);
+        expect(tester.getLeft(find.text('Device Management')), greaterThan(0));
+        expect(tester.getBottomRight(find.text('Open Advanced Settings')).dy,
+            lessThan(spec.$1.height));
+      }
       for(final entry in {'Device Management':'devices','School Settings':'school',
           'Open Password Management':'passwords','Open Advanced Settings':'advanced'}.entries) {
         await tester.ensureVisible(find.text(entry.key)); await tester.pumpAndSettle();
