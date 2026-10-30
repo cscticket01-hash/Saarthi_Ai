@@ -219,7 +219,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   void _admitBatch() {
-    if (isPaused) throw const _SyncAdmissionPaused();
+    // Check on every batch boundary too: a 24-hour proof can expire while a
+    // background cycle is running. Never admit the next financial/file write
+    // after the deadline. Original pending operations stay untouched.
+    if (isPaused || WindowsDailyAccessGuard.blockedFor(_activeSchoolSyncId))
+      throw const _SyncAdmissionPaused();
   }
 
   bool _syncing = false;
