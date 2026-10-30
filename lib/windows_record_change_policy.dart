@@ -7,8 +7,8 @@ const fieldPatchEnvelope = '_syncFieldPatch';
 Map<String,dynamic>? buildRecordFieldPatch(String collection, Map base, Map current) {
   if({'documents','backups'}.contains(collection) || base['_syncDeleted']==true ||
       base['_syncRevision'] is! String || (base['_syncRevision'] as String).isEmpty ||
-      current['replacesStudentGeneration']!=null ||
-      current.keys.any((key)=>key.toString().startsWith('_syncRecreates'))) return null;
+      current['replacesStudentGeneration']!=base['replacesStudentGeneration'] ||
+      current.keys.any((key)=>key.toString().startsWith('_syncRecreates')&&current[key]!=base[key])) return null;
   final identityKey=collection=='students_directory'?'mobileStableId':
       collection=='teachers_directory'?'teacherId':null;
   if(identityKey!=null && (base[identityKey] is! String ||
@@ -74,3 +74,10 @@ bool sameDeletedDirectoryOwner(Map intent, Map remote) {
     remote['_syncRecreatesDeletedRevision']==null && remote['_syncRecycleRestoreId']==null &&
     intent['schoolId']==remote['schoolId'] && intent['documentId']==remote['id'];
 }
+
+/// Initial creates, deletion/recreation and versioned files have their own
+/// immutable protocols. Ordinary edits must never fall back to a full upload.
+bool registeredRecordRequiresPatch(Map item) =>
+  item['operation']!='delete' && !{'documents','backups'}.contains(item['collection']) &&
+  (item['updateIntent']==true || item['baseCloudRevision'] is String && (item['baseCloudRevision'] as String).isNotEmpty) &&
+  item['priorDeletion']==null && item['createIntent']!=true;
