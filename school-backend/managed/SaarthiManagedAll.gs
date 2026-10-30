@@ -7115,7 +7115,7 @@ function VS_applyFieldPatch(b,existing,school) {
   for(const key of ['studentId','personId'])if(current[key]&&identity[key]!==current[key])throw new Error('Record revision conflict');
   const personKey=b.collection==='students_directory'?'mobileStableId':b.collection==='teachers_directory'?'teacherId':null;
   if(personKey&&(!identity[personKey]||identity[personKey]!==current[personKey]))throw new Error('Record revision conflict');
-  if(current._syncRecreatesDeletedRevision)throw new Error('Record revision conflict');
+  if(current._syncRecreatesDeletedRevision&&current._syncRevision!==b.expectedRecordRevision)throw new Error('Record revision conflict');
   for(const key of [personKey,'studentId','personId'].filter(Boolean)) {
     if(Object.prototype.hasOwnProperty.call(patch.set,key)&&patch.set[key]!==current[key]||patch.remove.indexOf(key)>=0)
       throw new Error('Record revision conflict');
@@ -7572,7 +7572,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-10-29.1',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-10-30.1',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
