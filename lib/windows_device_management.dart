@@ -200,22 +200,39 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   Icon(Icons.circle,key:ValueKey('activity-${row['deviceIdentity']}'),size:8,color:recentlyActive(row)?WindowsAppearance.foreground(const Color(0xff6ed6aa)):muted),
                   const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(fontFamily: 'Segoe UI', color:recentlyActive(row)?WindowsAppearance.foreground(const Color(0xff6ed6aa)):muted))),
                 ]);
+                Widget connectivity(Map<String,dynamic> row) {
+                  final type = row['connectionType'];
+                  final known = type=='WiFi'||type=='LAN';
+                  final label = type=='WiFi' ? 'Wi-Fi' : type=='LAN' ? 'LAN' : 'Unknown';
+                  final icon = type=='WiFi' ? Icons.wifi_rounded
+                      : type=='LAN' ? Icons.lan_outlined : Icons.help_outline_rounded;
+                  return Tooltip(
+                    message: known ? 'Last reported adapter type, not proof of internet access'
+                        : 'This PC has not reported a verified adapter type',
+                    child: Row(children:[
+                      Icon(icon,size:17,color:known?WindowsAppearance.foreground(const Color(0xff8aade8)):muted),
+                      const SizedBox(width:6),
+                      Flexible(child:Text(label,overflow:TextOverflow.ellipsis,
+                        style:TextStyle(fontFamily:'Segoe UI',color:known?WindowsAppearance.foreground(Colors.white70):muted))),
+                    ]),
+                  );
+                }
                 Widget action(Map<String,dynamic> row) => row['status']=='active' && row['deviceIdentity']!=current
                   ? TextButton(onPressed:revoking || !verified || !canRevoke ? null:()=>revoke(row),child:const Text('Revoke'))
                   :  Text('—',style:TextStyle(fontFamily: 'Segoe UI', color:muted));
                 return Column(children:[
                   if(!compact)  Padding(padding:EdgeInsets.symmetric(horizontal:20,vertical:12),child:Row(children:[
-                    Expanded(flex:4,child:Text('Device name',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:3,child:Text('Activity',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:3,child:Text('Last seen',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),SizedBox(width:80,child:Text('Action',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),
+                    Expanded(flex:4,child:Text('Device name',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:3,child:Text('Activity',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:2,child:Text('Last seen',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:2,child:Text('Connectivity',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),SizedBox(width:80,child:Text('Action',style:TextStyle(fontFamily: 'Segoe UI', color:muted))),
                   ])),
                   for(final row in devices) Container(key:ValueKey('device-${row['deviceIdentity']}'),padding:const EdgeInsets.symmetric(horizontal:20,vertical:14),decoration: BoxDecoration(border:Border(top:BorderSide(color:WindowsAppearance.outline(Color(0xff26364f))))),child:compact
-                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style: TextStyle(fontFamily: 'Segoe UI', color:muted)),Align(alignment:Alignment.centerRight,child:action(row))])
-                    : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:3,child:Text(lastSeen(row),style: TextStyle(fontFamily: 'Segoe UI', color:muted))),SizedBox(width:80,child:action(row))])),
+                    ? Column(crossAxisAlignment:CrossAxisAlignment.start,children:[name(row),const SizedBox(height:12),activity(row),const SizedBox(height:6),Text('Last seen: ${lastSeen(row)}',style: TextStyle(fontFamily: 'Segoe UI', color:muted)),const SizedBox(height:8),Row(children:[Text('Connectivity: ',style:TextStyle(fontFamily:'Segoe UI',color:muted)),connectivity(row)]),Align(alignment:Alignment.centerRight,child:action(row))])
+                    : Row(children:[Expanded(flex:4,child:Padding(padding:const EdgeInsets.only(right:16),child:name(row))),Expanded(flex:3,child:activity(row)),Expanded(flex:2,child:Text(lastSeen(row),style: TextStyle(fontFamily: 'Segoe UI', color:muted))),Expanded(flex:2,child:connectivity(row)),SizedBox(width:80,child:action(row))])),
                   if(devices.isEmpty) Padding(padding:const EdgeInsets.all(24),child:Text(busy ? 'Loading devices…' : 'No verified device list available.',style: TextStyle(fontFamily: 'Segoe UI', color:muted))),
                 ]);
               }),
             ])),
           if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
-           Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. A missing heartbeat does not confirm a PC is offline.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
+           Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. Connectivity is the last reported Wi-Fi/LAN adapter type, not verified internet access. Unreported devices show Unknown.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
         ]),
       )),
     );
