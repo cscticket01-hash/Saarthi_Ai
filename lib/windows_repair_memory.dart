@@ -36,7 +36,7 @@ class WindowsRepairMemory {
     final p=previous==null?<String,dynamic>{
       'collection':module,'category':category,'failureCode':code,'firstAt':now,
       'lastAt':now,'observations':0,'verifiedRepairs':0,'recurrences':0,
-      'status':'detected',
+      'status':'reviewRequired',
     }:Map<String,dynamic>.from(previous);
     if(resolved){
       p['verifiedRepairs']=(p['verifiedRepairs'] as int)+1;
@@ -47,7 +47,7 @@ class WindowsRepairMemory {
       if(p['status']=='resolved'){
         p['recurrences']=(p['recurrences'] as int)+1;
         p['status']='recurred';
-      }else if(p['status']!='recurred')p['status']='detected';
+      }else if(p['status']!='recurred')p['status']='reviewRequired';
     }
     p['lastAt']=now;
     if(entry['resolvedInVersion'] is String)p['resolvedInVersion']=entry['resolvedInVersion'];
@@ -117,7 +117,9 @@ class WindowsRepairMemory {
     }
     final category = categories.contains(event['failureCategory'])
       ? event['failureCategory'] as String
-      : stage == 'conflict' ? 'conflict' : 'unknown';
+      : {'conflict','duplicateReconciled'}.contains(stage) ||
+        stage=='repairDiagnosed' && verifiedOutcomes.contains(event['outcome'])
+        ? 'conflict' : 'unknown';
     final key = _hash([identity, category]);
     final previous = _entries[key];
     final wasResolved=previous?['status']=='resolved';
@@ -202,7 +204,7 @@ class WindowsRepairMemory {
         if(value is! Map || !_patternModules.contains(value['collection']) ||
             !categories.contains(value['category']) ||
             !_knownCodes.contains(value['failureCode']) ||
-            !{'detected','recurred','resolved'}.contains(value['status']) ||
+            !{'reviewRequired','recurred','resolved'}.contains(value['status']) ||
             ['firstAt','lastAt','observations','verifiedRepairs','recurrences']
               .any((k)=>value[k] is! int || value[k]<0) ||
             value['lastAt']<value['firstAt'] ||
