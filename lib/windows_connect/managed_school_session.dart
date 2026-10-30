@@ -12,6 +12,7 @@ import '../windows_secure_storage.dart';
 import '../platform/platform_config.dart';
 import 'central_school_cloud.dart';
 import 'managed_device_credentials.dart';
+import 'windows_network_connection.dart';
 export 'managed_device_credentials.dart';
 enum ThemeUnlockOutcome { applied, unchanged, deferred, interrupted, notManaged }
 class ManagedSchoolSession {
@@ -51,7 +52,9 @@ class ManagedSchoolSession {
       client:_transportFor(saved),closeClient:false);
     try {
       final metadata = action=='managed/session' || action=='managed/device/list'
-          ? (deviceRegistrationBody()..remove('action')) : const <String,dynamic>{};
+          ? <String,dynamic>{...(deviceRegistrationBody()..remove('action')),
+              ...await WindowsNetworkConnection.reportedMetadata()}
+          : const <String,dynamic>{};
       final token=await CentralSchoolCloud.firebaseToken();
       final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull'; // A quiet event subscription is not data transfer.
       if(visibleTransfer)activeTransfers.value++;
@@ -110,13 +113,15 @@ class ManagedSchoolSession {
       await ManagedDeviceCredentials.proof(accountUid:auth['localId'],endpoint:endpoint);
       final authenticated=CentralSchoolCloud(client:ManagedDeviceClient(cloud.client,endpoint,accountUid:auth['localId']),endpoint:endpoint,closeClient:false);
       try {
-        verifyDeviceRegistration(await authenticated.api(deviceRegistrationBody(),token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
+        final registration = {...deviceRegistrationBody(),
+          ...await WindowsNetworkConnection.reportedMetadata()};
+        verifyDeviceRegistration(await authenticated.api(registration,token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
       } on CentralCloudException catch(e) {
         // Compatibility only when this feature is explicitly inactive server-side.
         if(e.status==401 && e.diagnosticCode=='REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL') {
           // This path is reached only after a fresh Firebase password login.
           await ManagedDeviceCredentials.rotateRevokedCredential(accountUid:auth['localId'],endpoint:endpoint);
-          verifyDeviceRegistration(await authenticated.api(deviceRegistrationBody(),token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
+          verifyDeviceRegistration(await authenticated.api(registration,token:auth['idToken']), await ManagedDeviceCredentials.identity(accountUid:auth['localId'],endpoint:endpoint));
         } else if(e.status!=503 || e.diagnosticCode!='DEVICE_ROLLOUT_DISABLED') rethrow;
       }
       final session=await authenticated.api({'action':'managed/session','appearance':true},token:auth['idToken']);
