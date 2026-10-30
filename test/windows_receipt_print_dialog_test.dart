@@ -23,6 +23,8 @@ void main() {
       }))));
     await tester.pumpAndSettle();
     expect(find.text('Full page preview'), findsOneWidget);
+    expect(find.text('Save PDF'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Cancel'), findsNothing);
     expect(find.text('A4 (210 × 297 mm)'), findsOneWidget);
     expect(calls, isEmpty);
     await tester.enterText(find.byType(TextField), '2');
