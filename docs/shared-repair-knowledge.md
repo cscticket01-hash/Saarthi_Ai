@@ -22,3 +22,54 @@ The client verifies the pinned Ed25519 key, protocol, purpose, signature, timest
 4. Subsequent supported rule changes arrive remotely without another installer. New native functionality, new repair action types, database changes or key-pin replacement still require an app release.
 
 This implementation does not claim production activation, real-school throughput, measured speed gains, or automatic resolution of every sync error.
+
+
+## Permanent local repair-pattern memory (v2 snapshots)
+
+Each school profile keeps two separate local views in its existing durable
+`_windows_sync_status/recovery` record:
+
+- **Short-lived evidence:** at most 100 scoped per-operation observations. A
+  verified-resolved display entry expires after 24 hours; unresolved evidence
+  and the original durable outbox/receipts are never cleared by this cleanup.
+- **Durable pattern catalog:** at most 1,000 compact
+  `collection/category/allowlistedFailureCode` patterns with first/last seen
+  timestamps, recurring observations, and verified resolution counts. **No
+  automatic age-based deletion**. When storage reaches the 1,000-pattern bound,
+  the oldest unverified pattern is evicted before a verified one. All fields
+  are checked during restore; version-1 local snapshots are upgraded without
+  resetting queues. Application upgrades and ordinary restarts reuse the
+  same school-isolated local store.
+
+Patterns are observations, not executable recipes. A `verified` event must
+match an existing school-scoped pending operation before a new verified repair
+is counted. Repeated success messages for the same operation do not increase
+the count. An unresolved conflict, generic request success, or expired cache
+never grants a cloud ACK, changes payment amounts, or authorizes overwrites.
+
+The already existing `WindowsLearnedSyncRules` stores allowed deterministic
+actions independently of display events and seeds missing **safe** rules from
+previously verified pattern evidence after restart. This does **not** add
+unrestricted new repair actions.
+
+### Sharing to other schools
+
+At most once per hour when the shared-repair service is configured, the
+Windows client submits **only recently observed patterns** reduced to
+`module/category/outcome` enums by `sharedRepairObservations`. No
+school/record/operation IDs, error text, personal details, payment values, or
+credentials enter this payload. The broker aggregates untrusted, bounded
+category observations across licensed schools. A school cannot retrieve
+another school's records or source hash.
+
+An observed solution in School A **does not automatically become executable
+code in School B**. Cross-school action changes continue to require an
+already-supported bounded handler, verified CI evidence, developer approval,
+a signed policy and rollout checks. The Windows client validates the policy
+before applying it; unsigned/unconfigured policy falls back to local compiled
+behavior. This distinction is necessary to prevent one compromised device
+from pushing unsafe financial repairs to all schools.
+
+This change does not modify the school-owned Apps Script, transfer business
+data to the learning service, activate missing production signing secrets,
+or replace real-device and school-cloud acceptance tests.
