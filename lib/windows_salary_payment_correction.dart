@@ -5,10 +5,10 @@
 /// transfer: the authorised school operator confirms the actual amount.
 class SalaryPaymentCorrectionPolicy {
   static int wordCount(String text) =>
-      text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\\s+')).length;
+      text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
 
   static String validateNote(String note) {
-    final clean = note.trim().replaceAll(RegExp(r'\\s+'), ' ');
+    final clean = note.trim().replaceAll(RegExp(r'\s+'), ' ');
     final words = wordCount(clean);
     if (words < 100 || words > 300) {
       throw FormatException(
