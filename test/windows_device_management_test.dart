@@ -14,7 +14,7 @@ import '../lib/windows_connect/windows_network_connection.dart';
 void main() {
   setUp(()=>SharedPreferences.setMockInitialValues({}));
   test('connection classifier never invents WiFi/LAN or leaks adapter data',(){
-    expect(WindowsNetworkConnection.classifyRoute('WiFi\\r\\n'),'WiFi');
+    expect(WindowsNetworkConnection.classifyRoute('WiFi\r\n'),'WiFi');
     expect(WindowsNetworkConnection.classifyRoute('LAN'),'LAN');
     expect(WindowsNetworkConnection.classifyRoute('VPN'),isNull);
     expect(WindowsNetworkConnection.classifyRoute('My-WiFi-SSID'),isNull);
