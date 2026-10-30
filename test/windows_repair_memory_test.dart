@@ -116,7 +116,7 @@ void main() {
 
   test('permanent shared patterns contain only allowlisted generic fields',(){
     final memory=WindowsRepairMemory();
-    memory.observe({...event('conflict',op:'private-operation-987',id:'student-secret'),
+    memory.observe({...event('conflict',op:'private-operation-987',id:'student-secret',category:'conflict'),
       'failureCode':'PRIVATE_STUDENT_SECRET','password':'do-not-share',
       'token':'do-not-share','lastError':'personal data'},school,10);
     memory.observe(event('verified',op:'private-operation-987',id:'student-secret',category:'conflict'),school,11);
