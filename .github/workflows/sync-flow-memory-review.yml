@@ -19,11 +19,11 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_flow.dart lib/windows_sync_evidence.dart lib/windows_learned_sync_rules.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_projection.dart lib/windows_repair_memory.dart lib/windows_connect/managed_school_session.dart lib/windows_ui_localization.dart test/windows_sync_flow_learning_test.dart
-      - run: flutter test --concurrency=1 test/windows_notice_storage_recovery_test.dart test/windows_sync_flow_learning_test.dart test/windows_sync_modern_ui_test.dart test/windows_sync_control_cleanup_test.dart test/windows_repair_memory_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_pending_auto_repair_test.dart
+      - run: flutter test --concurrency=1 test/windows_changed_fields_only_test.dart test/windows_smart_record_sync_test.dart test/windows_notice_storage_recovery_test.dart test/windows_sync_flow_learning_test.dart test/windows_sync_modern_ui_test.dart test/windows_sync_control_cleanup_test.dart test/windows_repair_memory_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_pending_auto_repair_test.dart
         env:
           APPDATA: ${{ runner.temp }}/sync-flow-memory
       - name: Text notice recovery with real SQLite persistence
-        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 test/windows_notice_storage_recovery_test.dart
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 test/windows_notice_storage_recovery_test.dart test/windows_changed_fields_only_test.dart test/windows_smart_record_sync_test.dart
         env:
           APPDATA: ${{ runner.temp }}/notice-storage-sqlite
       - uses: actions/upload-artifact@v4
