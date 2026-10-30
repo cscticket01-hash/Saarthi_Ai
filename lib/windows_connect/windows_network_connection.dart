@@ -23,7 +23,7 @@ class WindowsNetworkConnection {
     final now = DateTime.now();
     if (_checkedAt != null &&
         now.difference(_checkedAt!).inSeconds < 120) return _cached;
-    return _pending ??= _read().whenComplete(() => _pending = null);
+    return _pending ??= _read().whenComplete(() { _pending = null; });
   }
 
   static Future<String?> _read() async {
