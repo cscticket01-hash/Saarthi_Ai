@@ -11757,6 +11757,130 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     );
   }
 
+  Widget _unpaidStudentCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
+    Map<String, dynamic>? ledger, {
+    required bool canSelect,
+  }) {
+    final student = studentDoc.data();
+    final name = student['name']?.toString() ?? 'Student';
+    final studentClass = student['class']?.toString() ?? '';
+    final roll = student['rollNo']?.toString() ?? '';
+    final selected = _activeStudentId == studentDoc.id;
+    return InkWell(
+      key: ValueKey('fees-student-${studentDoc.id}'),
+      borderRadius: BorderRadius.circular(11),
+      onTap: canSelect && !_isSavingPayment
+          ? () => _openInlineCollector(studentDoc, ledger)
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: WindowsAppearance.background(
+            selected ? const Color(0xFF183139) : const Color(0xFF172229)),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFF00D9A5).withOpacity(0.65)
+                : WindowsAppearance.outline(Colors.white12)),
+        ),
+        child: Row(
+          children: [
+            WindowsPersonAvatar(person: student, radius: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Segoe UI',
+                      color: WindowsAppearance.foreground(Colors.white),
+                      fontWeight: FontWeight.w700, fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Text('$studentClass  •  Roll $roll',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Segoe UI',
+                      color: WindowsAppearance.foreground(Colors.white54),
+                      fontSize: 10)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(selected ? Icons.check_circle_rounded
+                : Icons.chevron_right_rounded,
+              size: 20, color: selected
+                  ? WindowsAppearance.foreground(const Color(0xFF00D9A5))
+                  : WindowsAppearance.foreground(Colors.white38)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _unpaidStudentPanel(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> unpaid,
+    Map<String, dynamic>? Function(QueryDocumentSnapshot<Map<String, dynamic>>)
+        ledgerForStudent,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: WindowsAppearance.background(const Color(0xFF0E1B22)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.groups_2_rounded,
+              color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
+              size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Available Students (${unpaid.length})',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontFamily: 'Segoe UI',
+                color: WindowsAppearance.foreground(Colors.white),
+                fontSize: 14, fontWeight: FontWeight.w800))),
+          ]),
+          const SizedBox(height: 6),
+          Text('Jinhone is month abhi koi payment nahi diya.',
+            maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontFamily: 'Segoe UI',
+              color: WindowsAppearance.foreground(Colors.white54),
+              fontSize: 10)),
+          const SizedBox(height: 10),
+          Divider(height: 1, color: WindowsAppearance.outline(Colors.white10)),
+          Expanded(
+            child: !_localLedgerReady
+                ? Center(child: Text('Loading local fee ledger...',
+                    style: TextStyle(
+                      color: WindowsAppearance.foreground(Colors.white54))))
+                : unpaid.isEmpty
+                    ? Center(child: Text('No unpaid students',
+                        style: TextStyle(
+                          color: WindowsAppearance.foreground(Colors.white54))))
+                    : ListView.separated(
+                        key: const ValueKey('fees-unpaid-student-list'),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        itemCount: unpaid.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 7),
+                        itemBuilder: (context, index) {
+                          final student = unpaid[index];
+                          return _unpaidStudentCard(
+                            student, ledgerForStudent(student),
+                            canSelect: _localLedgerReady,
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _studentCard(
     QueryDocumentSnapshot<Map<String, dynamic>> studentDoc,
     Map<String, dynamic>? ledger, {
