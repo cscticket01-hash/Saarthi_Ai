@@ -693,8 +693,14 @@ class WindowsFirebaseRemote {
     final source=Map<String,dynamic>.from(patch?delta!['set'] as Map:item['data'] as Map);
     final data=await (prepareData!=null?prepareData(source):prepareManagedRecord(source,school,
       (action,body)=>ManagedSchoolSession.callForSchool(school,action,body)));
+    final before=patch?Map<String,dynamic>.from(delta!['before'] as Map):<String,dynamic>{};
+    if(patch)for(final key in data.keys.where((k)=>k!='schoolId'&&k!='updatedAt'&&!before.containsKey(k))) {
+      final saved=item['data'] as Map,fields=saved['_syncFieldRevisions'];
+      before[key]={'exists':saved.containsKey(key),
+        'revision':fields is Map&&fields[key] is String?fields[key]:saved.containsKey(key)?item['baseCloudRevision']:'absent'};
+    }
     final wire=patch?<String,dynamic>{'schoolId':school,'_syncFieldPatch':{
-      ...delta!,'set':({...data}..remove('schoolId'))}}:data;
+      ...delta!,'before':before,'set':({...data}..remove('schoolId'))}}:data;
     return FirebaseFirestore.instance.bindOutboxWireData(
       ref,
       item,
