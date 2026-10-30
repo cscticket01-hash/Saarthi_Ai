@@ -12104,9 +12104,16 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
               final activeLedger = activeStudentDoc == null || !ledgerSnapshot.hasData || !_studentUidConfigLoaded
                   ? null
                   : ledgerForStudent(activeStudentDoc);
+              // The no-payment queue hides both partial and full payments;
+              // active receipt/print actions remain available after collection.
+              final unpaidStudents = _localLedgerReady
+                  ? filtered.where((student) =>
+                      showInUnpaidStudentList(ledgerForStudent(student))).toList()
+                  : <QueryDocumentSnapshot<Map<String, dynamic>>>[];
 
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+
+              return Padding(
+                padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
                     Wrap(
@@ -12335,60 +12342,12 @@ child: Row(
 ),
 ),
                     const SizedBox(height: 12),
-                    _mainPaymentPanel(activeStudentDoc, activeLedger),
-                    const SizedBox(height: 12),
-                    Container(
-                        decoration: BoxDecoration(
-                          color: WindowsAppearance.background(const Color(0xFF101D24)),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
-                        ),
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.groups_2_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 19),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Student List (${filtered.length} result${filtered.length == 1 ? '' : 's'})',
-                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontWeight: FontWeight.w800),
-                                  ),
-                                  const Spacer(),
-                                  Text(
-                                    searchStarted
-                                        ? 'Matching student select karein'
-                                        : 'Select a student from the list or search by name / roll number',
-                                    style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 9.5),
-                                  ),
-                                ],
-                              ),
-                            ),
-                             Divider(height: 1, color: WindowsAppearance.foreground(Colors.white10)),
-                            Container(
-                              child: filtered.isEmpty
-                                  ?  Center(
-                                      child: Text('No students found', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white54))),
-                                    )
-                                  : ListView.separated(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      padding: const EdgeInsets.all(10),
-                                      itemCount: filtered.length,
-                                      separatorBuilder: (_, __) => const SizedBox(height: 7),
-                                      itemBuilder: (context, index) {
-                                        final student = filtered[index];
-                                        return _studentCard(
-                                          student,
-                                          ledgerForStudent(student),
-                                          canSelect: _localLedgerReady,
-                                        );
-                                      },
-                                    ),
-                            ),
-                          ],
-                        ),
+                    Expanded(
+                      child: _mainPaymentPanel(
+                        activeStudentDoc, activeLedger,
+                        unpaidStudentPanel: _unpaidStudentPanel(
+                          unpaidStudents, ledgerForStudent),
+                      ),
                     ),
                   ],
                 ),
