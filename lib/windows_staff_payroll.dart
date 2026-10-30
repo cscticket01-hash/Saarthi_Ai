@@ -9,6 +9,9 @@ import 'windows_payslip_template.dart';
 import 'package:printing/printing.dart';
 import 'windows_document_templates.dart';
 import 'windows_salary_history.dart';
+import 'windows_salary_payment_correction.dart';
+import 'windows_local_settings.dart';
+import 'windows_receipt_print_dialog.dart';
 import 'windows_save_pdf.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
@@ -128,6 +131,82 @@ class StaffPayroll {
     payments.add({'id': paymentId, 'amountPaise': amount, 'date': date.toIso8601String(), 'mode': mode, 'reference': reference.trim(), 'timeRecorded': true, 'recordedAt': DateTime.now().millisecondsSinceEpoch});
     await ref.update({'payments': payments, 'paidPaise': next, 'balancePaise': total(row) - next,
       'status': next == total(row) ? 'Paid' : 'Part paid', 'updatedAt': DateTime.now().millisecondsSinceEpoch});
+  });
+
+  /// A payment correction is a new immutable event, not a rewrite of the
+  /// original record. Every write re-reads the current row under the existing
+  /// serialized school-local queue before checking its expected amount.
+  static Future<void> correctPayment(
+    String profile,
+    String salaryRowId,
+    String paymentId, {
+    required int expectedPaise,
+    required int correctedPaise,
+    required String reason,
+    required String correctionId,
+    required String appLockPassword,
+  }) => _serial(() async {
+    _sameSchool(profile);
+    await WindowsLocalSecurity.initialize();
+    if (!WindowsLocalSecurity.configured ||
+        !WindowsLocalSecurity.verifyPassword(appLockPassword)) {
+      throw StateError('App Lock verification required to modify a salary payment.');
+    }
+    final explanation = SalaryPaymentCorrectionPolicy.validateNote(reason);
+    if (correctedPaise <= 0 || correctedPaise == expectedPaise ||
+        expectedPaise <= 0 || correctionId.trim().isEmpty) {
+      throw StateError('Enter a different, positive corrected amount.');
+    }
+    final doc = FirebaseFirestore.instance.collection('teacher_salary').doc(salaryRowId);
+    final row = (await doc.get()).data();
+    _sameSchool(profile);
+    if (row == null || row['id'] != salaryRowId && row['id'] != null) {
+      throw StateError('Salary record changed. Reopen Staff Salary.');
+    }
+    final payments = List<dynamic>.from(row['payments'] as List? ?? []);
+    final matched = payments.where((v) => v is Map && v['id'] == paymentId).toList();
+    if (matched.length != 1) throw StateError(
+      'Original itemized payment not found. Legacy summaries cannot be silently modified.');
+    final corrections = List<dynamic>.from(row['paymentCorrections'] as List? ?? []);
+    final previous = corrections.where((v) => v is Map && v['id'] == correctionId).toList();
+    if (previous.isNotEmpty) {
+      if (previous.length != 1 || previous.single['paymentId'] != paymentId ||
+          previous.single['previousPaise'] != expectedPaise ||
+          previous.single['correctedPaise'] != correctedPaise ||
+          previous.single['reason'] != explanation) {
+        throw StateError('Correction ID conflicts with another operation.');
+      }
+      return; // A confirmed retry never creates a duplicate correction.
+    }
+    final effective = SalaryPaymentCorrectionPolicy.effectiveAmount(
+        Map<String,dynamic>.from(matched.single as Map), corrections);
+    if (effective != expectedPaise) throw StateError(
+        'Someone modified this payment. Refresh and review before saving again.');
+    final next = paid(row) + correctedPaise - effective;
+    if (next < 0 || next > total(row)) throw StateError(
+      'Correction exceeds the saved net salary. Review Edit salary first; original payment retained.');
+    final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
+    corrections.add({
+      'id': correctionId,
+      'paymentId': paymentId,
+      'originalPaise': (matched.single as Map)['amountPaise'],
+      'previousPaise': effective,
+      'correctedPaise': correctedPaise,
+      'differencePaise': correctedPaise - effective,
+      'reason': explanation,
+      'authorizedBy': WindowsLocalSecurity.adminId,
+      'correctedAt': timestamp,
+    });
+    _sameSchool(profile);
+    if (!WindowsLocalSecurity.verifyPassword(appLockPassword)) {
+      throw StateError('App Lock verification expired; original payment retained.');
+    }
+    await doc.update({
+      'paymentCorrections': corrections,
+      'paidPaise': next, 'balancePaise': total(row) - next,
+      'status': next == total(row) ? 'Paid' : next == 0 ? 'Pending' : 'Part paid',
+      'updatedAt': timestamp,
+    });
   });
 }
 
