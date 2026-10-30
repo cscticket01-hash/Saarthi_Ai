@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'windows_daily_access_guard.dart';
 import 'dart:async';
 
 import 'school_cloud_engine.dart';
@@ -29,6 +30,7 @@ class WindowsManagedSchoolGate extends StatefulWidget {
 
 class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   late final SchoolCloudEngine engine;
+  late final bool Function(String) _dailyAdmissionBlocked;
   bool routed = false;
   bool _activatingLicence = false;
   bool _continuingTrial = false;
@@ -39,6 +41,9 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   void initState() {
     super.initState();
     engine = widget.engine ?? SchoolCloudEngine();
+    _dailyAdmissionBlocked = (school) =>
+      engine.identity?['schoolId'] == school && engine.dailyOnlineReadOnly;
+    WindowsDailyAccessGuard.install(_dailyAdmissionBlocked);
     engine.addListener(updated);
     WindowsSyncEngine.instance.state.addListener(updated);
     WindowsServiceStatus.instance.addListener(updated);
@@ -71,6 +76,7 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
   @override
   void dispose() {
     expiryTimer?.cancel();
+    WindowsDailyAccessGuard.uninstall(_dailyAdmissionBlocked);
     engine.removeListener(updated);
     engine.dispose();
     WindowsSyncEngine.instance.state.removeListener(updated);
@@ -119,6 +125,50 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
           ),
         ),
       );
+    if (engine.dailyOnlineReadOnly) {
+      return Column(
+        children: [
+          Material(
+            key: const ValueKey('daily-online-verification-disclaimer'),
+            color: WindowsAppearance.background(const Color(0xFF5A2630)),
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                child: Row(children: [
+                  const Icon(Icons.wifi_off, color: Colors.white),
+                  const SizedBox(width: 12),
+                  const Expanded(child: Text(
+                    'Internet unavailable, please connect internet. '
+                    '24-hour verification expired. Data remains visible, '
+                    'but entry, edit, delete, search, print and sync are disabled.',
+                    style: TextStyle(color: Colors.white))),
+                  OutlinedButton(
+                    onPressed: engine.verify,
+                    child: const Text('Verify online'),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+          Expanded(
+            // Preserve the exact existing screen and unsaved state; do not
+            // rebuild it as a dummy or permit pointer/keyboard/shortcut input.
+            child: FocusScope(
+              canRequestFocus: false,
+              descendantsAreFocusable: false,
+              child: AbsorbPointer(
+                absorbing: true,
+                child: KeyedSubtree(
+                  key: ValueKey(engine.identity?['schoolId']),
+                  child: widget.child,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     if (!engine.canOpen && engine.access?['allowed'] == true &&
         engine.access?['registrationState'] == 'new' &&
         engine.access?['status'] == 'licensed' &&
