@@ -161,6 +161,9 @@ String documentFailureExplanation(Map row) {
     parts.add(messages[row['failureCode']]!);
   if (stages[row['failureStage']] != null)
     parts.add('Step: ${stages[row['failureStage']]}');
+  final osCode=row['failureOsErrorCode'];
+  if(row['failureCode']=='RECORD_LOCAL_STORAGE_IO'&&osCode is int&&osCode>=0&&osCode<=65535)
+    parts.add('Local storage OS code: $osCode');
   final status = row['failureHttpStatus'];
   if (status is int && status >= 400 && status <= 599)
     parts.add('HTTP $status');
