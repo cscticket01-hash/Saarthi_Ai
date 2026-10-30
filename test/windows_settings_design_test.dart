@@ -124,7 +124,11 @@ void main() {
       phase: WindowsUpdatePhase.downloading, update: available, progress: .42);
     await tester.pump();
     expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, .42);
-    expect(find.text('Downloading 42%'), findsOneWidget);
+    expect(find.text('42%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-update-progress-percent')), findsOneWidget);
+    expect(find.text('Downloading 42%'), findsNothing);
+    expect(find.textContaining('Page change karne par'), findsNothing);
+    expect(find.text('Download & Install'), findsNothing);
     engine.details.value = {'pending': 37, 'needsAttention': 0};
     engine.state.value = SchoolCloudState.syncing;
     await tester.pump();
