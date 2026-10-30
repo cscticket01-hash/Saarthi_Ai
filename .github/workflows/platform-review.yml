@@ -234,6 +234,7 @@ jobs:
     - name: Prevent concurrent Windows local database instances
       run: |
         python .github/scripts/test_windows_single_instance.py
+        python .github/scripts/test_windows_background_installer.py
         python .github/scripts/configure_windows_single_instance.py
     - name: Keep Windows local dependencies
       shell: bash
