@@ -7,6 +7,16 @@ const repairModules = {'all','students_directory','teachers_directory','document
   'exams','exam_results','school_config'};
 const repairCategories = {'networkPath','timeout','server','quota','conflict',
   'configuration','validation','fileMissing','unknown','idCardInputs'};
+// Public, non-identifying diagnostic fingerprints only. No raw exception text.
+const repairDiagnosticCodes = {'RECORD_REVISION_CONFLICT',
+  'OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT',
+  'SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT',
+  'SCRIPT_TIMEOUT','SCRIPT_QUOTA_EXCEEDED','SCRIPT_PERMISSION_DENIED',
+  'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+  'FIELD_DELTA_UNAVAILABLE','ACK_UNVERIFIED','SCRIPT_TRANSPORT_ERROR',
+  'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_MIGRATION_PENDING',
+  'SCRIPT_MIGRATION_CONFLICT','SCRIPT_STORAGE_NOT_PREPARED',
+  'SCRIPT_JSON_READBACK_FAILED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED'};
 const repairActionBounds = {'retry_floor':[5,900],'record_probe_cooldown':[300,3600],
   'card_probe_cooldown':[120,3600],'batch_cap':[2,10]};
 void _only(Map value, Set<String> keys) {
@@ -97,7 +107,9 @@ List<Map<String,String>> sharedRepairObservations(List<Map<String,dynamic>> entr
     final outcome=const {'resolved':'resolved','retrying':'retry','recurred':'recurred',
       'reviewRequired':'detected'}[e['status']];
     if(outcome==null) continue;
-    final row={'module':module as String,'category':category as String,'outcome':outcome};
+    final code=e['failureCode'];
+    final row={'module':module as String,'category':category as String,'outcome':outcome,
+      if(code is String && repairDiagnosticCodes.contains(code)) 'code':code};
     unique[jsonEncode(row)]=row;
     if(unique.length>=20) break;
   }
