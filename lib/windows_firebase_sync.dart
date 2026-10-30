@@ -1,3 +1,4 @@
+import 'windows_record_change_policy.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_sync_recovery.dart';
 import 'sync_recovery_policy.dart';
@@ -637,8 +638,10 @@ class WindowsFirebaseRemote {
   static Future<Map<String, dynamic>?> prepareQueuedRecord(
     DocumentReference<Map<String, dynamic>> ref,
     Map<String, dynamic> item,
-    String school,
-  ) async {
+    String school, {
+    Future<Map<String,dynamic>> Function(String,String)? readRecord,
+    Future<Map<String,dynamic>> Function(Map<String,dynamic>)? prepareData,
+  }) async {
     if (item['wireData'] is Map) return item;
     if (recordPointReadSupported &&
         item['createIntent'] == true &&
@@ -667,25 +670,31 @@ class WindowsFirebaseRemote {
         return null;
       }
     }
-    final patch = recordFieldPatchSupported && item['fieldPatch'] is Map;
-    final source = Map<String, dynamic>.from(
-      patch ? item['fieldPatch']['set'] as Map : item['data'] as Map,
-    );
-    final data = await prepareManagedRecord(
-      source,
-      school,
-      (action, body) =>
-          ManagedSchoolSession.callForSchool(school, action, body),
-    );
-    final wire = patch
-        ? <String, dynamic>{
-            'schoolId': school,
-            '_syncFieldPatch': {
-              ...Map<String, dynamic>.from(item['fieldPatch'] as Map),
-              'set': ({...data}..remove('schoolId')),
-            },
-          }
-        : data;
+    Map<String,dynamic>? delta=item['fieldPatch'] is Map?Map<String,dynamic>.from(item['fieldPatch']):null;
+    final requiresPatch=registeredRecordRequiresPatch(item);
+    if(requiresPatch && !recordFieldPatchSupported)throw FieldDeltaUnavailable();
+    if(requiresPatch && delta==null) {
+      if(!recordPointReadSupported||item['baseCloudRevision'] is! String||(item['baseCloudRevision'] as String).isEmpty)throw FieldDeltaUnavailable();
+      final reply=await (readRecord!=null?readRecord(item['collection'],item['documentId']):
+        ManagedSchoolSession.callForSchool(school,'managed/records',{
+          'operation':'read','collection':item['collection'],'id':item['documentId'],'syncProtocol':2}));
+      if(reply['schoolId']!=school||reply['syncProtocol']!=2||reply['pointRead']!=true||reply['records'] is! Map)
+        throw FieldDeltaUnavailable();
+      final found=reply['records'][item['documentId']];
+      if(found is! Map||found['schoolId']!=school||found['_syncRevision'] is! String)throw FieldDeltaUnavailable();
+      if(found['_syncRevision']!=item['baseCloudRevision']||found['_syncDeleted']==true) {
+        await FirebaseFirestore.instance.recordOutboxConflict(ref,item,{...Map<String,dynamic>.from(found),'id':item['documentId']});
+        return null;
+      }
+      delta=buildRecordFieldPatch(item['collection'],found,item['data']);
+      if(delta==null)throw FieldDeltaUnavailable();
+    }
+    final patch=recordFieldPatchSupported&&delta!=null;
+    final source=Map<String,dynamic>.from(patch?delta!['set'] as Map:item['data'] as Map);
+    final data=await (prepareData!=null?prepareData(source):prepareManagedRecord(source,school,
+      (action,body)=>ManagedSchoolSession.callForSchool(school,action,body)));
+    final wire=patch?<String,dynamic>{'schoolId':school,'_syncFieldPatch':{
+      ...delta!,'set':({...data}..remove('schoolId'))}}:data;
     return FirebaseFirestore.instance.bindOutboxWireData(
       ref,
       item,
