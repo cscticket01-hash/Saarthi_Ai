@@ -11265,7 +11265,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                     MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
                   );
                   if (!mounted || _activeStudentId == null) return;
-                  final currentClass = _activeStudentClass;
+                  final currentClass = _activeStudentClass ?? '';
                   final currentStudent = _activeStudentId;
                   try {
                     final updated = await _getClassFeeSettings(currentClass);
