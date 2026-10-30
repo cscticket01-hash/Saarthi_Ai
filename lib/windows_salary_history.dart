@@ -18,9 +18,26 @@ List<Map<String, dynamic>> salaryPaymentHistory(Iterable<Map<String, dynamic>> r
         'employeeId': row['employeeId'] ?? row['teacherId'] ?? row['staffId'],
         'role': row['role'], 'month': row['month']});
     }
+    final corrections = (row['paymentCorrections'] as List? ?? []).whereType<Map>().toList();
+    for (final correction in corrections) {
+      final before = (correction['previousPaise'] as num?)?.toInt() ?? 0;
+      final revised = (correction['correctedPaise'] as num?)?.toInt() ?? 0;
+      final timestamp = (correction['correctedAt'] as num?)?.toInt();
+      entries.add({
+        'id': correction['id'], 'name': row['name'],
+        'employeeId': row['employeeId'] ?? row['teacherId'] ?? row['staffId'],
+        'role': row['role'], 'month': row['month'],
+        'amountPaise': revised - before,
+        'mode': 'Correction',
+        'date': timestamp == null ? null : DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true).toIso8601String(),
+        'timeRecorded': timestamp != null,
+        'reference': 'Original ₹${(before / 100).toStringAsFixed(2)} → Corrected ₹${(revised / 100).toStringAsFixed(2)} • Reason: ${correction['reason'] ?? ''}',
+      });
+    }
     final aggregatePaid = (row['paidPaise'] as num?)?.toInt() ?? (row['status'] == 'Paid'
       ? (row['netPaise'] as num?)?.toInt() ?? ((row['amount'] as num? ?? 0) * 100).round() : 0);
-    final itemizedPaid = payments.fold<int>(0, (sum, p) => sum + ((p['amountPaise'] as num?)?.toInt() ?? 0));
+    final itemizedPaid = payments.fold<int>(0, (sum, p) => sum + ((p['amountPaise'] as num?)?.toInt() ?? 0)) +
+      corrections.fold<int>(0, (sum, c) => sum + ((c['differencePaise'] as num?)?.toInt() ?? 0));
     if (aggregatePaid > itemizedPaid) {
       entries.add({'name': row['name'], 'employeeId': row['employeeId'] ?? row['teacherId'] ?? row['staffId'],
         'role': row['role'], 'month': row['month'], 'amountPaise': aggregatePaid - itemizedPaid,
