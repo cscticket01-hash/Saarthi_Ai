@@ -1,8 +1,7 @@
-"""Apply safe per-session Windows instance and invisible autostart support.
+"""Patch Flutter's generated Windows runner before building the application.
 
-The build generates the native Flutter runner, so patch it before compilation.
-Use one engine for foreground and background work: never let two processes open
-the same SQLite database/outbox simultaneously.
+Flutter 3.47 shows the window from flutter_window.cpp on the first frame,
+not from main.cpp. Preserve the original show callback for ordinary launches.
 """
 import re
 from pathlib import Path
@@ -12,22 +11,18 @@ BACKGROUND_MARKER = '// VIDYA_SAARTHI_BACKGROUND_AUTOSTART'
 
 
 def configure(source):
-    if MARKER in source and BACKGROUND_MARKER in source:
+    """Patch main.cpp with the per-session SQLite process singleton."""
+    if MARKER in source:
         return source
     start = source.index('int APIENTRY wWinMain(')
     brace = source.index('{', start)
     title = re.search(r'window\.Create\(L"([^"\n]+)"', source)
     if not title:
-        raise ValueError('Unknown Windows runner title; review instance guard.')
-    if 'window.Show();' not in source:
-        raise ValueError('Unknown Windows runner show path; do not ship a visible background app.')
-    if 'int APIENTRY wWinMain' not in source:
-        raise ValueError('Only the generated Win32 Flutter runner can be patched.')
+        raise ValueError('Unknown Windows runner title; review the instance guard.')
     guard = r'''
   // VIDYA_SAARTHI_SINGLE_INSTANCE
-  // A login-started invisible app IS the only local SQLite/outbox owner.
-  // On a normal launch, reveal that existing instance instead of starting
-  // another Flutter engine. Background duplicate launch must never steal focus.
+  // Exactly one per-session Flutter/SQLite/outbox owner.  Background starts
+  // must not bring the existing UI to the foreground.
   const bool saarthi_background =
       ::wcsstr(::GetCommandLineW(), L"--saarthi-background") != nullptr;
   struct ScopedVidyaInstance {
@@ -44,8 +39,6 @@ def configure(source):
     if (!saarthi_background) {
       HWND existing = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"__TITLE__");
       if (existing) {
-        // An existing logon worker owns the same exact UI engine.
-        // Show it on demand without touching credentials, outbox or files.
         ::ShowWindow(existing, SW_SHOW);
         if (::IsIconic(existing)) ::ShowWindow(existing, SW_RESTORE);
         ::SetForegroundWindow(existing);
@@ -54,14 +47,33 @@ def configure(source):
     return EXIT_SUCCESS;
   }
 '''.replace('__TITLE__', title.group(1))
-    output = '#include <windows.h>\n#include <cwchar>\n' + source[:brace + 1] + guard + source[brace + 1:]
-    output = output.replace('window.Show();', '''// VIDYA_SAARTHI_BACKGROUND_AUTOSTART
-  // Keep the Flutter window hidden only at logon. Its event loop, school
-  // verification and bounded delta-sync timers are identical to foreground.
-  if (!saarthi_background) window.Show();''', 1)
-    return output
+    return '#include <windows.h>\n#include <cwchar>\n' + source[:brace + 1] + guard + source[brace + 1:]
+
+
+def configure_window(source):
+    """Patch flutter_window.cpp's actual first-frame Show() callback."""
+    if BACKGROUND_MARKER in source:
+        return source
+    callback = '    this->Show();'
+    if source.count(callback) != 1 or 'SetNextFrameCallback' not in source:
+        raise ValueError('Unknown Flutter first-frame Show callback; refusing unsafe background patch.')
+    replacement = '''    // VIDYA_SAARTHI_BACKGROUND_AUTOSTART
+    // The hidden at-login process still pumps the same Flutter event loop.
+    // Only visibility changes. A normal launch reveals this same HWND.
+    if (::wcsstr(::GetCommandLineW(), L"--saarthi-background") == nullptr) {
+      this->Show();
+    }'''
+    return '#include <cwchar>\n' + source.replace(callback, replacement, 1)
 
 
 if __name__ == '__main__':
-    path = Path('windows/runner/main.cpp')
-    path.write_text(configure(path.read_text(encoding='utf-8')), encoding='utf-8')
+    main_path = Path('windows/runner/main.cpp')
+    flutter_window_path = Path('windows/runner/flutter_window.cpp')
+    original_main = main_path.read_text(encoding='utf-8')
+    original_window = flutter_window_path.read_text(encoding='utf-8')
+    new_main = configure(original_main)
+    new_window = configure_window(original_window)
+    # Validate both runner components before writing either; fail closed on
+    # unexpected Flutter template changes, with no half-patched build.
+    main_path.write_text(new_main, encoding='utf-8')
+    flutter_window_path.write_text(new_window, encoding='utf-8')
