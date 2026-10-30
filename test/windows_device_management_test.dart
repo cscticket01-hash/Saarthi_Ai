@@ -9,9 +9,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_device_management.dart';
 import '../lib/windows_device_directory_cache.dart';
+import '../lib/windows_connect/windows_network_connection.dart';
 
 void main() {
   setUp(()=>SharedPreferences.setMockInitialValues({}));
+  test('connection classifier never invents WiFi/LAN or leaks adapter data',(){
+    expect(WindowsNetworkConnection.classifyRoute('WiFi\\r\\n'),'WiFi');
+    expect(WindowsNetworkConnection.classifyRoute('LAN'),'LAN');
+    expect(WindowsNetworkConnection.classifyRoute('VPN'),isNull);
+    expect(WindowsNetworkConnection.classifyRoute('My-WiFi-SSID'),isNull);
+    expect(WindowsNetworkConnection.classifyRoute(''),isNull);
+  });
   final own = 'a' * 64, other = 'b' * 64;
   Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
     {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000,'connectionType':'WiFi','connectionSeenAt':1792363200000},
