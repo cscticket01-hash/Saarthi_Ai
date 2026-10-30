@@ -105,6 +105,8 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
   final decision = windowsSyncRecovery(error);
   return {
     'failureStage':stage,
+    if(error is RecordLocalStorageFailure && error.cause.osError?.errorCode != null)
+      'failureOsErrorCode':error.cause.osError!.errorCode,
     'failureCode':error is RecordLocalStorageFailure ? 'RECORD_LOCAL_STORAGE_IO' : error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
       error is CentralCloudException && const {
         'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
