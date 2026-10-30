@@ -3,6 +3,18 @@ const {createPrivateKey,createHash,createHmac,sign}=require('node:crypto');
 const PROTOCOL=1,DAY=86400000;
 const MODULES=new Set(['all','students_directory','teachers_directory','documents','fee_ledger','fee_payments','school_expenses','school_notices','attendance_records','exams','exam_results','school_config']);
 const CATEGORIES=new Set(['networkPath','timeout','server','quota','conflict','configuration','validation','fileMissing','unknown','idCardInputs']);
+// A versioned server catalog can remember a sanitized error fingerprint,
+ // never arbitrary client text, payment data or code to execute.
+const CODES=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT',
+ 'SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT',
+ 'SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_TIMEOUT',
+ 'SCRIPT_QUOTA_EXCEEDED','SCRIPT_PERMISSION_DENIED',
+ 'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
+ 'FIELD_DELTA_UNAVAILABLE','ACK_UNVERIFIED','SCRIPT_TRANSPORT_ERROR',
+ 'SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR',
+ 'SCRIPT_MIGRATION_PENDING','SCRIPT_MIGRATION_CONFLICT',
+ 'SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_JSON_READBACK_FAILED',
+ 'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED']);
 const ACTIONS={retry_floor:[5,900],record_probe_cooldown:[300,3600],card_probe_cooldown:[120,3600],batch_cap:[2,10]};
 const hash=v=>createHash('sha256').update(v).digest('hex');
 function fail(status,code){throw Object.assign(Error(code),{status,code,publicMessage:true});}
@@ -21,9 +33,10 @@ function policy(input){
 const policyHash=p=>hash(JSON.stringify(policy(p)));
 function reports(input){
  if(!Array.isArray(input)||input.length>20)fail(400,'REPAIR_KNOWLEDGE_REPORT');
- return input.map(r=>{exact(r,['module','category','outcome']);
-  if(!MODULES.has(r.module)||r.module==='all'||!CATEGORIES.has(r.category)||!['detected','retry','resolved','recurred'].includes(r.outcome))fail(400,'REPAIR_KNOWLEDGE_REPORT');
-  return {module:r.module,category:r.category,outcome:r.outcome};
+ return input.map(r=>{exact(r,['module','category','outcome','code']);
+  if(!MODULES.has(r.module)||r.module==='all'||!CATEGORIES.has(r.category)||!['detected','retry','resolved','recurred'].includes(r.outcome)||
+   (r.code!==undefined&&!CODES.has(r.code)))fail(400,'REPAIR_KNOWLEDGE_REPORT');
+  return {module:r.module,category:r.category,outcome:r.outcome,...(r.code?{code:r.code}:{})};
  });
 }
 function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='repair-v1',reportSalt}={}){
@@ -73,7 +86,7 @@ function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='
    const count=p.hour===hour?p.count:0;if(count>=6)fail(429,'REPAIR_KNOWLEDGE_REPORT_LIMIT');
    const patterns={...(catalog.data()?.patterns||{})};
    for(const row of rows){const id=hash(JSON.stringify(row));
-    if(!patterns[id]&&Object.keys(patterns).length>=200)continue;
+    if(!patterns[id]&&Object.keys(patterns).length>=1000)continue;
     patterns[id]={...row,observations:Math.min(1000000000,(patterns[id]?.observations||0)+1),lastHour:hour,untrusted:true};
    }
    tx.set(sourceRef,{hour,count:count+1,batchIds:[...ids,body.batchId]});tx.set(catalogRef,{protocol:PROTOCOL,patterns});
@@ -111,4 +124,4 @@ function createRepairKnowledge({db,now=Date.now,enabled=false,privateKey,keyId='
   }
  };
 }
-module.exports={createRepairKnowledge,policy,policyHash,reports,MODULES,CATEGORIES,ACTIONS};
+module.exports={createRepairKnowledge,policy,policyHash,reports,MODULES,CATEGORIES,CODES,ACTIONS};
