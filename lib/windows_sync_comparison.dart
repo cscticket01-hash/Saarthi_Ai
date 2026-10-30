@@ -172,6 +172,14 @@ bool legacyFeePublicationCandidate(Map queued) {
 // Remove only typed upload-protocol fields emitted by the existing broker.
 // Unknown keys remain business data and must still compare exactly.
 bool _legacyFeeUploadEnvelope(Map<String,dynamic> remote, String school, String owner) {
+  // Validated transport-only request ID from the existing broker; never modify
+  // the original authenticated cloud evidence or soften business comparisons.
+  if (remote.containsKey('requestId')) {
+    if (remote['success'] != true || remote['syncTiming'] is! Map ||
+        remote['requestId'] is! String ||
+        !RegExp(r'^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$').hasMatch(remote['requestId'] as String)) return false;
+    remote.remove('requestId');
+  }
   if (remote.containsKey('success')) { if(remote['success'] != true)return false; remote.remove('success'); }
   if (remote.containsKey('syncTiming')) {
     final t=remote['syncTiming'];

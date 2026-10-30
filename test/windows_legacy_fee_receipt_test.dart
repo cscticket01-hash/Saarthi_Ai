@@ -63,6 +63,20 @@ void main() {
     expect(sameSavedRecord('fee_payments', {'amount':9007199254740992.0}, {'amount':9007199254740992}), isFalse);
     expect(automaticDuplicateReadback(pending, {...cloud(),'unknownMoneyField':0}), isFalse);
   });
+  test('typed broker request ID on an older payment upload does not cause a false conflict', () {
+    final brokerCloud={...cloud(), 'requestId':'71f85cbc-f08c-4d2c-b655-90fee06f980b'};
+    expect(identicalLegacyFeePublication(queued(),brokerCloud),isTrue);
+    expect(automaticDuplicateReadback(queued(),brokerCloud),isTrue);
+    expect(brokerCloud['requestId'],'71f85cbc-f08c-4d2c-b655-90fee06f980b',
+      reason:'Verified original cloud evidence is never modified by comparison');
+    for(final wrong in <Map<String,dynamic>>[
+      {'requestId':'not-a-uuid'}, {'requestId':'71f85cbc-f08c-1d2c-b655-90fee06f980b'},
+      {'success':false}, {'syncTiming':{'unknown':1}}, {'fileId':'different-file'},
+      {'installmentAmount':101}, {'receiptNo':'VS-202610-1790000000000'},
+      {'unknownFinancialDetail':0},
+    ]) expect(automaticDuplicateReadback(queued(),{...brokerCloud,...wrong}),isFalse,
+      reason:'Rejected unverified metadata or business data: ${wrong.keys.join(',')}');
+  });
   test('only complete committed upload envelopes can be reconciled', () {
     final hash='a'*64;
     final key=sha256.convert(utf8.encode(jsonEncode([school,'legacy','fee_receipt',hash]))).toString();

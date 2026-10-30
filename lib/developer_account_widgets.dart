@@ -34,6 +34,20 @@ class AppDownloadButtons extends StatefulWidget{
 }
 class _AppDownloadButtonsState extends State<AppDownloadButtons>{
  String? busy,error;
- Future<void> download(String platform)async{if(busy!=null)return;setState((){busy=platform;error=null;});try{if(kIsWeb){final uri=Uri.base.resolve(platform=='windows'?'/downloads/windows.exe':'/downloads/android.apk');if(!await launchUrl(uri,webOnlyWindowName:'_self'))throw StateError('Download unavailable');return;}final response=await http.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100')).timeout(const Duration(seconds:20));if(response.statusCode!=200)throw StateError('Download list unavailable');final selected=latestReleasedInstaller(jsonDecode(response.body) as List,platform);if(selected==null)throw StateError('No released installer available');if(!await launchUrl(selected,webOnlyWindowName:'_self'))throw StateError('Download unavailable');}catch(_){if(mounted)setState(()=>error='Download unavailable. Try again shortly.');}finally{if(mounted)setState(()=>busy=null);}}
+ Future<void> download(String platform)async{if(busy!=null)return;setState((){busy=platform;error=null;});try{if(kIsWeb){
+      // Prefer the latest published verified Release, not a sleeping broker or
+      // a possibly stale static fallback after a new Windows/Android build.
+      Uri? chosen;
+      try{
+        final response=await http.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100')).timeout(const Duration(seconds:8));
+        if(response.statusCode==200){
+          final selected=latestReleasedInstaller(jsonDecode(response.body) as List,platform);
+          if(selected!=null)chosen=selected;
+        }
+      }catch(_){ /* Retain the static, already-published download fallback. */ }
+      chosen??=Uri.base.resolve(platform=='windows'?'/downloads/windows.exe':'/downloads/android.apk');
+      if(!await launchUrl(chosen,webOnlyWindowName:'_self'))throw StateError('Download unavailable');
+      return;
+    }final response=await http.get(Uri.parse('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100')).timeout(const Duration(seconds:20));if(response.statusCode!=200)throw StateError('Download list unavailable');final selected=latestReleasedInstaller(jsonDecode(response.body) as List,platform);if(selected==null)throw StateError('No released installer available');if(!await launchUrl(selected,webOnlyWindowName:'_self'))throw StateError('Download unavailable');}catch(_){if(mounted)setState(()=>error='Download unavailable. Try again shortly.');}finally{if(mounted)setState(()=>busy=null);}}
  @override Widget build(BuildContext context)=>Column(children:[Wrap(spacing:10,runSpacing:10,children:[OutlinedButton.icon(onPressed:busy!=null?null:()=>download('windows'),icon:const Icon(Icons.desktop_windows),label:const Text('Windows Download')),OutlinedButton.icon(onPressed:busy!=null?null:()=>download('android'),icon:const Icon(Icons.android),label:const Text('Student Android Download'))]),if(busy!=null)const LinearProgressIndicator(),if(error!=null)Text(error!)]);
 }

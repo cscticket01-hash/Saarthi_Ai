@@ -94,6 +94,8 @@ jobs:
       # =========================================================
       - name: Verify latest installer selection
         run: flutter test test/release_download_test.dart
+      - name: Verify download routing bypasses sleeping Render broker
+        run: node scripts/check_download_redirects.cjs
 
       - name: Build Web
         env:
