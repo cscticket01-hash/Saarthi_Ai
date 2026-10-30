@@ -1,3 +1,5 @@
+import 'windows_sync_dependencies.dart';
+import 'windows_id_card_inputs.dart';
 import 'windows_firebase_sync.dart';
 import 'windows_payslip_template.dart';
 import 'windows_id_card_reviews.dart';
@@ -132,7 +134,12 @@ class WindowsDocumentTemplates {
     return bytes;
   }
 
-  static Future<String> _fingerprint(
+  static Future<String> _fingerprint(Map<String,dynamic> data,Map<String,dynamic> profile,dynamic template,String qr) async =>
+    (await inputRevisions(data,profile,template,qr)).visual;
+
+  /// Includes the old identity only to verify existing published cards during
+  /// migration. The new identity contains rendered text and active image slots.
+  static Future<({String visual,String legacy})> inputRevisions(
     Map<String, dynamic> data,
     Map<String, dynamic> profile,
     dynamic template,
@@ -205,11 +212,37 @@ class WindowsDocumentTemplates {
 
     String? imageIdentity(int i) => hasSource(i) ? sourceHashes[i] as String :
       images[i]==null?null:sha256.convert(images[i]!).toString();
-    return sha256
-        .convert(utf8.encode(jsonEncode(clean([inputs(data), inputs(profile), template, qr,
-          if (SchoolLink.parse(qr).role == 'teacher') 'teacher-personal-details-v2',
-          for (var i=0;i<images.length;i++) imageIdentity(i)]))))
-        .toString();
+    final legacy=sha256.convert(utf8.encode(jsonEncode(clean([inputs(data),inputs(profile),template,qr,
+      if(SchoolLink.parse(qr).role=='teacher') 'teacher-personal-details-v2',
+      for(var i=0;i<images.length;i++)imageIdentity(i)])))).toString();
+    final student=SchoolLink.parse(qr).role=='student';
+    final kind=student?'studentId':'teacherId';
+    final effective={...profile,...personCardData(data,profile),
+      'schoolName':profile['schoolName']??profile['name']??'',
+      'schoolAddress':profile['address']??'',
+      'schoolEmail':profile['schoolEmail']??profile['email']??'',
+      'designation':data['designation']??data['role']??(student?'Student':'Teacher'),
+      'rollNo':data['rollNo']??data['employeeId']??data['teacherId']??'',
+      'parentName':data['parentName']??data['fatherName']??'',
+    };
+    Map<String,dynamic> text;
+    Set<String> slots;
+    if(student||template is String&&(template.startsWith('manifest:')||template.startsWith('reviewed:'))) {
+      final manifest=template is String&&template.startsWith('reviewed:')
+        ?await WindowsIdCardDesignerEntry.reviewed(template,FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'local:$origin')
+        :await (await IdCardCatalog.find(template is String?template.replaceFirst('manifest:',''):studentIdTemplateId)).manifest();
+      if(manifest==null)throw StateError('Verified ID design is required.');
+      final normalized=IdCardEngine.normalizedInput(manifest,Map<String,dynamic>.from(effective));
+      text={for(final region in manifest.regions.where((r)=>r.kind=='text'))region.key:normalized[region.key]?.toString()??''};
+      slots=manifest.regions.where((r)=>r.kind=='image').map((r)=>r.key).toSet();
+    } else {
+      text=teacherCardText(effective,windowsReferenceDocumentIndex(kind,template));
+      slots={'photo','logo','signature'};
+    }
+    final visual=sha256.convert(utf8.encode(jsonEncode(clean(['id-visible-v1',student?studentIdTemplateId:template is String&&(template.startsWith('manifest:')||template.startsWith('reviewed:'))?template:windowsReferenceDocumentIndex(kind,template),qr,text,
+      for(var i=0;i<images.length;i++)if(slots.contains(['photo','logo','signature','seal'][i]))imageIdentity(i)])))).toString();
+    if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed while checking ID inputs.');
+    return (visual:visual,legacy:legacy);
   }
 
   static Future<void> _publish(
@@ -352,7 +385,8 @@ class WindowsDocumentTemplates {
           'personId': doc.id,
           'linkToken': person['mobileLinkToken'],
         });
-        final revision = await _fingerprint(person, profile, kind == 'studentId' ? studentIdTemplateId : templates[kind], qr);
+        final revisions = await inputRevisions(person, profile, kind == 'studentId' ? studentIdTemplateId : templates[kind], qr);
+        final revision = revisions.visual;
         final id = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(kind == 'studentId' ? 'student' : 'teacher',doc.id,person);
         final existing =
             (await db.collection('_local_student_documents').doc(id).get())
@@ -362,6 +396,25 @@ class WindowsDocumentTemplates {
         if(db.activeProfileId!=origin)throw StateError('School changed during ID publication.');
         if(holdAutomaticIdCard(existing,pending,cached,identity['schoolId'] as String))continue;
         if (await WindowsIdCardReviews.held(identity['schoolId'] as String, id, revision, cached?['_syncRevision'])) continue;
+        final localVisualMatch=existing?['visualInputRevision']==revision&&
+          existing?['visualInputSourceRevision']==existing?['inputRevision'];
+        var verifiedLegacyMatch=existing?['inputRevision']==revisions.legacy;
+        if(!verifiedLegacyMatch&&!localVisualMatch&&existing!=null&&pending==null) {
+          final dependencies=await WindowsSyncDependencies.read(identity['schoolId'] as String);
+          for(final job in dependencies) {
+            final evidence=job.data();
+            if(evidence['collection']!=collection||evidence['documentId']!=doc.id||evidence['revision']!=person['_syncRevision']||evidence['previousRecord'] is! Map)continue;
+            final before=await inputRevisions(Map<String,dynamic>.from(evidence['previousRecord']),profile,
+              kind=='studentId'?studentIdTemplateId:templates[kind],qr);
+            if(before.visual==revision&&before.legacy==existing['inputRevision'])verifiedLegacyMatch=true;
+          }
+        }
+        if(pending==null&&existing?['syncState']=='Synced'&&existing?['deleted']!=true&&
+            (localVisualMatch||verifiedLegacyMatch)) {
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>db.collection('_local_student_documents').doc(id).set({
+            'visualInputRevision':revision,'visualInputSourceRevision':existing!['inputRevision']},const SetOptions(merge:true)));
+          continue;
+        }
         if ((existing?['inputRevision'] == revision ||
                 existing?['ownerCloudChoiceInputRevision'] == revision) &&
             existing?['deleted'] != true) {
@@ -378,24 +431,11 @@ class WindowsDocumentTemplates {
           if (cached?['schoolId'] == identity['schoolId'] &&
               cached?['studentId']==doc.id && cached?['personId']==(person['mobileStableId']??doc.id) &&
               cached?['ownerRole']==(kind=='studentId'?'student':'teacher') && cached?['documentKind']=='idCard' &&
-              cached?['inputRevision'] == revision &&
+              (cached?['inputRevision'] == revision || cached?['inputRevision'] == revisions.legacy) &&
               cached?['_syncDeleted'] != true)
             continue;
         }
-        final address = [
-          person['address'],
-          person['district'],
-          person['state'],
-        ].where((v) => v != null && v.toString().isNotEmpty).join(', ');
-        final data = {
-          ...person,
-          'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
-          'roll': person['rollNo'],
-          'contact': person['parentContact'],
-          'streetAddress': person['address'],
-          'address': address,
-          'showStudentUid': person['studentUid'] != null,
-        };
+        final data = personCardData(person,profile);
         await WindowsBackendBridge.publishIdCard(
           prepareBytes: () => selected(kind, data, qr: qr, publish: false),
           qr: qr,

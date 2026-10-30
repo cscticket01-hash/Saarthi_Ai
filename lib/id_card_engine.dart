@@ -63,14 +63,7 @@ class IdCardEngine {
     );
   }
 
-  static Future<PreparedIdCard> prepare(
-    IdCardManifest template,
-    Map<String, dynamic> data, {
-    Map<String, Uint8List> images = const {},
-    String qr = '',
-    Map<String, Uint8List> backgrounds = const {},
-    pw.Font? font,
-  }) async {
+  static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
     if(template.id == 'student-maroon-gold-v1') {
       String first(List<String> keys) {
         for(final key in keys) {
@@ -91,6 +84,18 @@ class IdCardEngine {
         'pinCode':first(['pinCode','pin','pincode']),
       };
     }
+    return data;
+  }
+
+  static Future<PreparedIdCard> prepare(
+    IdCardManifest template,
+    Map<String, dynamic> data, {
+    Map<String, Uint8List> images = const {},
+    String qr = '',
+    Map<String, Uint8List> backgrounds = const {},
+    pw.Font? font,
+  }) async {
+    data = normalizedInput(template,data);
     qr = compactQr(qr);
     for (final r in template.regions) {
       if (r.isRequired &&

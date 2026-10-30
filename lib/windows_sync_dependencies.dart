@@ -22,13 +22,13 @@ class WindowsSyncDependencies {
     String school,
     String collection,
     String id,
-    String revision,
-  ) => retainMany(school, collection, {id: revision});
+    String revision, {Map<String,dynamic>? previousRecord,}
+  ) => retainMany(school, collection, {id: revision},previousRecords:previousRecord==null?const {}:{id:previousRecord});
 
   static Future<void> retainMany(
     String school,
     String collection,
-    Map<String, String> revisions,
+    Map<String, String> revisions, {Map<String,Map<String,dynamic>> previousRecords=const {},}
   ) async {
     final entries = revisions.entries
         .where((e) => relevant(collection, e.key))
@@ -55,7 +55,9 @@ class WindowsSyncDependencies {
           'collection': collection,
           'documentId': entry.key,
           'revision': entry.value,
-        });
+          if(previousRecords[entry.key]!=null&&previousRecords[entry.key]!['schoolId']==school)
+            'previousRecord':previousRecords[entry.key],
+        },const SetOptions(merge:true));
       }
       await batch.commit();
     }
