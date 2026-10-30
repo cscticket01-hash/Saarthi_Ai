@@ -18,6 +18,29 @@ test('reviewed evidence, CAS, signature and common A/B envelope without school d
  await assert.rejects(publish(f,{enabled:true,rules:[{...p.rules[0],value:600}]},1),e=>e.code==='REPAIR_KNOWLEDGE_EVIDENCE');
  assert.equal(f.sent.length,0);
 });
+test('permanent signed server history survives client reset and delivers latest approved policy to school B',async()=>{
+ const f=setup();
+ const first=await publish(f);
+ const immutable=structuredClone(f.docs.get('repair_knowledge/version-1'));
+ assert.equal(immutable.sequence,1);
+ assert.equal(immutable.policyHash,policyHash(p));
+ assert.equal(immutable.envelope.payload,first.envelope.payload);
+ const a=await pull(f,'A');
+ const b=await pull(f,'B');
+ assert.deepEqual(a.envelope,b.envelope);
+ // A removed/reinstalled client is represented by a fresh authenticated pull,
+ // not by restoring a Windows-local memory snapshot.
+ const newClient=await pull(f,'A');
+ assert.deepEqual(newClient.envelope,a.envelope);
+ const disabled=await publish(f,{enabled:false,rules:[]},1);
+ assert.equal(disabled.sequence,2);
+ assert.deepEqual(f.docs.get('repair_knowledge/version-1'),immutable);
+ assert.equal(f.docs.get('repair_knowledge/version-2').sequence,2);
+ assert.equal(unpack((await pull(f,'B')).envelope).enabled,false);
+ assert.equal(f.docs.get('repair_knowledge/version-1').policy.enabled,true);
+ const stored=JSON.stringify(f.docs.get('repair_knowledge/version-1'));
+ assert(!stored.includes(A)&&!stored.includes(B));
+});
 test('school and licence isolation precedes knowledge routes; schools cannot publish',async()=>{
  const f=setup();await publish(f);
  await assert.rejects(f.call({action:'developer/managed/repair-knowledge/publish',publication:{expectedSequence:1,policy:{enabled:false,rules:[]}}}),e=>e.status===403);
