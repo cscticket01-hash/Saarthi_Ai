@@ -100,6 +100,20 @@ void main() {
     expect(rules.recommend(school,'teachers_directory','conflict'),'verify_original');
     expect(rules.recommend('another-school','teachers_directory','conflict'),isNull);
   });
+  test('duplicate reconciliation closes the original conflict pattern, not a new success category',(){
+    final memory=WindowsRepairMemory();
+    memory.observe(event('conflict',category:'conflict'),school,10);
+    memory.observe(event('duplicateReconciled',category:'verifiedDuplicate'),school,11);
+    expect(memory.entries.length,1);
+    expect(memory.entries.single['status'],'resolved');
+    expect(memory.patterns.length,1);
+    expect(memory.patterns.single['category'],'conflict');
+    expect(memory.patterns.single['verifiedRepairs'],1);
+    expect(sharedRepairObservations(memory.patterns),[
+      {'module':'teachers_directory','category':'conflict','outcome':'resolved'},
+    ]);
+  });
+
   test('permanent shared patterns contain only allowlisted generic fields',(){
     final memory=WindowsRepairMemory();
     memory.observe({...event('conflict',op:'private-operation-987',id:'student-secret'),
