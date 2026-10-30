@@ -11193,15 +11193,59 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
               Icon(Icons.receipt_long_rounded, color: WindowsAppearance.foreground(Color(0xFF38A8FF)), size: 21),
               const SizedBox(width: 8),
                Text(
                 'Fee Structure',
                 style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 15, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(width: 10),
+                  const Spacer(),
+              TextButton.icon(
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
+                  );
+                  if (!mounted || _activeStudentId == null) return;
+                  final currentClass = _activeStudentClass ?? '';
+                  final currentStudent = _activeStudentId;
+                  try {
+                    final updated = await _getClassFeeSettings(currentClass);
+                    if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
+                    setState(() {
+                      _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
+                      _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
+                      if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
+                        _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
+                      }
+                      if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
+                        _selectedFeeHeads.clear();
+                        _receivedAmountController.clear();
+                      }
+                    });
+                  } catch (error) {
+                    if (!mounted) return;
+                    setState(() {
+                      _activeFeeSettingsReady = false;
+                      _activeFeeSettingsMessage = 'Reload fee settings before collecting payment.';
+                      _selectedFeeHeads.clear();
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee settings load error: $error')));
+                  }
+                },
+                icon: const Icon(Icons.settings_rounded, size: 16),
+                label: const Text('Settings'),
+              ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
               Expanded(
                 child: Text(
                   studentSelected
@@ -11257,42 +11301,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const FeeCollectionSettingsScreen(); }),
-                  );
-                  if (!mounted || _activeStudentId == null) return;
-                  final currentClass = _activeStudentClass ?? '';
-                  final currentStudent = _activeStudentId;
-                  try {
-                    final updated = await _getClassFeeSettings(currentClass);
-                    if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
-                    setState(() {
-                      _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
-                      _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
-                      if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
-                        _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
-                      }
-                      if (_toDouble(_activeLedger?['expectedAmount']) <= 0) {
-                        _selectedFeeHeads.clear();
-                        _receivedAmountController.clear();
-                      }
-                    });
-                  } catch (error) {
-                    if (!mounted) return;
-                    setState(() {
-                      _activeFeeSettingsReady = false;
-                      _activeFeeSettingsMessage = 'Reload fee settings before collecting payment.';
-                      _selectedFeeHeads.clear();
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fee settings load error: $error')));
-                  }
-                },
-                icon: const Icon(Icons.settings_rounded, size: 16),
-                label: const Text('Settings'),
+                ],
               ),
             ],
           ),
