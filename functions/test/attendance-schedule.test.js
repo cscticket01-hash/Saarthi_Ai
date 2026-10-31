@@ -43,3 +43,23 @@ test('teacher has one daily entry without student schedule; foreign school and m
  const policy=f.mobile({action:'mobile_refresh',sessionToken:f.request.sessionToken}).attendancePolicy;
  assert.equal(policy.recorded,false);assert.equal(policy.schedule.startMinute,600);
 });
+
+test('school can hide check-out; unchanged schools remain compatible and old ACKs survive',()=>{
+ const f=fixture();
+ f.write('school_settings','attendance_schedule',{enabled:false,checkoutEnabled:false});
+ const before=f.mobile({action:'mobile_refresh',sessionToken:f.request.sessionToken}).attendancePolicy;
+ assert.equal(before.schedule.checkoutEnabled,false);
+ const entry=f.mobile({...f.request,operationId:'e'.repeat(64)});
+ assert.equal(entry.success,true,JSON.stringify(entry));
+ const denied=f.mobile({...f.request,mode:'exit',operationId:'f'.repeat(64)});
+ assert.equal(denied.success,false);
+ assert.equal(denied.success,false,'School-owned server rejects disabled student checkout');
+ // Public signed adapters intentionally sanitize school Script error details.
+ const stored=f.call({action:'managed_records',collection:'attendance_records',operation:'read'}).records;
+ assert.equal(Object.keys(stored).length,1);
+ assert.equal(Object.values(stored)[0].checkOut,undefined);
+ f.write('school_settings','attendance_schedule',{enabled:false,checkoutEnabled:true});
+ assert.equal(f.mobile({...f.request,mode:'exit',operationId:'f'.repeat(64)}).success,true);
+ const old=f.mobile({...f.request,mode:'exit',operationId:'f'.repeat(64)});
+ assert.equal(old.success,true,'Same operation ID is idempotent');
+});

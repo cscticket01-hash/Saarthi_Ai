@@ -10,6 +10,9 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'mobile/dob_input_formatter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:open_filex/open_filex.dart';
@@ -140,7 +143,59 @@ class _QrScanner extends StatefulWidget {
 
 class _QrScannerState extends State<_QrScanner> {
   final _capture = QrAuthenticationEngine();
-  final _scanner = MobileScannerController();
+  final _scanner = MobileScannerController(
+    formats: const [BarcodeFormat.qrCode],
+    autoZoom: true,
+  );
+  bool _torchOn = false, _choosingImage = false;
+  double _zoom = 1;
+  void _accept(List<Barcode> barcodes) {
+    if (_capture.paused) return;
+    for (final code in barcodes) {
+      final raw = code.rawValue;
+      if (raw == null) continue;
+      try {
+        final link = _capture.capture(raw);
+        if (link == null) return;
+        // Scanner disposal on route exit: no artificial 2-second stop wait.
+        if (mounted) Navigator.pop(context, link);
+        return;
+      } catch (_) {
+        if (mounted) setState(() =>
+          _error = 'Invalid or older ID QR. Ask your school to regenerate this card.');
+        return;
+      }
+    }
+  }
+  Future<void> _gallery() async {
+    if (_choosingImage) return;
+    _choosingImage = true;
+    try {
+      final photo = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (photo == null || !mounted) return;
+      final found = await _scanner.analyzeImage(photo.path);
+      if (found == null) {
+        if (mounted) setState(() => _error = 'No school ID QR found in that photo.');
+      } else {
+        _accept(found.barcodes);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not read that image. Choose a clear school ID QR.');
+    } finally { _choosingImage = false; }
+  }
+  Future<void> _torch() async {
+    try {
+      await _scanner.toggleTorch();
+      if (mounted) setState(() => _torchOn = !_torchOn);
+    } catch (_) {}
+  }
+  Future<void> _changeZoom() async {
+    final value = _zoom >= 3 ? 1.0 : _zoom + 0.5;
+    try {
+      await _scanner.setZoomScale(value);
+      if (mounted) setState(() => _zoom = value);
+    } catch (_) {}
+  }
   String? _error;
   @override
   void dispose() {
@@ -160,40 +215,55 @@ class _QrScannerState extends State<_QrScanner> {
           ),
         ),
         Expanded(
-          child: MobileScanner(
-            controller: _scanner,
-            onDetect: (capture) async {
-              if (_capture.paused) return;
-              for (final b in capture.barcodes) {
-                final raw = b.rawValue;
-                if (raw == null) continue;
-                try {
-                  final link = _capture.capture(raw);
-                  if (link == null) return;
-                  try {
-                    await _scanner.stop().timeout(const Duration(seconds: 2));
-                  } catch (_) {}
-                  if (mounted) Navigator.pop(context, link);
-                  return;
-                } catch (e) {
-                  try {
-                    await _scanner.stop().timeout(const Duration(seconds: 2));
-                  } catch (_) {}
-                  if (mounted)
-                    setState(
-                      () => _error =
-                          'Invalid or older ID QR. Ask your school to regenerate this card.',
-                    );
-                  return;
-                }
-              }
-            },
-            errorBuilder: (context, error) => Center(
-              child: Text(
-                'Camera unavailable. Allow camera access in your phone settings.\n${error.errorCode.name}',
-                textAlign: TextAlign.center,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Stack(fit: StackFit.expand, children: [
+              MobileScanner(
+                controller: _scanner,
+                onDetect: (capture) => _accept(capture.barcodes),
+                errorBuilder: (context, error) => Center(
+                  child: Text('Camera unavailable. Allow camera permission.\n${error.errorCode.name}',
+                    textAlign: TextAlign.center),
+                ),
               ),
-            ),
+              IgnorePointer(child: Center(child: FractionallySizedBox(
+                widthFactor: .75,
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFF00D9A5),width: 3),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.qr_code_scanner_rounded,
+                        size: 44, color: Colors.white54)),
+                  ),
+                ),
+              ))),
+              Positioned(
+                left: 12, right: 12, bottom: 14,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xDD0B141A),
+                    borderRadius: BorderRadius.circular(22)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                      TextButton.icon(onPressed: _gallery,
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('Gallery')),
+                      TextButton.icon(onPressed: _torch,
+                        icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
+                        label: const Text('Torch')),
+                      TextButton.icon(onPressed: _changeZoom,
+                        icon: const Icon(Icons.zoom_in),
+                        label: Text('${_zoom.toStringAsFixed(1)}×')),
+                    ]),
+                  ),
+                ),
+              ),
+            ]),
           ),
         ),
         if (_error != null)
@@ -402,7 +472,8 @@ class _SchoolLoginState extends State<_SchoolLogin> {
                     const SizedBox(height: 14),
                     TextField(
                       controller: _dob,
-                      keyboardType: TextInputType.datetime,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [DateOfBirthInputFormatter()],
                       decoration: const InputDecoration(
                         labelText: 'Date of birth',
                         hintText: 'DD/MM/YYYY',
@@ -617,15 +688,18 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Future<void> _loadAttendance() => _history.selectMonth(_monthKey);
 
   Future<void> _logout() async {
-    await SchoolMessaging.stop();
     await _s.logout();
-    await SchoolNotifications.clear();
     if (mounted)
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const _SchoolLogin()),
         (_) => false,
       );
+    // External messaging shutdown must not block navigation.
+    unawaited(SchoolMessaging.stop().timeout(const Duration(seconds: 4))
+      .catchError((Object _) {}));
+    unawaited(SchoolNotifications.clear().timeout(const Duration(seconds: 4))
+      .catchError((Object _) {}));
   }
 
   Widget _card(Widget child) => Card(
@@ -1006,10 +1080,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       if (yes != true) return;
       setState(() => _busy = true);
       final dir = await getTemporaryDirectory();
+      androidUpdateTransfer.value = null;
       final file = await downloadAndroidUpdate(
         Map<String, dynamic>.from(u),
         File('${dir.path}/vidya-saarthi-update.apk'),
+        onProgress: (bytes, total) {
+          androidUpdateTransfer.value = AndroidUpdateTransfer(bytes, total);
+        },
       );
+      final completed = androidUpdateTransfer.value;
+      if (completed != null) {
+        androidUpdateTransfer.value = AndroidUpdateTransfer(
+          completed.received, completed.total, verified: true);
+      }
       await OpenFilex.open(file.path);
     } catch (e) {
       if (mounted)
@@ -1123,7 +1206,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading('Attendance', 'Check in and check out once each day'),
+        _heading('Attendance', 'Your school day at a glance'),
         Row(
           children: [
             IconButton(
@@ -1207,7 +1290,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           ),
         ),
         if (_s.attendanceScheduleLabel.isNotEmpty)
-          _card(Text(_s.attendanceScheduleLabel)),
+          _card(Row(children: [
+            const Icon(Icons.schedule, color: Colors.tealAccent),
+            const SizedBox(width: 12),
+            Expanded(child: Text(_s.attendanceScheduleLabel)),
+          ])),
         if (!_open(today))
           _card(const Text('School is closed today. Attendance is disabled.'))
         else ...[
@@ -1224,7 +1311,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
+              if (_s.studentCheckoutEnabled) Expanded(
                 child: FilledButton.icon(
                   onPressed: _busy || exitLock.isNotEmpty
                       ? null
@@ -1235,7 +1322,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               ),
             ],
           ),
-          if (exitLock.isNotEmpty)
+          if (_s.studentCheckoutEnabled && exitLock.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(exitLock, style: const TextStyle(fontSize: 12)),
@@ -1273,7 +1360,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Widget _documents() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _heading('My school documents', 'ID card, marksheets and certificates'),
+      _heading('My school documents', 'Your digital student wallet'),
+      const SizedBox(height: 12),
+      const Row(children: [
+        Icon(Icons.verified_user_outlined, color: Colors.tealAccent),
+        SizedBox(width: 10),
+        Text('School-verified ID card',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ]),
       _card(
         Column(
           children: [
@@ -1299,25 +1393,38 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         ),
       ),
       const SizedBox(height: 10),
-      const Text(
-        'Marksheets',
-        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-      ),
+      const Row(children: [
+        Icon(Icons.auto_stories_outlined, color: Colors.tealAccent),
+        SizedBox(width: 10),
+        Text('Marksheets & results',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+      ]),
       const SizedBox(height: 12),
       if (_list(_data['examinations']).isNotEmpty)
-        _heading('Examinations', 'Published school examinations'),
+        const Text('Published examinations', style: TextStyle(color: Colors.white70)),
       for (final exam in _list(_data['examinations']))
-        _card(
-          Text(
-            '${exam['examName'] ?? exam['name'] ?? exam['id']} • ${exam['academicSession'] ?? ''}',
-          ),
-        ),
+        _card(Row(children: [
+          const CircleAvatar(
+            backgroundColor: Color(0x2239DBB2),
+            child: Icon(Icons.assignment_turned_in_outlined, color: Colors.tealAccent)),
+          const SizedBox(width: 14),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${exam['examName'] ?? exam['name'] ?? exam['id']}',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+              Text('Session ${exam['academicSession'] ?? '—'}',
+                style: const TextStyle(color: Colors.white60,fontSize: 12)),
+            ],
+          )),
+        ])),
       if (_list(_data['reportCards']).isEmpty)
         _card(const Text('Your school has not published a report card yet.')),
       ..._list(_data['reportCards']).map(
         (r) => _card(
           ListTile(
             contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.workspace_premium_outlined, color: Colors.tealAccent),
             title: Text(r['examName']?.toString() ?? 'Exam'),
             subtitle: Text(
               '${r['result'] ?? 'Pending'} • ${r['percentage'] ?? 0}%',

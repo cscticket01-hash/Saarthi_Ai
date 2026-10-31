@@ -286,6 +286,9 @@ class SchoolSession {
     if (mode == 'exit' ? exited : entered) {
       return '${mode == 'exit' ? 'Check-out' : 'Check-in'} captured today. Locked until tomorrow, including pending submissions.';
     }
+    if (mode == 'exit' && link?.role == 'student' && !studentCheckoutEnabled) {
+      return 'This school has disabled student check-out.';
+    }
     if (mode == 'exit' && !entered) return 'Check in before checking out.';
     if (link?.role == 'student') {
       if (status is! Map) {
@@ -299,6 +302,12 @@ class SchoolSession {
       }
     }
     return '';
+  }
+
+  bool get studentCheckoutEnabled {
+    final status = dashboard['attendanceStatus'];
+    final schedule = status is Map ? status['schedule'] : null;
+    return schedule is! Map || schedule['checkoutEnabled'] != false;
   }
 
   String get attendanceScheduleLabel {
@@ -1707,11 +1716,15 @@ class SchoolSession {
   }
 
   Future<void> logout() async {
+    // Server revoke is best-effort: never hold local sign-out behind HTTP.
+    // The request captures the old school identity before the local reset.
     if (loggedIn) {
-      try {
-        await schoolCall('mobile_logout', {});
-      } catch (_) {}
+      unawaited(schoolCall('mobile_logout', {})
+        .timeout(const Duration(seconds: 6))
+        .catchError((Object _) => <String,dynamic>{}));
     }
+    // Invalidate in-memory identity and persist the encrypted tombstone.
+    // Pending attendance and offline records belong to independent storage.
     await clear();
   }
 
