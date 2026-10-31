@@ -219,6 +219,6 @@ test('two authenticated Windows PCs share last verified adapter hints across the
  // The caller must possess the original registered credential to change its hint.
  await assert.rejects(f.call('managed/device/list',
    {...pcA,'x-vidya-device-credential':generateDeviceCredential()},
-   {connectionType:'LAN'}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+   {connectionType:'LAN'}),{code:'DEVICE_CREDENTIAL_CONFLICT'});
  assert.equal(f.audit.length,2,'Connectivity hints cannot grant access or create devices');
 });
