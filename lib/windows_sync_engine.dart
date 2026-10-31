@@ -164,22 +164,25 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (!automaticScheduleExpected || _syncing || _activating > 0) return;
     final db = FirebaseFirestore.instance;
     final profile = _activeProfileId, school = _activeSchoolSyncId;
-    final rows = await db.collection('_windows_sync_downloads').get();
-    if (!automaticScheduleExpected ||
-        _activeProfileId != profile || _activeSchoolSyncId != school ||
-        db.activeProfileId != profile) return;
-    final due = windowsStalledDownloadRepairTargets(
-      schoolId: school,
-      downloads: [for (final row in rows.docs) row.data()],
-      allowedCollections: _firebaseCollections.toSet(),
-      nowMillis: DateTime.now().millisecondsSinceEpoch,
-    );
-    if (due.isEmpty) {
-      _stalledDownloadRepairDue = false;
-      return;
+    try {
+      final rows = await db.collection('_windows_sync_downloads').get();
+      if (!automaticScheduleExpected ||
+          _activeProfileId != profile || _activeSchoolSyncId != school ||
+          db.activeProfileId != profile) return;
+      final due = windowsStalledDownloadRepairTargets(
+        schoolId: school,
+        downloads: [for (final row in rows.docs) row.data()],
+        allowedCollections: _firebaseCollections.toSet(),
+        nowMillis: DateTime.now().millisecondsSinceEpoch,
+      );
+      _stalledDownloadRepairDue = due.isNotEmpty;
+      if (due.isNotEmpty) {
+        scheduleSoon(delay: const Duration(milliseconds: 350));
+      }
+    } catch (_) {
+      // Read-only diagnosis can fail during a local storage transition.
+      // Never clear or manufacture a download checkpoint on diagnostic failure.
     }
-    _stalledDownloadRepairDue = true;
-    scheduleSoon(delay: const Duration(milliseconds: 350));
   }
 
   bool _initialized = false;
@@ -3111,7 +3114,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     recordBatchReader,
     bool? verifyInventory,
     Set<String>? selectedCollections,
-    Set<String> repairCollections = const {},
+    Set<String> repairCollections = const <String>{},
     Map<String, Set<String>>? targetRecordIds,
     Future<Map<String, dynamic>> Function(String, Set<String>)? pointReader,
   }) async {
@@ -3303,6 +3306,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         throw StateError('Incremental baseline missing.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
+      if (repairCollections.contains(collection)) {
+        // This is exceptional recovery of an interrupted VERIFIED download,
+        // not a routine full sync. A partial/empty response cannot prove that
+        // the older unverified record reached this device.
+        if (result['partialRecords'] == true || records.isEmpty) {
+          throw StateError('Incomplete authoritative download repair; original pending evidence retained.');
+        }
+        final prior = (await manifest.get()).data();
+        final alreadyDeleted = ((prior?['deletedIds'] as List?) ?? [])
+            .whereType<String>().toSet();
+        final expectedIds = ((prior?['ids'] as List?) ?? [])
+            .whereType<String>().where((id) => !alreadyDeleted.contains(id));
+        if (expectedIds.any((id) => !records.containsKey(id))) {
+          throw StateError('Authoritative repair omitted previously known records; pending download retained.');
+        }
+      }
       if (result['missingRecords'] is List &&
           batchReader == null &&
           recordBatchReader == null) {
