@@ -18,28 +18,29 @@ class ForgeRecognition {
 /// Conservative automatic field locator. Never silently infers marks or money.
 class TemplateForgeAutoMapper {
   static const aliases=<String,List<String>>{
-    'studentName':['student name','name of student'],
-    'name':['employee name','staff name','name of employee'],
-    'receiptNo':['receipt no','receipt number','receipt id'],
-    'rollNo':['roll no','roll number'],
-    'class':['class','grade'],
-    'dateText':['date of issue','payment date','date'],
-    'totalAmount':['total amount','amount paid','total paid'],
-    'paymentMode':['payment mode','mode of payment'],
-    'examName':['exam name','examination'],
-    'academicSession':['academic session','session'],
-    'totalMarks':['total marks'],
-    'percentage':['percentage'],
-    'result':['result'],
-    'employeeId':['employee id','staff id'],
-    'role':['designation'],
-    'month':['salary month','month'],
-    'basicPaise':['basic salary','basic pay'],
-    'allowancePaise':['allowances','allowance'],
-    'deductionPaise':['deductions','deduction'],
-    'netPaise':['net salary','net pay'],
-    'paidPaise':['salary paid'],
-    'status':['payment status'],
+    'schoolName':['school name','name of school','विद्यालय का नाम','স্কুলের নাম','বিদ্যালয়ৰ নাম'],
+    'studentName':['student name','name of student','name of pupil','विद्यार्थी का नाम','छात्र का नाम','শিক্ষার্থীর নাম','ছাত্রের নাম','ছাত্ৰৰ নাম'],
+    'name':['employee name','staff name','name of employee','कर्मचारी का नाम','কর্মচারীর নাম','কৰ্মচাৰীৰ নাম'],
+    'receiptNo':['receipt no','receipt number','receipt id','रसीद संख्या','রসিদ নং','ৰচিদ নং'],
+    'rollNo':['roll no','roll number','रोल नंबर','রোল নম্বর','ৰোল নং'],
+    'class':['class','grade','कक्षा','শ্রেণি','শ্রেণী','শ্ৰেণী'],
+    'dateText':['date of issue','payment date','date','दिनांक','तारीख','তারিখ','তাৰিখ'],
+    'totalAmount':['total amount','amount paid','total paid','कुल राशि','মোট টাকা','মোট পরিমাণ','মুঠ ধন'],
+    'paymentMode':['payment mode','mode of payment','भुगतान का तरीका','পেমেন্ট পদ্ধতি'],
+    'examName':['exam name','examination','परीक्षा का नाम','পরীক্ষার নাম','পৰীক্ষাৰ নাম'],
+    'academicSession':['academic session','session','शैक्षणिक सत्र','শিক্ষাবর্ষ','শিক্ষাবৰ্ষ'],
+    'totalMarks':['total marks','कुल अंक','মোট নম্বর','মুঠ নম্বৰ'],
+    'percentage':['percentage','प्रतिशत','শতাংশ','শতকৰা'],
+    'result':['result','परिणाम','ফলাফল'],
+    'employeeId':['employee id','staff id','कर्मचारी आईडी','কর্মচারী আইডি'],
+    'role':['designation','job title','पदनाम','পদবি','পদবী'],
+    'month':['salary month','month','महीना','মাস','মাহ'],
+    'basicPaise':['basic salary','basic pay','मूल वेतन','মূল বেতন','মূল দৰমহা'],
+    'allowancePaise':['allowances','allowance','भत्ता','ভাতা'],
+    'deductionPaise':['deductions','deduction','कटौती','কর্তন','কটন'],
+    'netPaise':['net salary','net pay','शुद्ध वेतन','নিট বেতন','মুঠ দৰমহা'],
+    'paidPaise':['salary paid','amount paid to employee','भुगतान वेतन','প্রদত্ত বেতন'],
+    'status':['payment status','भुगतान स्थिति','পেমেন্ট স্ট্যাটাস'],
   };
   static const required=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
@@ -47,7 +48,7 @@ class TemplateForgeAutoMapper {
     SchoolTemplateKind.payslip:['name','month','netPaise'],
   };
   static String normalized(String value)=>value.toLowerCase()
-    .replaceAll(RegExp(r'[^a-z0-9 ]'),' ')
+    .replaceAll(RegExp(r'[^\p{L}\p{M}\p{N} ]',unicode:true),' ')
     .replaceAll(RegExp(r'\s+'),' ').trim();
 
   static List<List<ForgeWord>> parseTsv(String tsv,int width,int height) {
@@ -72,20 +73,43 @@ class TemplateForgeAutoMapper {
       .where((x)=>x.isNotEmpty).toList();
   }
 
+  /// Suggest a document type without overriding the user's destination.
+  /// Ambiguous scans intentionally return null.
+  static SchoolTemplateKind? suggestKind(String tsv,int width,int height) {
+    final lines=parseTsv(tsv,width,height);
+    final scores=<SchoolTemplateKind,int>{};
+    for(final kind in SchoolTemplateKind.values){
+      var score=0;
+      for(final key in kind.fields){
+        final phrases=aliases[key]??const <String>[];
+        if(lines.any((line){
+          final label=normalized(line.map((w)=>w.text).join(' '));
+          return phrases.any((p)=>label==p||label.startsWith(p+' '));
+        })) score+=(required[kind]??const <String>[]).contains(key)?3:1;
+      }
+      scores[kind]=score;
+    }
+    final ordered=SchoolTemplateKind.values.toList()
+      ..sort((a,b)=>scores[b]!.compareTo(scores[a]!));
+    return scores[ordered.first]!>=5 &&
+      scores[ordered.first]! - scores[ordered[1]]!>=2 ? ordered.first : null;
+  }
+
   static ForgeRecognition detect(SchoolTemplateDraft input,String tsv) {
     final lines=parseTsv(tsv,input.width,input.height);
     final fields=<SchoolTemplateField>[],found=<String>[],warnings=<String>[];
+    final likely=suggestKind(tsv,input.width,input.height);
+    if(likely!=null && likely!=input.kind){
+      warnings.add('Document appears to be '+likely.title+', not '+input.kind.title+'.');
+    }
     for(final key in input.kind.fields){
       final names=aliases[key]??const <String>[];
       final hits=<({List<ForgeWord> words,String alias})>[];
       for(final words in lines){
         final text=normalized(words.map((w)=>w.text).join(' '));
-        for(final a in names){
-          if(text==a||text.startsWith(a+' ')){
-            hits.add((words:words,alias:a));
-            break;
-          }
-        }
+        final matching=names.where((a)=>text==a||text.startsWith(a+' ')).toList()
+          ..sort((a,b)=>b.length.compareTo(a.length));
+        if(matching.isNotEmpty)hits.add((words:words,alias:matching.first));
       }
       if(hits.length>1){warnings.add('Repeated ambiguous field: '+key);continue;}
       if(hits.isEmpty)continue;
@@ -110,6 +134,11 @@ class TemplateForgeAutoMapper {
       final field=SchoolTemplateField(key:key,x:x,y:y,width:w,size:size,
         mask:trailing.isNotEmpty);
       field.validate(input.kind);
+      if(fields.any((f)=>f.mask && field.mask &&
+        f.x<field.x+field.width && field.x<f.x+f.width &&
+        (f.y-field.y).abs()<.012)){
+        warnings.add('Overlapping detected fields: '+key);continue;
+      }
       fields.add(field);found.add(key);
     }
     final missing=(required[input.kind]??const <String>[])
