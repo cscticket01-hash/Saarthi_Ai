@@ -1,7 +1,7 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
 const DEFAULT_THEME=Object.freeze({schemaVersion:1,red:0,green:140,blue:120,revision:'default'});
-const PRESET_IDS=new Set(["neon-teal", "electric-blue", "mint-light", "sunset-ember", "aurora-violet", "emerald-gold"]);
+const PRESET_IDS=new Set(["neon-teal", "electric-blue", "mint-light", "sunset-ember", "aurora-violet", "emerald-gold", "midnight-glass"]);
 function theme(value){
  if(!value||value.schemaVersion!==1||!['red','green','blue'].every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=255))throw Object.assign(Error('Use whole RGB values from 0 to 255'),{status:400,publicMessage:true});
  if(value.presetId!=null&&!PRESET_IDS.has(value.presetId))throw Object.assign(Error('Unknown Windows theme preset'),{status:400,publicMessage:true});
