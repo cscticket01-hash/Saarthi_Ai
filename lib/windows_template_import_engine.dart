@@ -48,6 +48,14 @@ class SchoolTemplateField {
     double? size,bool? mask}) => SchoolTemplateField(
     key:key,x:x??this.x,y:y??this.y,width:width??this.width,
     size:size??this.size,mask:mask??this.mask);
+  factory SchoolTemplateField.fromJson(Map<String,dynamic> v) {
+    final field=SchoolTemplateField(
+      key:v['key']?.toString()??'',
+      x:(v['x'] as num).toDouble(),y:(v['y'] as num).toDouble(),
+      width:(v['width'] as num).toDouble(),
+      size:(v['size'] as num).toDouble(),mask:v['mask']==true);
+    return field;
+  }
   Map<String,dynamic> toJson()=>{'key':key,'x':x,'y':y,
     'width':width,'size':size,'mask':mask};
 }
@@ -173,6 +181,94 @@ class SchoolTemplateImportEngine {
       ]),
     ));
     return pdf.save();
+  }
+
+  static Future<List<SchoolTemplateDraft>> loadLocalDrafts({
+    required SchoolTemplateKind kind,required String schoolId,
+  }) async {
+    verifySchool(schoolId);
+    final root=await getApplicationSupportDirectory();
+    final scope=sha256.convert(utf8.encode(schoolId)).toString().substring(0,32);
+    final folder=Directory(root.path+Platform.pathSeparator+'template_drafts'+
+      Platform.pathSeparator+scope+Platform.pathSeparator+kind.name);
+    if(!await folder.exists()) return [];
+    final manifests=await folder.list(followLinks:false)
+      .where((e)=>e is File && e.path.endsWith('.json')).cast<File>().toList();
+    manifests.sort((a,b)=>b.path.compareTo(a.path));
+    final loaded=<SchoolTemplateDraft>[];
+    for(final manifest in manifests.take(30)) {
+      try {
+        final meta=jsonDecode(await manifest.readAsString());
+        if(meta is! Map<String,dynamic> ||
+          meta['version']!=1 || meta['approved']!=false ||
+          meta['schoolId']!=schoolId || meta['kind']!=kind.name) continue;
+        final hash=meta['sourceHash']?.toString()??'';
+        if(!RegExp(r'^[a-f0-9]{64}
+  /// upload to other PCs, clear queues, or change backend/Firestore rules.
+  static Future<void> saveLocalDraft(SchoolTemplateDraft draft,
+      {required String Function() currentSchoolId}) async {
+    verifySchool(draft.schoolId);
+    if(draft.fields.isEmpty || draft.fields.length>35) {
+      throw StateError('Review and map 1-35 fields first.');
+    }
+    for(final f in draft.fields) f.validate(draft.kind);
+    if(currentSchoolId()!=draft.schoolId) throw StateError('School changed.');
+    final root=await getApplicationSupportDirectory();
+    final scope=sha256.convert(utf8.encode(draft.schoolId)).toString().substring(0,32);
+    final folder=Directory(root.path+Platform.pathSeparator+'template_drafts'+
+      Platform.pathSeparator+scope+Platform.pathSeparator+draft.kind.name);
+    await folder.create(recursive:true);
+    if(currentSchoolId()!=draft.schoolId) throw StateError('School changed.');
+    final base=folder.path+Platform.pathSeparator+draft.sourceHash+'-'+
+      DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final tmpImage=File(base+'.png.tmp'),tmpJson=File(base+'.json.tmp');
+    final metadata={'version':1,'approved':false,'schoolId':draft.schoolId,
+      'kind':draft.kind.name,'filename':draft.filename,
+      'sourceHash':draft.sourceHash,'width':draft.width,'height':draft.height,
+      'fields':draft.fields.map((f)=>f.toJson()).toList()};
+    try {
+      await tmpImage.writeAsBytes(draft.png,flush:true);
+      await tmpJson.writeAsString(jsonEncode(metadata),flush:true);
+      if(currentSchoolId()!=draft.schoolId) throw StateError('School switched.');
+      final image=File(base+'.png'),manifest=File(base+'.json');
+      if(await image.exists()) await image.delete();
+      await tmpImage.rename(image.path);
+      if(await manifest.exists()) await manifest.delete();
+      await tmpJson.rename(manifest.path);
+    } finally {
+      if(await tmpImage.exists()) await tmpImage.delete();
+      if(await tmpJson.exists()) await tmpJson.delete();
+    }
+  }
+}
+).hasMatch(hash)) continue;
+        final raster=File(manifest.path.substring(0,manifest.path.length-5)+'.png');
+        if(!await raster.exists()) continue;
+        final bytes=await raster.readAsBytes();
+        if(bytes.length>maxPngBytes) continue;
+        final decoded=img.decodePng(bytes);
+        if(decoded==null || decoded.width!=meta['width'] ||
+          decoded.height!=meta['height'] ||
+          decoded.width*decoded.height>maxPixels) continue;
+        final rawFields=meta['fields'];
+        if(rawFields is! List || rawFields.length>35) continue;
+        final fields=<SchoolTemplateField>[];
+        for(final item in rawFields) {
+          if(item is! Map<String,dynamic>) throw const FormatException('Malformed field');
+          final field=SchoolTemplateField.fromJson(item);
+          field.validate(kind);
+          fields.add(field);
+        }
+        loaded.add(SchoolTemplateDraft(kind:kind,schoolId:schoolId,
+          filename:meta['filename']?.toString()??'Imported template',
+          sourceHash:hash,png:Uint8List.fromList(bytes),
+          width:decoded.width,height:decoded.height,fields:fields));
+      } catch (_) {
+        // A damaged local draft must never hide another valid version.
+        continue;
+      }
+    }
+    return loaded;
   }
 
   /// Local and school-scoped DRAFT ONLY. Does not overwrite selected templates,
