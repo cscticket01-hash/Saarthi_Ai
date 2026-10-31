@@ -21516,6 +21516,50 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ],
       );
 
+
+  Future<void> _deleteUnusedExam(Map<String, dynamic> exam) async {
+    if (_saving) return;
+    final examId = exam['examId']?.toString() ?? '';
+    final saved = _forExam(examId).length;
+    if (examId.isEmpty || saved > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:
+        Text('Cannot delete this exam while saved marks/results exist.')));
+      return;
+    }
+    final name = exam['examName']?.toString() ?? 'Exam';
+    final className = exam['studentClass']?.toString() ?? 'Class';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) { WindowsAppearance.watch(ctx); return AlertDialog(
+        title: const Text('Delete unused exam?'),
+        content: Text('Delete "$name" for $className? '
+          'Only an exam with no saved results can be deleted. '
+          'The cloud and other PCs will receive the deletion through existing sync.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete exam')),
+        ],
+      ); },
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await WindowsExamService.deleteUnusedExam(examId);
+      if (!mounted) return;
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unused exam deleted. Sync will deliver the deletion.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Delete blocked: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _openExamGroup(List<Map<String, dynamic>> group) async {
     if (group.isEmpty) return;
     final examName = group.first['examName']?.toString() ?? 'Exam';
@@ -21645,6 +21689,21 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               },
                               icon: const Icon(Icons.edit_note_rounded, size: 17),
                               label: const Text('Marks & Results'),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              key: ValueKey('delete-exam-$id'),
+                              tooltip: results.isNotEmpty
+                                  ? 'Saved marks: delete blocked'
+                                  : 'Delete unused class exam',
+                              onPressed: _saving || results.isNotEmpty
+                                  ? null
+                                  : () {
+                                      Navigator.pop(dialogContext);
+                                      _deleteUnusedExam(exam);
+                                    },
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                color: Colors.redAccent),
                             ),
                           ],
                         ),
