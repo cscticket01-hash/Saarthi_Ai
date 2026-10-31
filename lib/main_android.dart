@@ -1403,17 +1403,28 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       if (_list(_data['examinations']).isNotEmpty)
         const Text('Published examinations', style: TextStyle(color: Colors.white70)),
       for (final exam in _list(_data['examinations']))
-        _card(
-          Text(
-            '${exam['examName'] ?? exam['name'] ?? exam['id']} • ${exam['academicSession'] ?? ''}',
-          ),
-        ),
+        _card(Row(children: [
+          const CircleAvatar(
+            backgroundColor: Color(0x2239DBB2),
+            child: Icon(Icons.assignment_turned_in_outlined, color: Colors.tealAccent)),
+          const SizedBox(width: 14),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${exam['examName'] ?? exam['name'] ?? exam['id']}',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+              Text('Session ${exam['academicSession'] ?? '—'}',
+                style: const TextStyle(color: Colors.white60,fontSize: 12)),
+            ],
+          )),
+        ])),
       if (_list(_data['reportCards']).isEmpty)
         _card(const Text('Your school has not published a report card yet.')),
       ..._list(_data['reportCards']).map(
         (r) => _card(
           ListTile(
             contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.workspace_premium_outlined, color: Colors.tealAccent),
             title: Text(r['examName']?.toString() ?? 'Exam'),
             subtitle: Text(
               '${r['result'] ?? 'Pending'} • ${r['percentage'] ?? 0}%',
