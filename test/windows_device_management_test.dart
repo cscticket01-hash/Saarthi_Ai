@@ -62,6 +62,23 @@ void main() {
     expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
     await close(tester);
   });
+  testWidgets('local Windows adapter hint is shown only for verified current PC', (tester) async {
+    final list=response();
+    for(final row in (list['devices'] as List)) {
+      row['connectionType']='Unknown';
+    }
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+      request:(action,body) async => list,
+      localConnectionDetector:() async => 'LAN',
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('This PC'),findsOneWidget);
+    expect(find.text('LAN'),findsOneWidget);
+    expect(find.text('Unknown'),findsOneWidget,
+      reason:'Remote PC with no report must stay Unknown');
+    expect(find.byType(Tooltip),findsWidgets);
+    await close(tester);
+  });
   testWidgets('disabled server shows unknown counts, not fake devices', (tester) async {
     await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(a,b) async => throw StateError('DEVICE_ROLLOUT_DISABLED'))));
     await tester.pumpAndSettle();
