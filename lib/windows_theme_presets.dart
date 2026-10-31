@@ -14,11 +14,23 @@ class WindowsThemePreset {
   final String id, name;
   final Color seed, accent, darkSurface, darkBackground;
   final bool light;
-  String get image => 'assets/theme_preset_$id.webp';
-  String get wave => 'assets/theme_wave_$id.webp';
+  // The glass preset is painted interactively in the website Theme picker.
+  // Screenshot/animation fallbacks use existing verified dark-blue resources,
+  // so every existing page keeps rendering without missing binary assets.
+  String get image => 'assets/theme_preset_${id == 'midnight-glass' ? 'electric-blue' : id}.webp';
+  String get wave => 'assets/theme_wave_${id == 'midnight-glass' ? 'electric-blue' : id}.webp';
 }
 
 const windowsThemePresets = <WindowsThemePreset>[
+  WindowsThemePreset(
+    'midnight-glass',
+    'Midnight Glass',
+    Color(0xFF39ABF0),
+    Color(0xFF48E5B5),
+    Color(0xFF131A25),
+    Color(0xFF06090F),
+    light: false,
+  ),
   WindowsThemePreset(
     'neon-teal',
     'Neon Teal',
