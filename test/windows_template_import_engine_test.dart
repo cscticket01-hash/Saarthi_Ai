@@ -6,7 +6,7 @@ import '../lib/windows_template_forge_auto.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  final school='vs-1234567890abcdefgh';
+  final school='vs-db8afb01a3be46a983c8284714d06e5d';
   final png=Uint8List.fromList(img.encodePng(img.Image(width:160,height:220)));
 
   String sampleOcr(List<String> lines) {
