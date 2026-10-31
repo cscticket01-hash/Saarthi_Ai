@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/developer_windows_theme.dart';
+import '../lib/developer_portal.dart';
 import '../lib/managed_developer_panel.dart';
 import '../lib/windows_theme_presets.dart';
 
@@ -237,6 +238,26 @@ void main() {
     expect(find.text('Unsaved selection'), findsOneWidget);
     expect(find.textContaining('Theme was not confirmed'), findsOneWidget);
     expect(find.text('Electric Blue • sample app screens'), findsOneWidget);
+  });
+  test('active licence holders disappear until their final 30 renewal days',(){
+    const schoolA='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const schoolB='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const schoolC='vs-cccccccccccccccccccccccccccccccc';
+    const now=1800000000000;
+    final schools=<Map<String,dynamic>>[
+      {'id':schoolA,'name':'Already licensed'},
+      {'id':schoolB,'name':'Renew soon'},
+      {'id':schoolC,'name':'No licence'},
+    ];
+    final licences=<Map<String,dynamic>>[
+      {'schoolId':schoolA,'expiresAt':now+120*86400000,'revoked':false},
+      {'schoolId':schoolB,'expiresAt':now+15*86400000,'revoked':false},
+    ];
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']).toList(),[schoolB,schoolC]);
+    licences[0]['revoked']=true;
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']),contains(schoolA));
   });
   testWidgets(
     'school password action is in school row and validates before submitting',
