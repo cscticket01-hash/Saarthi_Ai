@@ -14,9 +14,10 @@ String deviceTimeLabel(Object? value) => value is num && value > 0
     : 'Unknown';
 
 class WindowsDeviceManagement extends StatefulWidget {
-  const WindowsDeviceManagement({super.key, this.request, this.cacheScope});
+  const WindowsDeviceManagement({super.key, this.request, this.cacheScope, this.localConnectionDetector});
   final Future<Map<String,dynamic>> Function(String action, Map<String,dynamic> body)? request;
   final Future<String?> Function()? cacheScope;
+  final Future<String?> Function()? localConnectionDetector;
   @override
   State<WindowsDeviceManagement> createState() => _WindowsDeviceManagementState();
 }
@@ -63,7 +64,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   // Local display hint only. Authorization still comes exclusively from the
   // verified server list; never persist this hint as a registered device.
   Future<void> refreshLocalConnection(int session) async {
-    final detected = await WindowsNetworkConnection.detect();
+    final detected = await (widget.localConnectionDetector?.call() ?? WindowsNetworkConnection.detect());
     if (!mounted || session != ManagedSchoolSession.changed.value) return;
     if (localConnectionType != detected) setState(() => localConnectionType = detected);
   }
