@@ -9,6 +9,44 @@ import 'windows_template_import_engine.dart';
 /// One reusable editor, opened only from the three supported document tabs.
 /// Uploads are local drafts; no school-wide selection is mutated.
 class SchoolTemplateImportEditor {
+  static Future<void> openSaved(
+      BuildContext context,SchoolTemplateKind kind,Map<String,dynamic> example) async {
+    final db=FirebaseFirestore.instance;
+    final origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    try {
+      final versions=await SchoolTemplateImportEngine.loadLocalDrafts(
+        kind:kind,schoolId:school);
+      if(!context.mounted || db.activeProfileId!=origin ||
+        db.activeProfileIdentity['schoolSyncId']!=school) {
+        throw StateError('School changed.');
+      }
+      if(versions.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content:Text('No local drafts saved for this school yet.')));
+        return;
+      }
+      final chosen=await showDialog<SchoolTemplateDraft>(context:context,
+        builder:(dialogContext)=>SimpleDialog(
+          title:Text(kind.title+' • Saved local drafts'),
+          children:versions.map((draft)=>SimpleDialogOption(
+            onPressed:()=>Navigator.pop(dialogContext,draft),
+            child:Text(draft.filename+' • '+
+              draft.fields.length.toString()+' mapped fields'))).toList(),
+        ));
+      if(chosen==null || !context.mounted) return;
+      if(db.activeProfileId!=origin ||
+        db.activeProfileIdentity['schoolSyncId']!=school) {
+        throw StateError('School changed.');
+      }
+      await showDialog<void>(context:context,barrierDismissible:false,
+        builder:(_)=>_TemplateEditor(draft:chosen,example:example,originProfile:origin));
+    } catch(error) {
+      if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Saved draft not available: '+error.toString())));
+    }
+  }
+
   static Future<void> pickAndEdit(
       BuildContext context,SchoolTemplateKind kind,Map<String,dynamic> example) async {
     final db=FirebaseFirestore.instance;
