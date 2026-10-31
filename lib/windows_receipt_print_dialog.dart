@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'fitted_document_preview.dart';
+import 'windows_save_pdf.dart';
 
 typedef ReceiptPrinterJob = Future<bool> Function(Printer printer, Uint8List bytes, PdfPageFormat format);
 
@@ -30,6 +31,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
   String paper = 'A4';
   String message = '';
   int submitted = 0;
+  bool savingPdf = false;
   @override
   void initState() { super.initState(); loadPrinters(); }
   @override
@@ -84,6 +86,20 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
       if (mounted) setState(() => printing = false);
     }
   }
+  Future<void> savePdf(Uint8List bytes) async {
+    if (savingPdf || printing || !widget.isCurrent()) return;
+    setState(() { savingPdf = true; message = ''; });
+    try {
+      final filename = widget.title.replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '_');
+      final saved = await WindowsSavePdf.save(bytes, '${filename.isEmpty ? 'Receipt' : filename}.pdf');
+      if (!mounted || !widget.isCurrent()) return;
+      setState(() => message = saved == null ? '' : 'PDF saved to: $saved');
+    } catch (e) {
+      if (mounted) setState(() => message = 'PDF could not be saved. Choose a writable folder and retry.');
+    } finally {
+      if (mounted) setState(() => savingPdf = false);
+    }
+  }
   Widget settings(Uint8List? bytes) => SingleChildScrollView(padding: const EdgeInsets.all(20), child: Column(
     crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const Text('Print', style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold)),
@@ -115,7 +131,12 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
       FilledButton.icon(onPressed: printing || loadingPrinters || selected == null || bytes == null || !widget.isCurrent()
           ? null : () => printReceipt(bytes),
         icon: const Icon(Icons.print), label: Text(printing ? 'Sending…' : 'Print')),
-      TextButton(onPressed: printing ? null : () => Navigator.pop(context), child: const Text('Cancel')),
+      TextButton.icon(
+        onPressed: printing || savingPdf || bytes == null || !widget.isCurrent()
+            ? null : () => savePdf(bytes),
+        icon: const Icon(Icons.picture_as_pdf_outlined),
+        label: Text(savingPdf ? 'Saving PDF…' : 'Save PDF'),
+      ),
     ]));
   @override
   Widget build(BuildContext context) {

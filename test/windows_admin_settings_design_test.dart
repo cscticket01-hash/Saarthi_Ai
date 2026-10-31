@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -30,6 +29,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Student Import Sheet'),findsNothing);
       expect(find.text('school@example.com'),findsOneWidget);
+      if (spec.$1.width >= 960 && spec.$1.height >= 830 && spec.$2 == 1.0) {
+        expect(find.byType(SingleChildScrollView), findsNothing);
+        expect(tester.getTopLeft(find.text('Device Management')).dx, greaterThan(0));
+        expect(tester.getBottomRight(find.text('Open Advanced Settings')).dy,
+            lessThan(spec.$1.height));
+      }
       for(final entry in {'Device Management':'devices','School Settings':'school',
           'Open Password Management':'passwords','Open Advanced Settings':'advanced'}.entries) {
         await tester.ensureVisible(find.text(entry.key)); await tester.pumpAndSettle();
@@ -69,10 +74,8 @@ void main() {
         final bytes=(await image.toByteData(format:ui.ImageByteFormat.png))!.buffer.asUint8List();
         final file=File('build/admin-settings-preview/admin-settings-${spec.$1}.png');
         await file.parent.create(recursive:true);await file.writeAsBytes(bytes);
-        final encoded=base64Encode(bytes);
-        for(var start=0;start<encoded.length;start+=16000) {
-          print('ADMIN_SETTINGS_PNG_${spec.$1}:$start:${encoded.substring(start,(start+16000).clamp(0,encoded.length))}');
-        }
+        // GitHub attaches the screenshot file as an artifact. Avoid printing
+        // binary-as-base64: it can grow CI logs beyond platform limits.
         image.dispose();
       });
       if(spec.$1=='desktop') {

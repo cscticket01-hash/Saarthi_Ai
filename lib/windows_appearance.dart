@@ -211,19 +211,26 @@ class WindowsAppearance {
       iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
       dividerColor: scheme.outlineVariant,
       cardTheme: CardThemeData(
-        color: scheme.surface,
+        color: dark && presetId == 'midnight-glass'
+            ? const Color(0xD51D293A)
+            : scheme.surface,
         surfaceTintColor: Colors.transparent,
+        shadowColor: dark && presetId == 'midnight-glass'
+            ? const Color(0x850A58B8) : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
           side: BorderSide(
-            color: preset == null
+            color: presetId == 'midnight-glass'
+                ? const Color(0xFF5686AC).withValues(alpha: .7)
+                : preset == null
                 ? scheme.outlineVariant
                 : accent.withValues(alpha: .35),
           ),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: scheme.surface,
+        backgroundColor: dark && presetId == 'midnight-glass'
+            ? const Color(0xFF172334) : scheme.surface,
         surfaceTintColor: Colors.transparent,
       ),
       snackBarTheme: SnackBarThemeData(

@@ -1,20 +1,17 @@
 import 'windows_appearance.dart';
 import 'package:flutter/material.dart' as material show Text;
 import 'windows_settings_design.dart';
-import 'windows_sync_conflict_review.dart';
 import 'windows_sync_control_center.dart';
 import 'windows_school_backup_action.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
-import 'dart:io';
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
@@ -855,9 +852,9 @@ class WindowsAppUpdateCard extends StatelessWidget {
       valueListenable: WindowsUpdateService.state,
       builder: (context, state, _) {WindowsAppearance.watch(context);
         final update = state.update;
-        final progressText = state.progress == null
-            ? ''
-            : ' ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
+        final progressPercent = state.launching ? '100%'
+            : state.progress == null ? null
+            : '${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
 
         return WindowsSettingsCard(
           icon: Icons.file_download_outlined,
@@ -868,8 +865,10 @@ class WindowsAppUpdateCard extends StatelessWidget {
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (state.message.isNotEmpty) ...[
+              if (state.message.isNotEmpty ||
+                  ((state.downloading || state.launching) && progressPercent != null)) ...[
                 Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  if (state.message.isNotEmpty) ...[
                   Icon(state.phase == WindowsUpdatePhase.upToDate ? Icons.check_circle_rounded : state.phase == WindowsUpdatePhase.error ? Icons.error_outline : Icons.info_outline,
                     color: state.phase == WindowsUpdatePhase.upToDate ? const Color(0xFF43DBAA) : WindowsAppearance.resolve(const Color(0xFF9DB9E8)), size: 18),
                   const SizedBox(width: 10),
@@ -882,6 +881,17 @@ class WindowsAppUpdateCard extends StatelessWidget {
                     fontSize: 15, height: 1.4,
                   ),
                 )),
+                  ] else
+                    const Spacer(),
+                  if ((state.downloading || state.launching) && progressPercent != null) ...[
+                    const SizedBox(width: 12),
+                    Text(progressPercent,
+                      key: const ValueKey('app-update-progress-percent'),
+                      style: TextStyle(fontFamily: 'Segoe UI',
+                        color: WindowsAppearance.foreground(const Color(0xFF9DB9E8)),
+                        fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ],
                 ]),
                 const SizedBox(height: 10),
               ],
@@ -889,16 +899,6 @@ class WindowsAppUpdateCard extends StatelessWidget {
                 LinearProgressIndicator(
                   value: state.launching ? 1 : state.progress,
                   minHeight: 7,
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  state.launching
-                      ? 'Download complete. Installer open ho raha hai...'
-                      : 'Downloading$progressText • Page change karne par bhi download continue rahega.',
-                  style:  TextStyle(fontFamily: 'Segoe UI', 
-                    color: WindowsAppearance.foreground(Colors.white54),
-                    fontSize: 10,
-                  ),
                 ),
                 const SizedBox(height: 10),
               ],
@@ -913,13 +913,12 @@ class WindowsAppUpdateCard extends StatelessWidget {
                 : const Icon(Icons.refresh_rounded, size: 20),
               label: state.checking ? 'Checking...' : 'Check for Update',
             ),
-            if (update?.updateAvailable == true) ...[
+            if (update?.updateAvailable == true && !state.downloading && !state.launching) ...[
               const SizedBox(height: 12),
               WindowsSettingsButton(
                 onPressed: state.busy ? null : _install,
                 icon: const Icon(Icons.download_rounded, size: 20),
-                label: state.downloading ? 'Downloading$progressText'
-                  : state.launching ? 'Opening Installer...' : 'Download & Install',
+                label: 'Download & Install',
               ),
             ],
           ]),

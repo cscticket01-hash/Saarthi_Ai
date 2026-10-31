@@ -16,7 +16,7 @@ void main() {
       final file = File('${dir.path}/appearance.json');
       final original = WindowsAppearance.brandData;
       addTearDown(() => WindowsAppearance.applyBrand(original, persist: false));
-      expect(windowsThemePresets.length, 6);
+      expect(windowsThemePresets.length, 7);
       for (final preset in windowsThemePresets) {
         expect(File(preset.image).existsSync(), isTrue);
         expect(File(preset.wave).existsSync(), isTrue);

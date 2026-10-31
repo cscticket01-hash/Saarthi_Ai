@@ -9,6 +9,9 @@ import 'windows_payslip_template.dart';
 import 'package:printing/printing.dart';
 import 'windows_document_templates.dart';
 import 'windows_salary_history.dart';
+import 'windows_salary_payment_correction.dart';
+import 'windows_local_settings.dart';
+import 'windows_receipt_print_dialog.dart';
 import 'windows_save_pdf.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
@@ -129,6 +132,84 @@ class StaffPayroll {
     await ref.update({'payments': payments, 'paidPaise': next, 'balancePaise': total(row) - next,
       'status': next == total(row) ? 'Paid' : 'Part paid', 'updatedAt': DateTime.now().millisecondsSinceEpoch});
   });
+
+  /// A payment correction is a new immutable event, not a rewrite of the
+  /// original record. Every write re-reads the current row under the existing
+  /// serialized school-local queue before checking its expected amount.
+  static Future<void> correctPayment(
+    String profile,
+    String salaryRowId,
+    String paymentId, {
+    required int expectedPaise,
+    required int correctedPaise,
+    required String reason,
+    required String correctionId,
+    required String appLockPassword,
+  }) => _serial(() async {
+    _sameSchool(profile);
+    await WindowsLocalSecurity.initialize();
+    if (!WindowsLocalSecurity.configured ||
+        !WindowsLocalSecurity.verifyPassword(appLockPassword)) {
+      throw StateError('App Lock verification required to modify a salary payment.');
+    }
+    final explanation = SalaryPaymentCorrectionPolicy.validateNote(reason);
+    if (correctedPaise <= 0 || correctedPaise == expectedPaise ||
+        expectedPaise <= 0 || correctionId.trim().isEmpty) {
+      throw StateError('Enter a different, positive corrected amount.');
+    }
+    final doc = FirebaseFirestore.instance.collection('teacher_salary').doc(salaryRowId);
+    final row = (await doc.get()).data();
+    _sameSchool(profile);
+    if (row == null || (row['id'] != salaryRowId && row['id'] != null) ||
+        (row['schoolId'] != null &&
+            row['schoolId'] != FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])) {
+      throw StateError('Salary record or school changed. Reopen Staff Salary.');
+    }
+    final payments = List<dynamic>.from(row['payments'] as List? ?? []);
+    final matched = payments.where((v) => v is Map && v['id'] == paymentId).toList();
+    if (matched.length != 1) throw StateError(
+      'Original itemized payment not found. Legacy summaries cannot be silently modified.');
+    final corrections = List<dynamic>.from(row['paymentCorrections'] as List? ?? []);
+    final previous = corrections.where((v) => v is Map && v['id'] == correctionId).toList();
+    if (previous.isNotEmpty) {
+      if (previous.length != 1 || previous.single['paymentId'] != paymentId ||
+          previous.single['previousPaise'] != expectedPaise ||
+          previous.single['correctedPaise'] != correctedPaise ||
+          previous.single['reason'] != explanation) {
+        throw StateError('Correction ID conflicts with another operation.');
+      }
+      return; // A confirmed retry never creates a duplicate correction.
+    }
+    final effective = SalaryPaymentCorrectionPolicy.effectiveAmount(
+        Map<String,dynamic>.from(matched.single as Map), corrections);
+    if (effective != expectedPaise) throw StateError(
+        'Someone modified this payment. Refresh and review before saving again.');
+    final next = paid(row) + correctedPaise - effective;
+    if (next < 0 || next > total(row)) throw StateError(
+      'Correction exceeds the saved net salary. Review Edit salary first; original payment retained.');
+    final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
+    corrections.add({
+      'id': correctionId,
+      'paymentId': paymentId,
+      'originalPaise': (matched.single as Map)['amountPaise'],
+      'previousPaise': effective,
+      'correctedPaise': correctedPaise,
+      'differencePaise': correctedPaise - effective,
+      'reason': explanation,
+      'authorizedBy': WindowsLocalSecurity.adminId,
+      'correctedAt': timestamp,
+    });
+    _sameSchool(profile);
+    if (!WindowsLocalSecurity.verifyPassword(appLockPassword)) {
+      throw StateError('App Lock verification expired; original payment retained.');
+    }
+    await doc.update({
+      'paymentCorrections': corrections,
+      'paidPaise': next, 'balancePaise': total(row) - next,
+      'status': next == total(row) ? 'Paid' : next == 0 ? 'Pending' : 'Part paid',
+      'updatedAt': timestamp,
+    });
+  });
 }
 
 class StaffSalaryScreen extends StatefulWidget {
@@ -238,6 +319,117 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     amount.dispose(); reference.dispose();
   }
+
+  Future<void> _correctPayment(Map<String,dynamic> salary) async {
+    StaffPayroll._sameSchool(_profile);
+    final raw = List<dynamic>.from(salary['payments'] as List? ?? []);
+    final eligible = raw.whereType<Map>().where((p) =>
+        p['id'] is String && p['amountPaise'] is num).toList();
+    if (eligible.isEmpty) {
+      setState(() => _error = 'This is a legacy paid total without individual payment details. Open payment history for review; automatic correction is blocked.');
+      return;
+    }
+    await WindowsLocalSecurity.initialize();
+    if (!WindowsLocalSecurity.configured) {
+      setState(() => _error = 'Configure this school App Lock before modifying payment records.');
+      return;
+    }
+    final lock = TextEditingController();
+    String? password;
+    try {
+      password = await showDialog<String>(context: context, barrierDismissible:false,
+        builder: (dialog) {
+          String? error;
+          return StatefulBuilder(builder:(context, refresh) => AlertDialog(
+            title: const Text('App Lock • Modify Payment'),
+            content: SizedBox(width:410, child:Column(mainAxisSize:MainAxisSize.min,
+              crossAxisAlignment:CrossAxisAlignment.start, children:[
+                const Text('Confirm your school App Lock password before changing this financial record.'),
+                const SizedBox(height:16),
+                TextField(controller:lock, obscureText:true, autofocus:true,
+                  decoration:const InputDecoration(labelText:'App Lock password')),
+                if(error!=null) Padding(padding:const EdgeInsets.only(top:10),
+                  child:Text(error!,style:const TextStyle(color:Colors.redAccent))),
+              ])),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('Cancel')),
+              FilledButton(onPressed:(){
+                if (FirebaseFirestore.instance.activeProfileId != _profile ||
+                    !WindowsLocalSecurity.verifyPassword(lock.text)) {
+                  refresh(()=>error='App Lock incorrect or school changed.');
+                  return;
+                }
+                Navigator.pop(dialog,lock.text);
+              },child:const Text('Unlock')),
+            ],
+          ));
+        });
+    } finally {
+      // Dialog widgets remain mounted during their closing animation.
+      await Future<void>.delayed(const Duration(milliseconds:250));
+      lock.dispose();
+    }
+    if (password == null || !mounted) return;
+    StaffPayroll._sameSchool(_profile);
+    final corrections = List<dynamic>.from(salary['paymentCorrections'] as List? ?? []);
+    final choices = <String,Map<String,dynamic>>{};
+    for(final rawPayment in eligible) {
+      final payment = Map<String,dynamic>.from(rawPayment);
+      final id = payment['id'] as String;
+      if(choices.containsKey(id)) continue;
+      choices[id]=payment;
+    }
+    var selected = choices.keys.first;
+    final amount = TextEditingController();
+    final note = TextEditingController();
+    int effective(String id) => SalaryPaymentCorrectionPolicy.effectiveAmount(
+      choices[id]!,corrections);
+    amount.text=StaffPayroll.format(effective(selected));
+    final correctionId='${salary['id']}:correction:${DateTime.now().microsecondsSinceEpoch}';
+    try {
+      await _editor('Modify Payment • ${salary['name']}', (setD) => [
+        DropdownButtonFormField<String>(
+          value:selected,isExpanded:true,
+          decoration:const InputDecoration(labelText:'Recorded payment to correct'),
+          items:[for(final item in choices.entries)DropdownMenuItem(
+            value:item.key,
+            child:Text('Original ₹${StaffPayroll.format((item.value['amountPaise'] as num).toInt())} • ${item.key}',
+              maxLines:1,overflow:TextOverflow.ellipsis))],
+          onChanged:(v){if(v!=null)setD((){
+            selected=v;amount.text=StaffPayroll.format(effective(selected));
+          });},
+        ),
+        Text('Previous recorded: ₹${StaffPayroll.format(effective(selected))}'),
+        TextField(controller:amount,
+          keyboardType:const TextInputType.numberWithOptions(decimal:true),
+          decoration:const InputDecoration(labelText:'Corrected recorded amount',prefixText:'₹ '),
+          onChanged:(_)=>setD((){})),
+        Builder(builder: (_) {
+          final candidate=(() {
+            try {return StaffPayroll.money(amount.text);} catch (_) {return 0;}
+          })();
+          final change=candidate-effective(selected);
+          return Text('Adjustment: ${change>=0?'+':''}₹${StaffPayroll.format(change)} • Original entry remains in audit history.');
+        }),
+        TextField(controller:note,minLines:5,maxLines:9,maxLength:3500,
+          decoration:const InputDecoration(labelText:'Reason / detailed audit explanation',
+            hintText:'Explain what was entered, why it was wrong, what evidence was checked, and who approved the correction.'),
+          onChanged:(_)=>setD((){})),
+        Text('Explanation: ${SalaryPaymentCorrectionPolicy.wordCount(note.text)} / 100–300 words required.'),
+        const Text('This updates the recorded salary payment, not an actual bank transfer. The original event and every correction remain visible in the payslip and history.'),
+      ], () async {
+        final expected=effective(selected);
+        final corrected=StaffPayroll.money(amount.text);
+        await StaffPayroll.correctPayment(_profile,salary['id'].toString(),selected,
+          expectedPaise:expected,correctedPaise:corrected,
+          reason:note.text,correctionId:correctionId,appLockPassword:password!);
+      });
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds:250));
+      amount.dispose();note.dispose();
+    }
+  }
+
   Future<void> _history([Map<String, dynamic>? row]) => Navigator.push<void>(context,
     MaterialPageRoute(builder: (_) => StaffSalaryHistoryScreen(profile: _profile,
       staffId: row == null ? null : row['staffId']?.toString() ?? 'legacy:${row['id']}', salaryRowId: row?['id']?.toString(), teacherId: row?['teacherId']?.toString(),
@@ -268,13 +460,13 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         final r=rows.single;
         final bytes=await renderWindowsPayslip({...r,'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r)},schoolName:_schoolName);
         StaffPayroll._sameSchool(_profile);
-        if (mounted) await WindowsDocumentTemplates.preview(context, bytes, title: 'Payslip • ${rows.single['name']}', printLabel: 'Print Payslip',
-          onPrint: () async {
-            try {
-              StaffPayroll._sameSchool(_profile);
-              await Printing.layoutPdf(onLayout: (_) async => bytes, name: 'Staff Payslip');
-            } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Print failed: $e'))); }
-          });
+        if (mounted) await showDialog<void>(context:context,builder: (_) =>
+          WindowsReceiptPrintDialog(
+            receipt:Future.value(bytes),
+            title:'Payslip • ${rows.single['name']}',
+            subtitle:'${rows.single['month'] ?? ''} • Staff Salary',
+            isCurrent:()=>FirebaseFirestore.instance.activeProfileId==_profile,
+          ));
       }
     } catch(e) { if(mounted) setState(() => _error='$e'); }
     finally { if(mounted) setState(() => _working=false); }
@@ -378,10 +570,12 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         PopupMenuButton<String>(tooltip:'Salary actions',onSelected:(action){
           if(action=='edit')_salary(person,row);
           if(action=='pay'&&row!=null)_payment(row);
+          if(action=='correct'&&row!=null)_correctPayment(row);
           if(action=='history'&&row!=null)_history(row);
         },itemBuilder:(_)=>[
           PopupMenuItem(value:'edit',child:Text(row==null?'Set salary':'Edit salary')),
           if(row!=null&&StaffPayroll.paid(row)<StaffPayroll.total(row))const PopupMenuItem(value:'pay',child:Text('Record payment')),
+          if(row!=null&&StaffPayroll.paid(row)>0)const PopupMenuItem(value:'correct',child:Text('Modify Payment • App Lock')),
           if(row!=null)const PopupMenuItem(value:'history',child:Text('Payment history')),
         ]),
       ])),

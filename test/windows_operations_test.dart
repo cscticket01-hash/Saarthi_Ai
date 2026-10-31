@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_staff_payroll.dart';
+import '../lib/windows_salary_payment_correction.dart';
 import '../lib/main_dashboard_screen_windows.dart' show TeachersDirectoryScreen;
 import '../lib/windows_salary_history.dart';
 import '../lib/fitted_document_preview.dart';
@@ -51,6 +52,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Open teachers'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
+  });
+  test('salary correction audit requires 100–300 words and never changes the original', () async {
+    final profile=db.activeProfileId;
+    await WindowsLocalSecurity.initialize();
+    await WindowsLocalSecurity.create(adminId:'School Admin',password:'secure-lock-123');
+    const rowId='salary-correction-fixture',paymentId='payment-original';
+    final original=<String,dynamic>{
+      'id':rowId,'name':'Teacher Test','month':'2026-10','netPaise':500000,
+      'paidPaise':50000,'balancePaise':450000,'status':'Part paid',
+      'payments':[{'id':paymentId,'amountPaise':50000,'mode':'Cash',
+        'date':'2026-10-04T10:30:00','reference':'First entry'}],
+    };
+    await db.collection('teacher_salary').doc(rowId).set(original);
+    final reason=List.generate(110,(i)=>'verified$i').join(' ');
+    expect(SalaryPaymentCorrectionPolicy.wordCount(reason),110);
+    expect(()=>SalaryPaymentCorrectionPolicy.validateNote('too short'),throwsFormatException);
+    expect(()=>SalaryPaymentCorrectionPolicy.validateNote(List.filled(301,'word').join(' ')),throwsFormatException);
+    await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
+        expectedPaise:50000,correctedPaise:500000,reason:reason,
+        correctionId:'correction-1',appLockPassword:'wrong'),throwsStateError);
+    expect((await db.collection('teacher_salary').doc(rowId).get()).data()?['paidPaise'],50000);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,
+        expectedPaise:50000,correctedPaise:500000,reason:reason,
+        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+    final saved=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
+    expect((saved['payments'] as List).single['amountPaise'],50000);
+    expect((saved['paymentCorrections'] as List),hasLength(1));
+    expect((saved['paymentCorrections'] as List).single['reason'],reason);
+    expect(saved['paidPaise'],500000);
+    expect(saved['balancePaise'],0);
+    expect(saved['status'],'Paid');
+    final events=salaryPaymentHistory([saved],salaryRowId:rowId);
+    expect(events,hasLength(2));
+    expect(events.where((e)=>e['mode']=='Correction').single['amountPaise'],450000);
+    expect(events.any((e)=>e['reference']?.toString().contains('Legacy paid total')==true),false);
+    await StaffPayroll.correctPayment(profile,rowId,paymentId,
+        expectedPaise:50000,correctedPaise:500000,reason:reason,
+        correctionId:'correction-1',appLockPassword:'secure-lock-123');
+    expect(((await db.collection('teacher_salary').doc(rowId).get()).data()!['paymentCorrections'] as List),hasLength(1));
+    await expectLater(StaffPayroll.correctPayment(profile,rowId,paymentId,
+        expectedPaise:50000,correctedPaise:510000,reason:reason,
+        correctionId:'correction-2',appLockPassword:'secure-lock-123'),throwsStateError);
+    final unchanged=(await db.collection('teacher_salary').doc(rowId).get()).data()!;
+    expect(unchanged['paidPaise'],500000);
+    expect((unchanged['payments'] as List).single['amountPaise'],50000);
   });
   test('payment history keeps separate staff/month events and never invents missing times', () {
     final rows = [
@@ -683,6 +729,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Record payment'), findsOneWidget);
     expect(find.text('Payment history'), findsOneWidget);
+    expect(find.text('Modify Payment • App Lock'), findsNothing); // no payment yet
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(find.text('Net payroll'), findsOneWidget);
@@ -699,7 +746,9 @@ void main() {
       }
       expect(find.byType(Dialog), findsOneWidget);
       expect(find.byType(FittedDocumentPreview), findsOneWidget);
-      expect(find.text('Print Payslip'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Print'), findsOneWidget);
+      expect(find.text('Save PDF'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
       await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
     } finally { PrintingPlatform.instance = nativePrinting; }
