@@ -3075,6 +3075,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
 
   @visibleForTesting
+  Future<void> reconcileStalledDownloadForTesting(
+    String school,
+    String collection,
+    Future<Map<String, dynamic>> Function(Map<String, String>) read,
+  ) => _pullManagedChanges(
+    schoolOverride: school,
+    batchReader: read,
+    selectedCollections: {collection},
+    repairCollections: {collection},
+    verifyInventory: false,
+  );
+
+  @visibleForTesting
   Future<void> reconcileManagedPointTargetsForTesting(
     String school,
     Map<String, Set<String>> targets,
