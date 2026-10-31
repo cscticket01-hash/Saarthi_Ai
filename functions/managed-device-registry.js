@@ -34,8 +34,10 @@ function createManagedDeviceRegistry({store,schoolId,now=Date.now,requireFreshAu
   delete next.revokedCredentials;return next;}
  function equal(a,b){return typeof a==='string'&&/^[a-f0-9]{64}$/.test(a)&&timingSafeEqual(Buffer.from(a,'hex'),Buffer.from(b,'hex'));}
  function valid(state,id,credential){const row=state.devices[id];if(!row||row.status!=='active'||!equal(row.credentialHash,credential))deny(401,'DEVICE_AUTHORIZATION_REJECTED');return row;}
+ // Optional display hint; not an access-control input.
+ function connectionMetadata(value,t){return value==='WiFi'||value==='LAN' ? {connectionType:value,connectionSeenAt:t}:{};}
  function safe(row,t){return {deviceIdentity:row.deviceIdentity,name:row.name,os:row.os,type:row.type,status:row.status,
-  generationHash:digest(row.credentialHash+'\n'+row.authorizedAt),authorizedAt:row.authorizedAt,lastSeenAt:row.lastSeenAt,...(row.status==='revoked'?{revokedAt:row.revokedAt}:{}),
+  generationHash:digest(row.credentialHash+'\n'+row.authorizedAt),authorizedAt:row.authorizedAt,lastSeenAt:row.lastSeenAt,connectionType:row.connectionType||'Unknown',connectionSeenAt:row.connectionSeenAt||null,...(row.status==='revoked'?{revokedAt:row.revokedAt}:{}),
   // Absence of a recent heartbeat is not proof that the PC is offline.
   activity:row.status==='active'?(t>=row.lastSeenAt&&t-row.lastSeenAt<=120000?'recently_seen':'unknown'):'revoked'};}
  async function transact(work){const t=now();if(!Number.isSafeInteger(t)||t<0)throw new Error('Invalid server clock');
@@ -49,6 +51,7 @@ function createManagedDeviceRegistry({store,schoolId,now=Date.now,requireFreshAu
     if(old?.status==='active'){if(!equal(old.credentialHash,credential))deny(409,'DEVICE_CREDENTIAL_CONFLICT');
      if(existingSessionEnrollment){if(t-old.lastSeenAt>=60000)old.lastSeenAt=t;
       if(input.name!==undefined)old.name=name;if(input.os!==undefined)old.os=os;}
+     Object.assign(old,connectionMetadata(input.connectionType,t));
      return {state,result:{...safe(old,t),duplicate:true}};}
     // Enrollment-only migration accepts an already verified school session for
     // a never-registered PC. It cannot resurrect a revoked/pruned identity.
@@ -58,11 +61,13 @@ function createManagedDeviceRegistry({store,schoolId,now=Date.now,requireFreshAu
     if(Object.values(state.devices).filter(r=>r.status==='active').length>=MAX_ACTIVE)deny(409,'DEVICE_LIMIT_REACHED');
     if(Object.values(state.devices).some(r=>equal(r.credentialHash,credential)))deny(409,'DEVICE_CREDENTIAL_REUSED');
     if(!old&&Object.keys(state.devices).length>=MAX_RECENT)deny(429,'DEVICE_RECENT_HISTORY_LIMIT');
-    const row={schoolId,deviceIdentity:id,credentialHash:credential,name,os,type:'pc',status:'active',authorizedAt:t,lastSeenAt:t};
+    const row={schoolId,deviceIdentity:id,credentialHash:credential,name,os,type:'pc',status:'active',authorizedAt:t,lastSeenAt:t,...connectionMetadata(input.connectionType,t)};
     state.devices[id]=row;return {state,audit:audit(auth,id,old||filterHas(state.revokedDeviceFilter,id)?'reauthorized':'registered',t),result:{...safe(row,t),duplicate:false}};
    });},
-  async verify({deviceId,credential}){const id=device(deviceId),proof=secret(credential);return transact((state,t)=>{
+  async verify({deviceId,credential,connectionType}){const id=device(deviceId),proof=secret(credential);return transact((state,t)=>{
    const row=valid(state,id,proof);if(t-row.lastSeenAt>=60000)row.lastSeenAt=t;
+   if(connectionType!==undefined && connectionType!==row.connectionType)
+    Object.assign(row,connectionMetadata(connectionType,t));
    return {state,result:safe(row,t)};
   });},
   async revoke(auth,{currentDeviceId,currentCredential,targetDeviceId,targetDeviceIdentity}){actor(auth);
