@@ -138,6 +138,10 @@ class SchoolTemplateImportEngine {
       decoded.width*decoded.height>maxPixels) {
       throw const FormatException('Template page too small or too large.');
     }
+    final aspect=decoded.width/decoded.height;
+    if ((aspect - 210/297).abs() > .075) {
+      throw const FormatException('An A4 portrait source is required.');
+    }
     return SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
       sourceHash:sha256.convert(bytes).toString(),png:imageBytes,
       width:decoded.width,height:decoded.height);
