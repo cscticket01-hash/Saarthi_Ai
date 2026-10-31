@@ -92,13 +92,17 @@ void main() {
           1,
           reason: 'Selecting a picture must never publish',
         );
-        final image = tester.widget<Image>(
-          find.byKey(const ValueKey('theme-preview-image')),
-        );
-        expect(
-          (image.image as AssetImage).assetName,
-          'assets/theme_preview_${preset.id=='midnight-glass'?'electric-blue':preset.id}_dashboard.webp',
-        );
+        if (preset.id == 'midnight-glass') {
+          expect(find.byKey(const ValueKey('theme-preview-glass')), findsOneWidget);
+          expect(find.byKey(const ValueKey('theme-preview-image')), findsNothing,
+            reason:'Glass must render its own frosted UI, not Electric Blue');
+        } else {
+          final image = tester.widget<Image>(
+            find.byKey(const ValueKey('theme-preview-image')),
+          );
+          expect((image.image as AssetImage).assetName,
+            'assets/theme_preview_${preset.id}_dashboard.webp');
+        }
       }
       expect(find.text('Unsaved selection'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('theme-next')));
@@ -130,6 +134,26 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('Glass RGB changes keep Glass selected and update same live preview', (tester) async {
+    final calls=<Map<String,dynamic>>[];
+    await mount(tester,const Size(1440,900),(action,body)async{
+      calls.add({'action':action,...body});
+      return {'theme':action=='theme/get'?initial():{...body['theme'] as Map,'revision':'saved-2'}};
+    });
+    await tester.tap(find.byKey(const ValueKey('theme-preset-midnight-glass')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')),'44');
+    await tester.pumpAndSettle();
+    expect(find.text('Midnight Glass • sample app screens'),findsOneWidget);
+    expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
+    expect(calls.length,1);
+    await tester.tap(find.byKey(const ValueKey('theme-save')));
+    await tester.pumpAndSettle();
+    expect((calls.last['theme'] as Map)['presetId'],'midnight-glass');
+    expect((calls.last['theme'] as Map)['red'],44);
+    expect(find.text('Saved theme'),findsOneWidget);
+  });
   testWidgets(
     'RGB and HEX validation, quick colours and Reset retain explicit Save',
     (tester) async {
