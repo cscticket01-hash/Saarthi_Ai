@@ -29,6 +29,8 @@ import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
+import 'windows_template_import_engine.dart';
+import 'windows_template_import_editor.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -860,6 +862,15 @@ class _SchoolDocumentTemplatesScreenState
     'percentage': '87.3',
     'result': 'PASS',
     'receiptNo': 'VS-000124',
+    'employeeId': 'EMP-001',
+    'role': 'Teacher',
+    'month': '2026-10',
+    'basicPaise': 2500000,
+    'allowancePaise': 400000,
+    'deductionPaise': 50000,
+    'netPaise': 2850000,
+    'paidPaise': 2000000,
+    'status': 'Part paid',
     'dateText': '01/10/2026',
     'feeItems': {'Tuition fee': 1000, 'Exam fee': 200},
     'totalAmount': 1200,
@@ -972,6 +983,48 @@ class _SchoolDocumentTemplatesScreenState
                 ),
               ),
             const SizedBox(height: 10),
+          ],
+          if (const ['receipt','reportCard','payslip'].contains(_kind)) ...[
+            Align(
+              alignment:Alignment.centerLeft,
+              child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(
+                  key:ValueKey('upload-template-'+_kind),
+                  icon:const Icon(Icons.upload_file_outlined),
+                  label:const Text('Auto-create A4 template from PDF / Image'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAutomatic(
+                    context,
+                    switch (_kind) {
+                      'receipt'=>SchoolTemplateKind.receipt,
+                      'reportCard'=>SchoolTemplateKind.reportCard,
+                      _=>SchoolTemplateKind.payslip,
+                    },
+                    _sample,
+                  ),
+                ),
+                TextButton.icon(
+                  key:ValueKey('open-local-template-drafts-'+_kind),
+                  icon:const Icon(Icons.folder_open_outlined),
+                  label:const Text('Preview generated drafts'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.previewSavedAutomatic(
+                    context,
+                    switch (_kind) {
+                      'receipt'=>SchoolTemplateKind.receipt,
+                      'reportCard'=>SchoolTemplateKind.reportCard,
+                      _=>SchoolTemplateKind.payslip,
+                    },
+                    _sample,
+                  ),
+                ),
+              ]),
+            ),
+            const Padding(
+              padding:EdgeInsets.symmetric(vertical:9),
+              child:Text('One shared import engine: preserve the original design, '
+                'auto-detect fields and preview A4 PDF. Imports save as LOCAL '
+                'DRAFTS only; existing school-wide templates are not replaced.',
+                style:TextStyle(fontSize:12)),
+            ),
           ],
           if (_loading) const LinearProgressIndicator(),
           Expanded(
