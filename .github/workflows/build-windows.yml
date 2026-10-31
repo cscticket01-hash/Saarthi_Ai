@@ -66,7 +66,9 @@ jobs:
 
       - name: Generate Windows Platform
         shell: powershell
-        run: flutter create --platforms=windows --no-pub .
+        run: |
+          flutter create --platforms=windows --no-pub .
+          python .github/scripts/apply_vidya_saarthi_brand.py
 
       - name: Prevent concurrent Windows local database instances
         shell: powershell
