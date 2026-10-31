@@ -136,7 +136,13 @@ function fromEnvironment(env) {
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
   const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,edgeRecordParallelism:env.SAARTHI_EDGE_RECORD_PARALLELISM==='2'?2:1,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
-    monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT})});
+    monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),
+    cloudflareMonitor:require('../functions/cloudflare-monitor').createCloudflareMonitor({
+      accountId:env.SAARTHI_CF_ACCOUNT_ID,
+      analyticsToken:env.SAARTHI_CF_ANALYTICS_TOKEN,
+      workerName:env.SAARTHI_CF_WORKER_NAME,
+      databaseId:env.SAARTHI_CF_D1_DATABASE_ID,
+    })});
   if(env.SAARTHI_ATTENDANCE_QUEUE_ENABLED!=='false'){
     const worker=require('../functions/attendance-queue').createAttendanceWorker({drain:async()=>{await verifyTest();return managed.drainAttendance();},onError:error=>console.info(JSON.stringify({event:'attendance_retry_pending',code:Number.isInteger(error?.code)&&error.code>=0&&error.code<=16?error.code:'UNAVAILABLE'}))});
     managed.setAttendanceWake(worker.wake);
