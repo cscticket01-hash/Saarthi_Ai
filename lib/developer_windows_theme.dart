@@ -153,7 +153,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
   int slide = 0;
   String get previewAsset => draftPreset == null
       ? 'assets/app_screenshot_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.png'
-      : 'assets/theme_preview_${draftPreset}_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.webp';
+      : 'assets/theme_preview_${draftPreset == 'midnight-glass' ? 'electric-blue' : draftPreset}_${pages[slide] == 'settings' ? 'settings_v2' : pages[slide]}.webp';
   Widget panel(Widget child) => Card(
     margin: EdgeInsets.zero,
     child: Padding(padding: const EdgeInsets.all(14), child: child),
@@ -525,11 +525,13 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                                   Expanded(
                                     child: ClipRRect(
                                       borderRadius: BorderRadius.circular(5),
-                                      child: Image.asset(
-                                        preset.image,
-                                        fit: BoxFit.contain,
-                                        semanticLabel: preset.name,
-                                      ),
+                                      child: preset.id == 'midnight-glass'
+                                          ? const _MidnightGlassTile()
+                                          : Image.asset(
+                                              preset.image,
+                                              fit: BoxFit.contain,
+                                              semanticLabel: preset.name,
+                                            ),
                                     ),
                                   ),
                                   const SizedBox(height: 4),
@@ -660,4 +662,51 @@ class _ColourPad extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ColourPad old) => old.hsv != hsv;
+}
+
+
+/// Asset-free, live-painted frosted glass tile. No remote theme pictures,
+/// network access or additional design assets are required.
+class _MidnightGlassTile extends StatelessWidget {
+  const _MidnightGlassTile();
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Midnight Glass theme: charcoal, translucent navy, azure and mint',
+    child: DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF112849), Color(0xFF090C14), Color(0xFF211528)],
+        ),
+      ),
+      child: Stack(children: [
+        Positioned(top: -18, left: 12,
+          child: Container(width: 85, height: 70,
+            decoration: BoxDecoration(shape: BoxShape.circle,
+              color: const Color(0xFF147BD1).withValues(alpha: .33)))),
+        Positioned(bottom: -22, right: -16,
+          child: Container(width: 95, height: 92,
+            decoration: BoxDecoration(shape: BoxShape.circle,
+              color: const Color(0xFF8C2CC2).withValues(alpha: .31)))),
+        Center(child: Container(
+          width: 102, height: 56,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: const Color(0xFF9BD4FF).withValues(alpha: .53)),
+            gradient: LinearGradient(colors: [
+              Colors.white.withValues(alpha: .20),
+              const Color(0xFF4AB2FF).withValues(alpha: .07),
+            ]),
+          ),
+          child: const Column(mainAxisAlignment: MainAxisAlignment.center,children: [
+            Icon(Icons.blur_on_rounded,color: Color(0xFF97D7FF),size:18),
+            SizedBox(height:2),
+            Text('GLASS',style:TextStyle(color:Colors.white,fontSize:10,fontWeight:FontWeight.w800)),
+          ]),
+        )),
+      ]),
+    ),
+  );
 }
