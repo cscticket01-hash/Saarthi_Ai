@@ -245,7 +245,7 @@ void main() {
 
   test('small printable text boxes auto-fit without ever truncating data',() {
     const field=SchoolTemplateField(key:'studentName',x:.1,y:.1,
-      width:.15,size:.03);
+      width:.12,size:.03);
     final size=SchoolTemplateImportEngine.fittedTextSize(field,'Arup Das');
     expect(size,lessThan(.03));
     expect(size,greaterThanOrEqualTo(.009));
