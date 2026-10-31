@@ -5,7 +5,15 @@ import 'package:flutter/services.dart';
 class DateOfBirthInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    final raw = newValue.text;
+    var raw = newValue.text;
+    // Backspace on an auto-inserted slash also removes the preceding digit.
+    // Otherwise the slash would reappear and the cursor become stuck.
+    if (oldValue.text.endsWith('/') &&
+        oldValue.text.length == raw.length + 1 &&
+        oldValue.text.substring(0, oldValue.text.length - 1) == raw &&
+        raw.isNotEmpty) {
+      raw = raw.substring(0, raw.length - 1);
+    }
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     final dateDigits = digits.length > 8 ? digits.substring(0, 8) : digits;
     final buffer = StringBuffer();
