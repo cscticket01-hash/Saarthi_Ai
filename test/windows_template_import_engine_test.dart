@@ -254,4 +254,14 @@ void main() {
       throwsFormatException);
   });
 
+  test('sideways A4 camera photo is turned upright without losing school scope',() async {
+    final side=Uint8List.fromList(img.encodeJpg(img.Image(width:1400,height:1000)));
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'sideways.jpg',bytes:side);
+    expect(draft.width,1000);
+    expect(draft.height,1400);
+    expect(draft.schoolId,school);
+  });
+
 }
