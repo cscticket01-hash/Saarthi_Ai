@@ -142,6 +142,55 @@ void main() {
       return cloud(revisions);
     });
   });
+  test('stalled same-head download gets an authoritative scoped recovery and local readback', () async {
+    await seed();
+    final checkpoint=db.collection('_windows_sync_downloads').doc('students_directory');
+    final prior=(await checkpoint.get()).data()!;
+    await checkpoint.set({
+      ...prior,'state':'downloading','remaining':1,'verified':0,
+      'observedAt':DateTime.now().millisecondsSinceEpoch-180000,
+      'repairAttempts':1,'repairLastAttemptAt':DateTime.now().millisecondsSinceEpoch-1000000,
+    });
+    var readCount=0;
+    await engine.reconcileStalledDownloadForTesting(school,'students_directory',(revisions)async{
+      readCount++;
+      expect(revisions,{'students_directory':''},
+        reason:'same collection head must not suppress unverified local readback');
+      return cloud(revisions);
+    });
+    expect(readCount,1);
+    final healed=(await checkpoint.get()).data()!;
+    expect(healed['state'],'verified');
+    expect(healed['remaining'],0);
+    expect(healed['verified'],1);
+    expect(healed['repairAttempts'],1,
+      reason:'recovery attempt evidence remains bounded if the next read fails');
+    expect(healed['lastVerifiedLocalReadbackAt'],isA<int>());
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  });
+  test('self repair cannot replace a newer local edit or fabricate a cloud ACK',() async {
+    await seed();
+    await db.collection('students_directory').doc('pupil').update({'name':'Offline newer'});
+    final pending=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final originalOperation=pending.data()['operationId'];
+    final checkpoint=db.collection('_windows_sync_downloads').doc('students_directory');
+    await checkpoint.set({
+      'schoolId':school,'collection':'students_directory',
+      'collectionRevision':'verified-students_directory',
+      'state':'needsReview','remaining':1,'verified':0,'blocked':1,
+      'observedAt':DateTime.now().millisecondsSinceEpoch-180000,
+      'repairAttempts':1,'repairLastAttemptAt':DateTime.now().millisecondsSinceEpoch-1000000,
+    });
+    await engine.reconcileStalledDownloadForTesting(
+      school,'students_directory',(revisions)async=>cloud(revisions));
+    final unresolved=(await checkpoint.get()).data()!;
+    expect(unresolved['remaining'],1);
+    expect(unresolved['state'],'needsReview');
+    expect(unresolved['blocked'],1);
+    expect((await db.collection('students_directory').doc('pupil').get()).data()?['name'],'Offline newer');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],
+      originalOperation);
+  });
   test('offline device reconciles retired generations from a live replacement student', () async {
     await db.collection('students_directory').doc('pupil').set({
       'schoolId': school, 'mobileStableId': 'old-person', 'name': 'Retired',

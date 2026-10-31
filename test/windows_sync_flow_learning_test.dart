@@ -65,6 +65,33 @@ void main(){
     expect(projectWindowsSyncState([],nowMillis:0,incomingPending:1),'pending');
     expect(projectWindowsSyncState([],nowMillis:0,incomingPending:0),'idle');
   });
+  test('stalled self repair is own-school, delayed, bounded and never clears evidence',(){
+    const foreign='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const collection='students_directory';
+    const now=1800000000000;
+    final stale={
+      'schoolId':school,'collection':collection,'state':'downloading',
+      'remaining':1,'observedAt':now-180000,'repairAttempts':0,
+    };
+    List<String> select(Iterable<Map<String,dynamic>> rows)=>windowsStalledDownloadRepairTargets(
+      schoolId:school,downloads:rows,
+      allowedCollections:{collection,'school_expenses'},nowMillis:now);
+    expect(select([stale]),[collection]);
+    expect(select([{...stale,'state':'needsReview'}]),[collection]);
+    expect(select([{...stale,'schoolId':foreign}]),isEmpty);
+    expect(select([{...stale,'state':'verified'}]),isEmpty);
+    expect(select([{...stale,'remaining':0}]),isEmpty);
+    expect(select([{...stale,'observedAt':now-30000}]),isEmpty);
+    expect(select([{...stale,'collection':'unknown_collection'}]),isEmpty);
+    expect(select([{...stale,'repairAttempts':2}]),isEmpty);
+    expect(select([{...stale,'repairAttempts':1,
+      'repairLastAttemptAt':now-60000}]),isEmpty);
+    expect(select([{...stale,'repairAttempts':1,
+      'repairLastAttemptAt':now-1000000}]),[collection]);
+    expect(select([stale,{...stale,'collection':'school_expenses',
+      'observedAt':now-300000}]),['school_expenses']);
+    expect(stale['remaining'],1,reason:'selection must never complete a download');
+  });
   test('incoming cloud check is not an upload, and school-scoped counts retain work',(){
     final breakdown=windowsIncomingPendingBreakdown(
       schoolId:school,
