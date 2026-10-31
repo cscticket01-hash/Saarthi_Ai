@@ -59,6 +59,7 @@ jobs:
           echo "Existing Android project found."
           echo "Existing Android configuration preserve kiya jayega."
         fi
+        python3 .github/scripts/apply_vidya_saarthi_brand.py
     - name: Configure Firebase and Permanent Signing
       shell: bash
       env:
