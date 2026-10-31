@@ -77,6 +77,7 @@ jobs:
       - name: Configure Flutter Web
         run: |
           flutter create --platforms=web --no-pub .
+          python3 .github/scripts/apply_vidya_saarthi_brand.py
           python3 scripts/configure-web-startup.py
 
       # =========================================================
