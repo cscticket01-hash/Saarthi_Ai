@@ -5,6 +5,10 @@ import '../lib/windows_template_import_engine.dart';
 import '../lib/windows_template_forge_auto.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final school='vs-1234567890abcdefgh';
+  final png=Uint8List.fromList(img.encodePng(img.Image(width:160,height:220)));
+
   String sampleOcr(List<String> lines) {
     final tsv=StringBuffer('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n');
     for(var i=0;i<lines.length;i++) {
@@ -65,10 +69,6 @@ void main() {
     expect(result.warnings,isNotEmpty);
     expect(result.detected,containsAll(['name','month','netPaise']));
   });
-
-  TestWidgetsFlutterBinding.ensureInitialized();
-  final school='vs-1234567890abcdefgh';
-  final png=Uint8List.fromList(img.encodePng(img.Image(width:160,height:220)));
 
   test('all 3 template types import same page via one shared engine',() async {
     for(final kind in SchoolTemplateKind.values) {
