@@ -86,7 +86,7 @@ class SchoolTemplateImportEngine {
   static bool isJpeg(Uint8List b)=>b.length>3 &&
     b[0]==255 && b[1]==216 && b[2]==255;
   static String verifySchool(String schoolId) {
-    if (!RegExp(r'^vs-[a-f0-9]{32}
+    if (!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(schoolId)) {
       throw StateError('Verified school identity required.');
     }
     return schoolId;
