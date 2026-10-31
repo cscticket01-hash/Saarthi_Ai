@@ -222,7 +222,8 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                         : ColorFiltered(
                             colorFilter: ColorFilter.mode(
                               draft,
-                              draftPreset == null ? BlendMode.hue : BlendMode.dst,
+                              (draftPreset == null || draft.toARGB32() != windowsThemePreset(draftPreset)?.seed.toARGB32())
+                                  ? BlendMode.hue : BlendMode.dst,
                             ),
                             child: Image.asset(
                               previewAsset,
