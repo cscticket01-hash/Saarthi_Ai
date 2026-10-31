@@ -865,8 +865,10 @@ class WindowsAppUpdateCard extends StatelessWidget {
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (state.message.isNotEmpty) ...[
+              if (state.message.isNotEmpty ||
+                  ((state.downloading || state.launching) && progressPercent != null)) ...[
                 Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  if (state.message.isNotEmpty) ...[
                   Icon(state.phase == WindowsUpdatePhase.upToDate ? Icons.check_circle_rounded : state.phase == WindowsUpdatePhase.error ? Icons.error_outline : Icons.info_outline,
                     color: state.phase == WindowsUpdatePhase.upToDate ? const Color(0xFF43DBAA) : WindowsAppearance.resolve(const Color(0xFF9DB9E8)), size: 18),
                   const SizedBox(width: 10),
@@ -879,6 +881,8 @@ class WindowsAppUpdateCard extends StatelessWidget {
                     fontSize: 15, height: 1.4,
                   ),
                 )),
+                  ] else
+                    const Spacer(),
                   if ((state.downloading || state.launching) && progressPercent != null) ...[
                     const SizedBox(width: 12),
                     Text(progressPercent,
