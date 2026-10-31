@@ -60,3 +60,17 @@ test('Firestore adapter uses school aggregate transaction and separate audit doc
  const store=firestoreManagedDeviceStore(db);assert.equal(await store.transaction(A,async()=>({state:{schoolId:A},audit:{eventId:'event'},result:'done'})),'done');
  assert.equal(calls[0],'managed_pc_registries/'+A);assert.equal(calls[2][0],'create');assert.throws(()=>store.transaction('invalid',()=>{}));
 });
+
+test('connection display hint is authenticated, bounded and does not change authorization',async()=>{
+ const f=fixture(),one={...input(21),connectionType:'WiFi'};
+ const saved=await f.registry.register(admin,one);
+ assert.equal(saved.connectionType,'WiFi');assert.equal(saved.connectionSeenAt,1000000);
+ f.setClock(1004000);
+ assert.equal((await f.registry.verify({...one,connectionType:'LAN'})).connectionType,'LAN');
+ const rows=await f.registry.list(admin);
+ assert.equal(rows[0].connectionType,'LAN');assert.equal(rows[0].connectionSeenAt,1004000);
+ assert.equal((await f.registry.verify({...one,connectionType:'SSID:private'})).connectionType,'LAN');
+ await assert.rejects(f.registry.verify({...one,credential:generateDeviceCredential(),connectionType:'WiFi'}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ assert.equal((await f.registry.list(admin))[0].connectionType,'LAN');
+ assert(!JSON.stringify(rows).includes(one.credential));
+});
