@@ -7,7 +7,7 @@ import '../lib/windows_template_forge_auto.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final school='vs-db8afb01a3be46a983c8284714d06e5d';
-  final png=Uint8List.fromList(img.encodePng(img.Image(width:160,height:220)));
+  final png=Uint8List.fromList(img.encodePng(img.Image(width:1000,height:1400)));
 
   String sampleOcr(List<String> lines) {
     final tsv=StringBuffer('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n');
@@ -75,8 +75,8 @@ void main() {
       final draft=await SchoolTemplateImportEngine.importBytes(
         kind:kind,schoolId:school,filename:'sample.png',bytes:png);
       expect(draft.kind,kind);
-      expect(draft.width,160);
-      expect(draft.height,220);
+      expect(draft.width,1000);
+      expect(draft.height,1400);
       expect(draft.fields,isEmpty,
         reason:'Do not guess data fields from a raster document');
       expect(draft.sourceHash,hasLength(64));
