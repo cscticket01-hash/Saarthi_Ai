@@ -29,6 +29,8 @@ import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
+import 'windows_template_import_engine.dart';
+import 'windows_template_import_editor.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -972,6 +974,32 @@ class _SchoolDocumentTemplatesScreenState
                 ),
               ),
             const SizedBox(height: 10),
+          ],
+          if (const ['receipt','reportCard','payslip'].contains(_kind)) ...[
+            Align(
+              alignment:Alignment.centerLeft,
+              child:OutlinedButton.icon(
+                key:ValueKey('upload-template-'+_kind),
+                icon:const Icon(Icons.upload_file_outlined),
+                label:const Text('Upload PDF / PNG / JPG template'),
+                onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAndEdit(
+                  context,
+                  switch (_kind) {
+                    'receipt'=>SchoolTemplateKind.receipt,
+                    'reportCard'=>SchoolTemplateKind.reportCard,
+                    _=>SchoolTemplateKind.payslip,
+                  },
+                  _sample,
+                ),
+              ),
+            ),
+            const Padding(
+              padding:EdgeInsets.symmetric(vertical:9),
+              child:Text('One shared import engine: preserve the original design, '
+                'map dynamic fields and preview PDF. Imports save as LOCAL '
+                'DRAFTS only; existing school-wide templates are not replaced.',
+                style:TextStyle(fontSize:12)),
+            ),
           ],
           if (_loading) const LinearProgressIndicator(),
           Expanded(
