@@ -140,7 +140,10 @@ class SchoolTemplateImportEngine {
       // Honour phone-camera EXIF orientation before A4 validation.
       // The original file hash remains unchanged for audit/reimport.
       final oriented=img.bakeOrientation(decoded);
-      imageBytes=Uint8List.fromList(img.encodePng(oriented));
+      final aspect=oriented.width/oriented.height;
+      final sideways=(aspect-(297/210)).abs()<.075;
+      final upright=sideways?img.copyRotate(oriented,angle:90):oriented;
+      imageBytes=Uint8List.fromList(img.encodePng(upright));
     }
     if(imageBytes.length>maxPngBytes) {
       throw const FormatException('Rendered page exceeds 24 MB.');
