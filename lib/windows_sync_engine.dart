@@ -2041,6 +2041,27 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _protocolVerifiedAt == null ||
             DateTime.now().difference(_protocolVerifiedAt!) >=
                 const Duration(minutes: 5)) {
+          // One PC's verified school-owned GS /exec link is stored centrally.
+          // Every other authenticated PC adopts that SAME school's latest
+          // broker-authoritative link during its existing bounded health check.
+          // Never copy secrets/URLs through ordinary school records or overwrite
+          // pending local operations with another device's configuration.
+          await ManagedSchoolSession.callForSchool(
+            _activeSchoolSyncId,
+            'managed/session',
+            {},
+          );
+          final verifiedConfig = await CentralSchoolCloud.saved();
+          if (verifiedConfig['managed'] != true ||
+              verifiedConfig['schoolId'] != _activeSchoolSyncId ||
+              verifiedConfig['uid'] != central['uid']) {
+            throw StateError('School connection changed during GS refresh.');
+          }
+          if (verifiedConfig['scriptUrl'] != central['scriptUrl']) {
+            // Rebind first; do not send existing records to an obsolete URL.
+            unawaited(activateCurrentConnections(allowPairing: false));
+            return;
+          }
           final health = await ManagedSchoolSession.callForSchool(
             _activeSchoolSyncId,
             'managed/storage/check',

@@ -759,69 +759,43 @@ class _WindowsLicenseSettingsPanelState
               ),
             ],
           ),
-          const SizedBox(height: 8),
-           Text(
-            'Adobe-style activation ke liye key yahan add hogi. School Firebase aur Google Drive connection isse alag rahega.',
-            style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11, height: 1.4),
-          ),
-          const SizedBox(height: 14),
-          if(_centralManaged) Padding(padding:const EdgeInsets.only(bottom:14),child:Text('Expiry / renewal: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}\nDays remaining: ${WindowsPlatformClient.instance.state.value.daysLeft}')),
-          // Device cache changes the displayed value, never feature availability.
-          ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: WindowsAppearance.background(const Color(0xFF0F191F)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.lock_rounded,
-                      color: WindowsAppearance.foreground(Color(0xFF00D9A5)), size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_licenceLocked ? 'School licence' : 'Saved Key',
-                            style:
-                                TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10)),
-                        const SizedBox(height: 3),
-                        SelectableText(
-                          _licenceLocked ? 'Licence verified and locked' :
-                              _savedKey.isEmpty ? 'No key saved on this device' : _maskedKey(_savedKey),
-                          style:  TextStyle(fontFamily: 'Segoe UI', 
-                              color: WindowsAppearance.foreground(Colors.white), fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _licenceLocked ? 'Renewal requires a new key from the developer.' :
-                              _savedKey.isEmpty ? 'The school licence status is shown above.' : 'Saved: ${_savedAtText()}',
-                          style:  TextStyle(fontFamily: 'Segoe UI', 
-                              color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_licenceLocked)
-                    Icon(Icons.lock_rounded, key: ValueKey('windows-licence-locked'),
-                        color: WindowsAppearance.foreground(Color(0xFF00D9A5)))
-                  else IconButton(
-                    key: const ValueKey('windows-licence-remove'),
-                    tooltip: WindowsUiLanguage.translate('Remove key'),
-                    onPressed: _saving ? null : _clear,
-                    icon: Icon(Icons.delete_outline_rounded,
-                        color: WindowsAppearance.foreground(Colors.orangeAccent)),
-                  ),
-                ],
-              ),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: WindowsAppearance.background(const Color(0xFF0F191F)),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: WindowsAppearance.outline(Colors.white12)),
             ),
-            const SizedBox(height: 12),
-          ],
-          if (_licenceLocked)
-            Text('Licence locked until renewal.',
-                style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Color(0xFF00D9A5)), fontSize: 12)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.verified_outlined, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text('Activation state',
+                    style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70)))),
+                  Text(_licenceLocked ? 'Active ✓' : _statusText(),
+                    key: const ValueKey('school-activation-state'),
+                    style: TextStyle(fontFamily: 'Segoe UI',
+                      color: _statusColor(), fontWeight: FontWeight.w800)),
+                  if (_licenceLocked) Icon(Icons.lock_rounded,
+                    key: const ValueKey('windows-licence-locked'),
+                    size: 15, color: _statusColor()),
+                ]),
+                if (_centralManaged) ...[
+                  const Divider(height: 22),
+                  Text('Renewal date: ${_licenceDate(WindowsPlatformClient.instance.state.value.expiresAt)}',
+                    key: const ValueKey('school-license-renewal-date')),
+                  const SizedBox(height: 8),
+                  Text('Remaining days: ${WindowsPlatformClient.instance.state.value.daysLeft}',
+                    key: const ValueKey('school-license-days-left')),
+                ],
+              ],
+            ),
+          ),
+          if (!_licenceLocked) const SizedBox(height: 14),
           if (!_licenceLocked) ...[
           if (_renewalRequired) const Padding(
             padding: EdgeInsets.only(bottom: 12),
@@ -18443,33 +18417,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
-                          gradient:  LinearGradient(
-                            colors: [WindowsAppearance.resolve(Color(0xFF2A2417)), WindowsAppearance.resolve(Color(0xFF172229))],
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                              color: WindowsAppearance.outline(Colors.orangeAccent.withOpacity(0.20))),
-                        ),
-                        child:  Row(
-                          children: [
-                            Icon(Icons.security_rounded,
-                                color: WindowsAppearance.foreground(Colors.orangeAccent), size: 30),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Protected settings: Google Drive, Local Data aur Student UID yahan manage karein.',
-                                style: TextStyle(fontFamily: 'Segoe UI', 
-                                    color: WindowsAppearance.foreground(Colors.white70), height: 1.4),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
                           color: WindowsAppearance.background(const Color(0xFF172229)),
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(color: WindowsAppearance.outline(Colors.white10)),
@@ -21569,6 +21516,50 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
         ],
       );
 
+
+  Future<void> _deleteUnusedExam(Map<String, dynamic> exam) async {
+    if (_saving) return;
+    final examId = exam['examId']?.toString() ?? '';
+    final saved = _forExam(examId).length;
+    if (examId.isEmpty || saved > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:
+        Text('Cannot delete this exam while saved marks/results exist.')));
+      return;
+    }
+    final name = exam['examName']?.toString() ?? 'Exam';
+    final className = exam['studentClass']?.toString() ?? 'Class';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) { WindowsAppearance.watch(ctx); return AlertDialog(
+        title: const Text('Delete unused exam?'),
+        content: Text('Delete "$name" for $className? '
+          'Only an exam with no saved results can be deleted. '
+          'The cloud and other PCs will receive the deletion through existing sync.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete exam')),
+        ],
+      ); },
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await WindowsExamService.deleteUnusedExam(examId);
+      if (!mounted) return;
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unused exam deleted. Sync will deliver the deletion.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Delete blocked: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _openExamGroup(List<Map<String, dynamic>> group) async {
     if (group.isEmpty) return;
     final examName = group.first['examName']?.toString() ?? 'Exam';
@@ -21698,6 +21689,21 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                               },
                               icon: const Icon(Icons.edit_note_rounded, size: 17),
                               label: const Text('Marks & Results'),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              key: ValueKey('delete-exam-$id'),
+                              tooltip: results.isNotEmpty
+                                  ? 'Saved marks: delete blocked'
+                                  : 'Delete unused class exam',
+                              onPressed: _saving || results.isNotEmpty
+                                  ? null
+                                  : () {
+                                      Navigator.pop(dialogContext);
+                                      _deleteUnusedExam(exam);
+                                    },
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                color: Colors.redAccent),
                             ),
                           ],
                         ),
