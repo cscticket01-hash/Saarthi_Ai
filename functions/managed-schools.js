@@ -403,7 +403,11 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
    if(cachedGood&&now()-data.summaryAt<300000)
     return {...result,studentCount:data.studentCount,driveBytes:data.driveBytes,
       driveBytesPartial:data.driveBytesPartial===true,summaryAt:data.summaryAt};
-   if(data.storageReady===true&&!data.deletedAt) {
+   // Platform summary markers may be absent on older linked schools.
+   // Check the authoritative private storage binding server-side rather than
+   // treating a missing public flag as evidence the school has no Drive.
+   const linked=await db.doc('school_storage_private/'+id).get();
+   if(linked.exists&&linked.data()?.ready===true&&!data.deletedAt) {
     try {
      const m=await signed({schoolId:id},{action:'managed_summary'});
      if(m.schoolId!==id||!Number.isSafeInteger(m.studentCount)||m.studentCount<0||
