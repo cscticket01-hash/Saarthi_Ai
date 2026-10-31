@@ -978,20 +978,36 @@ class _SchoolDocumentTemplatesScreenState
           if (const ['receipt','reportCard','payslip'].contains(_kind)) ...[
             Align(
               alignment:Alignment.centerLeft,
-              child:OutlinedButton.icon(
-                key:ValueKey('upload-template-'+_kind),
-                icon:const Icon(Icons.upload_file_outlined),
-                label:const Text('Upload PDF / PNG / JPG template'),
-                onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAndEdit(
-                  context,
-                  switch (_kind) {
-                    'receipt'=>SchoolTemplateKind.receipt,
-                    'reportCard'=>SchoolTemplateKind.reportCard,
-                    _=>SchoolTemplateKind.payslip,
-                  },
-                  _sample,
+              child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(
+                  key:ValueKey('upload-template-'+_kind),
+                  icon:const Icon(Icons.upload_file_outlined),
+                  label:const Text('Upload PDF / PNG / JPG template'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAndEdit(
+                    context,
+                    switch (_kind) {
+                      'receipt'=>SchoolTemplateKind.receipt,
+                      'reportCard'=>SchoolTemplateKind.reportCard,
+                      _=>SchoolTemplateKind.payslip,
+                    },
+                    _sample,
+                  ),
                 ),
-              ),
+                TextButton.icon(
+                  key:ValueKey('open-local-template-drafts-'+_kind),
+                  icon:const Icon(Icons.folder_open_outlined),
+                  label:const Text('Open saved drafts'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.openSaved(
+                    context,
+                    switch (_kind) {
+                      'receipt'=>SchoolTemplateKind.receipt,
+                      'reportCard'=>SchoolTemplateKind.reportCard,
+                      _=>SchoolTemplateKind.payslip,
+                    },
+                    _sample,
+                  ),
+                ),
+              ]),
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
