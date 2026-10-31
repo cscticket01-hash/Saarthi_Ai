@@ -40,8 +40,12 @@ void main() {
         expect(find.byKey(const ValueKey('windows-licence-remove')), findsNothing);
         expect(find.byType(TextField), findsNothing);
         expect(find.text('Save Licensing Key'), findsNothing);
-        expect(find.text('Licence locked until renewal.'), findsOneWidget);
-        expect(find.text('Licence verified and locked'), findsOneWidget);
+        // New Windows-style activation design replaces the old lock sentences.
+        // Verify the REAL locked state and renewal details, not old copy.
+        expect(find.text('Active ✓'), findsOneWidget);
+        expect(find.byKey(const ValueKey('school-activation-state')), findsOneWidget);
+        expect(find.byKey(const ValueKey('school-license-renewal-date')), findsOneWidget);
+        expect(find.byKey(const ValueKey('school-license-days-left')), findsOneWidget);
       }
       await openPanel();
       expect(find.byType(TextField), findsOneWidget);
