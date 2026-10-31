@@ -1053,10 +1053,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       if (yes != true) return;
       setState(() => _busy = true);
       final dir = await getTemporaryDirectory();
+      androidUpdateTransfer.value = null;
       final file = await downloadAndroidUpdate(
         Map<String, dynamic>.from(u),
         File('${dir.path}/vidya-saarthi-update.apk'),
+        onProgress: (bytes, total) {
+          androidUpdateTransfer.value = AndroidUpdateTransfer(bytes, total);
+        },
       );
+      final completed = androidUpdateTransfer.value;
+      if (completed != null) {
+        androidUpdateTransfer.value = AndroidUpdateTransfer(
+          completed.received, completed.total, verified: true);
+      }
       await OpenFilex.open(file.path);
     } catch (e) {
       if (mounted)
