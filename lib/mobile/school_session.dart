@@ -286,6 +286,9 @@ class SchoolSession {
     if (mode == 'exit' ? exited : entered) {
       return '${mode == 'exit' ? 'Check-out' : 'Check-in'} captured today. Locked until tomorrow, including pending submissions.';
     }
+    if (mode == 'exit' && link?.role == 'student' && !studentCheckoutEnabled) {
+      return 'This school has disabled student check-out.';
+    }
     if (mode == 'exit' && !entered) return 'Check in before checking out.';
     if (link?.role == 'student') {
       if (status is! Map) {
