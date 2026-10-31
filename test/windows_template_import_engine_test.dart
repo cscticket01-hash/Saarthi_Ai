@@ -212,4 +212,46 @@ void main() {
     }),throwsFormatException);
   });
 
+  test('verified fee table rows bind actual school fees, not OCR sample values',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'fees.png',bytes:png);
+    final mapped=TemplateForgeAutoMapper.detect(draft,sampleOcr([
+      'Receipt No VS101','Student Name Mira','Total Amount 1200',
+      'Description Amount','Tuition 1000','Exam 200','Total Amount 1200',
+    ]));
+    expect(mapped.draft.fields.map((f)=>f.key),
+      containsAll(['feeName0','feeAmount0','feeName1','feeAmount1']));
+    expect(SchoolTemplateImportEngine.valueFor('feeName0',{
+      'feeItems':{'Admission':300,'Exam':400}
+    }),'Admission');
+    expect(SchoolTemplateImportEngine.valueFor('feeAmount0',{
+      'feeItems':{'Admission':300,'Exam':400}
+    }),'300');
+  });
+
+  test('row count differs from scanned sample: fail instead of dropping fees',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'fees.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.2,width:.2,size:.015),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.2,width:.2,size:.015),
+    ]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'feeItems':{'Tuition':100,'Exam':50},'totalAmount':150,
+    }),throwsFormatException);
+  });
+
+  test('small printable text boxes auto-fit without ever truncating data',() {
+    const field=SchoolTemplateField(key:'studentName',x:.1,y:.1,
+      width:.15,size:.03);
+    final size=SchoolTemplateImportEngine.fittedTextSize(field,'Arup Das');
+    expect(size,lessThan(.03));
+    expect(size,greaterThanOrEqualTo(.009));
+    expect(()=>SchoolTemplateImportEngine.fittedTextSize(field,
+      'A name so long it cannot possibly fit safely in this box'),
+      throwsFormatException);
+  });
+
 }
