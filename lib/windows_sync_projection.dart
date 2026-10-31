@@ -38,6 +38,41 @@ Map<String, int> windowsIncomingPendingBreakdown({
   };
 }
 
+/// Select at most one stale, own-school download for *verified* recovery.
+/// "downloading" can be left behind by a crash; "needsReview" is still real
+/// unverified work. Neither is an upload ACK or a reason to clear a queue.
+/// Two attempts per unchanged collection revision, >=15 minutes apart, prevent
+/// the self-healer from repeatedly rereading a large school collection.
+List<String> windowsStalledDownloadRepairTargets({
+  required String schoolId,
+  required Iterable<Map<String, dynamic>> downloads,
+  required Set<String> allowedCollections,
+  required int nowMillis,
+}) {
+  if (schoolId.isEmpty) return const [];
+  final candidates = downloads.where((row) {
+    if (row['schoolId'] != schoolId ||
+        !allowedCollections.contains(row['collection']) ||
+        !{'downloading', 'needsReview'}.contains(row['state'])) return false;
+    final remaining = row['remaining'];
+    final observed = row['observedAt'];
+    if (remaining is! num || remaining <= 0 ||
+        observed is! num || observed <= 0 ||
+        nowMillis - observed.toInt() < const Duration(minutes: 2).inMilliseconds) {
+      return false;
+    }
+    final attempts = (row['repairAttempts'] as num? ?? 0).toInt();
+    final last = (row['repairLastAttemptAt'] as num? ?? 0).toInt();
+    return attempts < 2 &&
+        (last <= 0 ||
+         nowMillis - last >= const Duration(minutes: 15).inMilliseconds);
+  }).toList()
+    ..sort((a,b) => (a['observedAt'] as num).compareTo(b['observedAt'] as num));
+  return [
+    for (final row in candidates.take(1)) row['collection'] as String,
+  ];
+}
+
 /// Short, truthful wording for the circular display. A remote change hint is
 /// not a queued upload. The detailed status panel shows every component.
 String windowsSyncFlowPendingText(
