@@ -527,6 +527,44 @@ void main() {
     );
   });
 
+  test('school expense delta reaches five separate SQLite PCs without duplicate uploads', () async {
+    const id = 'EXP-SYNTHETIC-001';
+    final record = <String, dynamic>{
+      'expenseId': id,
+      'schoolId': school,
+      'title': 'Synthetic stationery only',
+      'category': 'Stationery',
+      'amount': 1250,
+      'paidTo': 'Synthetic Vendor',
+      'note': 'TEST fixture; no real financial transaction',
+      'dateText': '31/10/2026',
+      'timestamp': DateTime.utc(2026, 10, 31).millisecondsSinceEpoch,
+    };
+    await rig.open('pc1');
+    await rig.db.collection('school_expenses').doc(id).set(record);
+    final pending = await rig.queue();
+    expect(pending, hasLength(1));
+    expect(pending.single.data()['collection'], 'school_expenses');
+    await rig.flush();
+    expect(await rig.queue(), isEmpty);
+
+    for (var device = 1; device <= 5; device++) {
+      await rig.open('pc$device');
+      await rig.pull({'school_expenses'});
+      final expenses = (await rig.db.collection('school_expenses').get()).docs;
+      expect(expenses, hasLength(1));
+      expect(expenses.single.id, id);
+      expect(expenses.single.data()['schoolId'], school);
+      expect(expenses.single.data()['amount'], 1250);
+      expect(await rig.queue(), isEmpty,
+          reason: 'A downloaded expense must not be reuploaded');
+      await rig.pull({'school_expenses'});
+      expect((await rig.db.collection('school_expenses').get()).docs,
+          hasLength(1), reason: 'Second delta read must not duplicate an expense');
+      expect(await rig.queue(), isEmpty);
+    }
+  });
+
   test(
     'five independent SQLite devices converge without joining their queues',
     () async {
