@@ -36,6 +36,7 @@ import 'windows_analytics_identity.dart';
 import 'windows_expense_intent.dart';
 import 'windows_expense_history.dart';
 import 'windows_expense_receipt_preview.dart';
+import 'windows_school_expense_sync.dart';
 import 'windows_exam_service.dart';
 import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
@@ -23057,6 +23058,13 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
       if (result['success'] != true) throw StateError('Expense operation not verified.');
       return result;
     }
+    // Managed schools commit only a single durable local record. The normal
+    // Google/Drive sync owner publishes that delta and verifies cloud ACK.
+    if (body['action'] == 'save_school_expense' &&
+        await WindowsSchoolExpenseSync.enabled) {
+      return WindowsSchoolExpenseSync.save(
+        _expenseProfile, _expenseSchool, Map<String,dynamic>.from(body));
+    }
     final scriptUrl = await _windowsGoogleScriptUrl();
     _checkExpenseProfile();
     final response = await WindowsBackendBridge.post(
@@ -23085,6 +23093,13 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
         _items..clear()..addAll(local.docs.map((d) => {'expenseId': d.id, ...d.data()}));
         _loading = false;
       });
+      // Cloud-first list replacement would hide an unsynced local expense.
+      // Managed schools already receive verified delta downloads in the
+      // school-scoped store; leave pending rows visible until ACK.
+      if (widget.call == null && await WindowsSchoolExpenseSync.enabled) {
+        _checkExpenseProfile();
+        return;
+      }
       final result = await _call(const {'action': 'list_school_expenses'}).timeout(const Duration(seconds: 20));
       final raw = result['expenses'];
       final list = raw is List
@@ -23158,9 +23173,14 @@ class _WindowsSchoolExpensesScreenState extends State<WindowsSchoolExpensesScree
                 setDlg(() => saving = true);
                 try {
                   _checkExpenseProfile();
-                  await _call(intent.prepare(title: title.text, category: category,
+                  final result=await _call(intent.prepare(title: title.text, category: category,
                     amount: value, paidTo: paidTo.text, note: note.text));
                   if (ctx.mounted) Navigator.pop(ctx, true);
+                  if (mounted && result['cloudSyncPending'] == true) {
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text(
+                        'Expense saved locally. Google cloud delta sync queued; confirmation pending.')));
+                  }
                 } catch (e) {
                   if (ctx.mounted) {
                     ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(backgroundColor: WindowsAppearance.background(Colors.redAccent), content: Text('$e')));
