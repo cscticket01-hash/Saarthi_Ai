@@ -84,6 +84,19 @@ void main() {
     }
   });
 
+  test('school ID requires exactly 32 lowercase hex characters', () {
+    expect(SchoolTemplateImportEngine.verifySchool(school), school);
+    expect(() => SchoolTemplateImportEngine.verifySchool(school + 'evil'), throwsStateError);
+    expect(() => SchoolTemplateImportEngine.verifySchool(school.toUpperCase()), throwsStateError);
+  });
+
+  test('non-A4 landscape images are rejected rather than stretched', () async {
+    final landscape=Uint8List.fromList(img.encodePng(img.Image(width:300,height:100)));
+    await expectLater(SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'landscape.png',bytes:landscape),throwsFormatException);
+  });
+
   test('disguised input, oversized and foreign school are rejected',() async {
     await expectLater(SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
