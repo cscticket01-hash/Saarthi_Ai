@@ -188,7 +188,8 @@ class SchoolTemplateImportEngine {
       Platform.pathSeparator+scope+Platform.pathSeparator+draft.kind.name);
     await folder.create(recursive:true);
     if(currentSchoolId()!=draft.schoolId) throw StateError('School changed.');
-    final base=folder.path+Platform.pathSeparator+draft.sourceHash;
+    final base=folder.path+Platform.pathSeparator+draft.sourceHash+'-'+
+      DateTime.now().toUtc().microsecondsSinceEpoch.toString();
     final tmpImage=File(base+'.png.tmp'),tmpJson=File(base+'.json.tmp');
     final metadata={'version':1,'approved':false,'schoolId':draft.schoolId,
       'kind':draft.kind.name,'filename':draft.filename,
