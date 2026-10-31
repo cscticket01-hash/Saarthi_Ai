@@ -143,4 +143,73 @@ void main() {
     expect(imported.fields,isEmpty,
       reason:'Preview cannot publish or mutate the source draft');
   });
+
+  test('TemplateForge identifies Hindi/Bengali labels without cloud AI',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'bengali.png',bytes:png);
+    final recognized=TemplateForgeAutoMapper.detect(draft,sampleOcr([
+      'রসিদ নং VS101','শিক্ষার্থীর নাম Mira','মোট টাকা 1200',
+    ]));
+    expect(recognized.detected,containsAll(['receiptNo','studentName','totalAmount']));
+    expect(recognized.missing,isEmpty);
+    expect(recognized.safeToActivate,isFalse,
+      reason:'Recognized amounts do not prove fee table safety');
+  });
+
+  test('document type suggestion rejects misleading receipt labels',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.reportCard,schoolId:school,
+      filename:'not_marksheet.png',bytes:png);
+    final ocr=sampleOcr([
+      'Receipt No VS101','Student Name Mira','Total Amount 1200',
+    ]);
+    expect(TemplateForgeAutoMapper.suggestKind(ocr,draft.width,draft.height),
+      SchoolTemplateKind.receipt);
+    final result=TemplateForgeAutoMapper.detect(draft,ocr);
+    expect(result.warnings.any((w)=>w.startsWith('Document appears to be ')),
+      isTrue);
+    expect(result.safeToActivate,isFalse);
+  });
+
+  test('an empty scanned field is never silently printed as valid',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+    ]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{}),
+      throwsFormatException);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,
+      {'studentName':'An extraordinarily long name that will not fit in the small printed field'}),
+      throwsFormatException);
+  });
+
+  test('print preflight rejects receipt arithmetic mistakes',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.2),
+    ]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'receiptNo':'VS-101','totalAmount':150,
+      'feeItems':{'Tuition':100,'Exam':20},
+    }),throwsFormatException);
+  });
+
+  test('print preflight rejects contradictory salary records',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.payslip,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'name',x:.1,y:.2),
+    ]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'name':'Arup','basicPaise':20000,'allowancePaise':500,
+      'deductionPaise':100,'netPaise':9999,'paidPaise':12000,
+    }),throwsFormatException);
+  });
+
 }
