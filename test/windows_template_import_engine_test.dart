@@ -2,8 +2,70 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import '../lib/windows_template_import_engine.dart';
+import '../lib/windows_template_forge_auto.dart';
 
 void main() {
+  String sampleOcr(List<String> lines) {
+    final tsv=StringBuffer('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n');
+    for(var i=0;i<lines.length;i++) {
+      final words=lines[i].split(' ');
+      var left=100;
+      for(var j=0;j<words.length;j++) {
+        final token=words[j];
+        tsv.writeln([
+          '5','1','1','1',(i+1).toString(),(j+1).toString(),
+          left.toString(),(95+i*150).toString(),'75','30','96.1',token
+        ].join('\t'));
+        left+=95;
+      }
+    }
+    return tsv.toString();
+  }
+
+  test('automatic OCR maps receipt labels without manual coordinates',() async {
+    final original=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final result=TemplateForgeAutoMapper.detect(original,sampleOcr([
+      'Receipt No VS001','Student Name Alice','Total Amount 500',
+    ]));
+    expect(result.detected,containsAll(['receiptNo','studentName','totalAmount']));
+    expect(result.missing,isEmpty);
+    expect(result.draft.fields,everyElement(isA<SchoolTemplateField>()));
+    expect(result.safeToActivate,isFalse,
+      reason:'Receipt fee-item repeated rows need reconstruction');
+    expect(original.fields,isEmpty,reason:'Source page remains unchanged');
+  });
+
+  test('automatic OCR never invents unknown grades or activates ambiguous scans',() async {
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.reportCard,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final result=TemplateForgeAutoMapper.detect(source,sampleOcr([
+      'Student Name Anu','Class Seven','Exam Name Final',
+    ]));
+    expect(result.missing,isEmpty);
+    expect(result.safeToActivate,isFalse,
+      reason:'Subject and marks table is not reconstructed');
+    final duplicate=TemplateForgeAutoMapper.detect(source,sampleOcr([
+      'Student Name Anu','Student Name Ravi','Class Seven','Exam Name Final',
+    ]));
+    expect(duplicate.warnings,contains('Repeated ambiguous field: studentName'));
+    expect(duplicate.safeToActivate,isFalse);
+  });
+
+  test('offline OCR ignores forged low confidence and out-of-page words',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.payslip,schoolId:school,
+      filename:'sample.png',bytes:png);
+    final words=sampleOcr(['Staff Name Mira','Month October','Net Salary 25000'])
+      .replaceFirst('\t96.1\tMira','\t20\tMira');
+    final result=TemplateForgeAutoMapper.detect(draft,words);
+    expect(result.safeToActivate,isFalse);
+    expect(result.warnings,isNotEmpty);
+    expect(result.detected,containsAll(['name','month','netPaise']));
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
   final school='vs-1234567890abcdefgh';
   final png=Uint8List.fromList(img.encodePng(img.Image(width:160,height:220)));
