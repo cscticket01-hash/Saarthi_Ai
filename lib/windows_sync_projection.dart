@@ -24,6 +24,7 @@ Map<String, int> windowsIncomingPendingBreakdown({
   final remoteChecks = validSchool && remoteChangeQueued ? 1 : 0;
   final files = validSchool &&
           binaryStatus?['schoolId'] == schoolId &&
+          binaryStatus?['inventory'] != null &&
           binaryStatus?['inventory'] != 'UNKNOWN'
       ? boundedCount(binaryStatus?['pending']) +
           boundedCount(binaryStatus?['failed']) +
