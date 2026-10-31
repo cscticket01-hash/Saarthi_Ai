@@ -10,6 +10,9 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'mobile/dob_input_formatter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:open_filex/open_filex.dart';
@@ -402,7 +405,8 @@ class _SchoolLoginState extends State<_SchoolLogin> {
                     const SizedBox(height: 14),
                     TextField(
                       controller: _dob,
-                      keyboardType: TextInputType.datetime,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [DateOfBirthInputFormatter()],
                       decoration: const InputDecoration(
                         labelText: 'Date of birth',
                         hintText: 'DD/MM/YYYY',
@@ -617,15 +621,18 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Future<void> _loadAttendance() => _history.selectMonth(_monthKey);
 
   Future<void> _logout() async {
-    await SchoolMessaging.stop();
     await _s.logout();
-    await SchoolNotifications.clear();
     if (mounted)
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const _SchoolLogin()),
         (_) => false,
       );
+    // External messaging shutdown must not block navigation.
+    unawaited(SchoolMessaging.stop().timeout(const Duration(seconds: 4))
+      .catchError((Object _) {}));
+    unawaited(SchoolNotifications.clear().timeout(const Duration(seconds: 4))
+      .catchError((Object _) {}));
   }
 
   Widget _card(Widget child) => Card(
@@ -1123,7 +1130,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _heading('Attendance', 'Check in and check out once each day'),
+        _heading('Attendance', 'Your school day at a glance'),
         Row(
           children: [
             IconButton(
@@ -1207,7 +1214,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           ),
         ),
         if (_s.attendanceScheduleLabel.isNotEmpty)
-          _card(Text(_s.attendanceScheduleLabel)),
+          _card(Row(children: [
+            const Icon(Icons.schedule, color: Colors.tealAccent),
+            const SizedBox(width: 12),
+            Expanded(child: Text(_s.attendanceScheduleLabel)),
+          ])),
         if (!_open(today))
           _card(const Text('School is closed today. Attendance is disabled.'))
         else ...[
@@ -1224,7 +1235,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 ),
               ),
               const SizedBox(width: 12),
-              Expanded(
+              if (_s.studentCheckoutEnabled) Expanded(
                 child: FilledButton.icon(
                   onPressed: _busy || exitLock.isNotEmpty
                       ? null
@@ -1235,7 +1246,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               ),
             ],
           ),
-          if (exitLock.isNotEmpty)
+          if (_s.studentCheckoutEnabled && exitLock.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(exitLock, style: const TextStyle(fontSize: 12)),
@@ -1273,7 +1284,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Widget _documents() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _heading('My school documents', 'ID card, marksheets and certificates'),
+      _heading('My school documents', 'Your digital student wallet'),
+      const SizedBox(height: 12),
+      const Row(children: [
+        Icon(Icons.verified_user_outlined, color: Colors.tealAccent),
+        SizedBox(width: 10),
+        Text('School-verified ID card',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      ]),
       _card(
         Column(
           children: [
@@ -1299,13 +1317,15 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         ),
       ),
       const SizedBox(height: 10),
-      const Text(
-        'Marksheets',
-        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-      ),
+      const Row(children: [
+        Icon(Icons.auto_stories_outlined, color: Colors.tealAccent),
+        SizedBox(width: 10),
+        Text('Marksheets & results',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+      ]),
       const SizedBox(height: 12),
       if (_list(_data['examinations']).isNotEmpty)
-        _heading('Examinations', 'Published school examinations'),
+        const Text('Published examinations', style: TextStyle(color: Colors.white70)),
       for (final exam in _list(_data['examinations']))
         _card(
           Text(
