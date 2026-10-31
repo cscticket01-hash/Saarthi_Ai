@@ -135,8 +135,8 @@ class _TemplateEditorState extends State<_TemplateEditor> {
               onPanUpdate:(detail){
                 final current=draft.fields[i];
                 changeField(i,current.copyWith(
-                  x:(current.x+detail.delta.dx/w).clamp(0.0,1-current.width),
-                  y:(current.y+detail.delta.dy/h).clamp(0.0,.96)));
+                  x:(current.x+detail.delta.dx/w).clamp(0.0,1-current.width).toDouble(),
+                  y:(current.y+detail.delta.dy/h).clamp(0.0,.96).toDouble()));
               },
               child:Container(
                 decoration:BoxDecoration(
@@ -187,13 +187,13 @@ class _TemplateEditorState extends State<_TemplateEditor> {
           ]),
           Row(children:[
             Text('X '+(draft.fields[i].x*100).round().toString()+'%'),
-            Expanded(child:Slider(value:draft.fields[i].x.clamp(0,1-draft.fields[i].width),
+            Expanded(child:Slider(value:draft.fields[i].x.clamp(0.0,1-draft.fields[i].width).toDouble(),
               min:0,max:1-draft.fields[i].width,
               onChanged:(v)=>changeField(i,draft.fields[i].copyWith(x:v)))),
           ]),
           Row(children:[
             Text('Y '+(draft.fields[i].y*100).round().toString()+'%'),
-            Expanded(child:Slider(value:draft.fields[i].y.clamp(0,.96),
+            Expanded(child:Slider(value:draft.fields[i].y.clamp(0.0,.96).toDouble(),
               min:0,max:.96,
               onChanged:(v)=>changeField(i,draft.fields[i].copyWith(y:v)))),
           ]),
