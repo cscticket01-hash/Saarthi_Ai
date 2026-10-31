@@ -33,7 +33,7 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   if(entitlement?.allowed!==true||Number(entitlement.expiresAt)<=now())reject(403,'DEVICE_ENTITLEMENT_EXPIRED');
   const registry=createManagedDeviceRegistry({store,schoolId:auth.schoolId,now,requireFreshAuthentication:true});
   return registry.register(auth,{deviceId:header(req,'x-vidya-device-id'),credential:header(req,'x-vidya-device-credential'),
-   name:body.deviceName,os:body.deviceOs},{existingSessionEnrollment:true});
+   name:body.deviceName,os:body.deviceOs,connectionType:body.connectionType},{existingSessionEnrollment:true});
  }
  return {async themeDevices(req,identity){
   const registry=createManagedDeviceRegistry({store,schoolId:identity.schoolId,now});
@@ -64,13 +64,13 @@ function createManagedDeviceAccess({store,enforced=false,managementEnabled=false
   if(action==='managed/device/register'){
    // Device retries present the same locally persisted credential, not a newly
    // generated secret. A revoked device must reauthenticate and use a new one.
-   const device=await registry.register(auth,{...proof,name:body.deviceName,os:body.deviceOs});
+   const device=await registry.register(auth,{...proof,name:body.deviceName,os:body.deviceOs,connectionType:body.connectionType});
    return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
   }
   // Every protected request reads the registry transactionally: no cached
   // presence/session/offline lease may authorize an online server request.
   const device=enrollmentOnly&&action==='managed/device/list'
-   ?await enrollSession(req,body,identity,entitlement):await registry.verify(proof);
+   ?await enrollSession(req,body,identity,entitlement):await registry.verify({...proof,connectionType:body.connectionType});
   if(action==='managed/device/check')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,...access(device)}};
   if(action==='managed/device/list')return {handled:true,mode,result:{success:true,schoolId:auth.schoolId,serverTime:now(),deviceLimit:5,canRevoke:!enrollmentOnly,recentActivityWindowMs:120000,devices:(await registry.list(auth)).map(row=>({...row,current:row.deviceIdentity===device.deviceIdentity}))}};
   if(action==='managed/device/revoke'){
