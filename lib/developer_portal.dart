@@ -10,12 +10,31 @@ import 'platform/monitor_summary.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'platform/developer_service.dart';
+
+/// Active license holders disappear from the issue picker until the last
+/// 30 days of validity. Expired and revoked schools remain eligible.
+List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
+    List<Map<String,dynamic>> schools,
+    List<Map<String,dynamic>> licenses,
+    int nowMillis) {
+  const renewalWindow=Duration(days:30);
+  return schools.where((school){
+    final id=school['id'];
+    if(school['deletedAt']!=null||school['blocked']==true||school['loginDisabled']==true) return false;
+    return !licenses.any((l)=>
+      l['schoolId']==id&&l['revoked']!=true&&
+      l['expiresAt'] is num &&
+      (l['expiresAt'] as num)>nowMillis+renewalWindow.inMilliseconds);
+  }).toList();
+}
 
 const _ink = Color(0xFF101B24),
     _surface = Color(0xFF16242E),
@@ -220,6 +239,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   bool _loading = true;
   String? _error;
   Map<String, dynamic> _data = {};
+  final Map<String, String> _issuedSessionKeys = {}; // Volatile; never persisted or returned by dashboard.
   Timer? _timer;
   StreamSubscription? _schoolsWatch, _licencesWatch;
   bool _refreshing = false;
@@ -354,16 +374,16 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     child: child,
   );
   Future<void> _issue([String? selected]) async {
-    if (_schools.isEmpty) {
-      setState(() => _page = 1);
+    final eligible = eligibleDeveloperLicenseSchools(
+      _schools, _licenses, DateTime.now().millisecondsSinceEpoch);
+    if (eligible.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Create the school account from Schools first.'),
-        ),
+        const SnackBar(content:Text('All schools hold active licences. They return for renewal in their final 30 days.')),
       );
       return;
     }
-    String school = selected ?? _schools.first['id'].toString();
+    String school = selected!=null && eligible.any((s)=>s['id']==selected)
+        ? selected : eligible.first['id'].toString();
     bool paid = true, busy = false;
     String? error;
     final days = TextEditingController(text: '365'),
@@ -383,7 +403,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 DropdownButtonFormField<String>(
                   initialValue: school,
                   decoration: const InputDecoration(labelText: 'School'),
-                  items: _schools
+                  items: eligible
                       .map(
                         (s) => DropdownMenuItem(
                           value: s['id'].toString(),
@@ -463,6 +483,10 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     days.dispose();
     amount.dispose();
     if (result == null || !mounted) return;
+    if(result['key'] is String && (result['key'] as String).isNotEmpty)
+      _issuedSessionKeys[sha256.convert(utf8.encode((result['key'] as String).trim().toUpperCase())).toString()]=result['key'] as String;
+    await _load(silent:true);
+    if(!mounted)return;
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -873,9 +897,23 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 .map(
                   (l) => DataRow(
                     cells: [
-                      DataCell(Text(l['schoolId'].toString())),
+                      DataCell(Text(_schools.where((s)=>s['id']==l['schoolId']).map((s)=>s['name']?.toString()??'').where((s)=>s.isNotEmpty).firstOrNull??l['schoolId'].toString())),
                       DataCell(
-                        Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}'),
+                        Row(mainAxisSize:MainAxisSize.min,children:[
+                          Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}'),
+                          IconButton(
+                            key:ValueKey('copy-license-${l['id']}'),
+                            tooltip:_issuedSessionKeys[l['id']] == null
+                               ? 'Full key shown only once during issuance. Use renewal for a new key.'
+                               : 'Copy newly generated full licence key',
+                            icon:const Icon(Icons.copy_outlined,size:17),
+                            onPressed:_issuedSessionKeys[l['id']] == null
+                               ? null : () async {
+                                final key=_issuedSessionKeys[l['id']]!;
+                                await Clipboard.setData(ClipboardData(text:key));
+                               },
+                          ),
+                        ]),
                       ),
                       DataCell(
                         _chip(
@@ -890,12 +928,12 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                       DataCell(Text(_date(l['expiresAt']))),
                       DataCell(
                         Text(
-                          l['paid'] == true ? 'INR ${l['amount']}' : 'Unpaid',
+                          l['paid'] == true ? (l['amount'] is num?'INR ${l['amount']}':'Paid · amount not recorded') : 'Unpaid',
                         ),
                       ),
                       DataCell(
-                        Wrap(
-                          spacing: 4,
+                        Row(
+                          mainAxisSize:MainAxisSize.min,
                           children: [
                             TextButton(
                               onPressed: l['revoked'] == true
