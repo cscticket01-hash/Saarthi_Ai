@@ -143,7 +143,59 @@ class _QrScanner extends StatefulWidget {
 
 class _QrScannerState extends State<_QrScanner> {
   final _capture = QrAuthenticationEngine();
-  final _scanner = MobileScannerController();
+  final _scanner = MobileScannerController(
+    formats: const [BarcodeFormat.qrCode],
+    autoZoom: true,
+  );
+  bool _torchOn = false, _choosingImage = false;
+  double _zoom = 1;
+  void _accept(List<Barcode> barcodes) {
+    if (_capture.paused) return;
+    for (final code in barcodes) {
+      final raw = code.rawValue;
+      if (raw == null) continue;
+      try {
+        final link = _capture.capture(raw);
+        if (link == null) return;
+        // Scanner disposal on route exit: no artificial 2-second stop wait.
+        if (mounted) Navigator.pop(context, link);
+        return;
+      } catch (_) {
+        if (mounted) setState(() =>
+          _error = 'Invalid or older ID QR. Ask your school to regenerate this card.');
+        return;
+      }
+    }
+  }
+  Future<void> _gallery() async {
+    if (_choosingImage) return;
+    _choosingImage = true;
+    try {
+      final photo = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (photo == null || !mounted) return;
+      final found = await _scanner.analyzeImage(photo.path);
+      if (found == null) {
+        if (mounted) setState(() => _error = 'No school ID QR found in that photo.');
+      } else {
+        _accept(found.barcodes);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not read that image. Choose a clear school ID QR.');
+    } finally { _choosingImage = false; }
+  }
+  Future<void> _torch() async {
+    try {
+      await _scanner.toggleTorch();
+      if (mounted) setState(() => _torchOn = !_torchOn);
+    } catch (_) {}
+  }
+  Future<void> _changeZoom() async {
+    final value = _zoom >= 3 ? 1.0 : _zoom + 0.5;
+    try {
+      await _scanner.setZoomScale(value);
+      if (mounted) setState(() => _zoom = value);
+    } catch (_) {}
+  }
   String? _error;
   @override
   void dispose() {
@@ -165,32 +217,7 @@ class _QrScannerState extends State<_QrScanner> {
         Expanded(
           child: MobileScanner(
             controller: _scanner,
-            onDetect: (capture) async {
-              if (_capture.paused) return;
-              for (final b in capture.barcodes) {
-                final raw = b.rawValue;
-                if (raw == null) continue;
-                try {
-                  final link = _capture.capture(raw);
-                  if (link == null) return;
-                  try {
-                    await _scanner.stop().timeout(const Duration(seconds: 2));
-                  } catch (_) {}
-                  if (mounted) Navigator.pop(context, link);
-                  return;
-                } catch (e) {
-                  try {
-                    await _scanner.stop().timeout(const Duration(seconds: 2));
-                  } catch (_) {}
-                  if (mounted)
-                    setState(
-                      () => _error =
-                          'Invalid or older ID QR. Ask your school to regenerate this card.',
-                    );
-                  return;
-                }
-              }
-            },
+            onDetect: (capture) => _accept(capture.barcodes),
             errorBuilder: (context, error) => Center(
               child: Text(
                 'Camera unavailable. Allow camera access in your phone settings.\n${error.errorCode.name}',
@@ -198,6 +225,19 @@ class _QrScannerState extends State<_QrScanner> {
               ),
             ),
           ),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            TextButton.icon(onPressed: _gallery,
+              icon: const Icon(Icons.photo_library_outlined), label: const Text('Gallery')),
+            TextButton.icon(onPressed: _torch,
+              icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
+              label: const Text('Torch')),
+            TextButton.icon(onPressed: _changeZoom,
+              icon: const Icon(Icons.zoom_in),
+              label: Text('${_zoom.toStringAsFixed(1)}×')),
+          ],
         ),
         if (_error != null)
           Padding(
