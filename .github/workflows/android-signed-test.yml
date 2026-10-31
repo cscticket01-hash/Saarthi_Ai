@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    if: github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[android-signed-test]')
+    # Internal release-candidate PR only; TEST artifact is never published.
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/settings-download-device-connectivity-20261031') || (github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[android-signed-test]'))
     name: Build Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -61,6 +62,7 @@ jobs:
           echo "Existing Android project found."
           echo "Existing Android configuration preserve kiya jayega."
         fi
+        python3 .github/scripts/apply_vidya_saarthi_brand.py
     - name: Configure Firebase and Permanent Signing
       shell: bash
       env:
@@ -652,6 +654,11 @@ jobs:
         fi
 
         ls -lh build/app/outputs/flutter-apk/app-release.apk
+    - name: Verify signed TEST APK and permanent publisher identity
+      run: |
+        python3 .github/scripts/verify_android_release.py \
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+          build/app/outputs/flutter-apk/app-release.apk
     - name: Prepare Final APK
       shell: bash
       run: |
@@ -711,4 +718,12 @@ jobs:
   push:
     branches: [windows/easy-connect-draft]
     paths: [.github/workflows/android-signed-test.yml]
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-signed-test.yml'
+      - '.github/workflows/build-apk.yml'
+      - '.github/scripts/apply_vidya_saarthi_brand.py'
+      - 'assets/vidya_saarthi_app_icon.png'
+      - 'lib/main_android.dart'
   workflow_dispatch:
