@@ -28,6 +28,15 @@ void main() {
     expect(script,contains("NdisPhysicalMedium"));
     expect(script,contains("Win32_NetworkAdapter"));
     expect(script,contains("PhysicalAdapter"));
+    expect(script,contains("NetworkInterface]::GetAllNetworkInterfaces()"));
+    expect(script,contains("GetIPProperties().GatewayAddresses"));
+    expect(script,contains(r'if ($usable.Count -eq 1)'));
+    expect(script,contains("Wireless80211"));
+    expect(script,contains("VPN|WireGuard|OpenVPN"));
+    expect(WindowsNetworkConnection.classifyRoute('WiFi\r\n'), 'WiFi');
+    expect(WindowsNetworkConnection.classifyRoute('LAN\r\n'), 'LAN');
+    expect(WindowsNetworkConnection.classifyRoute('WiFi LAN'), isNull);
+    expect(WindowsNetworkConnection.classifyRoute('LAN\nWiFi'), isNull);
     expect(script,contains("WireGuard|OpenVPN"));
     expect(script,contains("'WiFi'; exit 0"));
     expect(script,contains("'LAN'; exit 0"));
