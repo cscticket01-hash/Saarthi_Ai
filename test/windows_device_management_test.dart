@@ -39,6 +39,65 @@ void main() {
     {'deviceIdentity':other,'name':'Accounts PC','status':revoked ? 'revoked':'active','current':false,'activity':revoked ? 'revoked':'unknown','lastSeenAt':1792359600000,'connectionType':'LAN','connectionSeenAt':1792359600000},
   ]};
   Future<void> close(WidgetTester tester) async => tester.pumpWidget(const SizedBox());
+  test('active current PC comes first among five without moving other PCs', () {
+    final rows=List<Map<String,dynamic>>.generate(5,(i)=>{'deviceIdentity':'$i',
+      'status':'active','current':i==3,'name':'PC-$i'});
+    final sorted=deviceDirectoryCurrentFirst(rows);
+    expect(sorted.map((r)=>r['deviceIdentity']).toList(),['3','0','1','2','4']);
+    expect(rows.map((r)=>r['deviceIdentity']).toList(),['0','1','2','3','4'],
+      reason:'Sorting must not mutate server or cache source');
+    expect(identical(sorted.first,rows[3]),isTrue);
+    expect(deviceDirectoryCurrentFirst(sorted).map((r)=>r['deviceIdentity']).toList(),
+      ['3','0','1','2','4']);
+    expect(deviceDirectoryCurrentFirst([]),isEmpty);
+  });
+  testWidgets('live and refreshed two-PC list always shows this PC in first row', (tester) async {
+    var refreshes=0;
+    Map<String,dynamic> reversedList() {
+      final d=response();
+      d['devices']=(d['devices'] as List).reversed.toList();
+      return d;
+    }
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+      request:(action,body) async {
+        expect(action,'managed/device/list');
+        refreshes++;
+        return refreshes==1?reversedList():response();
+      },
+    )));
+    await tester.pumpAndSettle();
+    final currentRow=find.byKey(ValueKey('device-$own'));
+    final otherRow=find.byKey(ValueKey('device-$other'));
+    expect(tester.getTopLeft(currentRow).dy,lessThan(tester.getTopLeft(otherRow).dy));
+    expect(find.text('This PC'),findsOneWidget);
+    await tester.tap(find.byTooltip('Refresh devices'));
+    await tester.pumpAndSettle();
+    expect(refreshes,2);
+    expect(tester.getTopLeft(currentRow).dy,lessThan(tester.getTopLeft(otherRow).dy));
+    expect(find.text('Revoke'),findsOneWidget,
+      reason:'Presentation ordering must not change revoke authorization');
+    await close(tester);
+  });
+  testWidgets('restored cache keeps own PC first before server becomes available', (tester) async {
+    const scope='five-pc-sort-test';
+    final original=response();
+    final cached=WindowsDeviceDirectoryCache.validate(
+      (original['devices'] as List).reversed.toList());
+    await WindowsDeviceDirectoryCache.write(scope,cached);
+    final pending=Completer<Map<String,dynamic>>();
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+      cacheScope:()async=>scope, request:(action,body)=>pending.future,
+    )));
+    await tester.pumpAndSettle();
+    final currentRow=find.byKey(ValueKey('device-$own'));
+    final otherRow=find.byKey(ValueKey('device-$other'));
+    expect(tester.getTopLeft(currentRow).dy,lessThan(tester.getTopLeft(otherRow).dy));
+    expect(find.textContaining('Saved device list'),findsOneWidget);
+    pending.complete(original);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(currentRow).dy,lessThan(tester.getTopLeft(otherRow).dy));
+    await close(tester);
+  });
   testWidgets('verified counts, current-PC protection and real revoke readback', (tester) async {
     var revoked = false, reads = 0, writes = 0;
     await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(request:(action,body) async {
