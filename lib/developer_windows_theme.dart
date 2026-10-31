@@ -196,18 +196,33 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                   borderRadius: BorderRadius.circular(10),
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 180),
-                    child: ColorFiltered(
+                    child: Container(
                       key: ValueKey('$previewAsset:${draft.toARGB32()}'),
-                      colorFilter: ColorFilter.mode(
-                        draft,
-                        draftPreset == null ? BlendMode.hue : BlendMode.dst,
-                      ),
-                      child: Image.asset(
-                        previewAsset,
-                        key: const ValueKey('theme-preview-image'),
-                        fit: BoxFit.contain,
-                        semanticLabel:
-                            '${pageNames[slide]} in ${windowsThemePreset(draftPreset)?.name ?? 'custom colour'}',
+                      foregroundDecoration: draftPreset == 'midnight-glass'
+                          ? BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Colors.white.withValues(alpha: .07),
+                                  const Color(0xFF0D1726).withValues(alpha: .13),
+                                  const Color(0xFF48E5B5).withValues(alpha: .05),
+                                ],
+                              ),
+                            )
+                          : null,
+                      child: ColorFiltered(
+                        colorFilter: ColorFilter.mode(
+                          draft,
+                          draftPreset == null ? BlendMode.hue : BlendMode.dst,
+                        ),
+                        child: Image.asset(
+                          previewAsset,
+                          key: const ValueKey('theme-preview-image'),
+                          fit: BoxFit.contain,
+                          semanticLabel:
+                              '${pageNames[slide]} in ${windowsThemePreset(draftPreset)?.name ?? 'custom colour'}',
+                        ),
                       ),
                     ),
                   ),
