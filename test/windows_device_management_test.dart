@@ -30,7 +30,7 @@ void main() {
     expect(script,contains("PhysicalAdapter"));
     expect(script,contains("NetworkInterface]::GetAllNetworkInterfaces()"));
     expect(script,contains("GetIPProperties().GatewayAddresses"));
-    expect(script,contains("if ($usable.Count -eq 1)"));
+    expect(script,contains(r'if ($usable.Count -eq 1)'));
     expect(script,contains("Wireless80211"));
     expect(script,contains("VPN|WireGuard|OpenVPN"));
     expect(WindowsNetworkConnection.classifyRoute('WiFi\r\n'), 'WiFi');
