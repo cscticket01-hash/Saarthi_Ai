@@ -374,7 +374,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     child: child,
   );
   Future<void> _issue([String? selected]) async {
-    final eligible = eligibleDeveloperLicenseSchools(_schools,_licenses,_now);
+    final eligible = eligibleDeveloperLicenseSchools(
+      _schools, _licenses, DateTime.now().millisecondsSinceEpoch);
     if (eligible.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content:Text('All schools hold active licences. They return for renewal in their final 30 days.')),
