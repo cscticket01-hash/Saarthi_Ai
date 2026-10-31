@@ -157,6 +157,9 @@ class SchoolTemplateImportEngine {
     pdf.addPage(pw.Page(
       pageFormat:PdfPageFormat(width,height),margin:pw.EdgeInsets.zero,
       build:(_)=>pw.Stack(children:[
+        // Give the stack the exact source page dimensions. Positioned-only
+        // stacks have no intrinsic size in the PDF widget layout engine.
+        pw.SizedBox(width:width,height:height),
         pw.Positioned(left:0,top:0,
           child:pw.Image(background,width:width,height:height,fit:pw.BoxFit.fill)),
         for(final f in draft.fields)
