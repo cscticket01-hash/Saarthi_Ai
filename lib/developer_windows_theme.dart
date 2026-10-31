@@ -56,9 +56,11 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
         '#${draft.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
   }
 
-  void change(Color c, {HSVColor? selection, String? presetId}) {
+  void change(Color c, {HSVColor? selection, String? presetId, bool clearPreset = false}) {
     setState(() {
-      draftPreset = presetId;
+      // RGB/HEX/HSV edits customize the SELECTED preset instead of
+      // silently switching to another preset or generic blue screenshot.
+      draftPreset = clearPreset ? null : (presetId ?? draftPreset);
       draft = c;
       hsv = selection ?? HSVColor.fromColor(c);
       inputError = null;
@@ -211,19 +213,25 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                               ),
                             )
                           : null,
-                      child: ColorFiltered(
-                        colorFilter: ColorFilter.mode(
-                          draft,
-                          draftPreset == null ? BlendMode.hue : BlendMode.dst,
-                        ),
-                        child: Image.asset(
-                          previewAsset,
-                          key: const ValueKey('theme-preview-image'),
-                          fit: BoxFit.contain,
-                          semanticLabel:
-                              '${pageNames[slide]} in ${windowsThemePreset(draftPreset)?.name ?? 'custom colour'}',
-                        ),
-                      ),
+                      child: draftPreset == 'midnight-glass'
+                        ? _MidnightGlassPreview(
+                            key: const ValueKey('theme-preview-glass'),
+                            page: pageNames[slide],
+                            tint: draft,
+                          )
+                        : ColorFiltered(
+                            colorFilter: ColorFilter.mode(
+                              draft,
+                              draftPreset == null ? BlendMode.hue : BlendMode.dst,
+                            ),
+                            child: Image.asset(
+                              previewAsset,
+                              key: const ValueKey('theme-preview-image'),
+                              fit: BoxFit.contain,
+                              semanticLabel:
+                                  '${pageNames[slide]} in ${windowsThemePreset(draftPreset)?.name ?? 'custom colour'}',
+                            ),
+                          ),
                     ),
                   ),
                 ),
@@ -589,7 +597,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                             avatar: CircleAvatar(backgroundColor: entry.value),
                             onPressed: busy || !loaded
                                 ? null
-                                : () => change(entry.value),
+                                : () => change(entry.value, clearPreset: true),
                           ),
                         ),
                     ],
@@ -679,6 +687,64 @@ class _ColourPad extends CustomPainter {
   bool shouldRepaint(covariant _ColourPad old) => old.hsv != hsv;
 }
 
+
+/// Real-time glass preview, rendered from the selected preset/tint instead of
+/// incorrectly showing an Electric Blue screenshot for every Glass selection.
+class _MidnightGlassPreview extends StatelessWidget {
+  const _MidnightGlassPreview({super.key, required this.page, required this.tint});
+  final String page;
+  final Color tint;
+  @override
+  Widget build(BuildContext context) {
+    final edge=tint.withValues(alpha:.48);
+    Widget pane(String text,{double opacity=.10}) => Container(
+      margin: const EdgeInsets.symmetric(vertical:4),
+      padding: const EdgeInsets.all(10),
+      decoration:BoxDecoration(
+        color:Colors.white.withValues(alpha:opacity),
+        border:Border.all(color:edge,width:.8),
+        borderRadius:BorderRadius.circular(14),
+      ),
+      child:Text(text,maxLines:2,overflow:TextOverflow.ellipsis,
+        style:const TextStyle(color:Colors.white,fontSize:12)),
+    );
+    return LayoutBuilder(builder:(context,box) => Container(
+      decoration:BoxDecoration(
+        gradient:LinearGradient(
+          begin:Alignment.topLeft,end:Alignment.bottomRight,
+          colors:[const Color(0xFF06090F),tint.withValues(alpha:.32),const Color(0xFF111C2D)])),
+      child:Stack(children:[
+        Positioned(right:-24,top:-35,child:Container(width:box.maxWidth*.58,height:box.maxHeight*.75,
+          decoration:BoxDecoration(shape:BoxShape.circle,color:tint.withValues(alpha:.13)))),
+        Padding(padding:const EdgeInsets.all(15),child:Column(
+          crossAxisAlignment:CrossAxisAlignment.stretch,
+          children:[
+            pane('✦   Vidya Saarthi  /  Midnight Glass',opacity:.14),
+            const SizedBox(height:7),
+            pane(page,opacity:.16),
+            Expanded(child:Row(children:[
+              Expanded(child:Column(children:[
+                Expanded(child:Container(
+                  decoration:BoxDecoration(
+                    borderRadius:BorderRadius.circular(16),
+                    color:Colors.white.withValues(alpha:.07),
+                    border:Border.all(color:edge)),
+                  child:Center(child:Icon(Icons.dashboard_customize_outlined,
+                    size:box.maxHeight>240?58:32,color:tint)))),
+                pane('School records  •  Secure cloud'),
+              ])),
+              const SizedBox(width:12),
+              Expanded(child:Column(children:[
+                pane('Live notices',opacity:.14),
+                pane('Students / Teachers',opacity:.12),
+                pane('Sync ready',opacity:.10),
+              ])),
+            ])),
+          ],
+        )),
+      ])));
+  }
+}
 
 /// Asset-free, live-painted frosted glass tile. No remote theme pictures,
 /// network access or additional design assets are required.
