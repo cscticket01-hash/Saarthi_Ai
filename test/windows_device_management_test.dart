@@ -123,7 +123,9 @@ void main() {
     expect(find.text('Revoke'),findsOneWidget);
     expect(find.text('Connectivity'),findsOneWidget);
     expect(find.text('Wi-Fi'),findsOneWidget);
-    expect(find.text('LAN'),findsOneWidget);
+    expect(find.text('LAN'),findsNothing,
+      reason:'An offline PC must not show its stale LAN adapter');
+    expect(find.text('Offline'),findsOneWidget);
     await tester.tap(find.text('Revoke')); await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
     expect(writes,1); expect(reads,2);
@@ -142,8 +144,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('This PC'),findsOneWidget);
     expect(find.text('LAN'),findsOneWidget);
-    expect(find.text('Unknown'),findsOneWidget,
-      reason:'Remote PC with no report must stay Unknown');
+    expect(find.text('Offline'),findsOneWidget,
+      reason:'A stale remote PC must show offline, not the former adapter');
     expect(find.byType(Tooltip),findsWidgets);
     await close(tester);
   });
@@ -241,7 +243,9 @@ void main() {
     expect(find.text('School Office PC'),findsOneWidget);
     expect(find.text('Recently active'),findsNothing);
     expect(find.textContaining('Saved device list'),findsOneWidget);
-    expect(find.text('Wi-Fi'),findsOneWidget);
+    expect(find.text('Wi-Fi'),findsNothing,
+      reason:'A cached Wi-Fi label is not live connectivity');
+    expect(find.text('Not verified'),findsNWidgets(2));
     expect(find.byType(LinearProgressIndicator),findsNothing);
     final revoke=tester.widget<TextButton>(find.widgetWithText(TextButton,'Revoke'));
     expect(revoke.onPressed,isNull);
