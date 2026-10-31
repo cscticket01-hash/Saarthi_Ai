@@ -102,7 +102,7 @@ class TemplateForgeAutoMapper {
       // marks, totals, table borders or a second printed label.
       final lastRight=trailing.isEmpty ? x+.3 :
         trailing.last.x+trailing.last.w+.006;
-      final w=math.min(trailing.isEmpty?.3:lastRight-x,.98-x);
+      final w=math.min(trailing.isEmpty ? 0.3 : lastRight-x, .98-x);
       if(x<0||x>=.92||y<0||y>=.96||w<.08){
         warnings.add('Field outside printable area: '+key);continue;
       }
