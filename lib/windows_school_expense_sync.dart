@@ -69,7 +69,8 @@ class WindowsSchoolExpenseSync {
     verify();
     // Schedule a real delta flush; do not create a second Google/Sheet write
     // from this screen. The standard sync owner handles ACKs and retries.
-    WindowsSyncEngine.instance.scheduleSoon(delay: const Duration(milliseconds: 100));
+    WindowsSyncEngine.instance.scheduleSoon(
+      delay: const Duration(milliseconds: 100), localMutation: true);
     return {'success':true,'expenseId':id,'cloudSyncPending':true};
   }
 }
