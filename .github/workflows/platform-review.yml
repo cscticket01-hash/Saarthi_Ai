@@ -1,10 +1,4 @@
 name: Platform review builds
-# Run release-candidate regression jobs on every main-targeted PR update.
-# This workflow builds and tests only; production publication is separate.
-on:
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
