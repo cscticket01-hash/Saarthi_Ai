@@ -20,6 +20,19 @@ void main() {
     expect(WindowsNetworkConnection.classifyRoute('My-WiFi-SSID'),isNull);
     expect(WindowsNetworkConnection.classifyRoute(''),isNull);
   });
+  test('Windows route probe classifies physical Wi-Fi/LAN without guessing virtual adapters', () {
+    final script=WindowsNetworkConnection.windowsRouteProbe;
+    expect(script,contains("Get-NetRoute -DestinationPrefix '0.0.0.0/0'"));
+    expect(script,contains("Get-NetRoute -DestinationPrefix '::/0'"));
+    expect(script,contains("Get-NetAdapter -InterfaceIndex"));
+    expect(script,contains("NdisPhysicalMedium"));
+    expect(script,contains("Win32_NetworkAdapter"));
+    expect(script,contains("PhysicalAdapter"));
+    expect(script,contains("WireGuard|OpenVPN"));
+    expect(script,contains("'WiFi'; exit 0"));
+    expect(script,contains("'LAN'; exit 0"));
+    expect(WindowsNetworkConnection.classifyRoute('WiFi\\nLAN'),isNull);
+  });
   final own = 'a' * 64, other = 'b' * 64;
   Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
     {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000,'connectionType':'WiFi','connectionSeenAt':1792363200000},
