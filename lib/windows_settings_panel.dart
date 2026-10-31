@@ -1,20 +1,17 @@
 import 'windows_appearance.dart';
 import 'package:flutter/material.dart' as material show Text;
 import 'windows_settings_design.dart';
-import 'windows_sync_conflict_review.dart';
 import 'windows_sync_control_center.dart';
 import 'windows_school_backup_action.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
 import 'school_cloud_state.dart';
 import 'dart:async';
-import 'dart:convert';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
 import 'school_password_panel.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
-import 'dart:io';
 
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 
