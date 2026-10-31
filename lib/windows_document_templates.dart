@@ -982,8 +982,8 @@ class _SchoolDocumentTemplatesScreenState
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:const Icon(Icons.upload_file_outlined),
-                  label:const Text('Upload PDF / PNG / JPG template'),
-                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAndEdit(
+                  label:const Text('Auto-create A4 template from PDF / Image'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAutomatic(
                     context,
                     switch (_kind) {
                       'receipt'=>SchoolTemplateKind.receipt,
@@ -996,8 +996,8 @@ class _SchoolDocumentTemplatesScreenState
                 TextButton.icon(
                   key:ValueKey('open-local-template-drafts-'+_kind),
                   icon:const Icon(Icons.folder_open_outlined),
-                  label:const Text('Open saved drafts'),
-                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.openSaved(
+                  label:const Text('Preview generated drafts'),
+                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.previewSavedAutomatic(
                     context,
                     switch (_kind) {
                       'receipt'=>SchoolTemplateKind.receipt,
@@ -1012,7 +1012,7 @@ class _SchoolDocumentTemplatesScreenState
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
               child:Text('One shared import engine: preserve the original design, '
-                'map dynamic fields and preview PDF. Imports save as LOCAL '
+                'auto-detect fields and preview A4 PDF. Imports save as LOCAL '
                 'DRAFTS only; existing school-wide templates are not replaced.',
                 style:TextStyle(fontSize:12)),
             ),
