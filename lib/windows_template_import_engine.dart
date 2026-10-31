@@ -19,8 +19,8 @@ extension SchoolTemplateKindInfo on SchoolTemplateKind {
     SchoolTemplateKind.reportCard => 'Report card',
     SchoolTemplateKind.payslip => 'Staff payslip',
   };
-  List<String> get fields => [
-    ...switch(this) {
+  List<String> get fields {
+    final base=switch(this) {
     SchoolTemplateKind.receipt => const ['schoolName','receiptNo','studentName','class',
       'rollNo','dateText','paymentMode','totalAmount','principalName'],
     SchoolTemplateKind.reportCard => const ['schoolName','studentName','class',
@@ -28,12 +28,15 @@ extension SchoolTemplateKindInfo on SchoolTemplateKind {
     SchoolTemplateKind.payslip => const ['schoolName','name','employeeId','role','month',
       'basicPaise','allowancePaise','deductionPaise','netPaise',
       'paidPaise','status','dateText'],
-    },
+    };
+    return [
+    ...base,
     if(this==SchoolTemplateKind.receipt)
       for(var i=0;i<8;i++) ...['feeName$i','feeAmount$i'],
     if(this==SchoolTemplateKind.reportCard)
       for(var i=0;i<8;i++) ...['subjectName$i','subjectMarks$i'],
-  ];
+    ];
+  }
 }
 
 class SchoolTemplateField {
@@ -174,7 +177,16 @@ class SchoolTemplateImportEngine {
       return 'Rs '+(value/100).toStringAsFixed(2);
     }
     final text=value.toString().trim();
-    return text.length>150?text.substring(0,150):text;
+    return text.length>150?'':text;
+  }
+
+  static double fittedTextSize(SchoolTemplateField field,String text) {
+    if(text.isEmpty)throw FormatException('Missing field: '+field.key);
+    final estimated=field.width/(text.runes.length*.62);
+    if(estimated<.009){
+      throw FormatException('Text does not fit: '+field.key);
+    }
+    return estimated<field.size?estimated:field.size;
   }
 
   /// Imported documents do not invent school data. Do not print an overlay
@@ -192,11 +204,9 @@ class SchoolTemplateImportEngine {
       if(value.isEmpty){
         throw FormatException('Missing record value for '+field.key);
       }
-      final approxWidth=value.runes.length * field.size * .58;
-      if(approxWidth>field.width){
-        throw FormatException('Text may be cut off: '+field.key+
-          '. Use a clearer source document with wider value boxes.');
-      }
+      // At print time shrink a long value if it still remains legible.
+      // Never clip or silently omit student names/fee values.
+      fittedTextSize(field,value);
     }
     // A printed source page has a fixed number of recognized row slots.
     // If the school record differs, abort rather than dropping fees/marks.
@@ -278,7 +288,8 @@ class SchoolTemplateImportEngine {
               color:f.mask?PdfColors.white:null,
               child:pw.Text(valueFor(f.key,record),
                 maxLines:1,overflow:pw.TextOverflow.clip,
-                style:pw.TextStyle(font:normal,fontSize:f.size*width,
+                style:pw.TextStyle(font:normal,
+                  fontSize:fittedTextSize(f,valueFor(f.key,record))*width,
                   color:PdfColors.black)))),
       ]),
     ));
