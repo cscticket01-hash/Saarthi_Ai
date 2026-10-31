@@ -1,3 +1,59 @@
+/// Separate durable upload rows from inbound record/file work and change hints.
+///
+/// A change signal means "check the cloud", not "one record is uploading".
+/// It cannot be cleared without the existing verified reconciliation path.
+/// Only metadata from the currently selected school contributes to a count.
+Map<String, int> windowsIncomingPendingBreakdown({
+  required String schoolId,
+  required Iterable<Map<String, dynamic>> downloads,
+  required bool remoteChangeQueued,
+  Map<String, dynamic>? binaryStatus,
+}) {
+  int boundedCount(Object? value) => value is num && value.isFinite
+      ? value.toInt().clamp(0, 1000000000).toInt()
+      : 0;
+  final validSchool = schoolId.isNotEmpty;
+  var records = 0;
+  if (validSchool) {
+    for (final row in downloads) {
+      if (row['schoolId'] == schoolId && row['state'] != 'verified') {
+        records += boundedCount(row['remaining']);
+      }
+    }
+  }
+  final remoteChecks = validSchool && remoteChangeQueued ? 1 : 0;
+  final files = validSchool &&
+          binaryStatus?['schoolId'] == schoolId &&
+          binaryStatus?['inventory'] != 'UNKNOWN'
+      ? boundedCount(binaryStatus?['pending']) +
+          boundedCount(binaryStatus?['failed']) +
+          boundedCount(binaryStatus?['interrupted'])
+      : 0;
+  return {
+    'recordDownloads': records,
+    'remoteChecks': remoteChecks,
+    'mediaFiles': files,
+    'total': records + remoteChecks + files,
+  };
+}
+
+/// Short, truthful wording for the circular display. A remote change hint is
+/// not a queued upload. The detailed status panel shows every component.
+String windowsSyncFlowPendingText(
+  int uploads,
+  Map<String, dynamic> inbound,
+) {
+  final records = (inbound['recordDownloads'] as num? ?? 0).toInt();
+  final signals = (inbound['remoteChecks'] as num? ?? 0).toInt();
+  final files = (inbound['mediaFiles'] as num? ?? 0).toInt();
+  if (uploads > 0) return '$uploads uploads';
+  if (records > 0 && signals == 0 && files == 0) return '$records downloads';
+  if (signals > 0 && records == 0 && files == 0) return 'Cloud check queued';
+  if (files > 0 && records == 0 && signals == 0) return '$files files to verify';
+  if (records + signals + files > 0) return 'Incoming work';
+  return '0 pending';
+}
+
 /// A manual request must revisit already-blocked own-school conflicts even
 /// when the cloud collection head has not changed since the last download.
 Set<String> manualConflictReadCollections(Iterable<Map<String,dynamic>> rows, {
