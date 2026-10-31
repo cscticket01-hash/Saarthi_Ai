@@ -159,11 +159,13 @@ class SchoolTemplateImportEngine {
     if(draft.fields.length>35) throw const FormatException('Too many fields.');
     for(final f in draft.fields) f.validate(draft.kind);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
-    final width=draft.width*.5,height=draft.height*.5;
+    // Generated documents print at real ISO A4; the imported page is
+    // admitted by the automatic pipeline only if its aspect ratio is A4.
+    final width=PdfPageFormat.a4.width,height=PdfPageFormat.a4.height;
     final background=pw.MemoryImage(draft.png);
     final pdf=pw.Document();
     pdf.addPage(pw.Page(
-      pageFormat:PdfPageFormat(width,height),margin:pw.EdgeInsets.zero,
+      pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,
       build:(_)=>pw.Stack(children:[
         // Give the stack the exact source page dimensions. Positioned-only
         // stacks have no intrinsic size in the PDF widget layout engine.
