@@ -10,6 +10,8 @@ import 'platform/monitor_summary.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -481,7 +483,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     amount.dispose();
     if (result == null || !mounted) return;
     if(result['key'] is String && (result['key'] as String).isNotEmpty)
-      _issuedSessionKeys[school]=result['key'] as String;
+      _issuedSessionKeys[sha256.convert(utf8.encode((result['key'] as String).trim().toUpperCase())).toString()]=result['key'] as String;
     await _load(silent:true);
     if(!mounted)return;
     await showDialog(
@@ -900,13 +902,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           Text('•••• ${l['keyHint'] ?? l['keySuffix'] ?? '—'}'),
                           IconButton(
                             key:ValueKey('copy-license-${l['id']}'),
-                            tooltip:_issuedSessionKeys[l['schoolId']] == null
+                            tooltip:_issuedSessionKeys[l['id']] == null
                                ? 'Full key shown only once during issuance. Use renewal for a new key.'
                                : 'Copy newly generated full licence key',
                             icon:const Icon(Icons.copy_outlined,size:17),
-                            onPressed:_issuedSessionKeys[l['schoolId']] == null
+                            onPressed:_issuedSessionKeys[l['id']] == null
                                ? null : () async {
-                                final key=_issuedSessionKeys[l['schoolId']]!;
+                                final key=_issuedSessionKeys[l['id']]!;
                                 await Clipboard.setData(ClipboardData(text:key));
                                },
                           ),
