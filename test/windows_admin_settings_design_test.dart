@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -75,10 +74,8 @@ void main() {
         final bytes=(await image.toByteData(format:ui.ImageByteFormat.png))!.buffer.asUint8List();
         final file=File('build/admin-settings-preview/admin-settings-${spec.$1}.png');
         await file.parent.create(recursive:true);await file.writeAsBytes(bytes);
-        final encoded=base64Encode(bytes);
-        for(var start=0;start<encoded.length;start+=16000) {
-          print('ADMIN_SETTINGS_PNG_${spec.$1}:$start:${encoded.substring(start,(start+16000).clamp(0,encoded.length))}');
-        }
+        // GitHub attaches the screenshot file as an artifact. Avoid printing
+        // binary-as-base64: it can grow CI logs beyond platform limits.
         image.dispose();
       });
       if(spec.$1=='desktop') {
