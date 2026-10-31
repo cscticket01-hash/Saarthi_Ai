@@ -1143,8 +1143,12 @@ class SchoolSession {
         throw StateError('School messaging project mismatch');
       }
       await _persist();
-    } catch (_) {
-      if (generation == _generation) await clear();
+    } catch (error) {
+      if (generation == _generation) {
+        // A concurrent owner may have committed a newer session. Never
+        // tombstone that verified cache just because our login CAS lost.
+        await clear(preserveSharedSession: error is StaleSessionCache);
+      }
       rethrow;
     }
   }
@@ -1323,7 +1327,13 @@ class SchoolSession {
 
   Future<void> _adoptSharedSnapshot() async {
     if (_sharedSessionStore != null) {
-      final current = await _sharedSessionStore!.read();
+      final observed = await _sharedSessionStore!.readSnapshot();
+      final current = observed.value;
+      if (current == _sharedSnapshot) {
+        // Background may save identical content with a newer CAS version.
+        // Adopt that version only after a fresh verified encrypted read.
+        _sharedSnapshotVersion = observed.version;
+      }
       if (current != _sharedSnapshot) {
         final same = current != null && jsonDecode(current)['qr'] == link?.rawQr;
         if (!same) {
@@ -1756,7 +1766,10 @@ class SchoolSession {
       (_) async {
         if (preserveSharedSession) return;
         if (_sharedSessionStore != null) {
-          await _sharedSessionStore!.clear(previousQr);
+          // Logout/new login advances the durable tombstone's CAS version.
+          // The next login must write using this version, not the preceding
+          // startup snapshot (which caused a false stale-worker rejection).
+          _sharedSnapshotVersion = await _sharedSessionStore!.clear(previousQr);
           _sharedSnapshot = null;
         } else { await _secure.delete(key: 'vs_mobile_session'); }
       },
