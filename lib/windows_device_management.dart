@@ -13,6 +13,19 @@ String deviceTimeLabel(Object? value) => value is num && value > 0
     ? DateTime.fromMillisecondsSinceEpoch(value.toInt()).toLocal().toString()
     : 'Unknown';
 
+/// Presentation order only: this installation's active device always appears
+/// first. Preserve the remaining server/cache order and the original row maps;
+/// never change authorization, device identity, heartbeats or persisted data.
+List<Map<String,dynamic>> deviceDirectoryCurrentFirst(List<Map<String,dynamic>> rows) {
+  final ownIndex=rows.indexWhere((row)=>row['current']==true && row['status']=='active');
+  if(ownIndex<=0) return List<Map<String,dynamic>>.of(rows);
+  return [
+    rows[ownIndex],
+    ...rows.take(ownIndex),
+    ...rows.skip(ownIndex+1),
+  ];
+}
+
 class WindowsDeviceManagement extends StatefulWidget {
   const WindowsDeviceManagement({super.key, this.request, this.cacheScope, this.localConnectionDetector});
   final Future<Map<String,dynamic>> Function(String action, Map<String,dynamic> body)? request;
@@ -82,7 +95,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       final cached=scope==null ? <Map<String,dynamic>>[] : await WindowsDeviceDirectoryCache.read(scope);
       if(!mounted || session!=ManagedSchoolSession.changed.value) return;
       if(cached.isNotEmpty) setState(() {
-        devices=cached; hasSnapshot=true;
+        devices=deviceDirectoryCurrentFirst(cached); hasSnapshot=true;
         current=cached.singleWhere((r)=>r['current']==true && r['status']=='active')['deviceIdentity'] as String;
       });
     } catch (_) { /* Display cache failure must never prevent a server read. */ }
@@ -130,10 +143,10 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       final rows=WindowsDeviceDirectoryCache.validate(response['devices']);
       final marked=rows.singleWhere((r)=>r['current']==true && r['status']=='active');
       final incoming={for(final row in rows) row['deviceIdentity'] as String:row};
-      final ordered=<Map<String,dynamic>>[
+      final ordered=deviceDirectoryCurrentFirst(<Map<String,dynamic>>[
         for(final row in devices) if(incoming.containsKey(row['deviceIdentity'])) incoming.remove(row['deviceIdentity'])!,
         ...incoming.values,
-      ];
+      ]);
       if (!mounted || session != ManagedSchoolSession.changed.value || generation!=readGeneration) return;
       setState(() {
         serverTime = response['serverTime'] is int ? response['serverTime'] as int : null;

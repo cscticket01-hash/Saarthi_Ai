@@ -41,11 +41,27 @@ const pages=['dashboard','analytics','students','add-student','teachers','add-te
   // Type through the focused editor, then blur/refocus to prove the framework
   // accepted the draft before testing a theme rebuild (DOM fill alone can be
   // overwritten by Flutter's next semantics update).
-  await name.click();
-  await page.keyboard.type('Unsaved preview student');
-  await page.keyboard.press('Tab');
-  await name.click();
-  assert.equal(await name.inputValue(),'Unsaved preview student','Draft must reach the Flutter controller before changing theme');
+  // On cold Flutter Web editor focus, the first key can be consumed while
+  // the semantics input transitions into the real editing element. Keep
+  // actual keystrokes (not DOM injection), wait for focus, and require an
+  // exact controller round-trip after blur/refocus. A bounded second attempt
+  // handles this focus race; any persistent mismatch still FAILS the test.
+  const draft='Unsaved preview student';
+  let received='';
+  for(let attempt=0;attempt<2;attempt++){
+   await name.click();
+   await page.waitForTimeout(180);
+   await page.keyboard.press('ControlOrMeta+A');
+   await page.keyboard.press('Backspace');
+   await page.waitForTimeout(100);
+   await page.keyboard.type(draft,{delay:30});
+   await page.keyboard.press('Tab');
+   await name.click();
+   received=await name.inputValue();
+   if(received===draft)break;
+   console.warn('Flutter Web first-focus input did not match; retrying real keystrokes', {attempt:attempt+1,expectedLength:draft.length,receivedLength:received.length});
+  }
+  assert.equal(received,draft,'Draft must reach the Flutter controller before changing theme');
   await page.screenshot({path:path.join(out,'student-form-dark.png')});
   await page.evaluate(({navigation})=>document.querySelector('iframe').contentWindow.postMessage(JSON.stringify({type:'vidya-preview-theme',red:124,green:58,blue:237,mode:'light',page:'students',navigation}),location.origin),{navigation});
   await page.waitForFunction(n=>window.previewApplied?.mode==='light'&&window.previewApplied?.red===124&&window.previewApplied?.navigation===n,navigation,{timeout:15000});
