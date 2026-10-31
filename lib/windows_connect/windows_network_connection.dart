@@ -55,6 +55,30 @@ foreach ($route in @($routes | Sort-Object -Property RouteMetric)) {
     if ($null -ne $nic -and $nic.PhysicalAdapter -eq $true -and
         $nic.AdapterTypeID -eq 0) { 'LAN'; exit 0 }
 }
+# Older/misconfigured Windows PCs can expose working network interfaces via
+# .NET even when NetTCPIP/NetAdapter cmdlets return no identifiable route.
+# Admit only ONE active, gateway-bearing Wi-Fi/Ethernet interface; otherwise
+# stay Unknown instead of guessing a remote PC's or a VPN's network type.
+$usable = @()
+try {
+    foreach ($iface in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($iface.OperationalStatus -ne 'Up') { continue }
+        $kind = [string]$iface.NetworkInterfaceType
+        if ($kind -ne 'Ethernet' -and $kind -ne 'Wireless80211') { continue }
+        $label = [string]$iface.Name + ' ' + [string]$iface.Description
+        if ($label -match '(?i)VPN|WireGuard|OpenVPN|TAP[- ]|TUN[- ]|Hyper-V|VMware|VirtualBox|Loopback|Tailscale|ZeroTier|vEthernet|Bluetooth|Pseudo') { continue }
+        $gateways = @($iface.GetIPProperties().GatewayAddresses |
+            Where-Object { $_.Address -ne $null -and
+              $_.Address.ToString() -ne '0.0.0.0' -and
+              $_.Address.ToString() -ne '::' })
+        if ($gateways.Count -eq 0) { continue }
+        $usable += $kind
+    }
+} catch { $usable = @() }
+if ($usable.Count -eq 1) {
+    if ($usable[0] -eq 'Wireless80211') { 'WiFi'; exit 0 }
+    if ($usable[0] -eq 'Ethernet') { 'LAN'; exit 0 }
+}
 """;
 
   static Future<String?> _read() async {
