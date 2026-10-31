@@ -128,7 +128,10 @@ class SchoolTemplateImportEngine {
       if(decoded==null || decoded.width*decoded.height>maxPixels) {
         throw const FormatException('Image invalid or larger than 12 megapixels.');
       }
-      imageBytes=Uint8List.fromList(img.encodePng(decoded));
+      // Honour phone-camera EXIF orientation before A4 validation.
+      // The original file hash remains unchanged for audit/reimport.
+      final oriented=img.bakeOrientation(decoded);
+      imageBytes=Uint8List.fromList(img.encodePng(oriented));
     }
     if(imageBytes.length>maxPngBytes) {
       throw const FormatException('Rendered page exceeds 24 MB.');
@@ -157,11 +160,74 @@ class SchoolTemplateImportEngine {
     return text.length>150?text.substring(0,150):text;
   }
 
+  /// Imported documents do not invent school data. Do not print an overlay
+  /// if its matching record value is missing or cannot fit its OCR box.
+  static void validatePreviewRecord(
+    SchoolTemplateDraft draft,Map<String,dynamic> record,
+  ) {
+    final keys=<String>{};
+    for(final field in draft.fields){
+      field.validate(draft.kind);
+      if(!keys.add(field.key)){
+        throw FormatException('Ambiguous duplicate field: '+field.key);
+      }
+      final value=valueFor(field.key,record);
+      if(value.isEmpty){
+        throw FormatException('Missing record value for '+field.key);
+      }
+      final approxWidth=value.runes.length * field.size * .58;
+      if(approxWidth>field.width){
+        throw FormatException('Text may be cut off: '+field.key+
+          '. Use a clearer source document with wider value boxes.');
+      }
+    }
+    if(draft.kind==SchoolTemplateKind.receipt &&
+       record['feeItems'] is Map && record['totalAmount'] is num){
+      final fees=record['feeItems'] as Map;
+      num sum=0;
+      for(final amount in fees.values){
+        if(amount is! num || !amount.isFinite || amount<0){
+          throw const FormatException('Invalid receipt fee amount.');
+        }
+        sum+=amount;
+      }
+      if(fees.isNotEmpty && (sum-(record['totalAmount'] as num)).abs()>.011){
+        throw const FormatException('Receipt total does not match fee items.');
+      }
+    }
+    if(draft.kind==SchoolTemplateKind.payslip){
+      for(final key in const ['basicPaise','allowancePaise','deductionPaise',
+        'bonusPaise','overtimePaise','netPaise','paidPaise']){
+        final raw=record[key];
+        if(raw!=null && (raw is! int || raw<0)){
+          throw FormatException('Invalid salary value: '+key);
+        }
+      }
+      if(record['netPaise'] is int){
+        final net=record['netPaise'] as int;
+        final hasComponents=record['basicPaise'] is int &&
+          record['allowancePaise'] is int &&
+          record['deductionPaise'] is int;
+        if(hasComponents){
+          final expected=(record['basicPaise'] as int)+
+            (record['allowancePaise'] as int)+
+            (record['bonusPaise'] as int? ??0)+
+            (record['overtimePaise'] as int? ??0)-
+            (record['deductionPaise'] as int);
+          if(expected!=net)throw const FormatException('Salary components do not match net pay.');
+        }
+        if((record['paidPaise'] as int? ??0)>net){
+          throw const FormatException('Paid salary exceeds net salary.');
+        }
+      }
+    }
+  }
+
   static Future<Uint8List> previewPdf(
     SchoolTemplateDraft draft,Map<String,dynamic> record) async {
     verifySchool(draft.schoolId);
     if(draft.fields.length>35) throw const FormatException('Too many fields.');
-    for(final f in draft.fields) f.validate(draft.kind);
+    validatePreviewRecord(draft,record);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
     // Generated documents print at real ISO A4; the imported page is
     // admitted by the automatic pipeline only if its aspect ratio is A4.
