@@ -1,3 +1,4 @@
+# Frontend-only rollout for PR #194. [hosting-only] intentionally skips Firestore rules publication.
 name: Deploy Vidya Saarthi to Firebase Hosting
 
 on:
