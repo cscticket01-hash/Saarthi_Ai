@@ -65,6 +65,32 @@ void main(){
     expect(projectWindowsSyncState([],nowMillis:0,incomingPending:1),'pending');
     expect(projectWindowsSyncState([],nowMillis:0,incomingPending:0),'idle');
   });
+  test('incoming cloud check is not an upload, and school-scoped counts retain work',(){
+    final breakdown=windowsIncomingPendingBreakdown(
+      schoolId:school,
+      downloads:[
+        {'schoolId':school,'state':'downloading','remaining':2},
+        {'schoolId':school,'state':'verified','remaining':4},
+        {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+         'state':'needsReview','remaining':100},
+      ],
+      remoteChangeQueued:true,
+      binaryStatus:{'schoolId':school,'inventory':'MEASURED',
+                    'pending':1,'failed':1,'interrupted':0},
+    );
+    expect(breakdown,{'recordDownloads':2,'remoteChecks':1,'mediaFiles':2,'total':5});
+    expect(windowsSyncFlowPendingText(0,breakdown),'Incoming work');
+    expect(windowsSyncFlowPendingText(2,breakdown),'2 uploads');
+    final onlyCheck=windowsIncomingPendingBreakdown(
+      schoolId:school,downloads:[],remoteChangeQueued:true,
+      binaryStatus:{'schoolId':'foreign','inventory':'MEASURED','pending':9});
+    expect(onlyCheck['total'],1);
+    expect(windowsSyncFlowPendingText(0,onlyCheck),'Cloud check queued');
+    expect(projectWindowsSyncState([],nowMillis:0,incomingPending:onlyCheck['total']!),'pending');
+    expect(windowsIncomingPendingBreakdown(schoolId:school,
+      downloads:[],remoteChangeQueued:false)['total'],0);
+    expect(windowsSyncFlowPendingText(0,{}),'0 pending');
+  });
   test('activity is school scoped and subscriptions are not transfer animations',(){
     expect(WindowsSyncEvidence.dataAction('managed/events'),false);
     WindowsSyncEvidence.enter(school,'cloud');WindowsSyncEvidence.enter(school,'cloud');
