@@ -8,7 +8,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[hosting-only]') && ((github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[android-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]')))) }}
+    # [android-release] permits an explicit signed APK release while [windows-only] keeps Firebase Hosting off.
+    if: ${{ !contains(github.event.head_commit.message, '[hosting-only]') && ((github.ref == 'refs/heads/windows/easy-connect-draft' && contains(github.event.head_commit.message, '[android-release]')) || (github.ref != 'refs/heads/windows/easy-connect-draft' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[windows-only]') || contains(github.event.head_commit.message, '[android-release]')))) }}
     name: Build Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
