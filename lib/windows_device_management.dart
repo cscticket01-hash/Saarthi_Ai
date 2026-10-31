@@ -64,6 +64,10 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   // Local display hint only. Authorization still comes exclusively from the
   // verified server list; never persist this hint as a registered device.
   Future<void> refreshLocalConnection(int session) async {
+    // Widget tests inject a fake device-server request. Avoid starting native
+    // PowerShell subprocesses inside their fake-async binding unless a local
+    // detector is explicitly injected. Production always probes on Windows.
+    if (widget.request != null && widget.localConnectionDetector == null) return;
     final detected = await (widget.localConnectionDetector?.call() ?? WindowsNetworkConnection.detect());
     if (!mounted || session != ManagedSchoolSession.changed.value) return;
     if (localConnectionType != detected) setState(() => localConnectionType = detected);
