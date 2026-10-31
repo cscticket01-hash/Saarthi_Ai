@@ -1,5 +1,5 @@
 # User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
-# PR #195: release tested Android CAS/session login fix; Cloudflare/Firebase infrastructure stays on hold.
+# PR #196: publish tested Android UX, QR gallery, DOB and update progress; Cloudflare/Firebase upgrades remain on hold.
 # Physical-device sync latency and isolated Google Sheets migration remain unverified.
 name: Build Vidya Saarthi Android APK
 permissions:
