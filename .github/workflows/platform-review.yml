@@ -329,7 +329,7 @@ jobs:
         python .github/scripts/check_id_qr_scannability.py
         flutter test test/id_export_decode_test.dart
     - name: Analyze Windows ID card changes
-      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_template_import_engine.dart lib/windows_template_import_editor.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/windows_reference_documents.dart
+      run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_student_id_cards.dart lib/windows_document_templates.dart lib/windows_template_import_engine.dart lib/windows_template_import_editor.dart lib/windows_template_forge_auto.dart lib/windows_template_forge_ocr.dart lib/windows_license_gate.dart lib/main_dashboard_screen_windows.dart lib/windows_school_map.dart lib/windows_school_map_dialog.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/windows_reference_documents.dart
     - uses: actions/upload-artifact@v4
       with:
         name: windows-id-card-previews
