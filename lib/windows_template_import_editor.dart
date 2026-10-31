@@ -150,7 +150,7 @@ class _TemplateEditorState extends State<_TemplateEditor> {
                   maxLines:1,overflow:TextOverflow.ellipsis,
                   style:TextStyle(
                     color:draft.fields[i].mask?Colors.black:Colors.white,
-                    fontSize:math.max(10,w*draft.fields[i].size),
+                    fontSize:math.max(10.0,w*draft.fields[i].size),
                     fontWeight:FontWeight.w600)),
               ),
             ),
