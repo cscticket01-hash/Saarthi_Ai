@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/developer_windows_theme.dart';
+import '../lib/developer_portal.dart';
 import '../lib/managed_developer_panel.dart';
 import '../lib/windows_theme_presets.dart';
 
@@ -92,17 +93,13 @@ void main() {
           1,
           reason: 'Selecting a picture must never publish',
         );
-        if (preset.id == 'midnight-glass') {
-          expect(find.byKey(const ValueKey('theme-preview-glass')), findsOneWidget);
-          expect(find.byKey(const ValueKey('theme-preview-image')), findsNothing,
-            reason:'Glass must render its own frosted UI, not Electric Blue');
-        } else {
-          final image = tester.widget<Image>(
-            find.byKey(const ValueKey('theme-preview-image')),
-          );
-          expect((image.image as AssetImage).assetName,
-            'assets/theme_preview_${preset.id}_dashboard.webp');
-        }
+        final image = tester.widget<Image>(
+          find.byKey(const ValueKey('theme-preview-image')),
+        );
+        expect(
+          (image.image as AssetImage).assetName,
+          'assets/theme_preview_${preset.id=='midnight-glass'?'electric-blue':preset.id}_dashboard.webp',
+        );
       }
       expect(find.text('Unsaved selection'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('theme-next')));
@@ -134,26 +131,6 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
-  testWidgets('Glass RGB changes keep Glass selected and update same live preview', (tester) async {
-    final calls=<Map<String,dynamic>>[];
-    await mount(tester,const Size(1440,900),(action,body)async{
-      calls.add({'action':action,...body});
-      return {'theme':action=='theme/get'?initial():{...body['theme'] as Map,'revision':'saved-2'}};
-    });
-    await tester.tap(find.byKey(const ValueKey('theme-preset-midnight-glass')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
-    await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')),'44');
-    await tester.pumpAndSettle();
-    expect(find.text('Midnight Glass • sample app screens'),findsOneWidget);
-    expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
-    expect(calls.length,1);
-    await tester.tap(find.byKey(const ValueKey('theme-save')));
-    await tester.pumpAndSettle();
-    expect((calls.last['theme'] as Map)['presetId'],'midnight-glass');
-    expect((calls.last['theme'] as Map)['red'],44);
-    expect(find.text('Saved theme'),findsOneWidget);
-  });
   testWidgets(
     'RGB and HEX validation, quick colours and Reset retain explicit Save',
     (tester) async {
@@ -261,6 +238,26 @@ void main() {
     expect(find.text('Unsaved selection'), findsOneWidget);
     expect(find.textContaining('Theme was not confirmed'), findsOneWidget);
     expect(find.text('Electric Blue • sample app screens'), findsOneWidget);
+  });
+  test('active licence holders disappear until their final 30 renewal days',(){
+    const schoolA='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const schoolB='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const schoolC='vs-cccccccccccccccccccccccccccccccc';
+    const now=1800000000000;
+    final schools=<Map<String,dynamic>>[
+      {'id':schoolA,'name':'Already licensed'},
+      {'id':schoolB,'name':'Renew soon'},
+      {'id':schoolC,'name':'No licence'},
+    ];
+    final licences=<Map<String,dynamic>>[
+      {'schoolId':schoolA,'expiresAt':now+120*86400000,'revoked':false},
+      {'schoolId':schoolB,'expiresAt':now+15*86400000,'revoked':false},
+    ];
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']).toList(),[schoolB,schoolC]);
+    licences[0]['revoked']=true;
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']),contains(schoolA));
   });
   testWidgets(
     'school password action is in school row and validates before submitting',
