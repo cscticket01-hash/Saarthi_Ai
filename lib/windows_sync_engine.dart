@@ -737,11 +737,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           '_queueCollection': '_windows_recycle_requests',
         },
     ];
-    final incomingPending=downloads.docs.fold<int>(0,(n,d)=>n+((d.data()['remaining'] as num? ?? 0).toInt()).clamp(0,1000000000).toInt()) +
-          (_remoteCollections.isNotEmpty||_remoteRecordIds.isNotEmpty||_remoteResetPending ? 1:0) +
-          (binary?['inventory']!='UNKNOWN' ? ((binary?['pending'] as int? ?? 0)+(binary?['failed'] as int? ?? 0)+(binary?['interrupted'] as int? ?? 0)):0);
+    // Keep upload counts and incoming work distinct. A remote head/FCM hint
+    // means one cloud check is queued, NOT one unsent school record. Do not
+    // silently discard hints or incomplete downloads to make the UI idle.
+    final incomingBreakdown = windowsIncomingPendingBreakdown(
+      schoolId: db.activeProfileIdentity['schoolSyncId']?.toString() ?? '',
+      downloads: [for (final row in downloads.docs) row.data()],
+      remoteChangeQueued: _remoteCollections.isNotEmpty ||
+          _remoteRecordIds.isNotEmpty || _remoteResetPending,
+      binaryStatus: binary,
+    );
+    final incomingPending = incomingBreakdown['total']!;
     details.value = {
       'incomingPending':incomingPending,
+      'incomingBreakdown': incomingBreakdown,
       'lanes': windowsSyncLanes(liveQueue, nowMillis),
       'lastVerifiedTransferMicros':verifiedTransferTiming.lastMicros,
       'lastVerifiedTransferAt':verifiedTransferTiming.completedAt,
