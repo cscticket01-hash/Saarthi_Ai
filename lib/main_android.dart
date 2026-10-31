@@ -215,29 +215,56 @@ class _QrScannerState extends State<_QrScanner> {
           ),
         ),
         Expanded(
-          child: MobileScanner(
-            controller: _scanner,
-            onDetect: (capture) => _accept(capture.barcodes),
-            errorBuilder: (context, error) => Center(
-              child: Text(
-                'Camera unavailable. Allow camera access in your phone settings.\n${error.errorCode.name}',
-                textAlign: TextAlign.center,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Stack(fit: StackFit.expand, children: [
+              MobileScanner(
+                controller: _scanner,
+                onDetect: (capture) => _accept(capture.barcodes),
+                errorBuilder: (context, error) => Center(
+                  child: Text('Camera unavailable. Allow camera permission.\n${error.errorCode.name}',
+                    textAlign: TextAlign.center),
+                ),
               ),
-            ),
+              IgnorePointer(child: Center(child: FractionallySizedBox(
+                widthFactor: .75,
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFF00D9A5),width: 3),
+                    ),
+                    child: const Center(
+                      child: Icon(Icons.qr_code_scanner_rounded,
+                        size: 44, color: Colors.white54)),
+                  ),
+                ),
+              ))),
+              Positioned(
+                left: 12, right: 12, bottom: 14,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xDD0B141A),
+                    borderRadius: BorderRadius.circular(22)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                      TextButton.icon(onPressed: _gallery,
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('Gallery')),
+                      TextButton.icon(onPressed: _torch,
+                        icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
+                        label: const Text('Torch')),
+                      TextButton.icon(onPressed: _changeZoom,
+                        icon: const Icon(Icons.zoom_in),
+                        label: Text('${_zoom.toStringAsFixed(1)}×')),
+                    ]),
+                  ),
+                ),
+              ),
+            ]),
           ),
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            TextButton.icon(onPressed: _gallery,
-              icon: const Icon(Icons.photo_library_outlined), label: const Text('Gallery')),
-            TextButton.icon(onPressed: _torch,
-              icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
-              label: const Text('Torch')),
-            TextButton.icon(onPressed: _changeZoom,
-              icon: const Icon(Icons.zoom_in),
-              label: Text('${_zoom.toStringAsFixed(1)}×')),
-          ],
         ),
         if (_error != null)
           Padding(
