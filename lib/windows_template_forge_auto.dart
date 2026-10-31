@@ -95,9 +95,8 @@ class TemplateForgeAutoMapper {
       scores[ordered.first]! - scores[ordered[1]]!>=2 ? ordered.first : null;
   }
 
-  /// Infer fixed table slots from an OCR-verified header and sample rows.
-  /// This is deliberately bounded: a different row count must fail during
-  /// preview rather than discard or invent marks/fees.
+  /// Import sample rows only when both column headers and OCR values are clear.
+  /// Row count is later rechecked against the real school record.
   static List<SchoolTemplateField> detectTableRows(
     SchoolTemplateKind kind,List<List<ForgeWord>> lines,List<String> warnings,
   ) {
@@ -109,88 +108,23 @@ class TemplateForgeAutoMapper {
       ?const ['amount','price','total','টাকা','রাশি','राशि']
       :const ['marks','obtained','score','নম্বর','अंक'];
     final start=lines.indexWhere((line){
-      final text=normalized(line.map((w)=>w.text).join(' '));
-      return nameHeaders.any(text.contains)&&valueHeaders.any(text.contains);
+      final label=normalized(line.map((w)=>w.text).join(' '));
+      return nameHeaders.any(label.contains)&&valueHeaders.any(label.contains);
     });
     if(start<0)return const [];
     final candidates=<List<ForgeWord>>[];
+    final numeric=RegExp(r'^[0-9,]+(?:\.[0-9]{1,2})?$');
     for(final line in lines.skip(start+1)){
-      final text=normalized(line.map((w)=>w.text).join(' '));
-      if(text.startsWith('total ')||text.startsWith('grand total') ||
-         text.startsWith('net total')||text.startsWith('মোট ')||
-         text.startsWith('कुल '))break;
+      final label=normalized(line.map((w)=>w.text).join(' '));
+      if(label.startsWith('total ')||label.startsWith('grand total') ||
+         label.startsWith('net total')||label.startsWith('মোট ')||
+         label.startsWith('कुल '))break;
       if(line.first.y-lines[start].first.y>.42)break;
-      final numeric=RegExp(r'^[0-9,]+(?:\.[0-9]{1,2})?SchoolTemplateDraft input,String tsv) {
-    final lines=parseTsv(tsv,input.width,input.height);
-    final fields=<SchoolTemplateField>[],found=<String>[],warnings=<String>[];
-    final likely=suggestKind(tsv,input.width,input.height);
-    if(likely!=null && likely!=input.kind){
-      warnings.add('Document appears to be '+likely.title+', not '+input.kind.title+'.');
-    }
-    for(final key in input.kind.fields){
-      final names=aliases[key]??const <String>[];
-      final hits=<({List<ForgeWord> words,String alias})>[];
-      for(final words in lines){
-        final text=normalized(words.map((w)=>w.text).join(' '));
-        final matching=names.where((a)=>text==a||text.startsWith(a+' ')).toList()
-          ..sort((a,b)=>b.length.compareTo(a.length));
-        if(matching.isNotEmpty)hits.add((words:words,alias:matching.first));
-      }
-      if(hits.length>1){warnings.add('Repeated ambiguous field: '+key);continue;}
-      if(hits.isEmpty)continue;
-      final hit=hits.single;
-      final labelWords=hit.alias.split(' ').length;
-      if(hit.words.length<labelWords)continue;
-      final endLabel=hit.words[labelWords-1];
-      final trailing=hit.words.skip(labelWords)
-        .where((w)=>normalized(w.text).isNotEmpty).toList();
-      final x=trailing.isEmpty?endLabel.x+endLabel.w+.015:trailing.first.x;
-      final y=hit.words.first.y;
-      // When OCR finds an existing value, mask ONLY its verified word box.
-      // Extending a white rectangle across a whole row could erase unrelated
-      // marks, totals, table borders or a second printed label.
-      final lastRight=trailing.isEmpty ? x+.3 :
-        trailing.last.x+trailing.last.w+.006;
-      final w=math.min(trailing.isEmpty ? 0.3 : lastRight-x, .98-x);
-      if(x<0||x>=.92||y<0||y>=.96||w<.08){
-        warnings.add('Field outside printable area: '+key);continue;
-      }
-      final size=hit.words.first.h.clamp(.009,.036).toDouble();
-      final field=SchoolTemplateField(key:key,x:x,y:y,width:w,size:size,
-        mask:trailing.isNotEmpty);
-      field.validate(input.kind);
-      if(fields.any((f)=>f.mask && field.mask &&
-        f.x<field.x+field.width && field.x<f.x+f.width &&
-        (f.y-field.y).abs()<.012)){
-        warnings.add('Overlapping detected fields: '+key);continue;
-      }
-      fields.add(field);found.add(key);
-    }
-    // Only table cells with verified text and number boxes are mapped.
-    // No table geometry is invented when OCR fails to find its header.
-    final dynamicRows=detectTableRows(input.kind,lines,warnings);
-    if(fields.length+dynamicRows.length<=35)fields.addAll(dynamicRows);
-    else warnings.add('Too many detected fields for a safe import');
-    final missing=(required[input.kind]??const <String>[])
-      .where((f)=>!found.contains(f)).toList();
-    // A row slot alone is not a complete acceptance/production print test.
-    final tableWarning=switch(input.kind){
-      SchoolTemplateKind.receipt=>'Fee-item rows not automatically reconstructed',
-      SchoolTemplateKind.reportCard=>'Subject/marks rows not automatically reconstructed',
-      SchoolTemplateKind.payslip=>'Earnings/deductions rows not automatically reconstructed',
-    };
-    warnings.add(tableWarning);
-    return ForgeRecognition(input.copyWith(fields:fields),found,missing,warnings);
-  }
-}
-);
       final last=line.last.text.replaceAll(RegExp(r'[^0-9.,]'),'');
       if(line.length<2||!numeric.hasMatch(last))continue;
       final nameWords=line.sublist(0,line.length-1);
-      if(nameWords.isNotEmpty &&
-        numeric.hasMatch(nameWords.first.text) && nameWords.length>1){
-        nameWords.removeAt(0); // skip quantity column
-      }
+      if(nameWords.isNotEmpty && numeric.hasMatch(nameWords.first.text)
+         && nameWords.length>1)nameWords.removeAt(0);
       if(nameWords.isEmpty || nameWords.first.x>=line.last.x)continue;
       candidates.add([...nameWords,line.last]);
     }
@@ -205,8 +139,7 @@ class TemplateForgeAutoMapper {
     final output=<SchoolTemplateField>[];
     for(var i=0;i<candidates.length;i++){
       final row=candidates[i];
-      final amount=row.last,name=row.first;
-      final nameEnd=row[row.length-2];
+      final amount=row.last,name=row.first,nameEnd=row[row.length-2];
       final nameWidth=math.min(nameEnd.x+nameEnd.w-name.x+.004,
         amount.x-name.x-.015);
       final amountWidth=math.min(amount.w+.008,.98-amount.x);
@@ -214,7 +147,7 @@ class TemplateForgeAutoMapper {
         warnings.add('Unclear table cell positions at row '+(i+1).toString());
         return const [];
       }
-      final fields=[
+      final mapped=[
         SchoolTemplateField(key:kind==SchoolTemplateKind.receipt
             ?'feeName$i':'subjectName$i',x:name.x,y:name.y,
           width:nameWidth,size:name.h.clamp(.009,.036).toDouble(),mask:true),
@@ -222,8 +155,8 @@ class TemplateForgeAutoMapper {
             ?'feeAmount$i':'subjectMarks$i',x:amount.x,y:amount.y,
           width:amountWidth,size:amount.h.clamp(.009,.036).toDouble(),mask:true),
       ];
-      for(final field in fields)field.validate(kind);
-      output.addAll(fields);
+      for(final f in mapped)f.validate(kind);
+      output.addAll(mapped);
     }
     return output;
   }
@@ -274,6 +207,9 @@ class TemplateForgeAutoMapper {
       }
       fields.add(field);found.add(key);
     }
+    final dynamicRows=detectTableRows(input.kind,lines,warnings);
+    if(fields.length+dynamicRows.length<=35)fields.addAll(dynamicRows);
+    else warnings.add('Too many detected fields for a safe import');
     final missing=(required[input.kind]??const <String>[])
       .where((f)=>!found.contains(f)).toList();
     // Complex rows must be rebuilt as dynamic repeated tables before use.
