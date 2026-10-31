@@ -8,7 +8,8 @@ test('developer gets verified own-school count, bytes and registered devices onl
   return JSON.stringify({success:true,schoolId:body.schoolId,studentCount:26,
     driveBytes:1048576,partial:false});
  }}));
- f.docs.get('platform_schools/'+A).storageReady=true;
+ assert.equal(f.docs.get('platform_schools/'+A).storageReady,undefined,
+  'Older connected schools lack the public readiness flag');
  f.docs.set('managed_pc_registries/'+A,{
   schemaVersion:1,schoolId:A,devices:{
    a:{schoolId:A,status:'active'},
@@ -32,6 +33,7 @@ test('developer gets verified own-school count, bytes and registered devices onl
 });
 test('unavailable school Drive cannot fabricate zeros or expose foreign PC registry',async()=>{
  const f=fixture();
+ f.docs.get('school_storage_private/'+A).ready=false;
  const r=await f.call({action:'developer/managed/overview',schoolId:A},'developer');
  assert.equal(r.deviceCount,0);
  assert.equal(r.studentCount,undefined);
