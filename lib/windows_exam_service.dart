@@ -116,32 +116,9 @@ class WindowsExamService {
     }
   }
 
-  /// Delete only an unused class exam. Never remove a published report card
-  /// or attempt an unverified remote/legacy delete. Local document deletions
-  /// enter the existing durable sync outbox; no new cloud protocol is needed.
+  /// Only unused class exams may be removed. Failed verification keeps data.
   static Future<void> deleteUnusedExam(String examId) async {
-    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}
-    if (FirebaseFirestore.instance.activeProfileId != profile) {
-      throw StateError(
-        'School changed during exam work. Reopen the exam screen.',
-      );
-    }
-  }
-
-  static Future<Map<String, dynamic>> _remote(
-    String url,
-    Map<String, dynamic> body,
-  ) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(url),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(body),
-    );
-    if (response.statusCode != 200) throw StateError('Exam sync failed');
-    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-  }
-}
-).hasMatch(examId)) {
+    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
       throw StateError('Invalid exam identifier.');
     }
     final profile = FirebaseFirestore.instance.activeProfileId;
@@ -168,9 +145,7 @@ class WindowsExamService {
     if (results.any((row) => row['examId']?.toString() == examId)) {
       throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
     }
-
-    // The school's existing authenticated managed record-read path is the
-    // authority. If offline or version-incompatible, fail CLOSED.
+    // Signed remote results must also be empty; offline deletes fail closed.
     final idToken = await CentralSchoolCloud.firebaseToken();
     for (final collection in const ['exam_center_results', 'exam_results']) {
       _requireProfile(profile);
@@ -186,7 +161,7 @@ class WindowsExamService {
     if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
       throw StateError('School identity changed. Delete cancelled.');
     }
-    // Existing tracked delete/tombstone engine propagates this exam to other PCs.
+    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
     await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
     _requireProfile(profile);
     await FirebaseFirestore.instance.collection('_local_exam_center_exams')
