@@ -78,10 +78,10 @@ test('activation re-reads PC admission inside its transaction',async()=>{
  await assert.rejects(t.schoolState(school,'a',true,['a','b']),e=>e.status===403);
 });
 
-test('all six presets survive publication, school barrier and unlock; invalid presets are rejected',async()=>{
+test('all seven presets survive publication, school barrier and unlock; invalid presets are rejected',async()=>{
  const {theme}=require('../windows-theme');
  const f=fixture(), t=createWindowsTheme({db:f.db});let revision='default';
- for(const presetId of ['neon-teal','electric-blue','mint-light','sunset-ember','aurora-violet','emerald-gold']){
+ for(const presetId of ['neon-teal','electric-blue','mint-light','sunset-ember','aurora-violet','emerald-gold','midnight-glass']){
   const saved=await t.save({schemaVersion:1,red:20,green:100,blue:180,presetId,expectedRevision:revision},'dev');
   assert.equal(saved.presetId,presetId);
   assert.equal((await t.schoolState('school','pc',false,['pc'])).revision,revision);
