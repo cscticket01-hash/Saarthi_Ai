@@ -445,7 +445,7 @@ jobs:
         import re
         p='pubspec.yaml'
         s=open(p).read()
-        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','image_picker','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
+        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
           s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
         open(p,'w').write(s)
         PY
