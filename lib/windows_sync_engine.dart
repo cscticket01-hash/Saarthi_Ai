@@ -128,6 +128,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   late final _dispatch = WindowsSyncDispatch(() => unawaited(_automaticSync()));
   DateTime? _lastIntegrityAttempt;
   bool _automaticMutationPending = false;
+  bool _stalledDownloadRepairDue = false;
   bool get _hasAutomaticWork =>
       (details.value['liveQueue'] as List? ?? const []).any((raw) {
         if (raw is! Map || raw['schoolId'] != _activeSchoolSyncId) return false;
@@ -148,12 +149,40 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _remoteRecordIds.isNotEmpty ||
         _remoteResetPending ||
         _pendingIdInputs.isNotEmpty ||
+        _stalledDownloadRepairDue ||
         (lastError != null &&
             recoveryDecision?.retry == true &&
             _failures <= 5),
   );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
+  }
+
+  // The automatic owner checks local durable evidence. It cannot ACK or
+  // discard anything; only a subsequent cloud read + local readback can heal.
+  Future<void> _scheduleStalledDownloadRepair() async {
+    if (!automaticScheduleExpected || _syncing || _activating > 0) return;
+    final db = FirebaseFirestore.instance;
+    final profile = _activeProfileId, school = _activeSchoolSyncId;
+    try {
+      final rows = await db.collection('_windows_sync_downloads').get();
+      if (!automaticScheduleExpected ||
+          _activeProfileId != profile || _activeSchoolSyncId != school ||
+          db.activeProfileId != profile) return;
+      final due = windowsStalledDownloadRepairTargets(
+        schoolId: school,
+        downloads: [for (final row in rows.docs) row.data()],
+        allowedCollections: _firebaseCollections.toSet(),
+        nowMillis: DateTime.now().millisecondsSinceEpoch,
+      );
+      _stalledDownloadRepairDue = due.isNotEmpty;
+      if (due.isNotEmpty) {
+        scheduleSoon(delay: const Duration(milliseconds: 350));
+      }
+    } catch (_) {
+      // Read-only diagnosis can fail during a local storage transition.
+      // Never clear or manufacture a download checkpoint on diagnostic failure.
+    }
   }
 
   bool _initialized = false;
@@ -1126,13 +1155,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _historyExpiryTimer=Timer.periodic(const Duration(minutes:1),(_)=>_pruneRepairHistory());
     _schedule.start(reconciliationInterval);
     _changeTimer?.cancel();
-    _changeTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => unawaited(_discoverManagedChanges()),
-    );
+    _changeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_discoverManagedChanges());
+      unawaited(_scheduleStalledDownloadRepair());
+    });
     _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
 
     scheduleSoon(delay: const Duration(milliseconds: 800));
+    unawaited(_scheduleStalledDownloadRepair());
   }
 
   Future<void> _handleFirebaseConnectionChanged() async {
@@ -1565,6 +1595,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _remoteFeed.stop();
       _lastIntegrityAttempt = null;
       _automaticMutationPending = false;
+      _stalledDownloadRepairDue = false;
       _failures = 0;
       _nextRetry = null;
       _quotaRetryAt = null;
@@ -2086,6 +2117,40 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }
           }
         }
+        // At most one old own-school record download is admitted per cycle.
+        // This is a recovery read, NOT a new full school/device sync.
+        // Persist bounded retry evidence before any network call. A stalled
+        // read remains visible if the broker fails or local edits block apply.
+        final repairDb = FirebaseFirestore.instance;
+        final observedRepairs = await repairDb.collection('_windows_sync_downloads').get();
+        if (repairDb.activeProfileId != syncOrigin) {
+          throw StateError('School changed before automatic download repair.');
+        }
+        final repairTargets = windowsStalledDownloadRepairTargets(
+          schoolId: _activeSchoolSyncId,
+          downloads: [for (final row in observedRepairs.docs) row.data()],
+          allowedCollections: _firebaseCollections.toSet(),
+          nowMillis: DateTime.now().millisecondsSinceEpoch,
+        ).toSet();
+        _stalledDownloadRepairDue = false;
+        for (final row in observedRepairs.docs) {
+          if (!repairTargets.contains(row.id) ||
+              row.data()['schoolId'] != _activeSchoolSyncId) continue;
+          _admitBatch();
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+            () => row.reference.set({
+              'repairAttempts': (row.data()['repairAttempts'] as num? ?? 0).toInt() + 1,
+              'repairLastAttemptAt': DateTime.now().millisecondsSinceEpoch,
+            }, const SetOptions(merge: true)),
+          );
+          _recordActivity({
+            'schoolId': _activeSchoolSyncId,
+            'collection': row.id,
+            'stage': 'repairDiagnosed',
+            'outcome': 'stalled_record_download_verified_read_requested',
+            'at': DateTime.now().millisecondsSinceEpoch,
+          });
+        }
         if (_manualSync) {
           final pending = await FirebaseFirestore.instance
               .collection('_windows_firebase_outbox')
@@ -2190,7 +2255,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             integrityAudit ||
             _remoteCollections.isNotEmpty ||
             _remoteRecordIds.isNotEmpty ||
-            _remoteResetPending) {
+            _remoteResetPending ||
+            repairTargets.isNotEmpty) {
           _admitBatch();
           final inventoryAudit = integrityAudit;
           final fullPull =
@@ -2215,14 +2281,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               recordDeltas: _recordDeltasSupported,
             );
             _admitBatch();
-            selected = {..._remoteCollections, ...changed};
+            selected = {..._remoteCollections, ...changed, ...repairTargets};
           }
+          selected = selected == null ? null : {...selected, ...repairTargets};
           final remoteGenerationAtRead = _remoteChangeGeneration;
           if (selected == null || selected.isNotEmpty) {
             _setCheckingCloud(false);
             await _measure('recordDownloadStage', () => _pullManagedChanges(
               verifyInventory: inventoryAudit,
               selectedCollections: selected,
+              repairCollections: repairTargets,
               targetRecordIds: fullPull || inventoryAudit || _remoteResetPending
                   ? null
                   : {
@@ -3010,6 +3078,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
 
   @visibleForTesting
+  Future<void> reconcileStalledDownloadForTesting(
+    String school,
+    String collection,
+    Future<Map<String, dynamic>> Function(Map<String, String>) read,
+  ) => _pullManagedChanges(
+    schoolOverride: school,
+    batchReader: read,
+    selectedCollections: {collection},
+    repairCollections: {collection},
+    verifyInventory: false,
+  );
+
+  @visibleForTesting
   Future<void> reconcileManagedPointTargetsForTesting(
     String school,
     Map<String, Set<String>> targets,
@@ -3033,6 +3114,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     recordBatchReader,
     bool? verifyInventory,
     Set<String>? selectedCollections,
+    Set<String> repairCollections = const <String>{},
     Map<String, Set<String>>? targetRecordIds,
     Future<Map<String, dynamic>> Function(String, Set<String>)? pointReader,
   }) async {
@@ -3091,7 +3173,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         throw StateError(
           'Verified record revision baseline unavailable; explicit inventory repair required.',
         );
-      revisions[collection] = needsBaseline
+      revisions[collection] = repairCollections.contains(collection)
+          ? ''
+          : needsBaseline
           ? ''
           : audit
           ? managedRecoveryRevision(
@@ -3108,6 +3192,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               },
             )
           : prior?['revision']?.toString() ?? '';
+      if (repairCollections.contains(collection)) {
+        // The existing manifest can have the same head even after a prior
+        // incomplete apply. Never use the stale per-record baseline to turn
+        // this verified recovery into a no-op "unchanged" response.
+        recordCheckpoints.remove(collection);
+      }
       if (recordCheckpoints.containsKey(collection) &&
           pendingAtRead.any(
             (row) =>
@@ -3216,6 +3306,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         throw StateError('Incremental baseline missing.');
       if (result['unchanged'] == true) continue;
       final records = Map<String, dynamic>.from(result['records'] as Map);
+      if (repairCollections.contains(collection)) {
+        // This is exceptional recovery of an interrupted VERIFIED download,
+        // not a routine full sync. A partial/empty response cannot prove that
+        // the older unverified record reached this device.
+        if (result['partialRecords'] == true || records.isEmpty) {
+          throw StateError('Incomplete authoritative download repair; original pending evidence retained.');
+        }
+        final prior = (await manifest.get()).data();
+        final alreadyDeleted = ((prior?['deletedIds'] as List?) ?? [])
+            .whereType<String>().toSet();
+        final expectedIds = ((prior?['ids'] as List?) ?? [])
+            .whereType<String>().where((id) => !alreadyDeleted.contains(id));
+        if (expectedIds.any((id) => !records.containsKey(id))) {
+          throw StateError('Authoritative repair omitted previously known records; pending download retained.');
+        }
+      }
       if (result['missingRecords'] is List &&
           batchReader == null &&
           recordBatchReader == null) {
@@ -3249,6 +3355,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           .length;
       final progress = db.collection('_windows_sync_downloads').doc(collection);
       var remaining = downloadable, verifiedDownloads = 0, blockedDownloads = 0;
+      final previousProgress = (await progress.get()).data();
+      final sameRevision = previousProgress?['schoolId'] == school &&
+          previousProgress?['collectionRevision'] == result['collectionRevision'];
       await progress.set({
         'schoolId': school,
         'collection': collection,
@@ -3259,6 +3368,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         'remaining': remaining,
         'verified': 0,
         'blocked': 0,
+        'repairAttempts': sameRevision
+            ? (previousProgress?['repairAttempts'] as num? ?? 0).toInt() : 0,
+        'repairLastAttemptAt': sameRevision
+            ? (previousProgress?['repairLastAttemptAt'] as num? ?? 0).toInt() : 0,
       });
       final pending =
           (await db.collection('_windows_firebase_outbox').get()).docs;

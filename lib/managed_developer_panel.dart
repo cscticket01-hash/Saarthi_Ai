@@ -10,6 +10,53 @@ class ManagedDeveloperPanel extends StatefulWidget {
 }
 class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
  bool busy=false;String search='',filter='all';String? message;
+ final _overviews=<String,Map<String,dynamic>>{};
+ final _measuring=<String>{};
+ bool _measuringAll=false;
+ @override
+ void initState(){
+  super.initState();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+   if(mounted) refreshVisible();
+  });
+ }
+ @override
+ void didUpdateWidget(covariant ManagedDeveloperPanel old){
+  super.didUpdateWidget(old);
+  if(widget.schools.map((s)=>s['id']).join('|')!=
+     old.schools.map((s)=>s['id']).join('|')){
+   WidgetsBinding.instance.addPostFrameCallback((_){if(mounted) refreshVisible();});
+  }
+ }
+ Future<void> measure(Map<String,dynamic> school)async{
+  final id=school['id']?.toString()??'';
+  if(id.isEmpty||school['managed']!=true||_measuring.contains(id))return;
+  _measuring.add(id);
+  try {
+   final r=await ManagedDeveloperService.call('overview',{'schoolId':id})
+      .timeout(const Duration(seconds:95));
+   if(r['success']!=true||r['schoolId']!=id)throw StateError('School summary identity mismatch');
+   if(mounted)setState(()=>_overviews[id]=r);
+  }catch(_){
+   if(mounted)setState(()=>_overviews[id]={
+    ...?_overviews[id], 'summaryError':'School totals are not verified',
+   });
+  }finally{_measuring.remove(id);if(mounted)setState((){});}
+ }
+ Future<void> refreshVisible({bool force=false})async{
+  if(_measuringAll)return;
+  _measuringAll=true;
+  try{
+   final rows=widget.schools.where((s)=>s['deletedAt']==null&&s['managed']==true).toList();
+   // Bounded provider reads: sequential, maximum ten per pass. This must not
+   // launch hundreds of Apps Script requests for a large multi-school tenant.
+   for(final row in rows.take(10)){
+    if(!mounted)break;
+    final id=row['id']?.toString()??'';
+    if(force||!_overviews.containsKey(id))await measure(row);
+   }
+  }finally{_measuringAll=false;}
+ }
  Future<void> changeSchoolPassword(Map<String,dynamic> school) async {
   final password=TextEditingController(),confirm=TextEditingController();
   var submitting=false,hidden=true;String? problem;
@@ -93,5 +140,9 @@ class _ManagedDeveloperPanelState extends State<ManagedDeveloperPanel>{
  Future<void> remove(Map<String,dynamic> school)async{final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:Text('Delete ${school['name']}?'),content:const Text('The school will be archived and access disabled. Existing student records, local data and Drive files are preserved.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete school'))]));if(yes!=true)return;if(school['managed']==true)await run('delete',{'schoolId':school['id']});else await widget.legacyDelete(school);}
  String date(dynamic value){if(value is! num)return 'Not available';if(value<=0)return 'Inactive';return DateTime.fromMillisecondsSinceEpoch(value.toInt()).toLocal().toString().split('.').first;}
  String bytes(Map s){final n=s['driveBytes'];if(n is! num)return 'Not reported';const units=['B','KB','MB','GB'];double v=n.toDouble();int i=0;while(v>=1024&&i<3){v/=1024;i++;}return '${s['driveBytesPartial']==true?'At least ':''}${v.toStringAsFixed(1)} ${units[i]}';}
- @override Widget build(BuildContext context){final now=DateTime.now().millisecondsSinceEpoch;final schools=widget.schools.where((s)=>s['deletedAt']==null&&('${s['name']} ${s['id']} ${s['loginEmail']}'.toLowerCase().contains(search.toLowerCase()))&&(filter=='all'||schoolOnline(s,now)==(filter=='online'))).toList();return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Wrap(spacing:12,runSpacing:12,children:[FilledButton.icon(onPressed:busy?null:()=>form('create',null),icon:const Icon(Icons.add),label:const Text('Create School')),SizedBox(width:300,child:TextField(onChanged:(v)=>setState(()=>search=v),decoration:const InputDecoration(labelText:'Search schools',prefixIcon:Icon(Icons.search)))),DropdownButton<String>(value:filter,items:const ['all','online','stale'].map((v)=>DropdownMenuItem(value:v,child:Text(v.toUpperCase()))).toList(),onChanged:(v)=>setState(()=>filter=v!))]),if(busy)const LinearProgressIndicator(),if(message!=null)Text(message!),const SizedBox(height:16),SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(dataRowMinHeight:72,dataRowMaxHeight:110,columns:const [DataColumn(label:Text('School Name')),DataColumn(label:Text('Activity')),DataColumn(label:Text('Total Students')),DataColumn(label:Text('Licence Expiry')),DataColumn(label:Text('Action')),DataColumn(label:Text('Total Data Used'))],rows:schools.map((s)=>DataRow(cells:[DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text('${s['name']??s['id']}'),Text('${s['loginEmail']??s['id']}',style:const TextStyle(fontSize:11,color:Colors.white54))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s['blocked']==true?'Blocked':schoolOnline(s,now)?'Recently seen':'Unknown / stale',style:TextStyle(color:schoolOnline(s,now)?Colors.greenAccent:Colors.orangeAccent)),Text('Last seen: ${date(s['lastSeenAt'])}',style:const TextStyle(fontSize:10)),if(s['managed']==true)Text(s['reportedAt'] is num?'Student report: ${date(s['reportedAt'])}':'Student report: Unknown',style:const TextStyle(fontSize:10))])),DataCell(Text('${s['studentCount']??'Not reported'}')),DataCell(Text(date(s['licenseExpiresAt']??(s['trialStartedAt'] is num?(s['trialStartedAt'] as num)+5*86400000:null)))),DataCell(PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='change-password'){changeSchoolPassword(s);return;}if(v=='sync-status'){syncStatus(s);return;}if(v=='exams'){exams(s);return;}if(v=='delete'){remove(s);return;}if(v=='licence'||v=='storage'){form(v,s);return;}run(v,{'schoolId':s['id'],'blocked':v=='block'?s['blocked']!=true:s['loginDisabled']!=true});},itemBuilder:(_)=>[if(s['managed']==true)...[const PopupMenuItem(value:'change-password',child:Text('Change School Password')),const PopupMenuItem(value:'sync-status',child:Text('Sync / Pending Monitor')),const PopupMenuItem(value:'exams',child:Text('Live Exams / Fees / Notices')),const PopupMenuItem(value:'licence',child:Text('Issue / Renew Licence')),const PopupMenuItem(value:'storage',child:Text('School ID')),PopupMenuItem(value:'block',child:Text(s['blocked']==true?'Unblock':'Block')),PopupMenuItem(value:'disable',child:Text(s['loginDisabled']==true?'Enable Login':'Disable Login'))],const PopupMenuItem(value:'delete',child:Text('Delete School'))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(bytes(s)),Text('School Drive • ${date(s['summaryAt'])}',style:const TextStyle(fontSize:10))]))])).toList())),if(schools.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('No schools found')),const Text('Windows activity uses its last heartbeat (90-second freshness). A stale heartbeat does not prove the PC is offline. Student activity is reported separately. Data totals show the latest verified Drive summary.')]);}
+ @override Widget build(BuildContext context){final now=DateTime.now().millisecondsSinceEpoch;final schools=widget.schools.map((s)=><String,dynamic>{...s,...?_overviews[s['id']?.toString()]}).where((s)=>s['deletedAt']==null&&('${s['name']} ${s['id']} ${s['loginEmail']}'.toLowerCase().contains(search.toLowerCase()))&&(filter=='all'||schoolOnline(s,now)==(filter=='online'))).toList();return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Wrap(spacing:12,runSpacing:12,children:[FilledButton.icon(onPressed:busy?null:()=>form('create',null),icon:const Icon(Icons.add),label:const Text('Create School')),SizedBox(width:300,child:TextField(onChanged:(v)=>setState(()=>search=v),decoration:const InputDecoration(labelText:'Search schools',prefixIcon:Icon(Icons.search)))),DropdownButton<String>(value:filter,items:const ['all','online','offline'].map((v)=>DropdownMenuItem(value:v,child:Text(v.toUpperCase()))).toList(),onChanged:(v)=>setState(()=>filter=v!))]),if(busy)const LinearProgressIndicator(),if(message!=null)Text(message!),const SizedBox(height:10),TextButton.icon(
+ onPressed:_measuringAll?null:()=>refreshVisible(force:true),
+ icon:const Icon(Icons.cloud_sync_outlined,size:16),
+ label:const Text('Refresh verified school totals (up to 10)')),
+ const SizedBox(height:8),SingleChildScrollView(scrollDirection:Axis.horizontal,child:DataTable(dataRowMinHeight:72,dataRowMaxHeight:110,columns:const [DataColumn(label:Text('School Name')),DataColumn(label:Text('Activity')),DataColumn(label:Text('Total Students')),DataColumn(label:Text('Licence Expiry')),DataColumn(label:Text('Action')),DataColumn(label:Text('Total Data Used')),DataColumn(label:Text('Devices'))],rows:schools.map((s)=>DataRow(cells:[DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text('${s['name']??s['id']}'),Text('${s['loginEmail']??s['id']}',style:const TextStyle(fontSize:11,color:Colors.white54))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s['blocked']==true?'Blocked':schoolOnline(s,now)?'Online':'Offline',style:TextStyle(color:schoolOnline(s,now)?Colors.greenAccent:Colors.orangeAccent)),Text('Last seen: ${date(s['lastSeenAt'])}',style:const TextStyle(fontSize:10)),if(s['managed']==true)Text(s['reportedAt'] is num?'Student report: ${date(s['reportedAt'])}':'Student report: Unknown',style:const TextStyle(fontSize:10))])),DataCell(Text('${s['studentCount']??'Not reported'}')),DataCell(Text(date(s['licenseExpiresAt']??(s['trialStartedAt'] is num?(s['trialStartedAt'] as num)+5*86400000:null)))),DataCell(PopupMenuButton<String>(enabled:!busy,onSelected:(v){if(v=='refresh-totals'){measure(s);return;}if(v=='change-password'){changeSchoolPassword(s);return;}if(v=='sync-status'){syncStatus(s);return;}if(v=='exams'){exams(s);return;}if(v=='delete'){remove(s);return;}if(v=='licence'||v=='storage'){form(v,s);return;}run(v,{'schoolId':s['id'],'blocked':v=='block'?s['blocked']!=true:s['loginDisabled']!=true});},itemBuilder:(_)=>[if(s['managed']==true)...[const PopupMenuItem(value:'refresh-totals',child:Text('Refresh verified school totals')),const PopupMenuItem(value:'change-password',child:Text('Change School Password')),const PopupMenuItem(value:'sync-status',child:Text('Sync / Pending Monitor')),const PopupMenuItem(value:'exams',child:Text('Live Exams / Fees / Notices')),const PopupMenuItem(value:'licence',child:Text('Issue / Renew Licence')),const PopupMenuItem(value:'storage',child:Text('School ID')),PopupMenuItem(value:'block',child:Text(s['blocked']==true?'Unblock':'Block')),PopupMenuItem(value:'disable',child:Text(s['loginDisabled']==true?'Enable Login':'Disable Login'))],const PopupMenuItem(value:'delete',child:Text('Delete School'))])),DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(bytes(s)),Text('School Drive • ${date(s['summaryAt'])}',style:const TextStyle(fontSize:10)),if(s['summaryError']!=null)Text('${s['summaryError']}',style:const TextStyle(fontSize:10,color:Colors.orangeAccent))])),DataCell(Text(s['deviceCount'] is num?'${s['deviceCount']}/5':'Not reported'))])).toList())),if(schools.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('No schools found')),const Text('Online means a recent verified Windows heartbeat (90 seconds); Offline means no recent heartbeat, not proof that a PC is disconnected. Student/data totals use verified school Drive summaries; device count uses authorized registry.')]);}
 }
