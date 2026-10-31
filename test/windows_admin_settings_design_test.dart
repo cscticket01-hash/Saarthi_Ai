@@ -32,7 +32,7 @@ void main() {
       expect(find.text('school@example.com'),findsOneWidget);
       if (spec.$1.width >= 960 && spec.$1.height >= 830 && spec.$2 == 1.0) {
         expect(find.byType(SingleChildScrollView), findsNothing);
-        expect(tester.getLeft(find.text('Device Management')), greaterThan(0));
+        expect(tester.getTopLeft(find.text('Device Management')).dx, greaterThan(0));
         expect(tester.getBottomRight(find.text('Open Advanced Settings')).dy,
             lessThan(spec.$1.height));
       }
