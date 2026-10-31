@@ -97,6 +97,26 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('zero uploads and one cloud hint show separate honest queue states', (tester) async {
+    engine.details.value = {
+      'pending':0,
+      'incomingPending':1,
+      'incomingBreakdown':{'recordDownloads':0,'remoteChecks':1,
+                           'mediaFiles':0,'total':1},
+      'needsAttention':0,
+      'displayState':'pending',
+      'liveQueue':<Map<String,dynamic>>[],
+      'items':<Map<String,dynamic>>[],
+    };
+    await tester.pumpWidget(MaterialApp(home:page()));
+    await tester.pumpAndSettle();
+    expect(find.text('Cloud check queued'),findsWidgets);
+    expect(find.text('No pending upload operations. Incoming cloud work is listed below.'),findsOneWidget);
+    expect(find.text('Cloud change signal queued for verified reconciliation (not an upload).'),findsOneWidget);
+    expect(find.text('No pending operations in this school.'),findsNothing);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('read-only checks remain enabled during an admitted sync while backup stays locked', (tester) async {
     tester.view.physicalSize = const Size(1440,1100); tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
