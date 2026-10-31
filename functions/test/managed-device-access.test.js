@@ -197,3 +197,28 @@ test('restored-session admission retains transactional five-PC limit and identit
   assert.equal(mode.rows.size,0);
  }
 });
+
+test('two authenticated Windows PCs share last verified adapter hints across their lists',async()=>{
+ const f=fixture(false,false,true),pcA=f.proof(1),pcB=f.proof(2);
+ const a=(await f.call('managed/device/list',pcA,
+  {deviceName:'Mohit_Das',deviceOs:'Windows',connectionType:'WiFi'})).result;
+ assert.equal(a.canRevoke,false);
+ const b=(await f.call('managed/device/list',pcB,
+  {deviceName:'DESKTOP-TG22ER2',deviceOs:'Windows',connectionType:'LAN'})).result;
+ assert.equal(b.devices.length,2);
+ for(const proof of [pcA,pcB]) {
+  const list=(await f.call('managed/device/list',proof)).result;
+  assert.equal(list.devices.find(d=>d.name==='Mohit_Das').connectionType,'WiFi');
+  assert.equal(list.devices.find(d=>d.name==='DESKTOP-TG22ER2').connectionType,'LAN');
+  assert.equal(list.devices.filter(d=>d.current).length,1);
+ }
+ // Unverified adapters cannot erase an earlier legitimate report.
+ await f.call('managed/device/list',pcA,{connectionType:'Unknown'});
+ const after=(await f.call('managed/device/list',pcB)).result.devices;
+ assert.equal(after.find(d=>d.name==='Mohit_Das').connectionType,'WiFi');
+ // The caller must possess the original registered credential to change its hint.
+ await assert.rejects(f.call('managed/device/list',
+   {...pcA,'x-vidya-device-credential':generateDeviceCredential()},
+   {connectionType:'LAN'}),{code:'DEVICE_AUTHORIZATION_REJECTED'});
+ assert.equal(f.audit.length,2,'Connectivity hints cannot grant access or create devices');
+});
