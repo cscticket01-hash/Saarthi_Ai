@@ -41,6 +41,9 @@ class SchoolTemplateImportEditor {
       if(!sameSchool())throw StateError('School changed during recognition.');
       final result=TemplateForgeAutoMapper.detect(draft,tsv);
       if(!context.mounted)return;
+      if(result.warnings.any((w)=>w.startsWith('Document appears to be '))){
+        throw StateError('This document type does not match the selected tab. No template was changed.');
+      }
       if(result.missing.isNotEmpty || result.detected.isEmpty){
         final missing=result.missing.join(', ');
         throw StateError('Cannot safely auto-convert this page. '
