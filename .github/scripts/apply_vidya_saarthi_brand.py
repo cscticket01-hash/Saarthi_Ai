@@ -2,11 +2,10 @@
 
 Only branding resources are replaced. No school documents or sync data are
 accessed. GitHub CI runs this after flutter create for each target platform.
-Uses Python standard library only: PNG-in-ICO is supported by Windows.
+Windows ICO additionally uses Pillow to generate correct Windows Shell sizes (16–256px).
 """
 from pathlib import Path
 import struct
-import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "assets" / "vidya_saarthi_app_icon.png"
@@ -19,14 +18,25 @@ def install():
     width, height = struct.unpack(">II", original[16:24])
     if (width, height) != (128, 128):
         raise SystemExit("Unexpected logo dimensions; refusing mismatched icon")
-    # ICO directory header + one 128px PNG image (Windows Vista and newer).
-    header = struct.pack("<HHH", 0, 1, 1)
-    directory = struct.pack("<BBBBHHII", 128, 128, 0, 0, 1, 32, len(original), 22)
-
+    # A single 128px PNG-in-ICO does not provide reliable small Windows Shell
+    # sizes. Flutter's exe, taskbar, Inno Setup and shortcuts all use this ICO.
+    # The native Windows build installs Pillow before running this helper.
     icon = ROOT / "windows/runner/resources/app_icon.ico"
     if icon.parent.exists():
-        icon.write_bytes(header + directory + original)
-        print("Windows icon updated:", icon.relative_to(ROOT))
+        from PIL import Image
+
+        sizes = [(16, 16), (24, 24), (32, 32), (48, 48),
+                 (64, 64), (128, 128), (256, 256)]
+        with Image.open(SOURCE) as source:
+            branded = source.convert("RGBA").resize(
+                (256, 256), Image.Resampling.LANCZOS
+            )
+            branded.save(icon, format="ICO", sizes=sizes)
+        with Image.open(icon) as verified:
+            embedded = set(verified.ico.sizes())
+            if not set(sizes).issubset(embedded):
+                raise SystemExit("Windows icon sizes missing: " + str(set(sizes) - embedded))
+        print("Windows multi-resolution icon updated:", icon.relative_to(ROOT))
 
     android_root = ROOT / "android/app/src/main/res"
     if android_root.exists():

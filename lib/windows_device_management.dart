@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_device_directory_cache.dart';
+import 'windows_connect/windows_network_connection.dart';
 
 String deviceActivityLabel(Object? value) => value == 'recently_seen'
     ? 'Recently active (online status not confirmed)'
@@ -13,16 +14,17 @@ String deviceTimeLabel(Object? value) => value is num && value > 0
     : 'Unknown';
 
 class WindowsDeviceManagement extends StatefulWidget {
-  const WindowsDeviceManagement({super.key, this.request, this.cacheScope});
+  const WindowsDeviceManagement({super.key, this.request, this.cacheScope, this.localConnectionDetector});
   final Future<Map<String,dynamic>> Function(String action, Map<String,dynamic> body)? request;
   final Future<String?> Function()? cacheScope;
+  final Future<String?> Function()? localConnectionDetector;
   @override
   State<WindowsDeviceManagement> createState() => _WindowsDeviceManagementState();
 }
 class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
     with WidgetsBindingObserver {
   List<Map<String,dynamic>> devices = [];
-  String? current, error;
+  String? current, error, localConnectionType;
   bool busy = false, verified = false, revoking=false;
   int readGeneration=0;
   Timer? refreshTimer, activityTimer;
@@ -59,6 +61,17 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed && ModalRoute.of(context)?.isCurrent == true) load(silent:true);
     });
   }
+  // Local display hint only. Authorization still comes exclusively from the
+  // verified server list; never persist this hint as a registered device.
+  Future<void> refreshLocalConnection(int session) async {
+    // Widget tests inject a fake device-server request. Avoid starting native
+    // PowerShell subprocesses inside their fake-async binding unless a local
+    // detector is explicitly injected. Production always probes on Windows.
+    if (widget.request != null && widget.localConnectionDetector == null) return;
+    final detected = await (widget.localConnectionDetector?.call() ?? WindowsNetworkConnection.detect());
+    if (!mounted || session != ManagedSchoolSession.changed.value) return;
+    if (localConnectionType != detected) setState(() => localConnectionType = detected);
+  }
   Future<void> initialize() async {
     final session=ManagedSchoolSession.changed.value;
     try {
@@ -74,6 +87,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
       });
     } catch (_) { /* Display cache failure must never prevent a server read. */ }
     if(mounted && session==ManagedSchoolSession.changed.value) load(silent:hasSnapshot);
+    unawaited(refreshLocalConnection(session));
     if(!mounted || session!=ManagedSchoolSession.changed.value) return;
     activityTimer=Timer.periodic(const Duration(seconds:5), (_) {
       if(mounted && WidgetsBinding.instance.lifecycleState==AppLifecycleState.resumed && ModalRoute.of(context)?.isCurrent==true && hasSnapshot) {
@@ -85,7 +99,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
   void sessionChanged() {
     if (!mounted) return;
     readGeneration++;
-    setState(() { busy=false; revoking=false; devices = []; current = null; verified = false; hasSnapshot=false; cacheScope=null; });
+    setState(() { busy=false; revoking=false; devices = []; current = null; localConnectionType = null; verified = false; hasSnapshot=false; cacheScope=null; });
     // A response from the previous session must never populate this page.
     Navigator.of(context).maybePop();
   }
@@ -129,6 +143,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
         verified = true;
         canRevoke = response['canRevoke'] != false;
       });
+      unawaited(refreshLocalConnection(session));
       final scope=cacheScope;
       if(scope!=null) {
         try { await WindowsDeviceDirectoryCache.write(scope,ordered); } catch (_) { /* Cache is optional; server result remains authoritative. */ }
@@ -201,13 +216,18 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(fontFamily: 'Segoe UI', color:recentlyActive(row)?WindowsAppearance.foreground(const Color(0xff6ed6aa)):muted))),
                 ]);
                 Widget connectivity(Map<String,dynamic> row) {
-                  final type = row['connectionType'];
+                  final reported = row['connectionType'];
+                  final localOnly = verified && row['deviceIdentity']==current &&
+                      reported!='WiFi' && reported!='LAN' &&
+                      (localConnectionType=='WiFi'||localConnectionType=='LAN');
+                  final type = localOnly ? localConnectionType : reported;
                   final known = type=='WiFi'||type=='LAN';
                   final label = type=='WiFi' ? 'Wi-Fi' : type=='LAN' ? 'LAN' : 'Unknown';
                   final icon = type=='WiFi' ? Icons.wifi_rounded
                       : type=='LAN' ? Icons.lan_outlined : Icons.help_outline_rounded;
                   return Tooltip(
-                    message: known ? 'Last reported adapter type, not proof of internet access'
+                    message: localOnly ? 'Detected on this PC only; awaiting server report. Not proof of internet access'
+                        : known ? 'Last reported adapter type, not proof of internet access'
                         : 'This PC has not reported a verified adapter type',
                     child: Row(children:[
                       Icon(icon,size:17,color:known?WindowsAppearance.foreground(const Color(0xff8aade8)):muted),

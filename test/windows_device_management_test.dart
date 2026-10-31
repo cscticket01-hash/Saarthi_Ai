@@ -20,6 +20,19 @@ void main() {
     expect(WindowsNetworkConnection.classifyRoute('My-WiFi-SSID'),isNull);
     expect(WindowsNetworkConnection.classifyRoute(''),isNull);
   });
+  test('Windows route probe classifies physical Wi-Fi/LAN without guessing virtual adapters', () {
+    final script=WindowsNetworkConnection.windowsRouteProbe;
+    expect(script,contains("Get-NetRoute -DestinationPrefix '0.0.0.0/0'"));
+    expect(script,contains("Get-NetRoute -DestinationPrefix '::/0'"));
+    expect(script,contains("Get-NetAdapter -InterfaceIndex"));
+    expect(script,contains("NdisPhysicalMedium"));
+    expect(script,contains("Win32_NetworkAdapter"));
+    expect(script,contains("PhysicalAdapter"));
+    expect(script,contains("WireGuard|OpenVPN"));
+    expect(script,contains("'WiFi'; exit 0"));
+    expect(script,contains("'LAN'; exit 0"));
+    expect(WindowsNetworkConnection.classifyRoute('WiFi\\nLAN'),isNull);
+  });
   final own = 'a' * 64, other = 'b' * 64;
   Map<String,dynamic> response({bool revoked = false}) => {'success':true,'serverTime':1792363200000,'devices':[
     {'deviceIdentity':own,'name':'School Office PC','status':'active','current':true,'activity':'recently_seen','lastSeenAt':1792363200000,'connectionType':'WiFi','connectionSeenAt':1792363200000},
@@ -47,6 +60,23 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton,'Revoke')); await tester.pumpAndSettle();
     expect(writes,1); expect(reads,2);
     expect(find.text('Authorized PCs: 1 / 5   |   Recently active: 1'),findsOneWidget);
+    await close(tester);
+  });
+  testWidgets('local Windows adapter hint is shown only for verified current PC', (tester) async {
+    final list=response();
+    for(final row in (list['devices'] as List)) {
+      row['connectionType']='Unknown';
+    }
+    await tester.pumpWidget(MaterialApp(home:WindowsDeviceManagement(
+      request:(action,body) async => list,
+      localConnectionDetector:() async => 'LAN',
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('This PC'),findsOneWidget);
+    expect(find.text('LAN'),findsOneWidget);
+    expect(find.text('Unknown'),findsOneWidget,
+      reason:'Remote PC with no report must stay Unknown');
+    expect(find.byType(Tooltip),findsWidgets);
     await close(tester);
   });
   testWidgets('disabled server shows unknown counts, not fake devices', (tester) async {

@@ -68,7 +68,10 @@ jobs:
         shell: powershell
         run: |
           flutter create --platforms=windows --no-pub .
+          python -m pip install --disable-pip-version-check "Pillow==11.3.0"
+          if ($LASTEXITCODE -ne 0) { throw 'Pillow required to generate a correct Windows ICO' }
           python .github/scripts/apply_vidya_saarthi_brand.py
+          if ($LASTEXITCODE -ne 0) { throw 'Branded Windows icon sizes could not be verified' }
 
       - name: Prevent concurrent Windows local database instances
         shell: powershell
@@ -340,6 +343,8 @@ jobs:
           if (-not $exe) { throw 'EXE not found for installer' }
           $outDir = (Resolve-Path 'build').Path
           $version = '${{ steps.app_version.outputs.version }}'
+          $iconSrc = (Resolve-Path 'windows/runner/resources/app_icon.ico').Path
+          if (!(Test-Path $iconSrc)) { throw 'Branded Windows ICO is missing' }
           $iss = @"
           [Setup]
           AppId={{9B6E3770-2F58-4D10-A468-38C588A4E24B}
@@ -353,21 +358,23 @@ jobs:
           Compression=lzma2
           SolidCompression=yes
           WizardStyle=modern
+          SetupIconFile=$iconSrc
           PrivilegesRequired=lowest
           CloseApplications=yes
           RestartApplications=yes
-          UninstallDisplayIcon={app}\$($exe.Name)
+          UninstallDisplayIcon={app}\vidya_saarthi_$version.ico
 
           [Files]
+          Source: "$iconSrc"; DestDir: "{app}"; DestName: "vidya_saarthi_$version.ico"; Flags: ignoreversion
           Source: "$release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Tasks]
           Name: "backgroundsync"; Description: "Automatically sync Vidya Saarthi in the background after Windows sign-in"; Flags: checkedonce
 
           [Icons]
-          Name: "{group}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
-          Name: "{autodesktop}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"
-          Name: "{userstartup}\Vidya Saarthi Background Sync"; Filename: "{app}\$($exe.Name)"; Parameters: "--saarthi-background"; WorkingDir: "{app}"; Tasks: backgroundsync
+          Name: "{group}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"; IconFilename: "{app}\vidya_saarthi_$version.ico"
+          Name: "{autodesktop}\Vidya Saarthi"; Filename: "{app}\$($exe.Name)"; IconFilename: "{app}\vidya_saarthi_$version.ico"
+          Name: "{userstartup}\Vidya Saarthi Background Sync"; Filename: "{app}\$($exe.Name)"; IconFilename: "{app}\vidya_saarthi_$version.ico"; Parameters: "--saarthi-background"; WorkingDir: "{app}"; Tasks: backgroundsync
 
           [Run]
           Filename: "{app}\$($exe.Name)"; Description: "Launch Vidya Saarthi"; Flags: nowait postinstall skipifsilent
