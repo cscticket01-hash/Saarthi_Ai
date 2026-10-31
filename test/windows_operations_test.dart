@@ -746,7 +746,7 @@ void main() {
       }
       expect(find.byType(Dialog), findsOneWidget);
       expect(find.byType(FittedDocumentPreview), findsOneWidget);
-      expect(find.text('Print'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Print'), findsOneWidget);
       expect(find.text('Save PDF'), findsOneWidget);
       expect(find.text('Cancel'), findsNothing);
       await tester.tap(find.byIcon(Icons.close));
