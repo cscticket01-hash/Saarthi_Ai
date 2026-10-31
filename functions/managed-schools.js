@@ -387,7 +387,47 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
    await db.collection('platform_audit').add({action,schoolId,actor:admin.uid,at:now()});return {success:true,schoolId,email,...(password===undefined?{passwordSetupLink:await auth.generatePasswordResetLink(email)}:{})};
   }
   if(action==='developer/managed/monitor'){const started=now();const metrics=await monitor();return {success:true,projectId,responseMs:now()-started,measuredAt:now(),metrics};}
-  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(!SCHOOL.test(id||''))fail(400,'Invalid school ID');if(!['developer/managed/exams','developer/managed/view','developer/managed/sync/status','developer/managed/overview'].includes(action))invalidate(id);const school=await cachedRead(developerViews,id,()=>db.doc('platform_schools/'+id).get());if(!school.exists||school.data().managed!==true)fail(404,'Managed school not found');const data=school.data(),ref=db.doc('school_entitlements/'+id);
+  if(action==='developer/managed/overview'){
+   // Developer-only aggregate, never record payloads or device credentials.
+   const registry=await db.doc('managed_pc_registries/'+id).get();
+   const row=registry.exists?registry.data():null;
+   if(row&&(row.schoolId!==id||row.schemaVersion!==1||
+       !row.devices||Array.isArray(row.devices)))fail(403,'Device registry is inconsistent');
+   const deviceCount=row?Object.values(row.devices).filter(v=>v&&v.schoolId===id&&v.status==='active').length:0;
+   if(deviceCount>5)fail(502,'Invalid device registry capacity');
+   const result={success:true,schoolId:id,deviceCount,deviceLimit:5,measuredAt:now()};
+   const cachedGood=Number.isSafeInteger(data.studentCount)&&data.studentCount>=0&&
+       Number.isSafeInteger(data.driveBytes)&&data.driveBytes>=0&&
+       Number.isSafeInteger(data.summaryAt)&&data.summaryAt>0;
+   if(cachedGood&&now()-data.summaryAt<300000)
+    return {...result,studentCount:data.studentCount,driveBytes:data.driveBytes,
+      driveBytesPartial:data.driveBytesPartial===true,summaryAt:data.summaryAt};
+   if(data.storageReady===true&&!data.deletedAt) {
+    try {
+     const m=await signed({schoolId:id},{action:'managed_summary'});
+     if(m.schoolId!==id||!Number.isSafeInteger(m.studentCount)||m.studentCount<0||
+        !Number.isSafeInteger(m.driveBytes)||m.driveBytes<0||typeof m.partial!=='boolean')
+      fail(502,'Unverified school summary');
+     const summaryAt=now();
+     await db.doc('platform_schools/'+id).set({
+      studentCount:m.studentCount,driveBytes:m.driveBytes,
+      driveBytesPartial:m.partial,summaryAt},{merge:true});
+     return {...result,studentCount:m.studentCount,driveBytes:m.driveBytes,
+       driveBytesPartial:m.partial,summaryAt};
+    }catch(error){
+     // No fabricated zero; keep last known values and allow a later refresh.
+     return {...result,...(cachedGood?{
+       studentCount:data.studentCount,driveBytes:data.driveBytes,
+       driveBytesPartial:data.driveBytesPartial===true,summaryAt:data.summaryAt,
+     }:{}),summaryError:'School Drive summary not verified; retry later'};
+    }
+   }
+   return {...result,...(cachedGood?{
+     studentCount:data.studentCount,driveBytes:data.driveBytes,
+     driveBytesPartial:data.driveBytesPartial===true,summaryAt:data.summaryAt,
+   }:{}),...(cachedGood?{}:{summaryError:'School Drive not connected or not yet measured'})};
+  }
   if(action==='developer/managed/sync/status')return {success:true,schoolId:id,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
   if(action==='developer/managed/view'){
    const known=b.knownRevisions||{};if(!known||typeof known!=='object'||Array.isArray(known)||JSON.stringify(known).length>16000)fail(400,'Invalid school view checkpoint');
