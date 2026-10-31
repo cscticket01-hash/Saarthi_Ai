@@ -5,9 +5,10 @@ import 'windows_ui_localization.dart';
 class WindowsSyncFlow extends StatefulWidget {
   const WindowsSyncFlow({super.key, required this.phase, required this.label,
     required this.local, required this.cloud, required this.drive,
-    required this.pending, this.lastMicros, this.active = const {}});
+    required this.pending, this.pendingText, this.lastMicros, this.active = const {}});
   final String phase, label, local, cloud, drive;
   final int pending;
+  final String? pendingText;
   final int? lastMicros;
   final Set<String> active;
   @override State<WindowsSyncFlow> createState() => _WindowsSyncFlowState();
@@ -42,7 +43,7 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
         SizedBox(width:circle-20,height:circle-20,child:FittedBox(fit:BoxFit.scaleDown,child:SizedBox(width:circle-20,child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.phase=='idle'?Icons.check_circle_outline:Icons.sync,color:color),
           Text(widget.label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:small?12:15,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
           if(widget.phase=='idle') Text(widget.lastMicros==null?'—':'${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
-          Text('${widget.pending} pending',style:const TextStyle(fontSize:11)),
+          Text(widget.pendingText ?? '${widget.pending} pending',style:const TextStyle(fontSize:11),textAlign:TextAlign.center),
         ]))))])),
       SizedBox(width:gap,height:height,child:AnimatedBuilder(animation:clock,builder:(_,__)=>CustomPaint(
         painter:_TransferLinks(color,widget.phase=='paused'?const {}:widget.active,clock.value,rowHeight)))),

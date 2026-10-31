@@ -792,8 +792,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lanes = details['lanes'] is Map ? details['lanes'] as Map
         : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
     final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
-    final hasUploads = (details['pending'] as num? ?? 0) > 0 ||
-        (details['incomingPending'] as num? ?? 0) > 0;
+    final uploadCount = (details['pending'] as num? ?? 0).toInt();
+    final incomingCount = (details['incomingPending'] as num? ?? 0).toInt();
+    final inbound = details['incomingBreakdown'] is Map
+        ? Map<String,dynamic>.from(details['incomingBreakdown'] as Map)
+        : <String,dynamic>{};
+    final recordDownloads = (inbound['recordDownloads'] as num? ?? 0).toInt();
+    final remoteChecks = (inbound['remoteChecks'] as num? ?? 0).toInt();
+    final mediaFiles = (inbound['mediaFiles'] as num? ?? 0).toInt();
+    final hasUploads = uploadCount > 0 || incomingCount > 0;
     final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
     final checking = !engine.isPaused && (checkingOnly || engine.isCheckingCloud);
     final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
@@ -821,7 +828,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'idle': 'Idle',
       'paused': 'Paused',
     };
-    final phaseLabel = busy ? 'Checking' : (phaseLabels[phase] ?? 'Unknown');
+    final phaseLabel = busy ? 'Checking' : phase == 'pending' && uploadCount == 0 && incomingCount > 0
+        ? (remoteChecks > 0 && recordDownloads == 0 && mediaFiles == 0
+            ? 'Cloud check queued' : 'Incoming work')
+        : (phaseLabels[phase] ?? 'Unknown');
     final phaseColor = phase == 'needsAttention'
         ? const Color(0xFFFFC153)
         : _cyan;
@@ -866,10 +876,20 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
                     cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
                     drive:driveLabel,
-                    pending:((details['pending'] as num? ?? 0)+(details['incomingPending'] as num? ?? 0)).toInt(),
+                    pending:uploadCount + incomingCount,
+                    pendingText:inbound.isNotEmpty
+                        ? windowsSyncFlowPendingText(uploadCount,inbound)
+                        : null,
                     lastMicros:details['lastVerifiedTransferMicros'] as int?,
                     active:engine.isPaused?const {}:WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
                       .where((lane)=>lane=='local'||!checking&&hasUploads).toSet(),
+                  ),
+                  if (incomingCount > 0) Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(inbound.isEmpty
+                        ? 'Incoming cloud work awaits verification; not a queued upload.'
+                        : 'Incoming: $recordDownloads record downloads · $remoteChecks cloud checks · $mediaFiles files awaiting verification',
+                      style: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(const Color(0xFF9AB4C9)),fontSize:12)),
                   ),
                   const SizedBox(height: 12),
                    Text(
@@ -900,10 +920,23 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   ),
                   const SizedBox(height: 12),
                   if ((details['liveQueue'] as List? ?? items).isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text('No pending operations in this school.'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(incomingCount > 0
+                          ? 'No pending upload operations. Incoming cloud work is listed below.'
+                          : 'No pending operations in this school.'),
                     ),
+                  if (remoteChecks > 0) Text(
+                    'Cloud change signal queued for verified reconciliation (not an upload).',
+                    style: TextStyle(color:WindowsAppearance.foreground(const Color(0xFF9AB4C9)))),
+                  if (recordDownloads > 0) Text(
+                    '$recordDownloads incoming school records await verified local apply.',
+                    style: TextStyle(color:WindowsAppearance.foreground(const Color(0xFF9AB4C9)))),
+                  if (mediaFiles > 0) Text(
+                    '$mediaFiles pending/failed/interrupted file transfers need verification.',
+                    style: TextStyle(color:WindowsAppearance.foreground(const Color(0xFF9AB4C9)))),
+                  if (incomingCount > 0 && inbound.isEmpty) const Text(
+                    'Incoming work is not detailed in this snapshot; refresh to check its source.'),
                   for (final raw
                       in (details['liveQueue'] as List? ?? items).take(8))
                     if (raw is Map)
