@@ -65,6 +65,24 @@ void main(){
       expect(await destination.exists(), false);
     } finally { await dir.delete(recursive: true); }
   });
+  test('download progress reports real streamed bytes without guessing total', () async {
+    final dir = await Directory.systemTemp.createTemp('update-progress-');
+    final destination = File('${dir.path}/update.apk');
+    final data = [1,2,3,4,5];
+    final points = <int>[];
+    final totals = <int?>[];
+    try {
+      final result = await downloadAndroidUpdate(
+        {...update(), 'sha256':sha256.convert(data).toString()},
+        destination,
+        client:_StreamClient(Stream.fromIterable([[1,2],[3,4,5]])),
+        onProgress:(received,total) { points.add(received);totals.add(total); });
+      expect(await result.readAsBytes(), data);
+      expect(points, [0,2,5,5]);
+      expect(totals, everyElement(isNull));
+    } finally { await dir.delete(recursive:true); }
+  });
+
   test('verified APK is completed only after hash validation', () async {
     final dir = await Directory.systemTemp.createTemp('update-test-');
     final destination = File('${dir.path}/update.apk');
