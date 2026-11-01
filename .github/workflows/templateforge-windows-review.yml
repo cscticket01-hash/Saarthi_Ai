@@ -11,6 +11,7 @@ on:
       - 'lib/windows_staff_payroll.dart'
       - 'test/windows_template_import_engine_test.dart'
       - 'test/windows_template_cloud_store_test.dart'
+      - 'test/windows_template_forge_ocr_test.dart'
       - '.github/scripts/bundle_templateforge_ocr.ps1'
       - '.github/workflows/templateforge-windows-review.yml'
   pull_request:
@@ -96,6 +97,12 @@ jobs:
       - name: Bundle offline OCR runtime and language packs
         shell: powershell
         run: .github/scripts/bundle_templateforge_ocr.ps1 -ReleaseDirectory 'build/windows/x64/runner/Release'
+
+      - name: Smoke-test bundled OCR through the Dart runtime
+        shell: powershell
+        run: |
+          flutter test --concurrency=1 test/windows_template_forge_ocr_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled offline OCR runtime test failed.' }
 
       - name: Verify bundled OCR runtime
         shell: powershell
