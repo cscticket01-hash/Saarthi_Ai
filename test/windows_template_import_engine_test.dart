@@ -335,6 +335,44 @@ void main() {
       reason:'Broken rectangle must not authorize old-image masking');
   });
 
+  test('unlabelled colour portrait alarms but simple form highlights do not',() async {
+    final page=img.Image(width:1000,height:1400);
+    img.fill(page,color:img.ColorRgb8(255,255,255));
+    // An anonymized, synthetic multicolour photograph-like block.
+    for(var y=75;y<360;y+=11){
+      for(var x=700;x<940;x+=11){
+        final color=switch((x*7+y*11)%3){
+          0=>img.ColorRgb8(230,55,40),
+          1=>img.ColorRgb8(35,210,65),
+          _=>img.ColorRgb8(40,80,230),
+        };
+        img.fillRect(page,x1:x,y1:y,x2:x+10,y2:y+10,
+          color:color);
+      }
+    }
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'anonymized-photo.png',
+      bytes:Uint8List.fromList(img.encodePng(page)));
+    expect(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
+      source,const []),isTrue,
+      reason:'Never silently reuse an obvious unlabelled student photo');
+    expect(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
+      source,[const ForgeVisualSlot(role:'studentPhoto',
+        x:.69,y:.04,width:.27,height:.25)]),isFalse,
+      reason:'A verified replacement rectangle may cover the old photo');
+    final clean=img.Image(width:1000,height:1400);
+    img.fill(clean,color:img.ColorRgb8(255,255,255));
+    img.fillRect(clean,x1:60,y1:70,x2:935,y2:95,
+      color:img.ColorRgb8(25,85,210));
+    final cleanDraft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'clean-letterhead.png',
+      bytes:Uint8List.fromList(img.encodePng(clean)));
+    expect(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
+      cleanDraft,const []),isFalse);
+  });
+
   test('visual planner refuses duplicate ambiguous photo labels',() async {
     final canvas=img.Image(width:1000,height:1400);
     img.fill(canvas,color:img.ColorRgb8(255,255,255));

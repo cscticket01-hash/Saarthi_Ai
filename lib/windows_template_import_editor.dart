@@ -73,6 +73,11 @@ class SchoolTemplateImportEditor {
         labels.values.every((count)=>count==1) &&
         slots.length==labels.length;
       final warnings=[...textRecognition.warnings];
+      if(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
+        oriented,allVerified?slots:const <ForgeVisualSlot>[])){
+        warnings.add('Unlabelled colour image may contain an old student '
+          'photo. Upload a blank form or a source with a verifiable photo slot.');
+      }
       if(allVerified){
         warnings.remove('Image/QR/signature slot needs verified automatic replacement.');
       }

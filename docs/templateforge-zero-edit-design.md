@@ -53,3 +53,9 @@ PR #198 must pass the dedicated Windows TemplateForge workflow, the repository's
 - Paper selection alone does not change an existing PDF page size. Schools must import/choose a Legal source document for a fully Legal-size document.
 - The Windows CI artifact includes A4 and Legal 100 mm physical calibration proofs. Real printer drivers, Legal-tray support and printed alignment are separate acceptance gates.
 - A local Linux LibreOffice smoke test of synthetic .docx US Legal and .xlsx A4 source files produced genuine single-page PDFs, including 612 x 1008 pt US Legal. That evidence does **not** certify Windows Office COM, installed school printer driver, physical paper alignment or school data.
+
+
+## Old photo leakage safeguard
+
+- The same existing visual-slot analyzer now applies a conservative bounded colour-block check for **unlabelled multicolour photograph-like regions**. If a substantial colour block cannot be covered by an independently verified image replacement rectangle, the upload fails closed rather than reprinting a previous person's portrait. Small accents and simple coloured headings are excluded.
+- This is a safety alarm, not face recognition. Grayscale photos, arbitrary visual layouts, unlabelled monochrome QR codes and difficult scans still require real-document review and must not be represented as universally supported.

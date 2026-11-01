@@ -69,6 +69,66 @@ class TemplateForgeVisualSlots {
     return true;
   }
 
+  /// A conservative safety alarm for an old, *unlabelled* colour photo.
+  /// OCR captions alone cannot find a sample student's face. A broad and
+  /// saturated block without a verified replacement slot must not silently
+  /// become part of the next student's background. This does NOT claim to
+  /// detect grayscale portraits, borderless QR codes or every image design.
+  ///
+  /// Small logos, narrow colour banners and isolated printed highlights are
+  /// intentionally excluded; only sustained multi-hue blocks trigger.
+  static bool hasUnverifiedColorPhoto(
+    SchoolTemplateDraft draft,List<ForgeVisualSlot> verified,
+  ){
+    final raster=img.decodePng(draft.png);
+    if(raster==null)return false;
+    const columns=40,rows=56;
+    final colorful=List<int>.filled(columns*rows,0);
+    final hues=List<int>.filled(columns*rows,0);
+    for(var y=0;y<rows;y++){
+      for(var x=0;x<columns;x++){
+        final px=math.min(raster.width-1,
+          ((x+.5)*raster.width/columns).floor());
+        final py=math.min(raster.height-1,
+          ((y+.5)*raster.height/rows).floor());
+        final c=raster.getPixel(px,py);
+        final r=c.r.toDouble(),g=c.g.toDouble(),b=c.b.toDouble();
+        final maximum=math.max(r,math.max(g,b));
+        final minimum=math.min(r,math.min(g,b));
+        final index=y*columns+x;
+        if(maximum-minimum>=55 && r+g+b>110 &&
+            r+g+b<700){
+          colorful[index]=1;
+          hues[index]=r>=g&&r>=b?1:g>=b?2:3;
+        }
+      }
+    }
+    // Sliding sample windows are 12.5% of the page wide and about 12.5%
+    // high. This is bounded to under 2,000 windows even for a 12 MP source.
+    const boxW=5,boxH=7;
+    for(var y=2;y<rows*3~/4-boxH;y++){
+      for(var x=1;x<=columns-boxW-1;x++){
+        var filled=0,distinct=0;
+        for(var v=0;v<boxH;v++){
+          for(var u=0;u<boxW;u++){
+            final index=(y+v)*columns+x+u;
+            if(colorful[index]==1){
+              filled++;
+              distinct|=1<<hues[index];
+            }
+          }
+        }
+        if(filled<28 || distinct!=14)continue;
+        final cx=(x+boxW/2)/columns,cy=(y+boxH/2)/rows;
+        final covered=verified.any((s)=>
+          cx>=s.x && cx<=s.x+s.width &&
+          cy>=s.y && cy<=s.y+s.height);
+        if(!covered)return true;
+      }
+    }
+    return false;
+  }
+
   /// Bounded scan near an OCR role label. Strongly rotated, decorative or
   /// borderless placeholders remain unresolved instead of being fabricated.
   static List<ForgeVisualSlot> detect(
