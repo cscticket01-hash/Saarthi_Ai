@@ -271,6 +271,27 @@ class SchoolTemplateImportEngine {
         throw const FormatException('Receipt total does not match fee items.');
       }
     }
+    if(draft.kind==SchoolTemplateKind.reportCard &&
+      record['marks'] is Map && record['totalMarks'] is num){
+      final marks=record['marks'] as Map;
+      if(draft.fields.any((f)=>f.key.startsWith('subjectMarks'))){
+        if(marks.values.any((v)=>v is! num || !v.isFinite || v<0)){
+          throw const FormatException('Subject marks must be numeric for this scanned table.');
+        }
+        final total=marks.values.fold<num>(0,(sum,v)=>sum+(v as num));
+        if((total-(record['totalMarks'] as num)).abs()>.01){
+          throw const FormatException('Marksheet total does not match the subject marks.');
+        }
+        final full=record['fullMarks'];
+        final percentage=double.tryParse(record['percentage']?.toString()??'');
+        if(full is num && full>0 && percentage!=null && marks.isNotEmpty){
+          final expected=total/(full*marks.length)*100;
+          if((expected-percentage).abs()>1.0){
+            throw const FormatException('Marksheet percentage does not match marks and full marks.');
+          }
+        }
+      }
+    }
     if(draft.kind==SchoolTemplateKind.payslip){
       for(final key in const ['basicPaise','allowancePaise','deductionPaise',
         'bonusPaise','overtimePaise','netPaise','paidPaise']){
