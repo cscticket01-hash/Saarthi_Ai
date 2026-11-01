@@ -60,6 +60,26 @@ void main() {
       isNot(identity));
   });
 
+  test('school receipt PDF embeds Indic fallback fonts for Bengali and Hindi',() async {
+    final imported=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'indic-fee-receipt.png',bytes:png);
+    final draft=imported.copyWith(fields:[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.16,width:.5),
+      const SchoolTemplateField(key:'totalAmount',x:.7,y:.88,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.45,width:.4),
+      const SchoolTemplateField(key:'feeAmount0',x:.7,y:.45,width:.2),
+    ]);
+    for(final studentName in ['অর্ণব','आरव','অসমীয়া']){
+      final pdf=await SchoolTemplateImportEngine.previewPdf(draft,{
+        'receiptNo':'VS-IND-001','studentName':studentName,
+        'feeItems':{'Tuition':100},'totalAmount':100,
+      });
+      expect(pdf.take(5).toList(),[37,80,68,70,45]);
+    }
+  });
+
   test('automatic OCR maps receipt labels without manual coordinates',() async {
     final original=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
