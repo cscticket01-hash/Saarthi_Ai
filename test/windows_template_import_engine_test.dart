@@ -253,6 +253,23 @@ void main() {
     }),throwsFormatException);
   });
 
+  test('OCR block order does not reshuffle the printed fee rows',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'rows.png',bytes:png);
+    final tsv=sampleOcr([
+      'Receipt No VS101','Student Name Mira','Description Amount',
+      'Tuition 1000','Exam 200','Total Amount 1200',
+    ]);
+    final records=tsv.trimRight().split('\n');
+    final shuffled=[records.first,...records.skip(1).toList().reversed].join('\n');
+    final mapped=TemplateForgeAutoMapper.detect(draft,shuffled);
+    expect(mapped.safeToActivate,isTrue);
+    final row0=mapped.draft.fields.firstWhere((f)=>f.key=='feeName0');
+    final row1=mapped.draft.fields.firstWhere((f)=>f.key=='feeName1');
+    expect(row0.y,lessThan(row1.y));
+  });
+
   test('verified fee table rows bind actual school fees, not OCR sample values',() async {
     final draft=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
