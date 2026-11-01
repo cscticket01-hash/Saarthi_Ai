@@ -209,12 +209,28 @@ class SchoolTemplateImportEngine {
       draft.visualSlots.map((s)=>s.role).toSet().length!=draft.visualSlots.length){
       throw const FormatException('Ambiguous visual slots.');
     }
-    for(final slot in draft.visualSlots){
+    for(var i=0;i<draft.visualSlots.length;i++){
+      final slot=draft.visualSlots[i];
       slot.validate();
+      if(slot.role=='qrCode'){
+        final aspect=(slot.width*draft.width/draft.height)/slot.height;
+        if(aspect<.85||aspect>1.15){
+          throw const FormatException('QR placeholder must be square on A4.');
+        }
+      }
       if(draft.fields.any((f)=>
         f.x<slot.x+slot.width && slot.x<f.x+f.width &&
         f.y<slot.y+slot.height && slot.y<f.y+f.size*1.8)){
         throw const FormatException('Visual slot overlaps a data field.');
+      }
+      for(var j=i+1;j<draft.visualSlots.length;j++){
+        final other=draft.visualSlots[j];
+        if(slot.x<other.x+other.width &&
+          other.x<slot.x+slot.width &&
+          slot.y<other.y+other.height &&
+          other.y<slot.y+slot.height){
+          throw const FormatException('Visual placeholders overlap.');
+        }
       }
     }
   }
