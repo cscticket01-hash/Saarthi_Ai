@@ -356,7 +356,14 @@ void main() {
     final bytes=Uint8List.fromList(await pdf.save());
     final draft=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
-      filename:'landscape.pdf',bytes:bytes);
+      filename:'landscape.pdf',bytes:bytes,
+      // Headless Flutter tests have no native Printing.raster plugin.
+      // The production path still uses the Windows PDF rasterizer.
+      pdfPagesRasterizer:(source) async {
+        expect(source,orderedEquals(bytes));
+        return [Uint8List.fromList(img.encodePng(
+          img.Image(width:1400,height:1000)))];
+      });
     expect(draft.width,greaterThan(draft.height));
   });
 
@@ -373,7 +380,12 @@ void main() {
     final bytes=Uint8List.fromList(await pdf.save());
     await expectLater(SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
-      filename:'two-pages.pdf',bytes:bytes),throwsFormatException);
+      filename:'two-pages.pdf',bytes:bytes,
+      pdfPagesRasterizer:(source) async {
+        expect(source,orderedEquals(bytes));
+        // The page-count guard must refuse both pages, never use only page one.
+        return [png,png];
+      }),throwsFormatException);
   });
 
   test('high-resolution A4 phone photos are reduced to the safe print raster limit',() async {
