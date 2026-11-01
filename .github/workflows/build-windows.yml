@@ -2,6 +2,7 @@
 # Existing backend 1383631a is live; school Apps Script migration is not executed.
 # Existing-school recovery and token reuse are verified before this installer release.
 # Website Windows downloads automatically select the latest published Windows release.
+# PR #196 Windows release: verified per-school student checkout setting UI; Cloudflare/Firebase infrastructure unchanged.
 name: Build Vidya Saarthi Windows Admin
 
 on:

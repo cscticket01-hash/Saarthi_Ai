@@ -95,15 +95,15 @@ void main() {
         );
         if (preset.id == 'midnight-glass') {
           expect(find.byKey(const ValueKey('theme-preview-glass')), findsOneWidget);
-          expect(find.byKey(const ValueKey('theme-preview-image')), findsNothing,
-            reason:'Glass must render its own frosted UI, not Electric Blue');
-        } else {
-          final image = tester.widget<Image>(
-            find.byKey(const ValueKey('theme-preview-image')),
-          );
-          expect((image.image as AssetImage).assetName,
-            'assets/theme_preview_${preset.id}_dashboard.webp');
+          expect(find.text('School records  •  Secure cloud'), findsNothing,
+            reason:'The fabricated placeholder dashboard must not reappear');
         }
+        final image = tester.widget<Image>(
+          find.byKey(const ValueKey('theme-preview-image')),
+        );
+        expect((image.image as AssetImage).assetName,
+          'assets/theme_preview_${preset.id == 'midnight-glass' ? 'electric-blue' : preset.id}_dashboard.webp',
+          reason:'Every preset, including Glass, must preview a real Windows screen');
       }
       expect(find.text('Unsaved selection'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('theme-next')));
@@ -144,6 +144,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('theme-preset-midnight-glass')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
+    final firstPreview=tester.widget<Image>(find.byKey(const ValueKey('theme-preview-image')));
+    expect((firstPreview.image as AssetImage).assetName,
+      'assets/theme_preview_electric-blue_dashboard.webp');
     await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')),'44');
     await tester.pumpAndSettle();
     expect(find.text('Midnight Glass • sample app screens'),findsOneWidget);

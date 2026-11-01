@@ -1,3 +1,5 @@
+# Frontend-only rollout for PR #196. [hosting-only] deliberately skips Firestore rules publication.
+# Midnight Glass website preview now uses real Windows screenshots, not synthetic empty cards.
 name: Deploy Vidya Saarthi to Firebase Hosting
 
 on:

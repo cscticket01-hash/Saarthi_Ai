@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/mobile/settings_screen.dart';
+import 'mobile_ux_dob_test.dart' as uxRegression;
 void main() {
+  group('mobile UX regression', uxRegression.main);
   final update = {'versionName':'1.0.496', 'versionCode':496,
     'apkUrl':'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.496/Vidya-Saarthi-v1.0.496.apk'};
   testWidgets('About shows installed version, build and shipped changes', (t) async {

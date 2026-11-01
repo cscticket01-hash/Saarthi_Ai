@@ -286,6 +286,9 @@ class SchoolSession {
     if (mode == 'exit' ? exited : entered) {
       return '${mode == 'exit' ? 'Check-out' : 'Check-in'} captured today. Locked until tomorrow, including pending submissions.';
     }
+    if (mode == 'exit' && link?.role == 'student' && !studentCheckoutEnabled) {
+      return 'This school has disabled student check-out.';
+    }
     if (mode == 'exit' && !entered) return 'Check in before checking out.';
     if (link?.role == 'student') {
       if (status is! Map) {
@@ -299,6 +302,12 @@ class SchoolSession {
       }
     }
     return '';
+  }
+
+  bool get studentCheckoutEnabled {
+    final status = dashboard['attendanceStatus'];
+    final schedule = status is Map ? status['schedule'] : null;
+    return schedule is! Map || schedule['checkoutEnabled'] != false;
   }
 
   String get attendanceScheduleLabel {
@@ -1143,8 +1152,12 @@ class SchoolSession {
         throw StateError('School messaging project mismatch');
       }
       await _persist();
-    } catch (_) {
-      if (generation == _generation) await clear();
+    } catch (error) {
+      if (generation == _generation) {
+        // A concurrent owner may have committed a newer session. Never
+        // tombstone that verified cache just because our login CAS lost.
+        await clear(preserveSharedSession: error is StaleSessionCache);
+      }
       rethrow;
     }
   }
@@ -1323,7 +1336,13 @@ class SchoolSession {
 
   Future<void> _adoptSharedSnapshot() async {
     if (_sharedSessionStore != null) {
-      final current = await _sharedSessionStore!.read();
+      final observed = await _sharedSessionStore!.readSnapshot();
+      final current = observed.value;
+      if (current == _sharedSnapshot) {
+        // Background may save identical content with a newer CAS version.
+        // Adopt that version only after a fresh verified encrypted read.
+        _sharedSnapshotVersion = observed.version;
+      }
       if (current != _sharedSnapshot) {
         final same = current != null && jsonDecode(current)['qr'] == link?.rawQr;
         if (!same) {
@@ -1697,11 +1716,15 @@ class SchoolSession {
   }
 
   Future<void> logout() async {
+    // Server revoke is best-effort: never hold local sign-out behind HTTP.
+    // The request captures the old school identity before the local reset.
     if (loggedIn) {
-      try {
-        await schoolCall('mobile_logout', {});
-      } catch (_) {}
+      unawaited(schoolCall('mobile_logout', {})
+        .timeout(const Duration(seconds: 6))
+        .catchError((Object _) => <String,dynamic>{}));
     }
+    // Invalidate in-memory identity and persist the encrypted tombstone.
+    // Pending attendance and offline records belong to independent storage.
     await clear();
   }
 
@@ -1756,7 +1779,10 @@ class SchoolSession {
       (_) async {
         if (preserveSharedSession) return;
         if (_sharedSessionStore != null) {
-          await _sharedSessionStore!.clear(previousQr);
+          // Logout/new login advances the durable tombstone's CAS version.
+          // The next login must write using this version, not the preceding
+          // startup snapshot (which caused a false stale-worker rejection).
+          _sharedSnapshotVersion = await _sharedSessionStore!.clear(previousQr);
           _sharedSnapshot = null;
         } else { await _secure.delete(key: 'vs_mobile_session'); }
       },

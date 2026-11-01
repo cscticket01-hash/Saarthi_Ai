@@ -2,7 +2,20 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+/// Shared passive progress source for the update screen. Zero means downloading
+/// has not begun; null total means byte-percent cannot be established.
+class AndroidUpdateTransfer {
+  const AndroidUpdateTransfer(this.received, this.total, {this.verified = false});
+  final int received;
+  final int? total;
+  final bool verified;
+  double? get fraction => total == null || total! <= 0
+    ? null : (received / total!).clamp(0.0, 1.0);
+}
+final androidUpdateTransfer = ValueNotifier<AndroidUpdateTransfer?>(null);
 
 Future<Map<String,dynamic>> latestAndroidUpdate({http.Client? client}) async {
   final transport = client ?? http.Client();
@@ -81,6 +94,7 @@ Future<File> downloadAndroidUpdate(Map<String, dynamic> update, File destination
   Duration headerTimeout = const Duration(seconds: 20),
   Duration idleTimeout = const Duration(seconds: 30),
   Duration overallTimeout = const Duration(minutes: 15),
+  void Function(int bytesReceived, int? bytesTotal)? onProgress,
 }) async {
   validateAndroidUpdate(update);
   final transport = client ?? http.Client();
@@ -92,6 +106,9 @@ Future<File> downloadAndroidUpdate(Map<String, dynamic> update, File destination
         .timeout(headerTimeout);
     if (response.statusCode != 200) throw StateError('Update download failed.');
     sink = partial.openWrite();
+    final totalBytes = response.contentLength;
+    var receivedBytes = 0;
+    onProgress?.call(0, totalBytes);
     chunks = StreamIterator<List<int>>(response.stream);
     final elapsed = Stopwatch()..start();
     while (true) {
@@ -100,6 +117,8 @@ Future<File> downloadAndroidUpdate(Map<String, dynamic> update, File destination
       final budget = remaining < idleTimeout ? remaining : idleTimeout;
       if (!await chunks.moveNext().timeout(budget)) break;
       sink.add(chunks.current);
+      receivedBytes += chunks.current.length;
+      onProgress?.call(receivedBytes, totalBytes);
       await sink.flush().timeout(budget);
     }
     await sink.close();
@@ -108,6 +127,7 @@ Future<File> downloadAndroidUpdate(Map<String, dynamic> update, File destination
     if (expected != null && (await sha256.bind(partial.openRead()).first).toString() != expected) {
       throw StateError('Update verification failed. Download again.');
     }
+    onProgress?.call(receivedBytes, totalBytes);
     return await partial.rename(destination.path);
   } finally {
     // Close the download transport to cancel stalled network activity.

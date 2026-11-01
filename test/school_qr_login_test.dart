@@ -9,9 +9,13 @@ import 'package:http/testing.dart';
 import '../lib/school_qr_link.dart';
 import '../lib/qr_authentication_engine.dart';
 import '../lib/mobile/school_session.dart';
+import 'mobile_session_cache_store_test.dart' as sharedCacheRegression;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Also run SQLite cross-worker cache/CAS tests in the Android QR login gate.
+  // Nested group scopes its secure-storage mocks and temporary databases.
+  group('Android encrypted shared-session login regression', sharedCacheRegression.main);
   final fixtures = (jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).map((v)=>Map<String,dynamic>.from(v as Map)).toList();
   setUp(()=>FlutterSecureStorage.setMockInitialValues({}));
   test('QR engine preserves expired identity but rejects invalid identity and new expired login',(){

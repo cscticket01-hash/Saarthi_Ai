@@ -38,7 +38,7 @@ function VS_attendancePolicy(session){
  return {role:session.role,personId:session.personId,documentId:session.person.id,
   qrHash:VS_hash(session.role+'/'+session.person.id+'/'+session.doc.linkToken),day:day,
   open:VS_isOpen(day),latitude:loc.latitude,longitude:loc.longitude,radiusMeters:loc.radiusMeters||200,
-  scheduleVersion:1,schedule:config?{enabled:config.enabled,startMinute:config.startMinute,endMinute:config.endMinute}:null,
+  scheduleVersion:1,schedule:config?{enabled:config.enabled,startMinute:config.startMinute,endMinute:config.endMinute,checkoutEnabled:config.checkoutEnabled!==false}:null,
   recorded:!!(record&&(record.checkIn||record.checkOut))};
 }
 function VS_mobileAction(b){
@@ -198,6 +198,10 @@ function VS_mobileAction(b){
      const d=new Date(at+19800000),minute=d.getUTCHours()*60+d.getUTCMinutes();
      if(schedule.enabled!==true||!Number.isInteger(schedule.startMinute)||!Number.isInteger(schedule.endMinute)||schedule.startMinute<0||schedule.endMinute>1440||schedule.startMinute>=schedule.endMinute||minute<schedule.startMinute||minute>=schedule.endMinute)throw new Error('Student attendance is outside the school schedule');
     }
+   }
+   if(mode==='exit'&&session.role==='student'){
+    const settings=VS_get('school_settings','attendance_schedule');
+    if(settings&&settings.checkoutEnabled===false)throw new Error('Student check-out is disabled by this school');
    }
    if(mode==='exit'&&!current.checkIn)throw new Error('Check in before checking out');
    if(mode==='exit'&&current.checkOut)throw new Error('Today’s check-out is already recorded');

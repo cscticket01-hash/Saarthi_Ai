@@ -89,7 +89,7 @@ class MobileSessionCacheStore {
     _version=next;_lastOwnWriteVersion=next;
     await _secure.delete(key:'vs_mobile_session');return next;
   }
-  Future<void> clear(String? expectedQr) async {
+  Future<int> clear(String? expectedQr) async {
     final db=await database;
     final next=await db.transaction((tx)async{
       final row=await _row(tx),raw=await _decode(row['envelope']);
@@ -97,7 +97,9 @@ class MobileSessionCacheStore {
       final version=(row['version'] as int)+1;
       await tx.update('session_snapshot',{'version':version,'envelope':null},where:'id=1');return version;
     },exclusive:true);
-    _version=next;await _secure.delete(key:'vs_mobile_session');
+    _version=next;_lastOwnWriteVersion=next;
+    await _secure.delete(key:'vs_mobile_session');
+    return next;
   }
   Future<void> close() async {final db=_database;if(db!=null)await (await db).close();_database=null;}
 }

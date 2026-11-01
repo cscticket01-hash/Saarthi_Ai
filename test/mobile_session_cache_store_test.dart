@@ -66,6 +66,63 @@ void main(){
     await expectLater(background.read(),throwsA(anything));
     expect((await db.query('session_snapshot')).length,1);
   });
+  test('Android first login after startup restore uses the post-logout CAS version',()async{
+    final fixture=Map<String,dynamic>.from(
+      (jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).first);
+    final school=fixture['schoolId'];
+    final client=MockClient((request)async{
+      final action=(jsonDecode(request.body)['request'] as Map)['action'];
+      if(action=='mobile_login')return http.Response(jsonEncode({
+        'success':true,'schoolId':school,'projectId':school,
+        'sessionToken':'new-verified-session',
+        'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,
+        'person':{'name':'Own student'},'schoolName':'Own school',
+      }),200);
+      return http.Response(jsonEncode({'success':true,'schoolId':school,'projectId':school}),200);
+    });
+    final front=SchoolSession(client:client,sharedSessionStore:foreground);
+    // Android startup has already read version zero. login() must not reuse
+    // that version after clear() writes a version-one tombstone.
+    await front.restore();
+    expect((await foreground.readSnapshot()).version,0);
+    await front.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+    expect(front.loggedIn,true);
+    final saved=await foreground.readSnapshot();
+    expect(saved.version,2);
+    expect(jsonDecode(saved.value!)['schoolToken'],'new-verified-session');
+    await front.closeBackgroundInvocation();
+  });
+  test('losing login CAS never deletes a newer independent worker session',()async{
+    final fixture=Map<String,dynamic>.from(
+      (jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).first);
+    final school=fixture['schoolId'];
+    final client=MockClient((request)async{
+      final action=(jsonDecode(request.body)['request'] as Map)['action'];
+      if(action=='mobile_login'){
+        // A background worker commits AFTER login has written its tombstone
+        // but BEFORE the foreground can persist the successful HTTP login.
+        final observed=await background.readSnapshot();
+        await background.write(snapshot('newer-worker'),expectedVersion:observed.version);
+        return http.Response(jsonEncode({
+          'success':true,'schoolId':school,'projectId':school,
+          'sessionToken':'foreground-should-not-win',
+          'expiresAt':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch,
+          'person':{'name':'Own student'},'schoolName':'Own school',
+        }),200);
+      }
+      return http.Response(jsonEncode({'success':true,'schoolId':school,'projectId':school}),200);
+    });
+    final front=SchoolSession(client:client,sharedSessionStore:foreground);
+    await front.restore();
+    await expectLater(
+      front.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture))),
+      throwsA(isA<StaleSessionCache>()));
+    expect(front.loggedIn,false);
+    expect(jsonDecode((await background.read())!)['dashboard']['revision'],'newer-worker',
+      reason:'A stale foreground login cannot erase a newer background owner');
+    await front.closeBackgroundInvocation();
+  });
+
   test('foreground adopts background verified cache before requesting the next delta',()async{
     final fixture=Map<String,dynamic>.from((jsonDecode(File('test/fixtures/windows_person_qr.json').readAsStringSync()) as List).first);
     final school=fixture['schoolId'];var revision='first';var observed='';

@@ -84,6 +84,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
       if (!mounted || !sameSchool()) return;
       final data = doc.data() ?? {};
       var enabled = data['enabled'] == true;
+      var checkoutEnabled = data['checkoutEnabled'] != false;
       TimeOfDay fromMinute(dynamic n, int fallback) {
         final m = n is int && n >= 0 && n < 1440 ? n : fallback;
         return TimeOfDay(hour: m ~/ 60, minute: m % 60);
@@ -103,6 +104,13 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
                 SwitchListTile(contentPadding: EdgeInsets.zero,
                   title: const Text('Limit student attendance time'), value: enabled,
                   onChanged: (v) => update(() => enabled = v)),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Student check-out'),
+                  subtitle: Text(checkoutEnabled ? 'Check-in and check-out' : 'Check-in only in student app'),
+                  value: checkoutEnabled,
+                  onChanged: (v) => update(() => checkoutEnabled = v),
+                ),
                 ListTile(title: const Text('Opens at'), trailing: Text(start.format(ctx)),
                   enabled: enabled, onTap: !enabled ? null : () async {
                     final t = await showTimePicker(context: ctx, initialTime: start);
@@ -129,6 +137,7 @@ class _SchoolAttendanceOverviewState extends State<SchoolAttendanceOverview> {
       if (save != true || !mounted || !sameSchool()) return;
       await FirebaseFirestore.instance.collection('school_settings').doc('attendance_schedule').set({
         'enabled': enabled, 'startMinute': minute(start), 'endMinute': minute(end),
+        'checkoutEnabled': checkoutEnabled,
         'timeZone': 'Asia/Kolkata', 'updatedAt': FieldValue.serverTimestamp(),
         'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       });

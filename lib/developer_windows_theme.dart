@@ -218,6 +218,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                             key: const ValueKey('theme-preview-glass'),
                             page: pageNames[slide],
                             tint: draft,
+                            screenshot: previewAsset,
                           )
                         : ColorFiltered(
                             colorFilter: ColorFilter.mode(
@@ -689,62 +690,56 @@ class _ColourPad extends CustomPainter {
 }
 
 
-/// Real-time glass preview, rendered from the selected preset/tint instead of
-/// incorrectly showing an Electric Blue screenshot for every Glass selection.
+/// Midnight Glass preview must show the SAME verified Windows app screens
+/// used by other presets. This is a screenshot with a subtle glass treatment,
+/// not an invented dashboard with empty placeholder panels. Dedicated
+/// Glass captures can replace the shared screenshot source later.
 class _MidnightGlassPreview extends StatelessWidget {
-  const _MidnightGlassPreview({super.key, required this.page, required this.tint});
+  const _MidnightGlassPreview({
+    super.key,
+    required this.page,
+    required this.tint,
+    required this.screenshot,
+  });
   final String page;
   final Color tint;
+  final String screenshot;
   @override
-  Widget build(BuildContext context) {
-    final edge=tint.withValues(alpha:.48);
-    Widget pane(String text,{double opacity=.10}) => Container(
-      margin: const EdgeInsets.symmetric(vertical:4),
-      padding: const EdgeInsets.all(10),
-      decoration:BoxDecoration(
-        color:Colors.white.withValues(alpha:opacity),
-        border:Border.all(color:edge,width:.8),
-        borderRadius:BorderRadius.circular(14),
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      ColorFiltered(
+        colorFilter: ColorFilter.mode(tint, BlendMode.hue),
+        child: Image.asset(
+          screenshot,
+          key: const ValueKey('theme-preview-image'),
+          fit: BoxFit.contain,
+          semanticLabel: '$page — verified Windows screen with Midnight Glass tint',
+        ),
       ),
-      child:Text(text,maxLines:2,overflow:TextOverflow.ellipsis,
-        style:const TextStyle(color:Colors.white,fontSize:12)),
-    );
-    return LayoutBuilder(builder:(context,box) => Container(
-      decoration:BoxDecoration(
-        gradient:LinearGradient(
-          begin:Alignment.topLeft,end:Alignment.bottomRight,
-          colors:[const Color(0xFF06090F),tint.withValues(alpha:.32),const Color(0xFF111C2D)])),
-      child:Stack(children:[
-        Positioned(right:-24,top:-35,child:Container(width:box.maxWidth*.58,height:box.maxHeight*.75,
-          decoration:BoxDecoration(shape:BoxShape.circle,color:tint.withValues(alpha:.13)))),
-        Padding(padding:const EdgeInsets.all(15),child:Column(
-          crossAxisAlignment:CrossAxisAlignment.stretch,
-          children:[
-            pane('✦   Vidya Saarthi  /  Midnight Glass',opacity:.14),
-            const SizedBox(height:7),
-            pane(page,opacity:.16),
-            Expanded(child:Row(children:[
-              Expanded(child:Column(children:[
-                Expanded(child:Container(
-                  decoration:BoxDecoration(
-                    borderRadius:BorderRadius.circular(16),
-                    color:Colors.white.withValues(alpha:.07),
-                    border:Border.all(color:edge)),
-                  child:Center(child:Icon(Icons.dashboard_customize_outlined,
-                    size:box.maxHeight>240?58:32,color:tint)))),
-                pane('School records  •  Secure cloud'),
-              ])),
-              const SizedBox(width:12),
-              Expanded(child:Column(children:[
-                pane('Live notices',opacity:.14),
-                pane('Students / Teachers',opacity:.12),
-                pane('Sync ready',opacity:.10),
-              ])),
-            ])),
-          ],
-        )),
-      ])));
-  }
+      IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: const Color(0xFFBEDFFF).withValues(alpha: .27),
+              width: 1,
+            ),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withValues(alpha: .12),
+                tint.withValues(alpha: .045),
+                Colors.transparent,
+                const Color(0xFF06090F).withValues(alpha: .055),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
 }
 
 /// Asset-free, live-painted frosted glass tile. No remote theme pictures,
