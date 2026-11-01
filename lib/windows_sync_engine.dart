@@ -158,6 +158,28 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (_automaticDue) await syncNow();
   }
 
+  bool _recoveringPendingDispatch = false;
+  // A dispatch can be consumed while profile activation owns the serial lane.
+  // Re-observe durable local work on the existing watchdog; never reset retries,
+  // user pause, quota limits, operation IDs or cloud acknowledgement state.
+  Future<void> _recoverPendingDispatch() async {
+    if (!automaticScheduleExpected || _syncing || _activating > 0 ||
+        _recoveringPendingDispatch || _dispatch.running) return;
+    _recoveringPendingDispatch = true;
+    final profile = _activeProfileId, school = _activeSchoolSyncId;
+    try {
+      await refreshDetails();
+      if (!automaticScheduleExpected || _syncing || _activating > 0 ||
+          _activeProfileId != profile || _activeSchoolSyncId != school ||
+          FirebaseFirestore.instance.activeProfileId != profile) return;
+      if (_hasAutomaticWork) scheduleSoon();
+    } catch (_) {
+      // A local storage transition is retried on the next existing tick.
+    } finally {
+      _recoveringPendingDispatch = false;
+    }
+  }
+
   // The automatic owner checks local durable evidence. It cannot ACK or
   // discard anything; only a subsequent cloud read + local readback can heal.
   Future<void> _scheduleStalledDownloadRepair() async {
@@ -1158,6 +1180,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _changeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_discoverManagedChanges());
       unawaited(_scheduleStalledDownloadRepair());
+      unawaited(_recoverPendingDispatch());
     });
     _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
 
@@ -1364,6 +1387,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       }
     } finally {
       _activating--;
+      if (_activating == 0 && automaticScheduleExpected) {
+        scheduleSoon(delay: const Duration(milliseconds: 350));
+      }
     }
   }
 
