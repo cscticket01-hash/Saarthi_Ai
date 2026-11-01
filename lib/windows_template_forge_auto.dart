@@ -176,8 +176,8 @@ class TemplateForgeAutoMapper {
       if(nameWords.isEmpty || nameWords.first.x>=line.last.x)continue;
       candidates.add([...nameWords,line.last]);
     }
-    if(candidates.length>8){
-      warnings.add('More than eight scanned table rows; cannot safely import');
+    if(candidates.length>SchoolTemplateImportEngine.maxTableRows){
+      warnings.add('More scanned rows than this A4 template supports; cannot safely import');
       return const [];
     }
     final rowTops=candidates.map((row)=>row.first.y).toList()..sort();
@@ -205,7 +205,7 @@ class TemplateForgeAutoMapper {
       final available=((totalY-firstRowY)/rowHeight).floor();
       if(available>0)rowCount=math.max(rowCount,available).toInt();
     }
-    rowCount=rowCount.clamp(1,8).toInt();
+    rowCount=rowCount.clamp(1,SchoolTemplateImportEngine.maxTableRows).toInt();
     if(totalY!=null && firstRowY+(rowCount-1)*rowHeight>=totalY){
       rowCount=math.max(1,((totalY-firstRowY)/rowHeight).floor()).toInt();
     }
@@ -313,7 +313,7 @@ class TemplateForgeAutoMapper {
       candidate.y<field.y+field.size));
     if(overlaps){
       warnings.add('Detected table cells overlap another field');
-    }else if(fields.length+dynamicRows.length<=35){
+    }else if(fields.length+dynamicRows.length<=SchoolTemplateImportEngine.maxFields){
       fields.addAll(dynamicRows);
     }else{
       warnings.add('Too many detected fields for a safe import');
