@@ -285,8 +285,9 @@ class SchoolTemplateImportEngine {
         final full=record['fullMarks'];
         final percentage=double.tryParse(record['percentage']?.toString()??'');
         if(full is num && full>0 && percentage!=null && marks.isNotEmpty){
-          final expected=total/(full*marks.length)*100;
-          if((expected-percentage).abs()>1.0){
+          final perSubject=(total/(full*marks.length)*100-percentage).abs();
+          final overall=(total/full*100-percentage).abs();
+          if(perSubject>1.0 && overall>1.0){
             throw const FormatException('Marksheet percentage does not match marks and full marks.');
           }
         }
