@@ -543,6 +543,9 @@ class WindowsDocumentTemplates {
         {};
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
+    final schoolName=[profile['schoolName'],profile['name'],data['schoolName']]
+      .map((v)=>v?.toString().trim()??'')
+      .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
     if(v is String && v.startsWith('imported:')){
       final manifest=importedAsset(templateSettings,kind,templateId:v.substring(9));
       if(manifest==null){
@@ -550,7 +553,7 @@ class WindowsDocumentTemplates {
       }
       final record={
         ...profile,...data,
-        'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
+        'schoolName':schoolName,
         'schoolAddress':profile['address']??data['schoolAddress']??'',
         'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
         if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
@@ -563,7 +566,7 @@ class WindowsDocumentTemplates {
         ...profile,...data,
         'netPaise':data['netPaise']??data['salaryNetPaise']??0,
         'paidPaise':data['paidPaise']??0,
-      },schoolName:profile['schoolName']?.toString()??profile['name']?.toString()??'');
+      },schoolName:schoolName);
     }
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
@@ -591,7 +594,7 @@ class WindowsDocumentTemplates {
         {
           ...profile,
           ...data,
-          'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
+          'schoolName': schoolName,
           'schoolAddress': profile['address'] ?? '',
           'designation':
               data['designation'] ??
@@ -666,10 +669,13 @@ class WindowsDocumentTemplates {
                 .get())
             .data() ??
         {};
+    final schoolName=[profile['schoolName'],profile['name'],data['schoolName']]
+      .map((v)=>v?.toString().trim()??'')
+      .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
     final branding = {
       ...data,
       ...profile,
-      'schoolName': profile['schoolName'] ?? '',
+      'schoolName': schoolName,
       'schoolAddress': profile['address'] ?? '',
       'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
     };
@@ -679,7 +685,7 @@ class WindowsDocumentTemplates {
       if(customIndex<customTemplates.length){
         return renderImportedTemplate(kind,customTemplates[customIndex],{
           ...profile,...data,
-          'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
+          'schoolName':schoolName,
           'schoolAddress':profile['address']??data['schoolAddress']??'',
           'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
         });
