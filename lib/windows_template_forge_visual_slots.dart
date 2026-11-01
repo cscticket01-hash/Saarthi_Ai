@@ -120,10 +120,19 @@ class TemplateForgeVisualSlots {
              (first.r-second.r).abs()>w*.009)continue;
           final l=math.min(first.l,second.l),
               r=math.max(first.r,second.r);
-          if(labelLeft*w<l-3||labelRight*w>r+3 ||
-             labelTop*h<first.y-3||labelBottom*h>second.y+3){
-            continue;
-          }
+          final labelL=labelLeft*w,labelR=labelRight*w;
+          final labelT=labelTop*h,labelB=labelBottom*h;
+          final inside=labelL>=l-3 && labelR<=r+3 &&
+            labelT>=first.y-3 && labelB<=second.y+3;
+          // Many printed school designs put PHOTO / SIGNATURE just
+          // under or over the actual image frame. Only accept a nearby
+          // caption aligned to the same frame, never a distant table label.
+          final aligned=labelR>=l && labelL<=r;
+          final below=aligned && labelT>=second.y &&
+            labelT-second.y<=h*.035;
+          final above=aligned && labelB<=first.y &&
+            first.y-labelB<=h*.035;
+          if(!inside&&!below&&!above)continue;
           if(!_closedBorder(raster,l,first.y,r,second.y))continue;
           final candidate=ForgeVisualSlot(
             role:key,x:l/w,y:first.y/h,
