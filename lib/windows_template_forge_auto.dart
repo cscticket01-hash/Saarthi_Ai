@@ -95,69 +95,146 @@ class TemplateForgeAutoMapper {
       scores[ordered.first]! - scores[ordered[1]]!>=2 ? ordered.first : null;
   }
 
-  /// Import sample rows only when both column headers and OCR values are clear.
-  /// Row count is later rechecked against the real school record.
+  /// Detects a bounded table region from its header and total-row anchor.
+  /// It also creates safe blank row slots when the uploaded A4 design has no
+  /// sample values, so schools do not need to fill the template before upload.
   static List<SchoolTemplateField> detectTableRows(
-    SchoolTemplateKind kind,List<List<ForgeWord>> lines,List<String> warnings,
+    SchoolTemplateDraft input,List<List<ForgeWord>> lines,List<String> warnings,
   ) {
+    final kind=input.kind;
     if(kind==SchoolTemplateKind.payslip)return const [];
     final nameHeaders=kind==SchoolTemplateKind.receipt
-      ?const ['description','particulars','fee details','fee head','বিবরণ','विवरण']
-      :const ['subject','subjects','বিষয়','বিষয়','विषय'];
+      ?const ['description','particulars','fee details','fee head','fee description',
+        'item','fee name','বিবরণ','विवरण']
+      :const ['subject','subjects','subject name','বিষয়','বিষয়','विषय'];
     final valueHeaders=kind==SchoolTemplateKind.receipt
-      ?const ['amount','price','total','টাকা','রাশি','राशि']
-      :const ['marks','obtained','score','নম্বর','अंक'];
-    final start=lines.indexWhere((line){
+      ?const ['amount','price','total','value','টাকা','রাশি','राशि']
+      :const ['marks','obtained','score','marks obtained','নম্বর','अंक'];
+    final headerIndex=lines.indexWhere((line){
       final label=normalized(line.map((w)=>w.text).join(' '));
       return nameHeaders.any(label.contains)&&valueHeaders.any(label.contains);
     });
-    if(start<0)return const [];
+    if(headerIndex<0){
+      warnings.add('Fee/subject table header was not recognized');
+      return const [];
+    }
+    final header=lines[headerIndex];
+    ForgeWord? columnWord(List<String> aliases){
+      for(final word in header){
+        final token=normalized(word.text);
+        if(aliases.any((alias)=>token==alias ||
+          (alias.contains(' ') && token==alias.split(' ').first))){
+          return word;
+        }
+      }
+      return null;
+    }
+    final nameHeader=columnWord(nameHeaders);
+    final valueHeader=columnWord(valueHeaders);
+    if(nameHeader==null || valueHeader==null || nameHeader.x>=valueHeader.x){
+      warnings.add('Table column positions are ambiguous');
+      return const [];
+    }
+    final headerBottom=header.map((w)=>w.y+w.h).reduce(math.max);
+    final headerHeight=header.map((w)=>w.h).reduce(math.max);
+    List<ForgeWord>? totalLine;
+    double? totalY;
+    for(final line in lines.skip(headerIndex+1)){
+      final label=normalized(line.map((w)=>w.text).join(' '));
+      if(label.startsWith('total') || label.startsWith('grand total') ||
+        label.startsWith('net total') || label.startsWith('মোট') ||
+        label.startsWith('কুল') || label.startsWith('कुल') ||
+        label.startsWith('মুঠ')){
+        totalLine=line;
+        totalY=line.first.y;
+        break;
+      }
+      if(line.first.y-headerBottom>.55)break;
+    }
     final candidates=<List<ForgeWord>>[];
     final numeric=RegExp(r'^[0-9,]+(?:\.[0-9]{1,2})?$');
-    for(final line in lines.skip(start+1)){
+    for(final line in lines.skip(headerIndex+1)){
+      if(totalLine!=null && identical(line,totalLine))break;
       final label=normalized(line.map((w)=>w.text).join(' '));
-      if(label.startsWith('total ')||label.startsWith('grand total') ||
-         label.startsWith('net total')||label.startsWith('মোট ')||
-         label.startsWith('कुल '))break;
-      if(line.first.y-lines[start].first.y>.42)break;
+      if(label.startsWith('grand total') || label.startsWith('net total'))break;
+      if(line.first.y-headerBottom>.55)break;
       final last=line.last.text
         .replaceFirst(RegExp(r'^(?:₹|Rs\.?|INR)\s*',caseSensitive:false),'')
         .trim();
-      if(line.length<2||!numeric.hasMatch(last))continue;
+      if(line.length<2 || !numeric.hasMatch(last))continue;
       final nameWords=line.sublist(0,line.length-1);
       if(nameWords.isNotEmpty && numeric.hasMatch(nameWords.first.text)
-         && nameWords.length>1)nameWords.removeAt(0);
+        && nameWords.length>1)nameWords.removeAt(0);
       if(nameWords.isEmpty || nameWords.first.x>=line.last.x)continue;
       candidates.add([...nameWords,line.last]);
-    }
-    if(candidates.isEmpty){
-      warnings.add('Detected table has no trustworthy data rows');
-      return const [];
     }
     if(candidates.length>8){
       warnings.add('More than eight scanned table rows; cannot safely import');
       return const [];
     }
+    final rowTops=candidates.map((row)=>row.first.y).toList()..sort();
+    double rowHeight;
+    if(rowTops.length>=2){
+      final gaps=<double>[
+        for(var i=1;i<rowTops.length;i++)rowTops[i]-rowTops[i-1],
+      ]..sort();
+      rowHeight=gaps[gaps.length~/2];
+    }else if(totalY!=null){
+      final start=rowTops.isEmpty?headerBottom+headerHeight:rowTops.first;
+      rowHeight=(totalY-start)/4;
+    }else if(rowTops.isNotEmpty){
+      rowHeight=math.max(.03,headerHeight*2.5);
+    }else{
+      warnings.add('Blank table has no readable total-row boundary');
+      return const [];
+    }
+    rowHeight=rowHeight.clamp(math.max(.022,headerHeight*1.6),.12).toDouble();
+    final firstRowY=rowTops.isNotEmpty
+      ?rowTops.first
+      :headerBottom+rowHeight*.25;
+    var rowCount=candidates.isNotEmpty?candidates.length:4;
+    if(totalY!=null){
+      final available=((totalY-firstRowY)/rowHeight).floor();
+      if(available>0)rowCount=math.max(rowCount,available);
+    }
+    rowCount=rowCount.clamp(1,8);
+    if(totalY!=null && firstRowY+(rowCount-1)*rowHeight>=totalY){
+      rowCount=math.max(1,((totalY-firstRowY)/rowHeight).floor());
+    }
     final output=<SchoolTemplateField>[];
-    for(var i=0;i<candidates.length;i++){
-      final row=candidates[i];
-      final amount=row.last,name=row.first,nameEnd=row[row.length-2];
-      final nameWidth=math.min(nameEnd.x+nameEnd.w-name.x+.004,
-        amount.x-name.x-.015);
-      final amountWidth=math.min(amount.w+.008,.98-amount.x);
-      if(nameWidth<=.04 || amountWidth<=.025){
-        warnings.add('Unclear table cell positions at row '+(i+1).toString());
+    for(var i=0;i<rowCount;i++){
+      final hasSample=i<candidates.length;
+      final row=hasSample?candidates[i]:const <ForgeWord>[];
+      final amount=hasSample?row.last:valueHeader;
+      final name=hasSample?row.first:nameHeader;
+      final nameEnd=hasSample?row[row.length-2]:nameHeader;
+      final nameX=name.x;
+      final amountX=amount.x;
+      final nameWidth=hasSample
+        ?math.min(nameEnd.x+nameEnd.w-name.x+.004,amountX-nameX-.015)
+        :amountX-nameX-.02;
+      final amountWidth=hasSample
+        ?math.min(amount.w+.008,.98-amountX)
+        :math.min(math.max(.09,valueHeader.w+.045),.98-amountX);
+      final textHeight=hasSample?name.h:headerHeight*.8;
+      final y=hasSample?name.y:firstRowY+i*rowHeight;
+      if(nameWidth<=.04 || amountWidth<=.025 ||
+        nameX<0 || amountX<0 || y<0 || y>.96 ||
+        nameWidth+nameX>1 || amountWidth+amountX>1){
+        warnings.add('Unclear table cell geometry at row '+(i+1).toString());
         return const [];
       }
       final mapped=[
-        SchoolTemplateField(key:kind==SchoolTemplateKind.receipt
-            ?'feeName$i':'subjectName$i',x:name.x,y:name.y,
-          width:nameWidth,size:name.h.clamp(.009,.036).toDouble(),mask:true),
-        SchoolTemplateField(key:kind==SchoolTemplateKind.receipt
-            ?'feeAmount$i':'subjectMarks$i',x:amount.x,y:amount.y,
-          width:amountWidth,size:amount.h.clamp(.009,.036).toDouble(),mask:true),
+        SchoolTemplateField(
+          key:kind==SchoolTemplateKind.receipt?'feeName$i':'subjectName$i',
+          x:nameX,y:y,width:nameWidth,
+          size:textHeight.clamp(.009,.036).toDouble(),mask:true),
+        SchoolTemplateField(
+          key:kind==SchoolTemplateKind.receipt?'feeAmount$i':'subjectMarks$i',
+          x:amountX,y:y,width:amountWidth,
+          size:textHeight.clamp(.009,.036).toDouble(),mask:true),
       ];
-      for(final f in mapped)f.validate(kind);
+      for(final field in mapped)field.validate(kind);
       output.addAll(mapped);
     }
     return output;
@@ -209,7 +286,7 @@ class TemplateForgeAutoMapper {
       }
       fields.add(field);found.add(key);
     }
-    final dynamicRows=detectTableRows(input.kind,lines,warnings);
+    final dynamicRows=detectTableRows(input,lines,warnings);
     final overlaps=dynamicRows.any((candidate)=>fields.any((field)=>
       field.mask && candidate.mask &&
       field.x<candidate.x+candidate.width &&
