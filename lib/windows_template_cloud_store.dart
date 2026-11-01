@@ -234,6 +234,50 @@ class WindowsTemplateCloudStore {
     }
   }
 
+  /// Only fetch the image roles actually printed by this template.
+  /// The existing private school image loader handles authenticated Drive
+  /// access; never copy OCR sample images into another student's document.
+  static Future<Map<String,Uint8List>> _visualAssets(
+    SchoolTemplateDraft draft,Map<String,dynamic> record,
+    void Function() ensureSchool,
+  ) async {
+    final result=<String,Uint8List>{};
+    for(final slot in draft.visualSlots){
+      if(slot.role=='qrCode')continue;
+      final values=switch(slot.role){
+        'studentPhoto'=>[record['photoUrl'],record['photoBase64']],
+        'schoolLogo'=>[record['schoolLogoUrl'],record['logoUrl'],
+          record['logoBase64']],
+        'signature'=>[record['principalSignatureUrl'],
+          record['principalSignatureBase64']],
+        'seal'=>[record['sealUrl'],record['sealBase64']],
+        _=>const <dynamic>[],
+      };
+      Uint8List? bytes;
+      for(final candidate in values){
+        final source=candidate?.toString().trim()??'';
+        if(source.isEmpty)continue;
+        try{
+          if(source.startsWith('data:image/')){
+            if(source.length>6*1024*1024)continue;
+            bytes=Uint8List.fromList(UriData.parse(source).contentAsBytes());
+          }else if(source.startsWith('https://')){
+            bytes=await schoolImageBytes(source);
+          }else if(!source.contains('://') && source.length<6*1024*1024 &&
+              RegExp(r'^[A-Za-z0-9+/=\\s]+$').hasMatch(source)){
+            bytes=Uint8List.fromList(base64Decode(source));
+          }
+        }catch(_){
+          bytes=null;
+        }
+        ensureSchool();
+        if(bytes!=null)break;
+      }
+      if(bytes!=null)result[slot.role]=bytes;
+    }
+    return result;
+  }
+
   static Future<Uint8List> render(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
   ) async {
@@ -259,7 +303,16 @@ class WindowsTemplateCloudStore {
     }
     final draft=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:parsed.single,schoolId:school,manifest:manifest,png:bytes);
-    final output=await SchoolTemplateImportEngine.previewPdf(draft,record);
+    void ensureSchool(){
+      if(db.activeProfileId!=origin ||
+        db.activeProfileIdentity['schoolSyncId']!=school){
+        throw StateError('School changed during template image retrieval.');
+      }
+    }
+    final imageAssets=await _visualAssets(draft,record,ensureSchool);
+    ensureSchool();
+    final output=await SchoolTemplateImportEngine.previewPdf(
+      draft,record,visualAssets:imageAssets);
     if(db.activeProfileId!=origin ||
       db.activeProfileIdentity['schoolSyncId']!=school){
       throw StateError('School changed while rendering the imported template.');
