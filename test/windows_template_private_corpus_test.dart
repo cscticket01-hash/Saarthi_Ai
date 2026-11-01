@@ -67,14 +67,20 @@ void main() {
         final labels=TemplateForgeVisualSlots.labelCounts(
           ocr,oriented.width,oriented.height);
         final slots=TemplateForgeVisualSlots.detect(oriented,ocr);
-        final visualVerified=labels.isEmpty ||
-          (labels.values.every((x)=>x==1)&&slots.length==labels.length);
+        final visualVerified=labels.isNotEmpty &&
+          labels.values.every((x)=>x==1) &&
+          slots.length==labels.length;
         unverifiedPhoto=TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
           oriented,visualVerified?slots:const []);
-        safe=r.missing.isEmpty && r.warnings.where((w)=>
-          w!='Image/QR/signature slot needs verified automatic replacement.'
-        ).isEmpty && visualVerified && !unverifiedPhoto &&
-          (labels.isEmpty||slots.length==labels.length);
+        final warningsList=[...r.warnings];
+        // Match the actual publication guard exactly. An IMAGE warning is
+        // removable only when every detected role has one verified slot.
+        if(visualVerified){
+          warningsList.remove(
+            'Image/QR/signature slot needs verified automatic replacement.');
+        }
+        safe=r.missing.isEmpty && warningsList.isEmpty &&
+          !unverifiedPhoto;
         if(safe){
           SchoolTemplateImportEngine.validateDraft(
             r.draft.copyWith(visualSlots:slots));
