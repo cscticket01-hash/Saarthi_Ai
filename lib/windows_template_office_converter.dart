@@ -159,7 +159,11 @@ class SchoolTemplateOfficeConverter {
         process.kill();
         return -1;
       });
-    await Future.wait([out,err]);
+    // Office COM descendants can retain inherited pipes after PowerShell exits.
+    // Never let pipe draining turn the 45-second conversion timeout into an
+    // indefinite wait with no result for the school user.
+    await Future.wait([out,err]).timeout(const Duration(seconds:3),
+      onTimeout:()=> <void>[]);
     return code==0;
   }
 
