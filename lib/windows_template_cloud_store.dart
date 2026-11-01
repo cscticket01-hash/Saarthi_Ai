@@ -84,6 +84,20 @@ class WindowsTemplateCloudStore {
     return versions.first;
   }
 
+  /// A matching PNG hash is not sufficient to borrow another school's
+  /// Drive asset. Reuse is permitted only within the verified tenant/kind
+  /// and when the recorded file URL resolves to its declared Drive file.
+  static bool canReuseVerifiedAsset(Map<String,dynamic> asset,{
+    required String schoolId,required String kind,
+    required String contentHash,
+  }){
+    final url=asset['fileUrl']?.toString()??'';
+    final id=asset['fileId']?.toString()??'';
+    return asset['schoolId']==schoolId && asset['kind']==kind &&
+      asset['approved']==true && asset['contentHash']==contentHash &&
+      id.isNotEmpty && schoolDriveFileId(url)==id;
+  }
+
   static Future<Map<String,dynamic>> publish(SchoolTemplateDraft draft) async {
     final db=FirebaseFirestore.instance;
     final origin=db.activeProfileId;
@@ -104,8 +118,8 @@ class WindowsTemplateCloudStore {
     final settings=await _settings();
     ensureSchool();
     final existing=importedAsset(settings,draft.kind.name,templateId:templateId);
-    if(existing!=null && existing['contentHash']==contentHash &&
-      existing['fileUrl'] is String){
+    if(existing!=null && canReuseVerifiedAsset(existing,
+      schoolId:school,kind:draft.kind.name,contentHash:contentHash)){
       final bytes=await schoolImageBytes(existing['fileUrl'].toString());
       ensureSchool();
       if(bytes!=null && sha256.convert(bytes).toString()==contentHash){
@@ -115,8 +129,8 @@ class WindowsTemplateCloudStore {
 
     Map<String,dynamic>? reusable;
     for(final item in importedTemplates(settings,draft.kind.name)){
-      if(item['sourceHash']==draft.sourceHash && item['contentHash']==contentHash &&
-        item['fileUrl'] is String){
+      if(item['sourceHash']==draft.sourceHash && canReuseVerifiedAsset(item,
+        schoolId:school,kind:draft.kind.name,contentHash:contentHash)){
         final bytes=await schoolImageBytes(item['fileUrl'].toString());
         ensureSchool();
         if(bytes!=null && sha256.convert(bytes).toString()==contentHash){
