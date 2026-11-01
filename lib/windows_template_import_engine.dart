@@ -185,7 +185,7 @@ class SchoolTemplateImportEngine {
   static Future<SchoolTemplateDraft> importBytes({
     required SchoolTemplateKind kind,required String schoolId,
     required String filename,required Uint8List bytes,
-    Future<Uint8List> Function(Uint8List)? pdfRasterizer,
+    Future<List<Uint8List>> Function(Uint8List)? pdfPagesRasterizer,
   }) async {
     verifySchool(schoolId);
     if(bytes.isEmpty || bytes.length>maxSourceBytes) {
@@ -204,17 +204,21 @@ class SchoolTemplateImportEngine {
     Uint8List imageBytes;
     if(ext=='pdf') {
       try {
-        if(pdfRasterizer!=null) {
-          imageBytes=await pdfRasterizer(bytes);
-        } else {
-          // A school template is one physical A4 sheet. Never silently discard
-          // page 2+ from an uploaded multi-page PDF.
-          final pages=await Printing.raster(bytes,dpi:110).take(2).toList();
-          if(pages.length!=1){
-            throw const FormatException('Upload a single-page A4 PDF template. Multi-page PDFs are not silently truncated.');
-          }
-          imageBytes=await pages.single.toPng();
+        // A school template is one physical A4 sheet. The native raster
+        // plugin is unavailable in headless Flutter unit tests, so tests
+        // inject a page rasterizer. Production always uses Printing.raster.
+        // Read at most two pages: a second page means fail closed rather
+        // than quietly dropping school marks or fee details.
+        final pages=pdfPagesRasterizer!=null
+          ?await pdfPagesRasterizer(bytes)
+          :await Printing.raster(bytes,dpi:110)
+            .take(2).asyncMap((page)=>page.toPng()).toList()
+            .timeout(const Duration(seconds:30));
+        if(pages.length!=1){
+          throw const FormatException(
+            'Upload a single-page A4 PDF template. Multi-page PDFs are not silently truncated.');
         }
+        imageBytes=pages.single;
       } catch (error) {
         if(error is FormatException)rethrow;
         throw const FormatException('Cannot render the single A4 PDF page. Encrypted/damaged PDF?');
