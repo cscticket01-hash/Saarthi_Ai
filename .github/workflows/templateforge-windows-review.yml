@@ -101,7 +101,8 @@ jobs:
       - name: Smoke-test bundled OCR through the Dart runtime
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_forge_ocr_test.dart
+          $bundle = (Resolve-Path 'build/windows/x64/runner/Release/ocr/tesseract').Path
+          flutter test --concurrency=1 "--dart-define=TEMPLATEFORGE_BUNDLE_DIR=$bundle" test/windows_template_forge_ocr_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Bundled offline OCR runtime test failed.' }
 
       - name: Verify bundled OCR runtime
