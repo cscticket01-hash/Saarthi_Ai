@@ -182,13 +182,20 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'sample.png',bytes:png);
     final mapped=draft.copyWith(fields:[
-      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.12,size:.03),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
     ]);
-    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{}),
-      throwsFormatException);
-    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,
-      {'studentName':'An extraordinarily long name that will not fit in the small printed field'}),
-      throwsFormatException);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'receiptNo':'VS-1','totalAmount':100,'feeItems':{'Tuition':100},
+    }),throwsFormatException);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'receiptNo':'VS-1',
+      'studentName':'An extraordinarily long name that will not fit in the small printed field',
+      'totalAmount':100,'feeItems':{'Tuition':100},
+    }),throwsFormatException);
   });
 
   test('print preflight rejects receipt arithmetic mistakes',() async {
@@ -196,11 +203,15 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'sample.png',bytes:png);
     final mapped=draft.copyWith(fields:[
-      const SchoolTemplateField(key:'receiptNo',x:.1,y:.2),
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
     ]);
     await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
-      'receiptNo':'VS-101','totalAmount':150,
-      'feeItems':{'Tuition':100,'Exam':20},
+      'receiptNo':'VS-101','studentName':'Mira','totalAmount':150,
+      'feeItems':{'Tuition':100},
     }),throwsFormatException);
   });
 
@@ -209,10 +220,15 @@ void main() {
       kind:SchoolTemplateKind.payslip,schoolId:school,
       filename:'sample.png',bytes:png);
     final mapped=draft.copyWith(fields:[
-      const SchoolTemplateField(key:'name',x:.1,y:.2),
+      const SchoolTemplateField(key:'name',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'month',x:.6,y:.1,width:.2),
+      const SchoolTemplateField(key:'basicPaise',x:.1,y:.3,width:.2),
+      const SchoolTemplateField(key:'allowancePaise',x:.1,y:.4,width:.2),
+      const SchoolTemplateField(key:'deductionPaise',x:.1,y:.5,width:.2),
+      const SchoolTemplateField(key:'netPaise',x:.1,y:.6,width:.2),
     ]);
     await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
-      'name':'Arup','basicPaise':20000,'allowancePaise':500,
+      'name':'Arup','month':'2026-10','basicPaise':20000,'allowancePaise':500,
       'deductionPaise':100,'netPaise':9999,'paidPaise':12000,
     }),throwsFormatException);
   });
@@ -242,10 +258,14 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'fees.png',bytes:png);
     final mapped=draft.copyWith(fields:[
-      const SchoolTemplateField(key:'feeName0',x:.1,y:.2,width:.2,size:.015),
-      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.2,width:.2,size:.015),
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.15,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.3,width:.2,size:.015,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.3,width:.2,size:.015,mask:true),
     ]);
     await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'receiptNo':'VS-101','studentName':'Mira',
       'feeItems':{'Tuition':100,'Exam':50},'totalAmount':150,
     }),throwsFormatException);
   });
@@ -275,7 +295,13 @@ void main() {
     final source=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'school.png',bytes:png);
-    final fields=[const SchoolTemplateField(key:'receiptNo',x:.1,y:.2,width:.3)];
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.25,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
+    ];
     final contentHash=sha256.convert(png).toString();
     final fieldJson=jsonEncode(fields.map((f)=>f.toJson()).toList());
     final templateId=sha256.convert(utf8.encode(
@@ -289,10 +315,10 @@ void main() {
     };
     final loaded=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:SchoolTemplateKind.receipt,schoolId:school,manifest:manifest,png:png);
-    expect(loaded.fields.single.key,'receiptNo');
-    final wrongMap={...manifest,'fields':[
-      SchoolTemplateField(key:'receiptNo',x:.2,y:.2,width:.3).toJson(),
-    ]};
+    expect(loaded.fields.map((f)=>f.key),contains('receiptNo'));
+    final wrongFields=fields.map((f)=>f.toJson()).toList();
+    wrongFields[0]=SchoolTemplateField(key:'receiptNo',x:.2,y:.2,width:.3).toJson();
+    final wrongMap={...manifest,'fields':wrongFields};
     expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
       kind:SchoolTemplateKind.receipt,schoolId:school,manifest:wrongMap,png:png),
       throwsFormatException);
