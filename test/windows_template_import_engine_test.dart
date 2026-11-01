@@ -375,4 +375,23 @@ void main() {
     }),throwsFormatException);
   });
 
+  test('blank receipt table is recognized and unused row slots are safely masked',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'blank-receipt.png',bytes:png);
+    final ocr=sampleOcr([
+      'Receipt No VS-101','Student Name Mira','Total Amount 1200',
+      'Description Amount','Grand Total 1200',
+    ]);
+    final mapped=TemplateForgeAutoMapper.detect(draft,ocr);
+    expect(mapped.safeToActivate,isTrue);
+    expect(mapped.draft.fields.where((f)=>f.key.startsWith('feeName')).length,
+      greaterThanOrEqualTo(2));
+    final pdf=await SchoolTemplateImportEngine.previewPdf(mapped.draft,{
+      'receiptNo':'VS-101','studentName':'Mira','totalAmount':1200,
+      'feeItems':{'Tuition':1000,'Exam':200},
+    });
+    expect(pdf,startsWith([37,80,68,70]));
+  });
+
 }
