@@ -1,19 +1,8 @@
 name: TemplateForge Windows review
 
 on:
-  push:
-    branches:
-      - feature/school-document-template-import-20261031
-    paths:
-      - 'lib/windows_template_*.dart'
-      - 'lib/windows_template_cloud_store.dart'
-      - 'lib/windows_document_templates.dart'
-      - 'lib/windows_staff_payroll.dart'
-      - 'test/windows_template_import_engine_test.dart'
-      - 'test/windows_template_cloud_store_test.dart'
-      - 'test/windows_template_forge_ocr_test.dart'
-      - '.github/scripts/bundle_templateforge_ocr.ps1'
-      - '.github/workflows/templateforge-windows-review.yml'
+  # A PR update already runs on each commit. Running a second copy on
+  # feature-branch push wastes Windows builders and duplicates failure reports.
   pull_request:
     branches:
       - main
