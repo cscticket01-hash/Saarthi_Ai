@@ -222,7 +222,7 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'fees.png',bytes:png);
     final mapped=TemplateForgeAutoMapper.detect(draft,sampleOcr([
-      'Receipt No VS101','Student Name Mira','Total Amount 1200',
+      'Receipt No VS101','Student Name Mira',
       'Description Amount','Tuition 1000','Exam 200','Total Amount 1200',
     ]));
     expect(mapped.draft.fields.map((f)=>f.key),
