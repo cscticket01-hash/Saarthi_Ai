@@ -32,7 +32,7 @@ void main(){
         pw.Positioned(left:10*mm,top:140*mm,
           child:pw.Text('Physical hardware approval is required.')),
       ]),
-    )));
+    ));
     final bytes=await document.save();
     expect(bytes.take(5).toList(),[37,80,68,70,45]);
     await Directory('build').create(recursive:true);
