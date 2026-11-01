@@ -243,6 +243,16 @@ class TemplateForgeAutoMapper {
   static ForgeRecognition detect(SchoolTemplateDraft input,String tsv) {
     final lines=parseTsv(tsv,input.width,input.height);
     final fields=<SchoolTemplateField>[],found=<String>[],warnings=<String>[];
+    // A photographed signature, old student portrait or QR must never
+    // remain printed as if it belonged to the next record. Until a verified
+    // image-slot renderer exists, fail closed instead of approving such pages.
+    final imageLabel=RegExp(
+      r'(^| )(photo|photograph|picture|logo|signature|seal|stamp|barcode|qr|फोटो|हस्ताक्षर|मुहर|ছবি|ফটো|স্বাক্ষর|ছৱি|স্বাক্ষৰ)( |$)',
+      unicode:true);
+    if(lines.any((line)=>imageLabel.hasMatch(
+      normalized(line.map((word)=>word.text).join(' '))))){
+      warnings.add('Image/QR/signature slot needs verified automatic replacement.');
+    }
     final likely=suggestKind(tsv,input.width,input.height);
     if(likely!=null && likely!=input.kind){
       warnings.add('Document appears to be '+likely.title+', not '+input.kind.title+'.');
