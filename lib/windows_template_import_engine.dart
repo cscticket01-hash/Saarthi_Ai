@@ -304,15 +304,12 @@ class SchoolTemplateImportEngine {
           height:(oriented.height*math.sqrt(maxPixels/pixels)).round(),
           interpolation:img.Interpolation.average)
         :oriented;
-      // Only attempt a camera-page rectification when the raw photo fails
-      // the A4 geometry guard. Strong evidence is mandatory; otherwise
-      // the original strict rejection still applies.
-      final rawAspect=normalized.width/normalized.height;
-      final needsCorrection=(rawAspect-210/297).abs()>.075 &&
-        (rawAspect-297/210).abs()>.075;
-      final corrected=needsCorrection
-        ?TemplateForgePhotoNormalizer.rectifyVerifiedA4(normalized)
-        :null;
+      // The camera frame may itself have an A4 aspect even while the
+      // actual paper occupies only its center. Rectify whenever a clearly
+      // bounded A4 page is evidenced by dark surroundings; clean full-bleed
+      // A4 scans keep their original pixels and orientation unchanged.
+      final corrected=TemplateForgePhotoNormalizer.rectifyVerifiedA4(
+        normalized);
       imageBytes=Uint8List.fromList(
         img.encodePng(corrected??normalized));
     }
