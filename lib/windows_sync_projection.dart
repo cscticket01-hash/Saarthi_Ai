@@ -1,3 +1,5 @@
+import 'school_timestamp.dart';
+
 /// Separate durable upload rows from inbound record/file work and change hints.
 ///
 /// A change signal means "check the cloud", not "one record is uploading".
@@ -348,3 +350,52 @@ bool holdAutomaticIdCard(Map? local, Map? pending, Map? cloud, String school) =>
     pending?['deleted'] == true ||
     {'conflict', 'needsAttention'}.contains(pending?['syncState']) ||
     (cloud?['schoolId'] == school && cloud?['_syncDeleted'] == true);
+
+
+/// A locally queued write is stalled only with positive evidence that the
+/// normal dispatch has not admitted it for at least two minutes. This is a
+/// diagnostic, never a cloud failure, ACK, or permission to bypass backoff.
+bool windowsSyncAdmissionStalled(
+  List<Map<String, dynamic>> rows, {
+  required String schoolId,
+  required int nowMillis,
+  bool syncing = false,
+  bool checkingCloud = false,
+  bool paused = false,
+  bool blocked = false,
+  bool offline = false,
+  bool automaticEnabled = true,
+  int? nextRetryMillis,
+  int? quotaRetryMillis,
+}) {
+  if (schoolId.isEmpty || syncing || checkingCloud || paused || blocked ||
+      offline || !automaticEnabled ||
+      (nextRetryMillis != null && nextRetryMillis > nowMillis) ||
+      (quotaRetryMillis != null && quotaRetryMillis > nowMillis)) {
+    return false;
+  }
+  const staleAfter = Duration(minutes: 2);
+  final cutoff = nowMillis - staleAfter.inMilliseconds;
+  return rows.any((row) {
+    if (row['schoolId'] != schoolId ||
+        !{'_windows_firebase_outbox', '_windows_document_outbox'}
+            .contains(row['_queueCollection']) ||
+        !{null, 'pending'}.contains(row['syncState']) ||
+        (row['retryCount'] is num && (row['retryCount'] as num) > 0) ||
+        (row['retryAtMillis'] is num &&
+            (row['retryAtMillis'] as num) > nowMillis)) {
+      return false;
+    }
+    final queuedAt = row['queuedAt'];
+    final queuedMillis = queuedAt is Timestamp
+        ? queuedAt.millisecondsSinceEpoch
+        : queuedAt is num
+        ? queuedAt.toInt()
+        : row['queuedAtMillis'] is num
+        ? (row['queuedAtMillis'] as num).toInt()
+        : null;
+    // Missing/invalid timestamps are UNKNOWN, not evidence of a stalled send.
+    return queuedMillis != null &&
+        queuedMillis > 0 && queuedMillis <= cutoff;
+  });
+}
