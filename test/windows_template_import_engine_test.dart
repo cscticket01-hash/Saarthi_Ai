@@ -289,8 +289,8 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,manifest:manifest,png:png);
     expect(loaded.fields.single.key,'receiptNo');
     final wrongMap={...manifest,'fields':[
-      const SchoolTemplateField(key:'receiptNo',x:.2,y:.2,width:.3).toJson(),
-    ].map((f)=>f)};
+      SchoolTemplateField(key:'receiptNo',x:.2,y:.2,width:.3).toJson(),
+    ]};
     expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
       kind:SchoolTemplateKind.receipt,schoolId:school,manifest:wrongMap,png:png),
       throwsFormatException);
