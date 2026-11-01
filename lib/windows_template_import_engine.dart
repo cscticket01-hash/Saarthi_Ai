@@ -134,7 +134,7 @@ class SchoolTemplateImportEngine {
         final a=list[i],b=list[j];
         if(a.mask && b.mask &&
           a.x<b.x+b.width && b.x<a.x+a.width &&
-          a.y<b.y+b.size && b.y<a.y+a.size){
+          a.y<b.y+b.size*1.8 && b.y<a.y+a.size*1.8){
           throw const FormatException('Template has overlapping masked fields.');
         }
       }
@@ -296,13 +296,19 @@ class SchoolTemplateImportEngine {
     return text.length>150?'':text;
   }
 
-  static double fittedTextSize(SchoolTemplateField field,String text) {
+  static double fittedTextSize(
+    SchoolTemplateField field,String text,{double? pageWidth,double? pageHeight}
+  ) {
     if(text.isEmpty)throw FormatException('Missing field: '+field.key);
-    final estimated=field.width/(text.runes.length*.62);
-    if(estimated<.009){
-      throw FormatException('Text does not fit: '+field.key);
+    final width=pageWidth??PdfPageFormat.a4.width;
+    final height=pageHeight??PdfPageFormat.a4.height;
+    final availableWidth=field.width*width;
+    final maximumFont=field.size*height;
+    final estimated=availableWidth/(text.runes.length*.62);
+    if(estimated<5.5){
+      throw FormatException('Text does not fit legibly: '+field.key);
     }
-    return estimated<field.size?estimated:field.size;
+    return estimated<maximumFont?estimated:maximumFont;
   }
 
   /// Imported documents do not invent school data. Do not print an overlay
@@ -331,7 +337,10 @@ class SchoolTemplateImportEngine {
         }
         throw FormatException('Missing record value for '+field.key);
       }
-      fittedTextSize(field,value);
+      final pageFormat=draft.width>draft.height
+        ?PdfPageFormat.a4.landscape:PdfPageFormat.a4;
+      fittedTextSize(field,value,
+        pageWidth:pageFormat.width,pageHeight:pageFormat.height);
     }
 
     // Records may contain fewer rows than the scanned page. The unused
@@ -424,12 +433,12 @@ class SchoolTemplateImportEngine {
     return pw.Positioned(
       left:field.x*pageWidth,top:field.y*pageHeight,
       child:pw.Container(
-        width:field.width*pageWidth,height:field.size*pageWidth*1.8,
+        width:field.width*pageWidth,height:field.size*pageHeight*1.8,
         color:field.mask?PdfColors.white:null,
         child:value.isEmpty?null:pw.Text(value,
           maxLines:1,overflow:pw.TextOverflow.clip,
           style:pw.TextStyle(font:font,
-            fontSize:fittedTextSize(field,value)*pageWidth,
+            fontSize:fittedTextSize(field,value,pageWidth:pageWidth,pageHeight:pageHeight),
             color:PdfColors.black)),
       ),
     );
