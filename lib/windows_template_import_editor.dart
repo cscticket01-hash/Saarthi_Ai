@@ -48,9 +48,12 @@ class SchoolTemplateImportEditor {
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
       if(!sameSchool())throw StateError('School changed before preview.');
+      final schoolName=[profile['schoolName'],profile['name'],example['schoolName']]
+        .map((v)=>v?.toString().trim()??'')
+        .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
       final record={
         ...profile,...example,
-        'schoolName':profile['schoolName']??profile['name']??example['schoolName']??'',
+        'schoolName':schoolName,
         'schoolAddress':profile['address']??example['schoolAddress']??'',
         'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
       };
