@@ -126,11 +126,17 @@ class SchoolTemplateImportEngine {
         if(pdfRasterizer!=null) {
           imageBytes=await pdfRasterizer(bytes);
         } else {
-          final first=await Printing.raster(bytes,pages:[0],dpi:110).first;
-          imageBytes=await first.toPng();
+          // A school template is one physical A4 sheet. Never silently discard
+          // page 2+ from an uploaded multi-page PDF.
+          final pages=await Printing.raster(bytes,dpi:110).take(2).toList();
+          if(pages.length!=1){
+            throw const FormatException('Upload a single-page A4 PDF template. Multi-page PDFs are not silently truncated.');
+          }
+          imageBytes=await pages.single.toPng();
         }
-      } catch (_) {
-        throw const FormatException('Cannot render page 1. Encrypted/damaged PDF?');
+      } catch (error) {
+        if(error is FormatException)rethrow;
+        throw const FormatException('Cannot render the single A4 PDF page. Encrypted/damaged PDF?');
       }
     } else {
       final decoded=img.decodeImage(bytes);
