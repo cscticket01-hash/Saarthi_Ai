@@ -380,7 +380,7 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'blank-receipt.png',bytes:png);
     final ocr=sampleOcr([
-      'Receipt No VS-101','Student Name Mira','Total Amount 1200',
+      'Receipt No VS-101','Student Name Mira',
       'Description Amount','Grand Total 1200',
     ]);
     final mapped=TemplateForgeAutoMapper.detect(draft,ocr);
