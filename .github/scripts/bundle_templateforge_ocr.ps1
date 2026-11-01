@@ -14,7 +14,7 @@ if (!(Test-Path (Join-Path $source 'tesseract.exe'))) {
 $target = Join-Path $release 'ocr\tesseract'
 New-Item -ItemType Directory -Path $target -Force | Out-Null
 Copy-Item (Join-Path $source 'tesseract.exe') $target -Force
-Get-ChildItem $source -File -Filter '*.dll' | Copy-Item -Destination $target -Force
+Get-ChildItem $source -File -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $target -Force }
 Copy-Item (Join-Path $source 'tessdata') $target -Recurse -Force
 
 # Official tessdata_fast snapshot, pinned by immutable Git commit and Git blob SHA-1.
@@ -34,7 +34,7 @@ foreach ($language in $models.Keys) {
   $bytes = [System.IO.File]::ReadAllBytes($destination)
   $headerText = "blob $($bytes.Length)" + [char]0
   $header = [System.Text.Encoding]::UTF8.GetBytes($headerText)
-  $payload = New-Object byte[] ($header.Length + $bytes.Length)
+  $payload = New-Object 'System.Byte[]' ($header.Length + $bytes.Length)
   [Array]::Copy($header, 0, $payload, 0, $header.Length)
   [Array]::Copy($bytes, 0, $payload, $header.Length, $bytes.Length)
   $sha = [System.Security.Cryptography.SHA1]::Create()
@@ -59,8 +59,8 @@ foreach ($language in $models.Keys) {
     throw "Bundled OCR is missing required language: $language"
   }
 }
-$version = & $exe --version 2>&1 | Select-Object -First 1
-if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Tesseract Open Source OCR Engine') {
+$version = (& $exe --version 2>&1 | Out-String)
+if ($LASTEXITCODE -ne 0 -or $version -notmatch '(?i)tesseract\s+v?5\.') {
   throw 'Bundled Tesseract version verification failed.'
 }
 Write-Host "TemplateForge OCR bundled: $version"
