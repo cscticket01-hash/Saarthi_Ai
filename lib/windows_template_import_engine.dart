@@ -741,6 +741,8 @@ class SchoolTemplateImportEngine {
           width: decoded.width, height: decoded.height, fields: fields,
           visualSlots:slots);
         validateDraft(candidate);
+        if(meta['draftIdentity']!=null &&
+          meta['draftIdentity']!=localDraftIdentity(candidate))continue;
         drafts.add(candidate);
       } catch (_) {
         // A corrupt local draft must never hide other previously saved versions.
