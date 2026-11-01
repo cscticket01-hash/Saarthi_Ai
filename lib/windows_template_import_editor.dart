@@ -65,7 +65,7 @@ class SchoolTemplateImportEditor {
       if(!sameSchool()||!context.mounted)return;
       await WindowsDocumentTemplates.preview(context,output,
         title:kind.title+' • School template preview',
-        notice:'Drive upload and content hash verified. This template is now available in the school template list. Select “Use for school” to apply it to future prints.');
+        notice:'Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
     } catch(error) {
       if(context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
