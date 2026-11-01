@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:crypto/crypto.dart';
 import '../lib/windows_template_import_engine.dart';
 import '../lib/windows_template_forge_auto.dart';
 
@@ -66,7 +67,8 @@ void main() {
       .replaceFirst('\t96.1\tMira','\t20\tMira');
     final result=TemplateForgeAutoMapper.detect(draft,words);
     expect(result.safeToActivate,isFalse);
-    expect(result.warnings,isNotEmpty);
+    expect(result.missing,containsAll(['basicPaise','deductionPaise']));
+    expect(result.safeToActivate,isFalse);
     expect(result.detected,containsAll(['name','month','netPaise']));
   });
 
@@ -222,6 +224,8 @@ void main() {
     ]));
     expect(mapped.draft.fields.map((f)=>f.key),
       containsAll(['feeName0','feeAmount0','feeName1','feeAmount1']));
+    expect(mapped.safeToActivate,isTrue,
+      reason:'All required fields and the fee table were recognized');
     expect(SchoolTemplateImportEngine.valueFor('feeName0',{
       'feeItems':{'Admission':300,'Exam':400}
     }),'Admission');
@@ -254,14 +258,48 @@ void main() {
       throwsFormatException);
   });
 
-  test('sideways A4 camera photo is turned upright without losing school scope',() async {
+  test('A4 landscape camera photo keeps its intended orientation and school scope',() async {
     final side=Uint8List.fromList(img.encodeJpg(img.Image(width:1400,height:1000)));
     final draft=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'sideways.jpg',bytes:side);
-    expect(draft.width,1000);
-    expect(draft.height,1400);
+    expect(draft.width,1400);
+    expect(draft.height,1000);
     expect(draft.schoolId,school);
+  });
+
+  test('published manifest is accepted only for matching school and image hash',() async {
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'school.png',bytes:png);
+    final fields=[const SchoolTemplateField(key:'receiptNo',x:.1,y:.2,width:.3)];
+    final contentHash=sha256.convert(png).toString();
+    final manifest={
+      'version':1,'approved':true,'schoolId':school,'kind':'receipt',
+      'filename':'school.png','sourceHash':source.sourceHash,
+      'contentHash':contentHash,'width':1000,'height':1400,
+      'fields':fields.map((f)=>f.toJson()).toList(),
+    };
+    final loaded=SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,schoolId:school,manifest:manifest,png:png);
+    expect(loaded.fields.single.key,'receiptNo');
+    expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,
+      schoolId:'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      manifest:manifest,png:png),throwsFormatException);
+    final altered=Uint8List.fromList(png)..[100]=png[100]^1;
+    await expectLater(Future.sync(()=>SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,schoolId:school,manifest:manifest,png:altered)),
+      throwsFormatException);
+  });
+
+  test('A4 landscape source is accepted without stretching into portrait',() async {
+    final landscape=Uint8List.fromList(img.encodePng(img.Image(width:1400,height:1000)));
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'landscape.png',bytes:landscape);
+    expect(draft.width,1400);
+    expect(draft.height,1000);
   });
 
 }
