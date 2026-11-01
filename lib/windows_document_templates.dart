@@ -7,6 +7,7 @@ import 'windows_appearance.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'windows_sync_projection.dart';
+import 'windows_sync_comparison.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -161,6 +162,88 @@ class WindowsDocumentTemplates {
       if (identity['managed'] == true) await _publish(kind, data, qr, bytes);
     }
     return bytes;
+  }
+
+  static bool _repairingQueuedIds=false;
+  static final Map<String,DateTime> _queuedIdChecks={};
+  /// Rebuild only derived IDs whose currently printed source inputs agree with
+  /// fresh authenticated school records. Originals and rejected queue revisions
+  /// are archived; a new operation uses the actual document CAS baseline.
+  static Future<int> repairQueuedIdCards(String school,{bool Function()? canAdmit,
+    Future<Map<String,dynamic>> Function(String,String)? readRecord,
+  }) async {
+    if(_repairingQueuedIds)return 0;
+    _repairingQueuedIds=true;
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    var repaired=0;
+    try {
+      final connection=await CentralSchoolCloud.saved();
+      if(connection['managed']!=true || connection['schoolId']!=school ||
+        db.activeProfileIdentity['schoolSyncId']!=school)return 0;
+      final queue=await db.collection('_windows_document_outbox').get();
+      for(final item in queue.docs){
+        if(canAdmit?.call()==false || db.activeProfileId!=origin)break;
+        final expected=item.data();
+        if(expected['schoolId']!=school || expected['syncState']!='conflict' ||
+          expected['documentKind']!='idCard' || expected['inventoryCategory']!='generatedIdCard' ||
+          expected['deleted']==true || !{'student','teacher'}.contains(expected['ownerRole']))continue;
+        final key='$origin:${item.id}:${expected['documentRevision']}';
+        final last=_queuedIdChecks[key],now=DateTime.now();
+        if(last!=null && now.difference(last)<const Duration(minutes:5))continue;
+        if(_queuedIdChecks.length>=128)_queuedIdChecks.remove(_queuedIdChecks.keys.first);
+        _queuedIdChecks[key]=now;
+        try {
+          final role=expected['ownerRole'] as String,personId=expected['studentId']?.toString()??'';
+          final kind=role=='student'?'studentId':'teacherId';
+          final collection=role=='student'?'students_directory':'teachers_directory';
+          final personSnap=await db.collection(collection).doc(personId).get();
+          final profileSnap=await db.collection('school_config').doc('school_profile_cache').get();
+          final templateSnap=await db.collection('school_settings').doc('document_templates').get();
+          final person=personSnap.data(),profile=profileSnap.data(),templates=templateSnap.data()??{};
+          if(person==null || profile==null || person['_syncDeleted']==true ||
+            person['mobileLinkToken'] is! String ||
+            WindowsBackendBridge.publishedIdCardOwnerIdForPerson(role,personId,person)!=item.id)continue;
+          final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+            'schoolId':school,'centralEndpoint':connection['endpoint'],'firebaseProjectId':connection['projectId'],
+            'type':role,'personId':personId,'linkToken':person['mobileLinkToken']});
+          final localInputs=await inputRevisions(person,profile,kind=='studentId'?studentIdTemplateId:templates[kind],qr);
+          Future<Map<String,dynamic>?> read(String c,String id) async {
+            final reply=await (readRecord?.call(c,id) ?? ManagedSchoolSession.callForSchool(school,'managed/records',{
+              'operation':'read','collection':c,'id':id,'syncProtocol':2}));
+            if(db.activeProfileId!=origin || canAdmit?.call()==false || reply['schoolId']!=school ||
+              reply['syncProtocol']!=2 || reply['records'] is! Map || reply['unchanged']==true)
+              throw StateError('Current ID sources could not be verified.');
+            final row=(reply['records'] as Map)[id];
+            if(row==null)return null;
+            if(row is! Map || row['schoolId']!=school || row['_syncDeleted']==true ||
+              row['_syncRevision'] is! String || row['_syncRevision'].isEmpty)
+              throw StateError('Current ID source identity changed.');
+            return Map<String,dynamic>.from(row);
+          }
+          Future<List<Map<String,dynamic>?>> evidence() => Future.wait([
+            read(collection,personId),read('school_config','school_profile_cache'),
+            read('school_settings','document_templates'),read('documents',item.id)]);
+          final before=await evidence();
+          final remotePerson=before[0],remoteProfile=before[1],remoteTemplates=before[2]??{},cloud=before[3];
+          if(remotePerson==null || remoteProfile==null || cloud==null ||
+            remotePerson['mobileLinkToken']!=person['mobileLinkToken'] ||
+            (remotePerson['mobileStableId']??personId)!=expected['personId'])continue;
+          final remoteInputs=await inputRevisions(remotePerson,remoteProfile,
+            kind=='studentId'?studentIdTemplateId:remoteTemplates[kind],qr);
+          if(remoteInputs.visual!=localInputs.visual)continue;
+          final bytes=await selected(kind,personCardData(person,profile),qr:qr,publish:false);
+          if(bytes==null)continue;
+          final after=await evidence();
+          if(syncPayloadHash({'sources':before})!=syncPayloadHash({'sources':after}))continue;
+          await WindowsBackendBridge.regenerateVerifiedIdConflict(id:item.id,expected:expected,
+            cloud:cloud,person:person,qr:qr,inputRevision:localInputs.visual,bytes:bytes,
+            dependencies:[personSnap,profileSnap,templateSnap]);
+          repaired++;
+        } catch (_) { /* Unproven source, race or unavailable photo: retain all originals. */ }
+        break; // One bounded derived repair per pass; unrelated sync continues.
+      }
+      return repaired;
+    } finally {_repairingQueuedIds=false;}
   }
 
   static Future<String> _fingerprint(Map<String,dynamic> data,Map<String,dynamic> profile,dynamic template,String qr) async =>
