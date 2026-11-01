@@ -5,7 +5,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
-import 'windows_payslip_template.dart';
 import 'package:printing/printing.dart';
 import 'windows_document_templates.dart';
 import 'windows_salary_history.dart';
@@ -458,8 +457,11 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
         await WindowsSavePdf.save(Uint8List.fromList(utf8.encode(content)), 'staff-salary-${StaffPayroll.monthKey(_month)}.csv', csv:true);
       } else {
         final r=rows.single;
-        final bytes=await renderWindowsPayslip({...r,'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r)},schoolName:_schoolName);
+        final bytes=await WindowsDocumentTemplates.selected('payslip',{
+          ...r,'netPaise':StaffPayroll.total(r),'paidPaise':StaffPayroll.paid(r),
+        });
         StaffPayroll._sameSchool(_profile);
+        if(bytes==null)throw StateError('Selected payslip template could not be rendered.');
         if (mounted) await showDialog<void>(context:context,builder: (_) =>
           WindowsReceiptPrintDialog(
             receipt:Future.value(bytes),
