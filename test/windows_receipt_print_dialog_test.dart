@@ -22,7 +22,7 @@ class PaperSizePrinting extends MethodChannelPrinting {
   final Future<void>? gate;
   int rasterCalls=0;
   @override
-  Stream<PdfRaster> raster(Uint8List document,{List<int>? pages,double dpi=72}) async* {
+  Stream<PdfRaster> raster(Uint8List document,List<int>? pages,double dpi) async* {
     rasterCalls++;
     if(gate!=null)await gate;
     yield PaperSizeRaster(width,height);
