@@ -5,6 +5,7 @@ import 'windows_payslip_template.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_appearance.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'windows_sync_projection.dart';
 
 import 'package:crypto/crypto.dart';
@@ -876,6 +877,8 @@ class _SchoolDocumentTemplatesScreenState
   Map<String, dynamic> _selected = {};
   bool _loading = true;
   final Map<String, Future<Uint8List>> _thumbnails = {};
+  StreamSubscription? _templateChanges;
+  bool _deletingTemplate=false;
 
   Future<Uint8List> _thumbnail(int index) {
     final kind = _kind;
@@ -896,15 +899,51 @@ class _SchoolDocumentTemplatesScreenState
   void initState() {
     super.initState();
     _initializeCatalog();
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    _templateChanges=db.collection('school_settings').doc('document_templates')
+      .snapshots().listen((_){
+        if(mounted && db.activeProfileId==origin) unawaited(_initializeCatalog());
+      });
   }
 
+  @override
+  void dispose(){_templateChanges?.cancel();super.dispose();}
+
+  Future<void> _deleteUploaded(int index) async {
+    final kind=_kind;
+    final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final assets=WindowsDocumentTemplates.availableImportedTemplates(_selected,kind,school);
+    final position=index-_baseTemplateCount(kind);
+    if(position<0 || position>=assets.length || _deletingTemplate)return;
+    final asset=assets[position],id=(assets[position]['templateId']??assets[position]['sourceHash']).toString();
+    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('Delete uploaded template?'),
+      content:Text('Remove ${asset['filename']??'this design'} from this school’s template list on all devices? Existing printed documents are retained.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
+        TextButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete'))]));
+    if(confirmed!=true || !mounted)return;
+    setState(()=>_deletingTemplate=true);
+    try {
+      if(FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=school)
+        throw StateError('School changed. Reopen templates.');
+      await WindowsTemplateCloudStore.deleteTemplate(kind,id);
+      if(mounted)await _initializeCatalog();
+    } catch(error) {
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Template deletion failed: $error')));
+    } finally {if(mounted)setState(()=>_deletingTemplate=false);}
+  }
+
+  int _catalogLoadGeneration=0;
   Future<void> _initializeCatalog() async {
+    final generation=++_catalogLoadGeneration;
+    final origin=FirebaseFirestore.instance.activeProfileId;
     // Version ordering can change after an upload; never reuse an old card image.
     _thumbnails.clear();
     try {
       final entries = await IdCardCatalog.load(),
           v = await WindowsDocumentTemplates.selections();
-      if (mounted)
+      if (mounted && generation==_catalogLoadGeneration &&
+          FirebaseFirestore.instance.activeProfileId==origin)
         setState(() {
           _catalog = entries;
           _selected = v;
@@ -1175,6 +1214,11 @@ class _SchoolDocumentTemplatesScreenState
                               color: WindowsAppearance.foreground(Colors.tealAccent),
                             ),
                             const Spacer(),
+                            if(const ['receipt','reportCard','payslip'].contains(_kind) &&
+                                i>=_baseTemplateCount(_kind))
+                              IconButton(tooltip:'Delete uploaded template',
+                                onPressed:_deletingTemplate?null:()=>_deleteUploaded(i),
+                                icon:const Icon(Icons.delete_outline)),
                             if (active)
                               Icon(
                                 Icons.check_circle,

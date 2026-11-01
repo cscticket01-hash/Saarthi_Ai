@@ -35,9 +35,11 @@ class WindowsTemplateCloudStore {
     if(all is! Map)return const [];
     final raw=all[kind];
     if(raw is! Map)return const [];
-    if(raw['version']==1)return [Map<String,dynamic>.from(raw)];
-    final versions=raw.values.whereType<Map>()
+    final candidates=raw['version']==1 ? [raw] : raw.values.whereType<Map>();
+    final versions=candidates
       .map((v)=>Map<String,dynamic>.from(v)).toList();
+    versions.removeWhere((v)=>settings[deletionKey(kind,
+      (v['templateId']??v['sourceHash']).toString())]==true);
     final latest=(settings['templateAssetLatest'] is Map)
       ?(settings['templateAssetLatest'] as Map)[kind]?.toString():null;
     if(latest!=null){
@@ -50,6 +52,39 @@ class WindowsTemplateCloudStore {
       });
     }
     return versions;
+  }
+
+  // Top-level independent fields survive existing field-patch synchronization.
+  // Never remove manifests: a stale device must not resurrect a deleted design.
+  static String deletionKey(String kind,String id)=>'templateDeleted_${kind}_$id';
+
+  static Map<String,dynamic> deletionPatch(Map<String,dynamic> settings,
+      String kind,String id,String school) {
+    SchoolTemplateImportEngine.verifySchool(school);
+    final asset=importedAsset(settings,kind,templateId:id);
+    if(asset==null || asset['schoolId']!=school || asset['kind']!=kind ||
+        asset['approved']!=true) {
+      throw StateError('Only this school’s uploaded template can be deleted.');
+    }
+    return {deletionKey(kind,id):true,
+      if(settings[kind]=='imported:$id')kind:0};
+  }
+
+  static Future<void> deleteTemplate(String kind,String id) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final ref=db.collection('school_settings').doc('document_templates');
+    final snapshot=await ref.get();
+    final patch=deletionPatch(snapshot.data()??{},kind,id,school);
+    if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before template deletion.');
+    final batch=db.batch();
+    batch.requireUnchanged(ref,snapshot.data());
+    batch.set(ref,{...patch,'updatedAt':FieldValue.serverTimestamp()},
+      const SetOptions(merge:true));
+    await batch.commit();
+    // Existing generated receipts and shared source assets remain intact.
+    // The durable school_settings outbox carries the deletion to other PCs.
   }
 
   /// Keep the visible/selected/printed catalog identical and school-scoped.
@@ -168,6 +203,9 @@ class WindowsTemplateCloudStore {
     final templateId=_idFor(draft,contentHash);
     final settings=await _settings();
     ensureSchool();
+    if(settings[deletionKey(draft.kind.name,templateId)]==true) {
+      throw StateError('This uploaded template was deleted by the school.');
+    }
     final existing=importedAsset(settings,draft.kind.name,templateId:templateId);
     if(existing!=null && canReuseVerifiedAsset(existing,
       schoolId:school,kind:draft.kind.name,contentHash:contentHash)){
@@ -255,6 +293,8 @@ class WindowsTemplateCloudStore {
       final snapshot=await settingsRef.get();
       ensureSchool();
       latestSettings=snapshot.data()??<String,dynamic>{};
+      if(latestSettings[deletionKey(draft.kind.name,templateId)]==true)
+        throw StateError('Template deleted during publication.');
       final allAssets=latestSettings['templateAssets'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
         :<String,dynamic>{};

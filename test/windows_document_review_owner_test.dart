@@ -171,6 +171,37 @@ void main() {
   tearDown(() async {
     await dir.delete(recursive: true);
   });
+  test('self repair clears only an identical authenticated document ACK; differing inputs remain retained',()async{
+    cloud={...local,'id':id,'_syncRevision':'verified-record',
+      'contentHash':sha256.convert([1,2,3]).toString(),
+      'fileUrl':'https://drive.google.com/file/d/own-file/view'};
+    expect(await WindowsBackendBridge.repairIdenticalDocumentConflicts(school,readCloud:(_)=>read()),1);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false);
+    expect(await File(local['localPath'] as String).exists(),true);
+    final other='different-generation';
+    await db.collection('_local_student_documents').doc(other).set({...local,'documentId':other});
+    await db.collection('_windows_document_outbox').doc(other).set({...local,'documentId':other});
+    expect(await WindowsBackendBridge.repairIdenticalDocumentConflicts(school,readCloud:(_)async=>{
+      'schoolId':school,'syncProtocol':2,'records':{other:{...cloud,'id':other,'documentId':other,'inputRevision':'different-input'}}}),0);
+    expect((await db.collection('_windows_document_outbox').doc(other).get()).exists,true);
+  });
+  test('restored local ID without cloud baseline verifies before regenerating a conflicting PDF',()async{
+    final person={'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'1','rollNo':1};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','S1',person);
+    await db.collection('_local_student_documents').doc(cardId).set({
+      ...local,'documentId':cardId,'syncState':'Synced','inputRevision':'old-local-input'});
+    var renders=0,reads=0;
+    await expectLater(WindowsBackendBridge.publishIdCard(qr:qr,kind:'studentId',person:person,
+      inputRevision:'current-input',automatic:true,prepareBytes:()async{renders++;return Uint8List.fromList([9]);},
+      readPublished:()async{reads++;return {'schoolId':school,'syncProtocol':2,'records':{
+        cardId:{...cloud,'id':cardId,'documentId':cardId}}};}),throwsA(isA<PublishedIdInputConflict>()));
+    expect(reads,1);expect(renders,0);
+    expect((await db.collection('_windows_document_outbox').doc(cardId).get()).exists,false);
+    expect(await File(local['localPath'] as String).exists(),true);
+  });
   for(final source in ['local-deletion','pending-deletion','cloud-tombstone','deletion-during-read']) {
     test('automatic ID decision retains $source without a replacement upload', () async {
       final person={'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'1','rollNo':1};
