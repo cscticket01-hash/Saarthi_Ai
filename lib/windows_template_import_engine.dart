@@ -536,9 +536,7 @@ class SchoolTemplateImportEngine {
     required String Function() currentSchoolId,
   }) async {
     verifySchool(draft.schoolId);
-    if (draft.fields.isEmpty || draft.fields.length > 35) {
-      throw StateError('Automatic field recognition is incomplete.');
-    }
+    validateFieldSet(draft.kind,draft.fields);
     for (final field in draft.fields) field.validate(draft.kind);
     if (currentSchoolId() != draft.schoolId) {
       throw StateError('School changed before template save.');
