@@ -70,19 +70,54 @@ class SchoolTemplateField {
     'width':width,'size':size,'mask':mask};
 }
 
+/// Verified OCR/geometry evidence for an image or QR placeholder.
+/// The page border is scanned; a plain OCR label is never accepted as a slot.
+class ForgeVisualSlot {
+  const ForgeVisualSlot({
+    required this.role,required this.x,required this.y,
+    required this.width,required this.height,
+  });
+  static const roles={'studentPhoto','schoolLogo','signature','seal','qrCode'};
+  final String role;
+  final double x,y,width,height;
+  void validate(){
+    if(!roles.contains(role) ||
+      ![x,y,width,height].every((v)=>v.isFinite) ||
+      x<0||y<0||width<.06||height<.04||
+      x+width>1||y+height>1||width>.50||height>.48){
+      throw const FormatException('Unverified visual slot geometry.');
+    }
+  }
+  Map<String,dynamic> toJson()=>{'role':role,'x':x,'y':y,
+    'width':width,'height':height};
+  factory ForgeVisualSlot.fromJson(Map<String,dynamic> m){
+    final slot=ForgeVisualSlot(
+      role:m['role']?.toString()??'',
+      x:(m['x'] as num).toDouble(),y:(m['y'] as num).toDouble(),
+      width:(m['width'] as num).toDouble(),
+      height:(m['height'] as num).toDouble());
+    slot.validate();
+    return slot;
+  }
+}
+
 class SchoolTemplateDraft {
   const SchoolTemplateDraft({required this.kind,required this.schoolId,
     required this.filename,required this.sourceHash,required this.png,
-    required this.width,required this.height,this.fields=const []});
+    required this.width,required this.height,this.fields=const [],
+    this.visualSlots=const []});
   final SchoolTemplateKind kind;
   final String schoolId,filename,sourceHash;
   final Uint8List png;
   final int width,height;
   final List<SchoolTemplateField> fields;
-  SchoolTemplateDraft copyWith({List<SchoolTemplateField>? fields}) =>
+  final List<ForgeVisualSlot> visualSlots;
+  SchoolTemplateDraft copyWith({
+    List<SchoolTemplateField>? fields,List<ForgeVisualSlot>? visualSlots,
+  }) =>
     SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
       sourceHash:sourceHash,png:png,width:width,height:height,
-      fields:fields??this.fields);
+      fields:fields??this.fields,visualSlots:visualSlots??this.visualSlots);
 }
 
 class SchoolTemplateImportEngine {
@@ -169,6 +204,18 @@ class SchoolTemplateImportEngine {
     }
     validateFieldSet(draft.kind,draft.fields);
     for(final field in draft.fields)field.validate(draft.kind);
+    if(draft.visualSlots.length>5 ||
+      draft.visualSlots.map((s)=>s.role).toSet().length!=draft.visualSlots.length){
+      throw const FormatException('Ambiguous visual slots.');
+    }
+    for(final slot in draft.visualSlots){
+      slot.validate();
+      if(draft.fields.any((f)=>
+        f.x<slot.x+slot.width && slot.x<f.x+f.width &&
+        f.y<slot.y+slot.height && slot.y<f.y+f.size*1.8)){
+        throw const FormatException('Visual slot overlaps a data field.');
+      }
+    }
   }
 
   static bool isPdf(Uint8List b)=>b.length>5 &&
