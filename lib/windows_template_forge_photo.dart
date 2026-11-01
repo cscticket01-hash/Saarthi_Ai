@@ -60,14 +60,16 @@ class TemplateForgePhotoNormalizer {
       (topWidth-bottomWidth).abs()>w*.22)return null;
     final avgWidth=(topWidth+bottomWidth)/2;
     final aspect=avgWidth/(bottom-top);
-    if((aspect-210/297).abs()>.12)return null;
+    final portrait=(aspect-210/297).abs()<=.12;
+    final landscape=(aspect-297/210).abs()<=.12;
+    if(!portrait&&!landscape)return null;
     // The four corners must be inside the image and distinctly inside
     // the dark surrounding surface, not the image border itself.
     if(math.min(a.left,b.left)<5 ||
       math.max(a.right,b.right)>w-6)return null;
     final sx=source.width/w,sy=source.height/h;
     final targetWidth=math.min(1900,source.width);
-    final targetHeight=(targetWidth*297/210).round();
+    final targetHeight=(targetWidth*(landscape?210/297:297/210)).round();
     if(targetWidth<200||targetHeight<200)return null;
     final output=img.copyRectify(source,
       topLeft:img.Point((a.left*sx).round(),(top*sy).round()),
