@@ -278,6 +278,28 @@ class WindowsTemplateCloudStore {
     return result;
   }
 
+  /// Preview the current school's live image assets before publishing any
+  /// manifest. A broken photo/signature URL must never create a usable design.
+  static Future<Map<String,Uint8List>> previewVisualAssets(
+    SchoolTemplateDraft draft,Map<String,dynamic> record,
+  ) async {
+    final db=FirebaseFirestore.instance;
+    final origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    if(school!=draft.schoolId)throw StateError('School changed before image preview.');
+    verifyRecordSchool(record,school);
+    void ensureSchool(){
+      if(db.activeProfileId!=origin ||
+        db.activeProfileIdentity['schoolSyncId']!=school){
+        throw StateError('School changed during image preview.');
+      }
+    }
+    final assets=await _visualAssets(draft,record,ensureSchool);
+    ensureSchool();
+    SchoolTemplateImportEngine.validateVisualAssets(draft,record,assets);
+    return assets;
+  }
+
   static Future<Uint8List> render(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
   ) async {
