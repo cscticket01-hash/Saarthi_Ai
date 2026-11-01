@@ -497,10 +497,61 @@ class SchoolTemplateImportEngine {
     );
   }
 
+  /// Refuse missing/foreign image assets: a previous person's face or
+  /// signature must never survive as the background of a new document.
+  static void validateVisualAssets(
+    SchoolTemplateDraft draft,Map<String,dynamic> record,
+    Map<String,Uint8List> visualAssets,
+  ){
+    for(final slot in draft.visualSlots){
+      if(slot.role=='qrCode'){
+        final data=(record['qr']??record['qrText'])?.toString().trim()??'';
+        if(data.isEmpty||data.length>1024){
+          throw const FormatException('Verified record QR value is missing.');
+        }
+        continue;
+      }
+      final bytes=visualAssets[slot.role];
+      if(bytes==null||bytes.isEmpty||bytes.length>4*1024*1024){
+        throw FormatException('Required school image is missing: '+slot.role);
+      }
+      final decoded=img.decodeImage(bytes);
+      if(decoded==null||decoded.width*decoded.height>5000000){
+        throw FormatException('School image is invalid or oversized: '+slot.role);
+      }
+    }
+  }
+
+  static pw.Widget _renderVisualSlot(
+    ForgeVisualSlot slot,Map<String,dynamic> record,
+    Map<String,Uint8List> visualAssets,double pageWidth,double pageHeight,
+  ){
+    final qr=(record['qr']??record['qrText'])?.toString().trim()??'';
+    return pw.Positioned(
+      left:slot.x*pageWidth+1,top:slot.y*pageHeight+1,
+      child:pw.Container(
+        width:slot.width*pageWidth-2,
+        height:slot.height*pageHeight-2,
+        color:PdfColors.white,
+        child:pw.Padding(
+          padding:pw.EdgeInsets.all(1),
+          child:slot.role=='qrCode'
+            ?pw.BarcodeWidget(barcode:pw.Barcode.qrCode(),
+              data:qr,drawText:false)
+            :pw.Image(pw.MemoryImage(visualAssets[slot.role]!),
+              fit:pw.BoxFit.contain),
+        ),
+      ),
+    );
+  }
+
   static Future<Uint8List> previewPdf(
-    SchoolTemplateDraft draft,Map<String,dynamic> record) async {
+    SchoolTemplateDraft draft,Map<String,dynamic> record,{
+    Map<String,Uint8List> visualAssets=const {},
+  }) async {
     validateDraft(draft);
     validatePreviewRecord(draft,record);
+    validateVisualAssets(draft,record,visualAssets);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
     // Generated documents print at real ISO A4; the imported page is
     // admitted by the automatic pipeline only if its aspect ratio is A4.
@@ -519,6 +570,8 @@ class SchoolTemplateImportEngine {
           child:pw.Image(background,width:width,height:height,fit:pw.BoxFit.fill)),
         for(final f in draft.fields)
           _renderField(f,record,normal,width,height),
+        for(final slot in draft.visualSlots)
+          _renderVisualSlot(slot,record,visualAssets,width,height),
       ]),
     ));
     return pdf.save();
