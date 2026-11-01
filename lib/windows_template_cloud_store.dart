@@ -202,7 +202,9 @@ class WindowsTemplateCloudStore {
       'updatedAt':FieldValue.serverTimestamp(),
     },SetOptions(merge:true));
     ensureSchool();
-    final verified=importedAsset(await _settings(),draft.kind.name,templateId:templateId);
+    final savedSettings=await _settings();
+    ensureSchool();
+    final verified=importedAsset(savedSettings,draft.kind.name,templateId:templateId);
     if(verified==null || verified['contentHash']!=contentHash ||
       verified['fileId']!=fileId || verified['schoolId']!=school){
       throw StateError('School template manifest read-back failed.');
@@ -234,6 +236,11 @@ class WindowsTemplateCloudStore {
     }
     final draft=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:parsed.single,schoolId:school,manifest:manifest,png:bytes);
-    return SchoolTemplateImportEngine.previewPdf(draft,record);
+    final output=await SchoolTemplateImportEngine.previewPdf(draft,record);
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed while rendering the imported template.');
+    }
+    return output;
   }
 }
