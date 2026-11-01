@@ -934,6 +934,7 @@ class _SchoolDocumentTemplatesScreenState
     'pinCode': '788001',
     'dob': '15/03/2015',
     'examName': 'Final Examination',
+    'academicSession': '2026-27',
     'marks': {'English': 84, 'Mathematics': 91, 'Science': 87},
     'fullMarks': 100,
     'totalMarks': 262,
