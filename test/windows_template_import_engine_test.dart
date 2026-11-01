@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:crypto/crypto.dart';
@@ -274,15 +275,25 @@ void main() {
       filename:'school.png',bytes:png);
     final fields=[const SchoolTemplateField(key:'receiptNo',x:.1,y:.2,width:.3)];
     final contentHash=sha256.convert(png).toString();
+    final fieldJson=jsonEncode(fields.map((f)=>f.toJson()).toList());
+    final templateId=sha256.convert(utf8.encode(
+      '${source.sourceHash}:$contentHash:$fieldJson:TemplateForge-3')).toString();
     final manifest={
       'version':1,'approved':true,'schoolId':school,'kind':'receipt',
       'filename':'school.png','sourceHash':source.sourceHash,
-      'contentHash':contentHash,'width':1000,'height':1400,
+      'contentHash':contentHash,'templateId':templateId,
+      'engine':'TemplateForge-3','width':1000,'height':1400,
       'fields':fields.map((f)=>f.toJson()).toList(),
     };
     final loaded=SchoolTemplateImportEngine.fromPublishedManifest(
       kind:SchoolTemplateKind.receipt,schoolId:school,manifest:manifest,png:png);
     expect(loaded.fields.single.key,'receiptNo');
+    final wrongMap={...manifest,'fields':[
+      const SchoolTemplateField(key:'receiptNo',x:.2,y:.2,width:.3).toJson(),
+    ].map((f)=>f)};
+    expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,schoolId:school,manifest:wrongMap,png:png),
+      throwsFormatException);
     expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
       kind:SchoolTemplateKind.receipt,
       schoolId:'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
