@@ -344,4 +344,15 @@ void main() {
       filename:'two-pages.pdf',bytes:bytes),throwsFormatException);
   });
 
+  test('high-resolution A4 phone photos are reduced to the safe print raster limit',() async {
+    final photo=Uint8List.fromList(img.encodeJpg(
+      img.Image(width:3600,height:5000),quality:88));
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'high-res.jpg',bytes:photo);
+    expect(draft.width*draft.height,
+      lessThanOrEqualTo(SchoolTemplateImportEngine.maxPixels));
+    expect((draft.width/draft.height-210/297).abs(),lessThan(.075));
+  });
+
 }
