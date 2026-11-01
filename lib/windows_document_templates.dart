@@ -1102,7 +1102,7 @@ class _SchoolDocumentTemplatesScreenState
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:const Icon(Icons.upload_file_outlined),
-                  label:const Text('Upload A4 PDF / PNG / JPG template'),
+                  label:const Text('Upload single-page A4 PDF / PNG / JPG template'),
                   onPressed:_loading?null:() async {
                     await SchoolTemplateImportEditor.pickAutomatic(
                       context,
