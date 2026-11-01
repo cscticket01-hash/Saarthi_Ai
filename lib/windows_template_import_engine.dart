@@ -599,13 +599,15 @@ class SchoolTemplateImportEngine {
         throw const FormatException('Published template field-map identity is invalid.');
       }
     }
-    return SchoolTemplateDraft(
+    final published=SchoolTemplateDraft(
       kind: kind, schoolId: schoolId,
       filename: manifest['filename']?.toString() ?? 'School template',
       sourceHash: sourceHash, png: Uint8List.fromList(png),
       width: decoded.width, height: decoded.height, fields: fields,
       visualSlots:visualSlots,
     );
+    validateDraft(published);
+    return published;
   }
 
   static Future<List<SchoolTemplateDraft>> loadLocalDrafts({
