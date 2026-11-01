@@ -27,7 +27,8 @@ class WindowsReceiptPrintDialog extends StatefulWidget {
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
 }
 
-class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
+class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
+    with WidgetsBindingObserver {
   final copies = TextEditingController(text: '1');
   List<Printer> printers = [];
   String? selected;
@@ -37,9 +38,26 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
   int submitted = 0;
   bool savingPdf = false, openingSystemDialog = false;
   @override
-  void initState() { super.initState(); loadPrinters(); }
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    loadPrinters();
+  }
   @override
-  void dispose() { copies.dispose(); super.dispose(); }
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from Windows "Add printer" should enumerate the newly
+    // installed USB/network driver without requiring the school to relaunch.
+    if(state==AppLifecycleState.resumed && mounted &&
+       !printing && !loadingPrinters && widget.isCurrent()){
+      loadPrinters();
+    }
+  }
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    copies.dispose();
+    super.dispose();
+  }
   Future<void> loadPrinters() async {
     setState(() { loadingPrinters = true; message = ''; });
     try {

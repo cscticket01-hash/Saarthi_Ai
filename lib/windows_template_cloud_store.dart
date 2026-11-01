@@ -242,26 +242,52 @@ class WindowsTemplateCloudStore {
       'engine':_engineVersion,
     };
     ensureSchool();
-    // The Drive upload can take time. Merge from the latest local/cloud
-    // settings snapshot, not the stale state loaded before upload, to avoid
-    // erasing a version added by another device during that wait.
-    final latestSettings=await _settings();
-    ensureSchool();
-    final allAssets=latestSettings['templateAssets'] is Map
-      ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
-      :<String,dynamic>{};
-    final rawVersions=allAssets[draft.kind.name];
-    final versions=appendedVersionHistory(
-      rawVersions,templateId,manifest);
-    allAssets[draft.kind.name]=versions;
-    final latest=latestSettings['templateAssetLatest'] is Map
-      ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
-      :<String,dynamic>{};
-    latest[draft.kind.name]=templateId;
-    await db.collection('school_settings').doc('document_templates').set({
-      'templateAssets':allAssets,'templateAssetLatest':latest,
-      'updatedAt':FieldValue.serverTimestamp(),
-    },SetOptions(merge:true));
+    // A Drive upload may take seconds while another window/PC edits the
+    // catalog. Re-read immediately before the write and use the EXISTING
+    // serialized local-store read-dependency guard, not an unguarded set().
+    // Only a true concurrent local change triggers a bounded retry.
+    // Cross-device atomicity still needs verified cloud CAS acceptance.
+    final settingsRef=db.collection('school_settings').doc('document_templates');
+    Map<String,dynamic> latestSettings={};
+    Map<String,dynamic> versions={};
+    var written=false;
+    for(var attempt=0;attempt<3;attempt++){
+      final snapshot=await settingsRef.get();
+      ensureSchool();
+      latestSettings=snapshot.data()??<String,dynamic>{};
+      final allAssets=latestSettings['templateAssets'] is Map
+        ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
+        :<String,dynamic>{};
+      versions=appendedVersionHistory(
+        allAssets[draft.kind.name],templateId,manifest);
+      allAssets[draft.kind.name]=versions;
+      final latest=latestSettings['templateAssetLatest'] is Map
+        ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
+        :<String,dynamic>{};
+      latest[draft.kind.name]=templateId;
+      final batch=db.batch();
+      batch.requireUnchanged(settingsRef,snapshot.data());
+      batch.set(settingsRef,{
+        'templateAssets':allAssets,'templateAssetLatest':latest,
+        'updatedAt':FieldValue.serverTimestamp(),
+      },const SetOptions(merge:true));
+      try{
+        ensureSchool();
+        await batch.commit();
+        written=true;
+        break;
+      }on StateError catch(error){
+        ensureSchool();
+        if(!error.toString().contains('Record changed before commit.')){
+          rethrow;
+        }
+        if(attempt==2){
+          throw StateError('School template settings changed repeatedly. '
+            'No version was intentionally removed; retry after sync settles.');
+        }
+      }
+    }
+    if(!written)throw StateError('Template manifest was not committed.');
     ensureSchool();
     final savedSettings=await _settings();
     ensureSchool();

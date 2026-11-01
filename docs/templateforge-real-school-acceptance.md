@@ -79,3 +79,9 @@ flutter test test/windows_template_private_corpus_test.dart --dart-define="TEMPL
 ```
 
 The local `build/templateforge_private_corpus_audit.json` contains only source SHA256, type, format, field/slot counts and safe-rejection status; it does **not** contain school files, recognized text, faces, student names or credentials. This test reuses the real importer, OCR, and geometry validators and never writes to Drive. A `geometry-safe-needs-human-review` result still needs an operator to visually approve correct placement. OCR may require the packaged local Windows Tesseract. In environments without native PDF rasterization the audit must fail/reject instead of claiming a pass. No actual corpus is currently provided, so no real-school accuracy claim is made.
+
+
+## Latest publication and printer refresh hardening
+
+- The existing local Windows `school_settings/document_templates` manifest now uses its existing serialized batch read-dependency check with up to three retries if the local snapshot changed before commit. This prevents a **same-PC** lost-update race without creating any duplicate sync engine. It is **not** a server-side compare-and-swap; two independent cloud PCs still need live concurrent/rollback acceptance.
+- The existing Windows receipt print dialog observes app resume and refreshes the installed printer list when users return from Windows Settings/Add Printer. All OS-installed printers with usable printer identities remain available and the system print chooser is retained.

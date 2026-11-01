@@ -85,6 +85,35 @@ void main() {
     expect(tester.takeException(),isNull);
   });
 
+  testWidgets('printer list refreshes when returning from Windows settings', (tester) async {
+    tester.view.devicePixelRatio=1;
+    tester.view.physicalSize=const Size(1200,900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    var lookups=0;
+    const installed=Printer(url:'network-laser',
+      name:'Newly installed network printer',isDefault:false,isAvailable:true);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:WindowsReceiptPrintDialog(
+        receipt:Future.value(Uint8List.fromList([37,80,68,70,45])),
+        title:'Install printer',subtitle:'School',isCurrent:()=>true,
+        printers:()async{
+          lookups++;
+          return lookups==1?[printer]:[printer,installed];
+        },
+        previewBuilder:(_)=>const SizedBox()))));
+    await tester.pumpAndSettle();
+    expect(lookups,1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(lookups,2);
+    await tester.ensureVisible(find.text('EPSON L3110'));
+    await tester.tap(find.text('EPSON L3110'));
+    await tester.pumpAndSettle();
+    expect(find.text('Newly installed network printer'),findsOneWidget);
+  });
+
   testWidgets('invalid copies and a school switch cannot submit another print', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1200, 900);
