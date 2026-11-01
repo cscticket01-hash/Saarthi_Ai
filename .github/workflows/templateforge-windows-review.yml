@@ -6,9 +6,11 @@ on:
       - feature/school-document-template-import-20261031
     paths:
       - 'lib/windows_template_*.dart'
+      - 'lib/windows_template_cloud_store.dart'
       - 'lib/windows_document_templates.dart'
       - 'lib/windows_staff_payroll.dart'
       - 'test/windows_template_import_engine_test.dart'
+      - 'test/windows_template_cloud_store_test.dart'
       - '.github/scripts/bundle_templateforge_ocr.ps1'
       - '.github/workflows/templateforge-windows-review.yml'
   pull_request:
@@ -82,7 +84,7 @@ jobs:
       - name: Run TemplateForge and document regression tests
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_reference_documents_test.dart
+          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'TemplateForge regression tests failed.' }
 
       - name: Build Windows application
