@@ -456,7 +456,7 @@ void main() {
       const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
     ],visualSlots:[
       const ForgeVisualSlot(role:'studentPhoto',x:.78,y:.07,width:.15,height:.18),
-      const ForgeVisualSlot(role:'qrCode',x:.79,y:.3,width:.13,height:.13),
+      const ForgeVisualSlot(role:'qrCode',x:.79,y:.3,width:.13,height:.092),
     ]);
     final record=<String,dynamic>{
       'receiptNo':'VS-55','studentName':'Mira','totalAmount':100,
