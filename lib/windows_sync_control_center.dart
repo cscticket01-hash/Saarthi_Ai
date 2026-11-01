@@ -785,6 +785,32 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
   }
 
+  // Never label a school as stalled from a cloud health probe or spinner.
+  // Only an aged, own-school durable pending write without an admitted retry
+  // qualifies; the engine's existing watchdog still owns actual recovery.
+  bool _syncStalledFor(Map<String, dynamic> details) {
+    if (db.activeProfileId != origin || details['liveQueue'] is! List) {
+      return false;
+    }
+    final rows = (details['liveQueue'] as List)
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    return windowsSyncAdmissionStalled(
+      rows,
+      schoolId: db.activeProfileIdentity['schoolSyncId']?.toString() ?? '',
+      nowMillis: DateTime.now().millisecondsSinceEpoch,
+      syncing: engine.isSyncing,
+      checkingCloud: engine.isCheckingCloud || busy,
+      paused: engine.isPaused,
+      automaticEnabled: engine.automaticSyncEnabled,
+      blocked: details['displayState'] == 'needsAttention',
+      offline: details['displayState'] == 'offline',
+      nextRetryMillis: engine.nextRetryAt?.millisecondsSinceEpoch,
+      quotaRetryMillis: engine.providerQuotaRetryAt?.millisecondsSinceEpoch,
+    );
+  }
+
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
     final rows = details['liveQueue'] is List
         ? (details['liveQueue'] as List).whereType<Map>().map((r) => Map<String,dynamic>.from(r)).toList()
@@ -801,10 +827,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final remoteChecks = (inbound['remoteChecks'] as num? ?? 0).toInt();
     final mediaFiles = (inbound['mediaFiles'] as num? ?? 0).toInt();
     final hasUploads = uploadCount > 0 || incomingCount > 0;
+    final stalled = _syncStalledFor(details);
     final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
     final checking = !engine.isPaused && (checkingOnly || engine.isCheckingCloud);
     final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
     final phase = engine.isPaused ? 'paused' : checking ? 'checking' :
+        stalled ? 'stalled' :
         engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
         details['displayState']?.toString() ??
         (syncing
@@ -825,6 +853,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'offline': 'Offline',
       'waiting': 'Waiting',
       'pending': 'Pending',
+      'stalled': 'Sync stalled',
       'idle': 'Idle',
       'paused': 'Paused',
     };
@@ -832,7 +861,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ? (remoteChecks > 0 && recordDownloads == 0 && mediaFiles == 0
             ? 'Cloud check queued' : 'Incoming work')
         : (phaseLabels[phase] ?? 'Unknown');
-    final phaseColor = phase == 'needsAttention'
+    final phaseColor = phase == 'needsAttention' || phase == 'stalled'
         ? const Color(0xFFFFC153)
         : _cyan;
     final ack = details['lastCloudAckMillis'];
@@ -1292,6 +1321,18 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         'Your school records, cloud transfers and recovery — together in one live workspace.',
                       ),
                       _alerts(ownSchool: ownSchool),
+                      if (ownSchool && _syncStalledFor(details))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'Sync stalled: a saved local upload has not entered the sync engine for over 2 minutes. The normal safe recovery is enabled; if it persists, use Sync Now. Your original pending record is retained.',
+                            style: TextStyle(
+                              fontFamily: 'Segoe UI',
+                              fontWeight: FontWeight.w600,
+                              color: WindowsAppearance.foreground(Colors.orangeAccent),
+                            ),
+                          ),
+                        ),
                       if (ownSchool) ...[
                         _navigation(active),
                         const SizedBox(height: 12),
@@ -1502,7 +1543,25 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                       ? 'Syncing'
                                       : busy
                                       ? 'Checking'
-                                      : 'Idle',
+                                      : engine.isPaused
+                                      ? 'Paused'
+                                      : _syncStalledFor(details)
+                                      ? 'Sync stalled — pending upload not admitted'
+                                      : !engine.automaticSyncEnabled
+                                      ? 'Automatic sync off'
+                                      : switch (details['displayState']) {
+                                          'pending' => 'Pending — awaiting sync admission',
+                                          'waiting' => 'Waiting for retry or verification',
+                                          'needsAttention' => 'Needs review',
+                                          'offline' => 'Offline',
+                                          'paused' => 'Paused',
+                                          'syncing' => 'Preparing changed data',
+                                          'idle' => 'Idle',
+                                          _ => (details['pending'] is num &&
+                                                  details['pending'] > 0)
+                                              ? 'Pending — awaiting sync admission'
+                                              : 'Not measured',
+                                        },
                                 ),
                                 metric(
                                   'Pending downloads',
