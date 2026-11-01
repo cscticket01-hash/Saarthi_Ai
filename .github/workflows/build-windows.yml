@@ -16,6 +16,7 @@ on:
       - 'assets/**'
       - 'pubspec.yaml'
       - '.github/workflows/build-windows.yml'
+      - '.github/scripts/bundle_templateforge_ocr.ps1'
 
 permissions:
   contents: write
@@ -221,7 +222,7 @@ jobs:
         run: |
           flutter test test/windows_oauth_build_configuration_test.dart --dart-define=SAARTHI_VERIFY_OAUTH_BUILD=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=$env:SAARTHI_SCHOOL_CLOUD_URL --dart-define=SAARTHI_GOOGLE_DESKTOP_CLIENT_ID=$env:SAARTHI_GOOGLE_DESKTOP_CLIENT_ID --dart-define=SAARTHI_GOOGLE_OAUTH_BROKER_URL=$env:SAARTHI_GOOGLE_OAUTH_BROKER_URL --dart-define=SAARTHI_GOOGLE_REQUIRES_BROKER=true
           if ($LASTEXITCODE -ne 0) { throw 'Release cloud configuration verification failed.' }
-          flutter test --concurrency=1 test/windows_student_contact_test.dart test/windows_save_idempotency_test.dart test/windows_smart_record_sync_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart test/windows_legacy_queue_recovery_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart
+          flutter test --concurrency=1 test/windows_student_contact_test.dart test/windows_save_idempotency_test.dart test/windows_smart_record_sync_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_remote_change_feed_test.dart test/windows_legacy_queue_recovery_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/school_qr_login_test.dart test/central_school_cloud_test.dart test/spark_license_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_template_import_engine_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed.' }
 
       - name: Verify reference PDF contents and continuation pages
@@ -312,6 +313,10 @@ jobs:
           $exe = Get-ChildItem -Path $release -Filter *.exe | Select-Object -First 1
           if (-not $exe) { throw 'Windows EXE not found' }
           Write-Host "Built EXE: $($exe.FullName)"
+
+      - name: Bundle and verify offline TemplateForge OCR runtime
+        shell: powershell
+        run: .github/scripts/bundle_templateforge_ocr.ps1 -ReleaseDirectory 'build/windows/x64/runner/Release'
 
       - name: Sign and verify application
         if: steps.publisher_signing.outputs.available == 'true'
