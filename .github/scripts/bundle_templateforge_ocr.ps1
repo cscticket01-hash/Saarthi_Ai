@@ -24,7 +24,7 @@ $models = @{
   ben = '7e9054d1de309714009a85555f5276168d41af9c'
   eng = 'bbef4675053b5b468cdb477053e28b1c698ba08e'
   hin = 'a8f0aaec09378115b12a2c6287c57695d082aea2'
-  osd = '527457ca8f8fe1fda7c2f88bce3c0e4be12be9d'
+  osd = '527457ca8f8fe1fda7c2f88bce3c0e4be12be9d0'
 }
 $data = Join-Path $target 'tessdata'
 New-Item -ItemType Directory -Path $data -Force | Out-Null
@@ -59,7 +59,7 @@ if ($license) {
   throw 'Tesseract Apache 2.0 licence file was not available for redistribution.'
 }
 $exe = Join-Path $target 'tesseract.exe'
-$list = & $exe --tessdata-dir $target --list-langs 2>&1
+$list = & $exe --tessdata-dir $data --list-langs 2>&1
 $listText = $list | Out-String
 if ($LASTEXITCODE -ne 0) { throw 'Bundled Tesseract could not load its traineddata.' }
 foreach ($language in $models.Keys) {
