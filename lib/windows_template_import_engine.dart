@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'windows_template_forge_photo.dart';
 
 /// One school-scoped engine for fee receipts, report cards and staff payslips.
 /// Raster background stays unchanged; only mapped overlay fields are editable.
@@ -287,7 +288,17 @@ class SchoolTemplateImportEngine {
           height:(oriented.height*math.sqrt(maxPixels/pixels)).round(),
           interpolation:img.Interpolation.average)
         :oriented;
-      imageBytes=Uint8List.fromList(img.encodePng(normalized));
+      // Only attempt a camera-page rectification when the raw photo fails
+      // the A4 geometry guard. Strong evidence is mandatory; otherwise
+      // the original strict rejection still applies.
+      final rawAspect=normalized.width/normalized.height;
+      final needsCorrection=(rawAspect-210/297).abs()>.075 &&
+        (rawAspect-297/210).abs()>.075;
+      final corrected=needsCorrection
+        ?TemplateForgePhotoNormalizer.rectifyVerifiedA4(normalized)
+        :null;
+      imageBytes=Uint8List.fromList(
+        img.encodePng(corrected??normalized));
     }
     if(imageBytes.length>maxPngBytes) {
       throw const FormatException('Rendered page exceeds 18 MB.');
