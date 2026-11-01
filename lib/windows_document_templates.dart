@@ -66,11 +66,45 @@ class WindowsDocumentTemplates {
   }
 
 
-  static Map<String,dynamic>? importedAsset(Map<String,dynamic> settings,String kind) {
+  static List<Map<String,dynamic>> importedTemplates(
+    Map<String,dynamic> settings,String kind,
+  ) {
     final all=settings['templateAssets'];
-    if(all is! Map)return null;
-    final value=all[kind];
-    return value is Map ? Map<String,dynamic>.from(value) : null;
+    if(all is! Map)return const [];
+    final raw=all[kind];
+    if(raw is! Map)return const [];
+    // Read the early single-manifest draft format for backward compatibility.
+    if(raw['version']==1)return [Map<String,dynamic>.from(raw)];
+    final versions=raw.values.whereType<Map>()
+      .map((v)=>Map<String,dynamic>.from(v)).toList();
+    final latest=(settings['templateAssetLatest'] is Map)
+      ?(settings['templateAssetLatest'] as Map)[kind]?.toString():null;
+    if(latest!=null){
+      versions.sort((a,b){
+        if(a['sourceHash']==latest)return -1;
+        if(b['sourceHash']==latest)return 1;
+        return (a['filename']??'').toString().compareTo((b['filename']??'').toString());
+      });
+    }
+    return versions;
+  }
+
+  static Map<String,dynamic>? importedAsset(
+    Map<String,dynamic> settings,String kind,{String? sourceHash}
+  ) {
+    final versions=importedTemplates(settings,kind);
+    if(versions.isEmpty)return null;
+    if(sourceHash!=null){
+      for(final item in versions){
+        if(item['sourceHash']==sourceHash)return item;
+      }
+      return null;
+    }
+    final selected=settings[kind]?.toString()??'';
+    if(selected.startsWith('imported:')){
+      return importedAsset(settings,kind,sourceHash:selected.substring(9));
+    }
+    return versions.first;
   }
 
   static int importedTemplateIndex(String kind) =>
@@ -102,7 +136,7 @@ class WindowsDocumentTemplates {
     final contentHash=sha256.convert(draft.png).toString();
     final settings=await selections();
     own();
-    final previous=importedAsset(settings,draft.kind.name);
+    final previous=importedAsset(settings,draft.kind.name,sourceHash:draft.sourceHash);
     if(previous!=null && previous['contentHash']==contentHash &&
       previous['sourceHash']==draft.sourceHash &&
       previous['fileUrl'] is String){
@@ -592,7 +626,7 @@ class WindowsDocumentTemplates {
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
     if(v is String && v.startsWith('imported:')){
-      final manifest=importedAsset(templateSettings,kind);
+      final manifest=importedAsset(templateSettings,kind,sourceHash:v.substring(9));
       if(manifest==null || manifest['sourceHash']!=v.substring(9)){
         throw StateError('Selected school template manifest is missing or mismatched.');
       }
@@ -722,9 +756,10 @@ class WindowsDocumentTemplates {
       'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
     };
     final settings=await selections();
-    final custom=importedAsset(settings,kind);
-    if(custom!=null && index==importedTemplateIndex(kind)){
-      return renderImportedTemplate(kind,custom,{
+    final customIndex=index-importedTemplateIndex(kind);
+    final customTemplates=importedTemplates(settings,kind);
+    if(customIndex>=0 && customIndex<customTemplates.length){
+      return renderImportedTemplate(kind,customTemplates[customIndex],{
         ...profile,...data,
         'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
         'schoolAddress':profile['address']??data['schoolAddress']??'',
@@ -1279,8 +1314,39 @@ class _SchoolDocumentTemplatesScreenState
       'engine':'TemplateForge-3',
     };
     own();
+    final allAssets=settings['templateAssets'] is Map
+      ?Map<String,dynamic>.from(settings['templateAssets'] as Map)
+      :<String,dynamic>{};
+    final rawVersions=allAssets[draft.kind.name];
+    final versions=<String,dynamic>{};
+    if(rawVersions is Map){
+      if(rawVersions['version']==1 && rawVersions['sourceHash'] is String){
+        versions[rawVersions['sourceHash'].toString()]=Map<String,dynamic>.from(rawVersions);
+      }else{
+        for(final entry in rawVersions.entries){
+          if(entry.value is Map)versions[entry.key.toString()]=Map<String,dynamic>.from(entry.value as Map);
+        }
+      }
+    }
+    versions[draft.sourceHash]=manifest;
+    final selected=(settings[draft.kind.name]?.toString()??'');
+    final selectedHash=selected.startsWith('imported:')?selected.substring(9):'';
+    // Keep the currently selected version and the newest nine uploads.
+    while(versions.length>10){
+      final removable=versions.keys.firstWhere(
+        (key)=>key!=selectedHash && key!=draft.sourceHash,
+        orElse:()=>draft.sourceHash,
+      );
+      if(removable==draft.sourceHash)break;
+      versions.remove(removable);
+    }
+    allAssets[draft.kind.name]=versions;
+    final latest=settings['templateAssetLatest'] is Map
+      ?Map<String,dynamic>.from(settings['templateAssetLatest'] as Map)
+      :<String,dynamic>{};
+    latest[draft.kind.name]=draft.sourceHash;
     await db.collection('school_settings').doc('document_templates').set({
-      'templateAssets':{draft.kind.name:manifest},
+      'templateAssets':allAssets,'templateAssetLatest':latest,
       'updatedAt':FieldValue.serverTimestamp(),
     },SetOptions(merge:true));
     own();
