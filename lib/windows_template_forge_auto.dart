@@ -135,8 +135,8 @@ class TemplateForgeAutoMapper {
       warnings.add('Table column positions are ambiguous');
       return const [];
     }
-    final headerBottom=header.map((w)=>w.y+w.h).reduce(math.max);
-    final headerHeight=header.map((w)=>w.h).reduce(math.max);
+    final headerBottom=header.map((w)=>w.y+w.h).reduce((a,b)=>a>b?a:b);
+    final headerHeight=header.map((w)=>w.h).reduce((a,b)=>a>b?a:b);
     List<ForgeWord>? totalLine;
     double? totalY;
     for(final line in lines.skip(headerIndex+1)){
@@ -183,7 +183,7 @@ class TemplateForgeAutoMapper {
       final start=rowTops.isEmpty?headerBottom+headerHeight:rowTops.first;
       rowHeight=(totalY-start)/4;
     }else if(rowTops.isNotEmpty){
-      rowHeight=math.max(.03,headerHeight*2.5);
+      rowHeight=math.max(.03,headerHeight*2.5).toDouble();
     }else{
       warnings.add('Blank table has no readable total-row boundary');
       return const [];
@@ -195,11 +195,11 @@ class TemplateForgeAutoMapper {
     var rowCount=candidates.isNotEmpty?candidates.length:4;
     if(totalY!=null){
       final available=((totalY-firstRowY)/rowHeight).floor();
-      if(available>0)rowCount=math.max(rowCount,available);
+      if(available>0)rowCount=math.max(rowCount,available).toInt();
     }
-    rowCount=rowCount.clamp(1,8);
+    rowCount=rowCount.clamp(1,8).toInt();
     if(totalY!=null && firstRowY+(rowCount-1)*rowHeight>=totalY){
-      rowCount=math.max(1,((totalY-firstRowY)/rowHeight).floor());
+      rowCount=math.max(1,((totalY-firstRowY)/rowHeight).floor()).toInt();
     }
     final output=<SchoolTemplateField>[];
     for(var i=0;i<rowCount;i++){
@@ -210,12 +210,12 @@ class TemplateForgeAutoMapper {
       final nameEnd=hasSample?row[row.length-2]:nameHeader;
       final nameX=name.x;
       final amountX=amount.x;
-      final nameWidth=hasSample
+      final nameWidth=(hasSample
         ?math.min(nameEnd.x+nameEnd.w-name.x+.004,amountX-nameX-.015)
-        :amountX-nameX-.02;
-      final amountWidth=hasSample
+        :amountX-nameX-.02).toDouble();
+      final amountWidth=(hasSample
         ?math.min(amount.w+.008,.98-amountX)
-        :math.min(math.max(.09,valueHeader.w+.045),.98-amountX);
+        :math.min(math.max(.09,valueHeader.w+.045),.98-amountX)).toDouble();
       final textHeight=hasSample?name.h:headerHeight*.8;
       final y=hasSample?name.y:firstRowY+i*rowHeight;
       if(nameWidth<=.04 || amountWidth<=.025 ||
