@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -140,12 +141,20 @@ class SchoolTemplateImportEngine {
       }
     } else {
       final decoded=img.decodeImage(bytes);
-      if(decoded==null || decoded.width*decoded.height>maxPixels) {
-        throw const FormatException('Image invalid or larger than 12 megapixels.');
+      if(decoded==null) {
+        throw const FormatException('Unsupported or damaged image.');
       }
-      // Honour EXIF orientation while preserving intentional A4 landscape layouts.
+      // Honour EXIF orientation. High-resolution phone photos are reduced to
+      // a print-safe 12 MP raster instead of being rejected unnecessarily.
       final oriented=img.bakeOrientation(decoded);
-      imageBytes=Uint8List.fromList(img.encodePng(oriented));
+      final pixels=oriented.width*oriented.height;
+      final normalized=pixels>maxPixels
+        ?img.copyResize(oriented,
+          width:(oriented.width*math.sqrt(maxPixels/pixels)).round(),
+          height:(oriented.height*math.sqrt(maxPixels/pixels)).round(),
+          interpolation:img.Interpolation.average)
+        :oriented;
+      imageBytes=Uint8List.fromList(img.encodePng(normalized));
     }
     if(imageBytes.length>maxPngBytes) {
       throw const FormatException('Rendered page exceeds 18 MB.');
