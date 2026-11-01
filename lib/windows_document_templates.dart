@@ -920,10 +920,10 @@ class _SchoolDocumentTemplatesScreenState
     if (_kind == 'studentId') return 0;
     final value = _selected[_kind];
     if(value is String && value.startsWith('imported:')){
-      final asset=WindowsDocumentTemplates.importedAsset(_selected,_kind);
-      return asset!=null && asset['approved']==true &&
-        asset['sourceHash']==value.substring(9)
-          ?_baseTemplateCount(_kind):-1;
+      final templates=WindowsDocumentTemplates.importedTemplates(_selected,_kind);
+      final index=templates.indexWhere((asset)=>asset['approved']==true &&
+        asset['sourceHash']==value.substring(9));
+      return index<0?-1:_baseTemplateCount(_kind)+index;
     }
     if (value is String && value.startsWith('manifest:')) {
       final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
@@ -978,12 +978,12 @@ class _SchoolDocumentTemplatesScreenState
               ..._choices(kind).map((e) => e.name),
             ];
           for(final kind in ['receipt','reportCard','payslip']){
-            final asset=WindowsDocumentTemplates.importedAsset(v,kind);
+            final assets=WindowsDocumentTemplates.importedTemplates(v,kind)
+              .where((asset)=>asset['approved']==true &&
+                asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']);
             _names[kind]=[
               ..._baseTemplateNames(kind),
-              if(asset!=null && asset['approved']==true &&
-                asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
-                'School upload • ${asset['filename']??'A4 template'}',
+              ...assets.map((asset)=>'School upload • ${asset['filename']??'A4 template'}'),
             ];
           }
           _loading = false;
@@ -1079,10 +1079,12 @@ class _SchoolDocumentTemplatesScreenState
   Future<void> _select(int index) async {
     final kind = _kind, count = _legacyCount(_kind);
     final settings=await WindowsDocumentTemplates.selections();
-    final asset=WindowsDocumentTemplates.importedAsset(settings,kind);
+    final templates=WindowsDocumentTemplates.importedTemplates(settings,kind);
+    final customIndex=index-_baseTemplateCount(kind);
+    final asset=customIndex>=0 && customIndex<templates.length
+      ?templates[customIndex]:null;
     final isImported=['receipt','reportCard','payslip'].contains(kind) &&
-      index==_baseTemplateCount(kind) && asset!=null &&
-      asset['approved']==true &&
+      asset!=null && asset['approved']==true &&
       asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
     final value = isImported
         ? 'imported:${asset['sourceHash']}'
