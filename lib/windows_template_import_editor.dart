@@ -8,10 +8,10 @@ import 'windows_template_forge_ocr.dart';
 import 'windows_template_forge_auto.dart';
 
 /// Zero-edit TemplateForge upload and preview for the three supported tabs.
-/// Uploads are school-scoped local drafts; existing selections stay untouched.
+/// Approved pages are hash-verified in the school's Drive and listed as selectable versions.
 class SchoolTemplateImportEditor {
-  /// One-click, no-edit conversion: OCR, safe field suggestion, A4 preview
-  /// and local draft. Never auto-activates a financial or academic template.
+  /// One-click conversion: offline OCR, strict record preflight, verified Drive
+  /// publication and a real print preview. The school explicitly selects the version.
   static Future<void> pickAutomatic(
     BuildContext context,SchoolTemplateKind kind,Map<String,dynamic> example,
   ) async {
