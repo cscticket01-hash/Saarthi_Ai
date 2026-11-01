@@ -102,7 +102,7 @@ jobs:
         run: |
           $ocr = 'build\windows\x64\runner\Release\ocr\tesseract'
           if (!(Test-Path "$ocr\tesseract.exe")) { throw 'Tesseract executable missing from Windows release.' }
-          foreach ($language in @('eng','hin','ben','asm')) {
+          foreach ($language in @('eng','hin','ben','asm','osd')) {
             if (!(Test-Path "$ocr\tessdata\$language.traineddata")) {
               throw "Missing OCR language pack: $language"
             }
