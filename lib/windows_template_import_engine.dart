@@ -174,7 +174,27 @@ class SchoolTemplateImportEngine {
       if(value is! String && value is! num)return '';
       return value.toString().trim();
     }
-    final value=record[key] ?? (key=='studentName'?record['name']:null);
+    final fallback=<String,List<String>>{
+      'studentName':['name','fullName'],
+      'name':['employeeName','staffName','fullName'],
+      'class':['studentClass','grade'],
+      'rollNo':['roll','rollNumber'],
+      'receiptNo':['receiptNumber','receiptId'],
+      'totalAmount':['amount','installmentAmount','paidAmount'],
+      'dateText':['date','paymentDate','createdAtText'],
+      'paymentMode':['mode','method'],
+      'examName':['exam','examination'],
+      'academicSession':['session','year'],
+      'employeeId':['staffId','teacherId'],
+      'role':['designation','position'],
+      'month':['salaryMonth','period'],
+    };
+    dynamic value=record[key];
+    if(value==null){
+      for(final alias in fallback[key]??const <String>[]){
+        if(record[alias]!=null){value=record[alias];break;}
+      }
+    }
     if(value==null || value is List || value is Map) return '';
     if(key.endsWith('Paise')&&value is num) {
       return 'Rs '+(value/100).toStringAsFixed(2);
