@@ -290,6 +290,64 @@ void main() {
     }),'300');
   });
 
+  test('twelve-row field mapping preserves additional real fee and subject rows',() async {
+    final receipt=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'ten-fee-rows.png',bytes:png);
+    final mapped=receipt.copyWith(fields:[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.2),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.14,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.88,width:.2),
+      for(var i=0;i<10;i++) ...[
+        SchoolTemplateField(key:'feeName$i',x:.1,y:.25+i*.055,
+          width:.35,size:.015,mask:true),
+        SchoolTemplateField(key:'feeAmount$i',x:.65,y:.25+i*.055,
+          width:.18,size:.015,mask:true),
+      ],
+    ]);
+    final items=<String,int>{
+      for(var i=0;i<10;i++) 'Tuition $i':100,
+    };
+    final record=<String,dynamic>{
+      'receiptNo':'VS-12','studentName':'Mira',
+      'totalAmount':1000,'feeItems':items,
+    };
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(mapped,record),
+      returnsNormally);
+    expect(SchoolTemplateImportEngine.valueFor('feeName9',record),'Tuition 9');
+    expect(SchoolTemplateImportEngine.valueFor('feeAmount9',record),'100');
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(mapped,{
+      ...record,'feeItems':<String,int>{
+        for(var i=0;i<11;i++) 'Tuition $i':100,
+      },
+    }),throwsFormatException,reason:'Never omit an overflow fee silently');
+    final report=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.reportCard,schoolId:school,
+      filename:'ten-subjects.png',bytes:png);
+    final marksDraft=report.copyWith(fields:[
+      const SchoolTemplateField(key:'studentName',x:.1,y:.08,width:.3),
+      const SchoolTemplateField(key:'class',x:.1,y:.14,width:.3),
+      const SchoolTemplateField(key:'examName',x:.6,y:.14,width:.3),
+      for(var i=0;i<10;i++) ...[
+        SchoolTemplateField(key:'subjectName$i',x:.1,y:.25+i*.055,
+          width:.35,size:.015,mask:true),
+        SchoolTemplateField(key:'subjectMarks$i',x:.65,y:.25+i*.055,
+          width:.18,size:.015,mask:true),
+      ],
+    ]);
+    final marks={
+      for(var i=0;i<10;i++) 'Subject $i':40,
+    };
+    final marksRecord=<String,dynamic>{
+      'studentName':'Mira','class':'5','examName':'Final',
+      'marks':marks,'totalMarks':400,'fullMarks':100,'percentage':'40',
+    };
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(
+      marksDraft,marksRecord),returnsNormally);
+    expect(SchoolTemplateImportEngine.valueFor('subjectName9',marksRecord),
+      'Subject 9');
+  });
+
   test('row count differs from scanned sample: fail instead of dropping fees',() async {
     final draft=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
