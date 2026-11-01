@@ -168,6 +168,20 @@ void main() {
       reason:'Recognized amounts do not prove fee table safety');
   });
 
+  test('detected old photo or signature never silently transfers to another record',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'old-receipt.png',bytes:png);
+    final result=TemplateForgeAutoMapper.detect(draft,sampleOcr([
+      'Receipt No VS-101','Student Name Mira',
+      'Description Amount','Tuition 1000','Total Amount 1000',
+      'Student Photo','Principal Signature',
+    ]));
+    expect(result.warnings,
+      contains('Image/QR/signature slot needs verified automatic replacement.'));
+    expect(result.safeToActivate,isFalse);
+  });
+
   test('document type suggestion rejects misleading receipt labels',() async {
     final draft=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.reportCard,schoolId:school,
