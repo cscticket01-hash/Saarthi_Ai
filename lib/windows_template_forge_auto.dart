@@ -203,6 +203,10 @@ class TemplateForgeAutoMapper {
     var rowCount=candidates.isNotEmpty?candidates.length:4;
     if(totalY!=null){
       final available=((totalY-firstRowY)/rowHeight).floor();
+      if(available>SchoolTemplateImportEngine.maxTableRows){
+        warnings.add('Scanned table needs more rows than safe A4 capacity.');
+        return const [];
+      }
       if(available>0)rowCount=math.max(rowCount,available).toInt();
     }
     rowCount=rowCount.clamp(1,SchoolTemplateImportEngine.maxTableRows).toInt();
