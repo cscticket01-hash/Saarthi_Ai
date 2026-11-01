@@ -45,7 +45,7 @@ class TemplateForgeAutoMapper {
   static const required=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
     SchoolTemplateKind.reportCard:['studentName','class','examName'],
-    SchoolTemplateKind.payslip:['name','month','basicPaise','deductionPaise','netPaise'],
+    SchoolTemplateKind.payslip:['name','month','basicPaise','allowancePaise','deductionPaise','netPaise'],
   };
   static String normalized(String value)=>value.toLowerCase()
     .replaceAll(RegExp(r'[^\p{L}\p{M}\p{N} ]',unicode:true),' ')
@@ -208,8 +208,19 @@ class TemplateForgeAutoMapper {
       fields.add(field);found.add(key);
     }
     final dynamicRows=detectTableRows(input.kind,lines,warnings);
-    if(fields.length+dynamicRows.length<=35)fields.addAll(dynamicRows);
-    else warnings.add('Too many detected fields for a safe import');
+    final overlaps=dynamicRows.any((candidate)=>fields.any((field)=>
+      field.mask && candidate.mask &&
+      field.x<candidate.x+candidate.width &&
+      candidate.x<field.x+field.width &&
+      field.y<candidate.y+candidate.size &&
+      candidate.y<field.y+field.size));
+    if(overlaps){
+      warnings.add('Detected table cells overlap another field');
+    }else if(fields.length+dynamicRows.length<=35){
+      fields.addAll(dynamicRows);
+    }else{
+      warnings.add('Too many detected fields for a safe import');
+    }
     final missing=(required[input.kind]??const <String>[])
       .where((f)=>!found.contains(f)).toList();
     if(input.kind!=SchoolTemplateKind.payslip && dynamicRows.isEmpty){
