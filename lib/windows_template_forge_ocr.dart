@@ -16,14 +16,14 @@ class TemplateForgeOfflineOcr {
     final bundledExe=bundled+Platform.pathSeparator+'tesseract.exe';
     final bundledData=bundled+Platform.pathSeparator+'tessdata';
     if(File(bundledExe).existsSync() && Directory(bundledData).existsSync()){
-      return (executable:bundledExe,tessdata:bundled);
+      return (executable:bundledExe,tessdata:bundledData);
     }
     final programFiles=Platform.environment['ProgramFiles']??r'C:\Program Files';
     final installed=programFiles+Platform.pathSeparator+'Tesseract-OCR';
     final installedExe=installed+Platform.pathSeparator+'tesseract.exe';
     final installedData=installed+Platform.pathSeparator+'tessdata';
     if(File(installedExe).existsSync() && Directory(installedData).existsSync()){
-      return (executable:installedExe,tessdata:installed);
+      return (executable:installedExe,tessdata:installedData);
     }
     return (executable:'tesseract',tessdata:null);
   }
