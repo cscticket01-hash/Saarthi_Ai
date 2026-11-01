@@ -274,8 +274,8 @@ void main() {
     const field=SchoolTemplateField(key:'studentName',x:.1,y:.1,
       width:.12,size:.03);
     final size=SchoolTemplateImportEngine.fittedTextSize(field,'Arup Das');
-    expect(size,lessThan(.03));
-    expect(size,greaterThanOrEqualTo(.009));
+    expect(size,lessThan(PdfPageFormat.a4.height*.03));
+    expect(size,greaterThanOrEqualTo(5.5));
     expect(()=>SchoolTemplateImportEngine.fittedTextSize(field,
       'A name so long it cannot possibly fit safely in this box'),
       throwsFormatException);
