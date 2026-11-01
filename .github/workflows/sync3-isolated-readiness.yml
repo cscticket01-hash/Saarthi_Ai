@@ -14,7 +14,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   read-only-test-cloud:
-    if: github.head_ref == 'feature/sync3-unified-repair-20261026' && github.event.pull_request.head.repo.full_name == github.repository
+    # Run on trusted in-repository release candidates too. Do not waive exact runtime,
+    # owner credentials, tested Apps Script version or read-only protocol acceptance.
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

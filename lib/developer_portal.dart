@@ -1044,7 +1044,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       'Schools',
       'Licences',
       'Support',
-      'Firebase',
+      'Cloud Services',
       'Admin Profile',
       'Windows Theme',
     ];
