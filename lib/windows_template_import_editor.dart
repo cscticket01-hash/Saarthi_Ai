@@ -32,9 +32,11 @@ class SchoolTemplateImportEditor {
         kind:kind,schoolId:school,filename:file.name,
         bytes:Uint8List.fromList(raw));
       if(!sameSchool())throw StateError('School changed while uploading.');
-      final tsv=await TemplateForgeOfflineOcr.recognize(draft);
+      final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
+      if(!sameSchool())throw StateError('School changed during orientation detection.');
+      final tsv=await TemplateForgeOfflineOcr.recognize(oriented);
       if(!sameSchool())throw StateError('School changed during recognition.');
-      final result=TemplateForgeAutoMapper.detect(draft,tsv);
+      final result=TemplateForgeAutoMapper.detect(oriented,tsv);
       if(!context.mounted)return;
       if(!result.safeToActivate){
         final missing=result.missing.isEmpty?'none':result.missing.join(', ');
