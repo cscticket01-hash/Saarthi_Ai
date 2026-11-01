@@ -7,6 +7,41 @@ import 'package:pdf/widgets.dart' as pw;
 /// Passing does NOT certify a specific school's physical paper/printer.
 void main(){
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('produce full US Legal 8.5 by 14 inch printer calibration proof',() async {
+    final format=PdfPageFormat.legal;
+    expect((format.width-8.5*PdfPageFormat.inch).abs(),lessThan(.01));
+    expect((format.height-14*PdfPageFormat.inch).abs(),lessThan(.01));
+    final mm=PdfPageFormat.mm;
+    final document=pw.Document();
+    document.addPage(pw.Page(
+      pageFormat:format,margin:pw.EdgeInsets.zero,
+      build:(_)=>pw.Stack(children:[
+        pw.SizedBox(width:format.width,height:format.height),
+        pw.Positioned(left:10*mm,top:10*mm,
+          child:pw.Container(width:100*mm,height:.35*mm,
+            color:PdfColors.black)),
+        pw.Positioned(left:10*mm,top:10*mm,
+          child:pw.Container(width:.35*mm,height:100*mm,
+            color:PdfColors.black)),
+        pw.Positioned(left:10*mm,top:116*mm,
+          child:pw.Text('Legal 8.5 x 14 inch physical print calibration')),
+        pw.Positioned(left:10*mm,top:124*mm,
+          child:pw.Text('Print at Actual Size 100%; no Fit to Page.')),
+        pw.Positioned(left:10*mm,top:132*mm,
+          child:pw.Text('Measure two 100mm lines and 10mm margins.')),
+        pw.Positioned(left:10*mm,top:140*mm,
+          child:pw.Text('Physical hardware approval is required.')),
+      ]),
+    )));
+    final bytes=await document.save();
+    expect(bytes.take(5).toList(),[37,80,68,70,45]);
+    await Directory('build').create(recursive:true);
+    await File('build/templateforge_legal_print_proof.pdf')
+      .writeAsBytes(bytes,flush:true);
+    expect(await File('build/templateforge_legal_print_proof.pdf').length(),
+      greaterThan(500));
+  });
+
   test('produce exact-size ISO A4 printer registration proof',() async {
     const tolerance=.01;
     const mm=PdfPageFormat.mm;

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-A school uploads its existing A4 receipt, marksheet, or payslip as a single-page PDF, PNG, or JPG. Vidya Saarthi keeps the original artwork as the page background, detects the fields and table, and overlays the current school's record data during the ordinary print-preview flow. Schools do not have to redraw the document or manually place every field.
+A school uploads its existing A4 or US Legal receipt, marksheet, or payslip as a single-page PDF, PNG, or JPG. Vidya Saarthi keeps the original artwork as the page background, detects the fields and table, and overlays the current school's record data during the ordinary print-preview flow. Schools do not have to redraw the document or manually place every field.
 
 ## Implemented in draft PR #198 (not production-live)
 
-- **Input and page safety:** single-page PDF, PNG and JPG/JPEG; portrait and landscape A4; EXIF orientation correction; high-resolution images are reduced to a 12 MP print-safe raster. Multi-page PDFs are rejected rather than silently truncating later pages.
+- **Input and page safety:** single-page PDF, PNG and JPG/JPEG; portrait and landscape A4 or US Legal; EXIF orientation correction; high-resolution images are reduced to a 12 MP print-safe raster. Multi-page PDFs are rejected rather than silently truncating later pages.
 - **Offline OCR:** the Windows release packages Tesseract 5.5.3 with pinned English, Hindi, Bengali, Assamese and OSD orientation data. OCR is local; no photo is sent to an external AI/OCR service. Original full-colour artwork is preserved; only a temporary grayscale copy is used for OCR.
 - **Document understanding:** OCR-based receipt, marksheet and payslip type suggestion; multilingual label aliases; duplicate/overlapping field detection; confidence-gated field placement. A document-type mismatch or uncertain required field blocks publication.
 - **Blank and populated tables:** recognizes fee/description/amount and subject/marks headers. It can infer up to twelve row slots from a blank table when a readable total-row boundary exists, or use readable sample rows. Current record values populate the detected slots; unused slots are masked so sample values do not leak into the new print. Extra verified record rows use separately labelled ISO A4 continuation sheets, never a fabricated extension of the scanned design. Excessive, missing or invalid data is rejected.
@@ -18,7 +18,7 @@ A school uploads its existing A4 receipt, marksheet, or payslip as a single-page
 ## Deliberate safety boundaries
 
 - Clean bright A4 paper against a contrasting dark background can be normalized locally, including portrait and landscape. Borderless, glare-heavy or very steep photographs can still be rejected: a generic all-design perspective recovery claim is not validated.
-- The table engine supports up to twelve detected row slots. It does not yet expand a table onto another page or invent additional rows when a school's record exceeds the uploaded table capacity.
+- The source form supports up to twelve verified slots. Overflow records use separate clearly labelled A4/Legal continuation pages while preserving the original template artwork, not guessed additional original rows.
 - Only receipt, marksheet and payslip are supported by this importer. It does not replace student/teacher ID-card designers.
 - A successful Drive image read-back does not by itself prove that the manifest has reached every other PC. End-to-end multi-PC propagation, offline/reconnect behaviour and rollback must pass the existing sync acceptance tests.
 - Real school scan corpus comparisons, actual printer tests, and the full Windows installer test remain required.
@@ -43,3 +43,13 @@ PR #198 must pass the dedicated Windows TemplateForge workflow, the repository's
 - The original Office bytes remain the immutable source-hash identity. Converted PDF pages pass the existing A4 validation, offline OCR, school isolation, field detection, preview and Drive read-back. Multi-sheet Excel or multi-page Word files are rejected rather than silently dropping school records.
 - Office OpenXML ZIP metadata is checked for the expected document/workbook entries, archive expansion limits, and macro/external connections. Unsupported macro-enabled formats are rejected. Corrupt, oversized or encrypted files cannot activate a template.
 - Automated tests check Word/Excel signature matching, spoofed ZIPs, original hash identity, A4 preview integration and multi-page safety. Live installed Word/Excel/LibreOffice and school documents still require physical acceptance.
+
+
+## US Legal paper and printer discovery (2026-11-01)
+
+- Legal (8.5 x 14 inches, 215.9 x 355.6 mm), portrait or landscape, is accepted and preserved through PNG/JPG/PDF and locally converted Word/Excel sources. No A4-to-Legal stretching is used for an imported Legal template. Existing A4 templates keep their original print dimensions.
+- Template raster validation, offline orientation correction, printed overlays and continuation pages use the original sheet size. Unclear paper geometry is rejected instead of guessing A4 or Legal.
+- The existing receipt printer UI enumerates **all** system-installed printers (including devices Windows marks temporarily unavailable), with Refresh and an Add printer shortcut to Windows Settings / Printers & scanners. No fake in-app driver installer is created. The system print dialog offers the OS printer chooser for extra devices.
+- Paper selection alone does not change an existing PDF page size. Schools must import/choose a Legal source document for a fully Legal-size document.
+- The Windows CI artifact includes A4 and Legal 100 mm physical calibration proofs. Real printer drivers, Legal-tray support and printed alignment are separate acceptance gates.
+- A local Linux LibreOffice smoke test of synthetic .docx US Legal and .xlsx A4 source files produced genuine single-page PDFs, including 612 x 1008 pt US Legal. That evidence does **not** certify Windows Office COM, installed school printer driver, physical paper alignment or school data.

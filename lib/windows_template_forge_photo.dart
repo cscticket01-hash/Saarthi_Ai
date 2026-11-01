@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:image/image.dart' as img;
 
-/// Conservative, local-only automatic A4 page extraction for a bright
+/// Conservative, local-only automatic A4/Legal extraction for a bright
 /// rectangular sheet against a clearly darker camera background.
 ///
 /// If evidence is weak, return null so the existing A4 validator rejects
@@ -60,16 +60,20 @@ class TemplateForgePhotoNormalizer {
       (topWidth-bottomWidth).abs()>w*.22)return null;
     final avgWidth=(topWidth+bottomWidth)/2;
     final aspect=avgWidth/(bottom-top);
-    final portrait=(aspect-210/297).abs()<=.12;
-    final landscape=(aspect-297/210).abs()<=.12;
-    if(!portrait&&!landscape)return null;
+    final ratios=[210/297,215.9/355.6,297/210,355.6/215.9]
+      ..sort((a,b)=>(a-aspect).abs().compareTo((b-aspect).abs()));
+    if((ratios.first-aspect).abs()>.065)return null;
+    // When neither stock size has strong evidence and both are close,
+    // reject rather than stretch a student's form onto the wrong paper.
+    if((ratios[1]-aspect).abs()-(ratios.first-aspect).abs()<.012 &&
+       (ratios.first-aspect).abs()>.02)return null;
     // The four corners must be inside the image and distinctly inside
     // the dark surrounding surface, not the image border itself.
     if(math.min(a.left,b.left)<5 ||
       math.max(a.right,b.right)>w-6)return null;
     final sx=source.width/w,sy=source.height/h;
     final targetWidth=math.min(1900,source.width);
-    final targetHeight=(targetWidth*(landscape?210/297:297/210)).round();
+    final targetHeight=(targetWidth/ratios.first).round();
     if(targetWidth<200||targetHeight<200)return null;
     final output=img.copyRectify(source,
       topLeft:img.Point((a.left*sx).round(),(top*sy).round()),

@@ -85,7 +85,7 @@ class TemplateForgeOfflineOcr {
       if(angle==0)return draft;
       final rotated=img.copyRotate(decoded,angle:angle);
       final ratio=rotated.width/rotated.height;
-      if((ratio-210/297).abs()>.075 && (ratio-297/210).abs()>.075){
+      if(!SchoolTemplateImportEngine.isSupportedPageAspect(ratio)){
         return draft;
       }
       final bytes=Uint8List.fromList(img.encodePng(rotated));

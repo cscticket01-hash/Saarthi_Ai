@@ -61,6 +61,58 @@ void main() {
       isNot(identity));
   });
 
+  test('Legal-size portrait and landscape retain physical 8.5 × 14 inch print geometry',() async {
+    final legal=Uint8List.fromList(img.encodePng(
+      img.Image(width:612,height:1008)));
+    final landscape=Uint8List.fromList(img.encodePng(
+      img.Image(width:1008,height:612)));
+    final portrait=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'legal-receipt.png',bytes:legal);
+    final side=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'legal-landscape.png',bytes:landscape);
+    expect(SchoolTemplateImportEngine.pageFormatForDimensions(
+      portrait.width,portrait.height).width,PdfPageFormat.legal.width);
+    expect(SchoolTemplateImportEngine.pageFormatForDimensions(
+      side.width,side.height).width,PdfPageFormat.legal.landscape.width);
+    expect((PdfPageFormat.legal.height/PdfPageFormat.inch-14).abs(),
+      lessThan(.001));
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.42,width:.3),
+      const SchoolTemplateField(key:'feeAmount0',x:.62,y:.42,width:.25),
+      const SchoolTemplateField(key:'totalAmount',x:.62,y:.82,width:.2),
+    ];
+    final record={'receiptNo':'LEGAL-01','studentName':'Mira',
+      'feeItems':{'Tuition':300},'totalAmount':300};
+    for(final source in [portrait,side]){
+      final draft=source.copyWith(fields:fields);
+      expect(()=>SchoolTemplateImportEngine.validateDraft(draft),
+        returnsNormally);
+      final pdf=await SchoolTemplateImportEngine.previewPdf(draft,record);
+      expect(pdf.take(5).toList(),[37,80,68,70,45]);
+    }
+    expect(()=>SchoolTemplateImportEngine.pageFormatForDimensions(
+      900,900),throwsFormatException);
+  });
+
+  test('Legal-size paper on a dark phone background is cropped safely',() async {
+    final camera=img.Image(width:1100,height:1100);
+    img.fill(camera,color:img.ColorRgb8(20,20,20));
+    img.fillRect(camera,x1:240,y1:55,x2:840,y2:1045,
+      color:img.ColorRgb8(255,255,255));
+    final photo=Uint8List.fromList(img.encodePng(camera));
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'phone-legal.png',bytes:photo);
+    final format=SchoolTemplateImportEngine.pageFormatForDimensions(
+      source.width,source.height);
+    expect(format.width,PdfPageFormat.legal.width);
+    expect(source.sourceHash,sha256.convert(photo).toString());
+  });
+
   test('school receipt PDF embeds Indic fallback fonts for Bengali and Hindi',() async {
     final imported=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,

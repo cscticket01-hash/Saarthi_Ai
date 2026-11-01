@@ -131,6 +131,28 @@ class SchoolTemplateImportEngine {
   static const maxContinuationPages=8;
   static const maxRecordRows=maxTableRows+continuationRowsPerPage*maxContinuationPages;
   static const maxFields=45;
+  // US Legal = 8.5 x 14 inches (215.9 x 355.6 mm).
+  static const supportedPageAspectTolerance=.045;
+  static PdfPageFormat pageFormatForDimensions(int width,int height){
+    if(width<=0||height<=0)throw const FormatException('Invalid page dimensions.');
+    final ratio=width/height;
+    final variants=<PdfPageFormat>[
+      PdfPageFormat.a4,PdfPageFormat.legal,
+      PdfPageFormat.a4.landscape,PdfPageFormat.legal.landscape,
+    ]..sort((a,b)=>((a.width/a.height)-ratio).abs()
+      .compareTo(((b.width/b.height)-ratio).abs()));
+    final selected=variants.first;
+    if(((selected.width/selected.height)-ratio).abs()>supportedPageAspectTolerance){
+      throw const FormatException('Source must be A4 or US Legal (portrait or landscape).');
+    }
+    return selected;
+  }
+  static bool isSupportedPageAspect(double ratio)=>
+    ratio.isFinite && ratio>0 && [
+      PdfPageFormat.a4,PdfPageFormat.legal,
+      PdfPageFormat.a4.landscape,PdfPageFormat.legal.landscape,
+    ].any((page)=>((page.width/page.height)-ratio).abs()
+      <=supportedPageAspectTolerance);
   static const requiredFields=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
     SchoolTemplateKind.reportCard:['studentName','class','examName'],
@@ -203,10 +225,7 @@ class SchoolTemplateImportEngine {
       decoded.height!=draft.height){
       throw const FormatException('Template raster dimensions do not match.');
     }
-    final ratio=decoded.width/decoded.height;
-    if((ratio-210/297).abs()>.075 && (ratio-297/210).abs()>.075){
-      throw const FormatException('Template raster is not A4.');
-    }
+    pageFormatForDimensions(decoded.width,decoded.height);
     validateFieldSet(draft.kind,draft.fields);
     for(final field in draft.fields)field.validate(draft.kind);
     if(draft.visualSlots.length>5 ||
@@ -299,7 +318,7 @@ class SchoolTemplateImportEngine {
     Uint8List imageBytes;
     if(ext=='pdf') {
       try {
-        // A school template is one physical A4 sheet. The native raster
+        // A school template is one physical A4 or US Legal sheet. Native raster
         // plugin is unavailable in headless Flutter unit tests, so tests
         // inject a page rasterizer. Production always uses Printing.raster.
         // Read at most two pages: a second page means fail closed rather
@@ -311,7 +330,7 @@ class SchoolTemplateImportEngine {
             .timeout(const Duration(seconds:30));
         if(pages.length!=1){
           throw const FormatException(
-            'Upload a single-page A4 PDF template. Multi-page PDFs are not silently truncated.');
+            'Upload a single-page A4 or Legal PDF template. Multi-page PDFs are not silently truncated.');
         }
         imageBytes=pages.single;
       } catch (error) {
@@ -350,12 +369,7 @@ class SchoolTemplateImportEngine {
       decoded.width*decoded.height>maxPixels) {
       throw const FormatException('Template page too small or too large.');
     }
-    final aspect=decoded.width/decoded.height;
-    final portrait=(aspect-210/297).abs()<=.075;
-    final landscape=(aspect-297/210).abs()<=.075;
-    if(!portrait&&!landscape){
-      throw const FormatException('An A4 portrait or landscape source is required.');
-    }
+    pageFormatForDimensions(decoded.width,decoded.height);
     return SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
       sourceHash:sha256.convert(bytes).toString(),png:imageBytes,
       width:decoded.width,height:decoded.height);
@@ -476,8 +490,7 @@ class SchoolTemplateImportEngine {
         }
         throw FormatException('Missing record value for '+field.key);
       }
-      final pageFormat=draft.width>draft.height
-        ?PdfPageFormat.a4.landscape:PdfPageFormat.a4;
+      final pageFormat=pageFormatForDimensions(draft.width,draft.height);
       fittedTextSize(field,value,
         pageWidth:pageFormat.width,pageHeight:pageFormat.height);
     }
@@ -641,10 +654,8 @@ class SchoolTemplateImportEngine {
       pw.Font.ttf(await rootBundle.load(
         'assets/fonts/NotoSansBengali[wdth,wght].ttf')),
     ]:<pw.Font>[];
-    // Generated documents print at real ISO A4; the imported page is
-    // admitted by the automatic pipeline only if its aspect ratio is A4.
-    final pageFormat=draft.width>draft.height
-      ?PdfPageFormat.a4.landscape:PdfPageFormat.a4;
+    // The original imported sheet remains A4 or Legal at real paper size.
+    final pageFormat=pageFormatForDimensions(draft.width,draft.height);
     final width=pageFormat.width,height=pageFormat.height;
     final background=pw.MemoryImage(draft.png);
     final pdf=pw.Document();
@@ -672,9 +683,10 @@ class SchoolTemplateImportEngine {
       final rows=extra.sublist(start,
         math.min(start+continuationRowsPerPage,extra.length));
       pdf.addPage(pw.Page(
-        // Continuation is a separate clean portrait A4 sheet, even when
-        // the school's original imported design is landscape.
-        pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.all(36),
+        // Keep continuation on portrait A4 or portrait Legal to match stock.
+        pageFormat:pageFormat.width>pageFormat.height
+          ?PdfPageFormat(pageFormat.height,pageFormat.width):pageFormat,
+        margin:pw.EdgeInsets.all(36),
         build:(_)=>pw.Column(
           crossAxisAlignment:pw.CrossAxisAlignment.start,
           children:[
@@ -684,7 +696,7 @@ class SchoolTemplateImportEngine {
             pw.Text('Student: '+valueFor('studentName',record),style:font),
             pw.Text('Reference: '+valueFor(
               isFee?'receiptNo':'examName',record),style:font),
-            pw.Text('Continuation ${index+1} / $pages – original A4 is page 1',
+            pw.Text('Continuation ${index+1} / $pages – original sheet is page 1',
               style:font),
             pw.SizedBox(height:12),
             pw.Divider(),
@@ -705,7 +717,7 @@ class SchoolTemplateImportEngine {
             pw.Spacer(),
             pw.Divider(),
             pw.Text('Extra record rows only. The full original total'
-              ' remains on the source A4 sheet.',style:font),
+              ' remains on the original sheet.',style:font),
           ],
         ),
       ));
@@ -737,11 +749,7 @@ class SchoolTemplateImportEngine {
         decoded.width * decoded.height > maxPixels) {
       throw const FormatException('Published template dimensions are invalid.');
     }
-    final ratio = decoded.width / decoded.height;
-    if ((ratio - 210 / 297).abs() > .075 &&
-        (ratio - 297 / 210).abs() > .075) {
-      throw const FormatException('Published template is not A4.');
-    }
+    pageFormatForDimensions(decoded.width,decoded.height);
     final raw = manifest['fields'];
     if (raw is! List || raw.isEmpty || raw.length > maxFields) {
       throw const FormatException('Published template field manifest is invalid.');

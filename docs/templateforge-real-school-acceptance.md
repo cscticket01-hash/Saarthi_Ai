@@ -40,3 +40,15 @@ Use a **TEST school**, no real students, and the school's own connected Drive. E
 7. **Data safety:** Verify the source never enters a second school's Drive or local cache, including identical source images across schools.
 
 **Gate:** The PR must not be merged or made LIVE based on synthetic tests alone. Record each actual device, test date, source SHA, pass/fail, rollback evidence and operator review.
+
+## Legal-paper and installed-printer acceptance (2026-11-01)
+
+1. Verify a clean **US Legal 8.5 × 14 inch** school receipt in DOCX, PDF and PNG. It must stay 612 × 1008 PDF points for portrait. Verify Legal landscape is 1008 × 612 points; the source school artwork must not be stretched to A4.
+2. Download the **templateforge-a4-print-proof** CI artifact containing A4 and Legal calibration PDFs. Select actual A4 or Legal paper and turn off scaling. Both 100 mm lines must measure 100 mm ±1 mm and margins must match; record printer/model/tray/driver.
+3. Open the app's existing receipt print preview. Check **Add printer** opens Windows Settings > Bluetooth & devices > Printers & scanners; install a USB or TCP/IP network device using the normal signed Windows driver, return and click **Refresh printers**.
+4. Confirm Windows-installed printers stay visible even if temporarily marked offline. Use **More printers / system print dialog** for Windows printer selection. Do not conclude a print succeeded merely because a job was accepted.
+5. Repeat on a 1-PC, 2-PC and 5-PC TEST school using different network/USB printers where available. Compare preview page-size metadata, printed ruler measurements, original student identity and fee totals.
+6. For images/QR, verify the live student's portrait and the correct school's signature/seal, with no trace of the scanned sample person's picture. Unlabelled photos and ambiguous/unbounded slots must reject rather than guess.
+7. Run real Word/Excel conversions on Windows school PCs with locally installed LibreOffice/Word/Excel and inspect all printed pages for accidental extra Excel sheets or cropped Word layouts.
+
+**Status:** No real Windows printer enumeration, physical measurement, or real 5-PC Drive rollback data has been collected here. Keep release gated until those checks are actually performed.

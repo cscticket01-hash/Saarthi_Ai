@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
@@ -12,12 +13,15 @@ typedef ReceiptPrinterJob = Future<bool> Function(Printer printer, Uint8List byt
 class WindowsReceiptPrintDialog extends StatefulWidget {
   const WindowsReceiptPrintDialog({super.key, required this.receipt,
     required this.title, required this.subtitle, required this.isCurrent,
-    this.printers, this.printJob, this.previewBuilder});
+    this.printers, this.printJob, this.previewBuilder,
+    this.openPrinterSettings, this.systemPrintJob});
   final Future<Uint8List> receipt;
   final String title, subtitle;
   final bool Function() isCurrent;
   final Future<List<Printer>> Function()? printers;
   final ReceiptPrinterJob? printJob;
+  final Future<void> Function()? openPrinterSettings;
+  final Future<bool> Function(Uint8List,PdfPageFormat)? systemPrintJob;
   final Widget Function(Uint8List)? previewBuilder;
   @override
   State<WindowsReceiptPrintDialog> createState() => _WindowsReceiptPrintDialogState();
@@ -31,7 +35,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
   String paper = 'A4';
   String message = '';
   int submitted = 0;
-  bool savingPdf = false;
+  bool savingPdf = false, openingSystemDialog = false;
   @override
   void initState() { super.initState(); loadPrinters(); }
   @override
@@ -41,7 +45,10 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
     try {
       final rows = await (widget.printers ?? Printing.listPrinters)();
       if (!mounted || !widget.isCurrent()) return;
-      final unique = {for (final row in rows.where((p) => p.isAvailable)) row.url: row};
+      // Windows can mark an installed USB/network printer temporarily
+      // unavailable. Keep it visible; let the driver report send failure.
+      final unique = {for(final row in rows) if(row.url.trim().isNotEmpty)
+        row.url:row};
       setState(() {
         printers = unique.values.toList();
         if (!unique.containsKey(selected)) {
@@ -64,7 +71,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
     final matches = printers.where((p) => p.url == selected);
     if (matches.isEmpty) { setState(() => message = 'Select an available printer.'); return; }
     final printer = matches.first;
-    final format = paper == 'A4' ? PdfPageFormat.a4 : PdfPageFormat.letter;
+    final format = paperFormat(paper);
     setState(() { printing = true; submitted = 0; message = ''; });
     try {
       for (var i = 0; i < count; i++) {
@@ -86,6 +93,55 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
       if (mounted) setState(() => printing = false);
     }
   }
+  static PdfPageFormat paperFormat(String value)=>switch(value){
+    'Legal'=>PdfPageFormat.legal,
+    'Letter'=>PdfPageFormat.letter,
+    _=>PdfPageFormat.a4,
+  };
+
+  Future<void> addPrinter() async {
+    if(printing || openingSystemDialog || !widget.isCurrent())return;
+    try{
+      if(widget.openPrinterSettings!=null){
+        await widget.openPrinterSettings!();
+      }else if(Platform.isWindows){
+        await Process.start('explorer.exe',['ms-settings:printers'],
+          runInShell:false);
+      }else{
+        throw const FormatException('Add printer through system settings.');
+      }
+      if(mounted)setState(()=>message='Use Windows Add device / Add printer, '
+        'then select Refresh printers in Vidya Saarthi.');
+    }catch(_){
+      if(mounted)setState(()=>message='Could not open printer settings. '
+        'Open Windows Settings > Bluetooth & devices > Printers & scanners.');
+    }
+  }
+
+  Future<void> showSystemPrinterDialog(Uint8List bytes) async {
+    if(printing||openingSystemDialog||!widget.isCurrent())return;
+    setState(()=>openingSystemDialog=true);
+    try{
+      final format=paperFormat(paper);
+      final submitted=await (widget.systemPrintJob!=null
+        ?widget.systemPrintJob!(bytes,format)
+        :Printing.layoutPdf(name:widget.title,format:format,
+          dynamicLayout:false,usePrinterSettings:true,
+          onLayout:(_ ) async {
+            if(!widget.isCurrent())throw StateError('School changed.');
+            return bytes;
+          }));
+      if(mounted)setState(()=>message=submitted
+        ?'Print request sent to the Windows printer dialog.'
+        :'System printing was cancelled.');
+    }catch(_){
+      if(mounted)setState(()=>message='System print dialog failed. '
+        'Check Windows printer installation and retry.');
+    }finally{
+      if(mounted)setState(()=>openingSystemDialog=false);
+    }
+  }
+
   Future<void> savePdf(Uint8List bytes) async {
     if (savingPdf || printing || !widget.isCurrent()) return;
     setState(() { savingPdf = true; message = ''; });
@@ -109,9 +165,16 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
         decoration: const InputDecoration(labelText: 'Printer'),
         items: printers.map((p) => DropdownMenuItem(value: p.url, child: Text(p.name, overflow: TextOverflow.ellipsis))).toList(),
         onChanged: printing ? null : (value) => setState(() => selected = value)),
-      Align(alignment: Alignment.centerRight, child: TextButton.icon(
-        onPressed: printing || loadingPrinters ? null : loadPrinters,
-        icon: const Icon(Icons.refresh, size: 16), label: const Text('Refresh printers'))),
+      Wrap(alignment:WrapAlignment.end,spacing:8,runSpacing:4,children:[
+        TextButton.icon(
+          onPressed:printing||openingSystemDialog?null:addPrinter,
+          icon:const Icon(Icons.add, size:16),
+          label:const Text('Add printer')),
+        TextButton.icon(
+          onPressed:printing||loadingPrinters?null:loadPrinters,
+          icon:const Icon(Icons.refresh,size:16),
+          label:const Text('Refresh printers')),
+      ]),
       const SizedBox(height: 12),
       TextField(controller: copies, enabled: !printing,
         keyboardType: TextInputType.number,
@@ -120,17 +183,28 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog> {
       DropdownButtonFormField<String>(value: paper, isExpanded: true,
         decoration: const InputDecoration(labelText: 'Paper size'),
         items: const [DropdownMenuItem(value: 'A4', child: Text('A4 (210 × 297 mm)', overflow: TextOverflow.ellipsis)),
-          DropdownMenuItem(value: 'Letter', child: Text('Letter (216 × 279 mm)', overflow: TextOverflow.ellipsis))],
+          DropdownMenuItem(value: 'Letter', child: Text('Letter (216 × 279 mm)', overflow: TextOverflow.ellipsis)),
+          DropdownMenuItem(value: 'Legal', child: Text('Legal (216 × 356 mm)', overflow: TextOverflow.ellipsis))],
         onChanged: printing ? null : (v) => setState(() => paper = v ?? 'A4')),
       const SizedBox(height: 20),
       const Text('Pages: All receipt pages'),
       const SizedBox(height: 8),
       const Text('Layout: Original receipt'),
+      const SizedBox(height: 5),
+      const Text('For full-size Legal artwork, generate a Legal-size '
+        'document. Changing printer paper does not resize an existing PDF.',
+        style:TextStyle(fontSize:11)),
       const SizedBox(height: 20),
       if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(message)),
       FilledButton.icon(onPressed: printing || loadingPrinters || selected == null || bytes == null || !widget.isCurrent()
           ? null : () => printReceipt(bytes),
         icon: const Icon(Icons.print), label: Text(printing ? 'Sending…' : 'Print')),
+      TextButton.icon(
+        onPressed:printing||openingSystemDialog||bytes==null||!widget.isCurrent()
+          ?null:()=>showSystemPrinterDialog(bytes),
+        icon:const Icon(Icons.print_outlined),
+        label:Text(openingSystemDialog?'Opening Windows print dialog…'
+          :'More printers / system print dialog')),
       TextButton.icon(
         onPressed: printing || savingPdf || bytes == null || !widget.isCurrent()
             ? null : () => savePdf(bytes),
