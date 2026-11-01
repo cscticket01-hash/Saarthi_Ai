@@ -37,6 +37,36 @@ void main(){
       'legacy-hash');
   });
 
+
+  test('catalog indexes exclude foreign, unapproved and wrong-kind templates',(){
+    const school='vs-db8afb01a3be46a983c8284714d06e5d';
+    const foreign='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final settings={
+      'templateAssetLatest':{'receipt':'good-new'},
+      'templateAssets':{'receipt':{
+        'unapproved':{'approved':false,'schoolId':school,'kind':'receipt',
+          'templateId':'unapproved','filename':'Draft'},
+        'foreign':{'approved':true,'schoolId':foreign,'kind':'receipt',
+          'templateId':'foreign','filename':'Another school'},
+        'wrong-kind':{'approved':true,'schoolId':school,'kind':'payslip',
+          'templateId':'wrong-kind','filename':'Salary slip'},
+        'good-old':{'approved':true,'schoolId':school,'kind':'receipt',
+          'templateId':'good-old','filename':'Old receipt'},
+        'good-new':{'approved':true,'schoolId':school,'kind':'receipt',
+          'templateId':'good-new','filename':'New receipt'},
+      }},
+    };
+    final visible=WindowsTemplateCloudStore.availableSchoolTemplates(
+      settings,'receipt',school);
+    expect(visible.map((v)=>v['templateId']).toList(),
+      ['good-new','good-old']);
+    expect(WindowsTemplateCloudStore.availableSchoolTemplates(
+      settings,'receipt',foreign).map((v)=>v['templateId']).toList(),
+      ['foreign']);
+    expect(WindowsTemplateCloudStore.availableSchoolTemplates(
+      settings,'receipt','../other'),isEmpty);
+  });
+
   test('unknown template version and school type return no assets',(){
     expect(WindowsTemplateCloudStore.importedTemplates(
       {'templateAssets':{'receipt':{'unknown':'not-a-manifest'}}},'receipt'),isEmpty);
