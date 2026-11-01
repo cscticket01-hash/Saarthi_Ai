@@ -69,3 +69,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .github/scripts/templateforg
 ```
 
 The script reports locally installed printers, Office/LibreOffice prerequisites and operator-measured print accuracy. It never accesses student documents or Drive credentials and never claims live 5-PC sync success. Omitting measurements leaves `physicalVerified=false`. For five PCs run separately on each device; synthetic CI results cannot substitute for actual hardware.
+
+## Local private corpus audit without uploading school files
+
+Run the existing TemplateForge importer/OCR against anonymized real PDF/JPG/PNG/Word/Excel samples on an authorised Windows TEST PC. Store samples only in a private folder, with filenames starting `receipt_`, `reportcard_`, or `payslip_`. From the checked-out repository:
+
+```powershell
+flutter test test/windows_template_private_corpus_test.dart --dart-define="TEMPLATEFORGE_PRIVATE_CORPUS_DIR=C:\private\test-forms"
+```
+
+The local `build/templateforge_private_corpus_audit.json` contains only source SHA256, type, format, field/slot counts and safe-rejection status; it does **not** contain school files, recognized text, faces, student names or credentials. This test reuses the real importer, OCR, and geometry validators and never writes to Drive. A `geometry-safe-needs-human-review` result still needs an operator to visually approve correct placement. OCR may require the packaged local Windows Tesseract. In environments without native PDF rasterization the audit must fail/reject instead of claiming a pass. No actual corpus is currently provided, so no real-school accuracy claim is made.
