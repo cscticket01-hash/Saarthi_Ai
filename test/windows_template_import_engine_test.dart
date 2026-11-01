@@ -361,6 +361,28 @@ void main() {
       source,[const ForgeVisualSlot(role:'studentPhoto',
         x:.69,y:.04,width:.27,height:.25)]),isFalse,
       reason:'A verified replacement rectangle may cover the old photo');
+    // The SAME real detector must also reject a stray portrait at the
+    // bottom of a Legal or A4 school document, beyond the old 3/4-page scan.
+    img.fillRect(page,x1:699,y1:74,x2:946,y2:365,
+      color:img.ColorRgb8(255,255,255));
+    for(var y=1050;y<1320;y+=11){
+      for(var x=700;x<940;x+=11){
+        final color=switch((x*7+y*11)%3){
+          0=>img.ColorRgb8(230,55,40),
+          1=>img.ColorRgb8(35,210,65),
+          _=>img.ColorRgb8(40,80,230),
+        };
+        img.fillRect(page,x1:x,y1:y,x2:x+10,y2:y+10,
+          color:color);
+      }
+    }
+    final lower=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'bottom-photo.png',
+      bytes:Uint8List.fromList(img.encodePng(page)));
+    expect(TemplateForgeVisualSlots.hasUnverifiedColorPhoto(
+      lower,const []),isTrue,
+      reason:'Bottom-page old portraits must be blocked too');
     final clean=img.Image(width:1000,height:1400);
     img.fill(clean,color:img.ColorRgb8(255,255,255));
     img.fillRect(clean,x1:60,y1:70,x2:935,y2:95,

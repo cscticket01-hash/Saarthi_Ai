@@ -106,7 +106,9 @@ class TemplateForgeVisualSlots {
     // Sliding sample windows are 12.5% of the page wide and about 12.5%
     // high. This is bounded to under 2,000 windows even for a 12 MP source.
     const boxW=5,boxH=7;
-    for(var y=2;y<rows*3~/4-boxH;y++){
+    // Check the *entire* printable sheet. Old pictures may sit near the
+    // bottom of Legal/A4 marksheets, not only in the upper portrait area.
+    for(var y=1;y<rows-boxH;y++){
       for(var x=1;x<=columns-boxW-1;x++){
         var filled=0,distinct=0;
         for(var v=0;v<boxH;v++){
