@@ -33,9 +33,9 @@ extension SchoolTemplateKindInfo on SchoolTemplateKind {
     return [
     ...base,
     if(this==SchoolTemplateKind.receipt)
-      for(var i=0;i<8;i++) ...['feeName$i','feeAmount$i'],
+      for(var i=0;i<SchoolTemplateImportEngine.maxTableRows;i++) ...['feeName$i','feeAmount$i'],
     if(this==SchoolTemplateKind.reportCard)
-      for(var i=0;i<8;i++) ...['subjectName$i','subjectMarks$i'],
+      for(var i=0;i<SchoolTemplateImportEngine.maxTableRows;i++) ...['subjectName$i','subjectMarks$i'],
     ];
   }
 }
@@ -89,6 +89,8 @@ class SchoolTemplateImportEngine {
   static const maxSourceBytes=16*1024*1024;
   static const maxPngBytes=18*1024*1024;
   static const maxPixels=12000000;
+  static const maxTableRows=12;
+  static const maxFields=45;
   static const requiredFields=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
     SchoolTemplateKind.reportCard:['studentName','class','examName'],
@@ -101,7 +103,7 @@ class SchoolTemplateImportEngine {
   ) {
     final list=fields.toList();
     final keys=list.map((f)=>f.key).toSet();
-    if(list.isEmpty || list.length>35 || keys.length!=list.length ||
+    if(list.isEmpty || list.length>maxFields || keys.length!=list.length ||
       !(requiredFields[kind]??const <String>[]).every(keys.contains)){
       throw const FormatException('Template is missing required unique fields.');
     }
@@ -112,7 +114,7 @@ class SchoolTemplateImportEngine {
     if(namePrefix.isNotEmpty){
       var sawGap=false;
       var count=0;
-      for(var i=0;i<8;i++){
+      for(var i=0;i<maxTableRows;i++){
         final hasName=keys.contains(namePrefix+i.toString());
         final hasValue=keys.contains(valuePrefix+i.toString());
         if(hasName!=hasValue){
@@ -260,10 +262,10 @@ class SchoolTemplateImportEngine {
   }
 
   static String valueFor(String key,Map<String,dynamic> record) {
-    final rowKey=RegExp(r'^(feeName|feeAmount|subjectName|subjectMarks)([0-7])$').firstMatch(key);
+    final rowKey=RegExp(r'^(feeName|feeAmount|subjectName|subjectMarks)(1[01]|[0-9])$').firstMatch(key);
     if(rowKey!=null){
       final items=rowKey.group(1)!.startsWith('fee')?record['feeItems']:record['marks'];
-      if(items is! Map || items.length>8)return '';
+      if(items is! Map || items.length>maxTableRows)return '';
       final index=int.parse(rowKey.group(2)!);
       if(index>=items.length)return '';
       final entry=items.entries.elementAt(index);
@@ -330,7 +332,7 @@ class SchoolTemplateImportEngine {
       final value=valueFor(field.key,record);
       if(value.isEmpty){
         final rowKey=RegExp(
-          r'^(feeName|feeAmount|subjectName|subjectMarks)([0-7])',
+          r'^(feeName|feeAmount|subjectName|subjectMarks)(1[01]|[0-9])$',
         ).firstMatch(field.key);
         if(rowKey!=null){
           final rows=rowKey.group(1)!.startsWith('fee')
@@ -505,7 +507,7 @@ class SchoolTemplateImportEngine {
       throw const FormatException('Published template is not A4.');
     }
     final raw = manifest['fields'];
-    if (raw is! List || raw.isEmpty || raw.length > 35) {
+    if (raw is! List || raw.isEmpty || raw.length > maxFields) {
       throw const FormatException('Published template field manifest is invalid.');
     }
     final fields = <SchoolTemplateField>[];
@@ -578,7 +580,7 @@ class SchoolTemplateImportEngine {
             decoded.height != meta['height'] ||
             decoded.width * decoded.height > maxPixels) continue;
         final rawFields = meta['fields'];
-        if (rawFields is! List || rawFields.length > 35) continue;
+        if (rawFields is! List || rawFields.length > maxFields) continue;
         final fields = <SchoolTemplateField>[];
         for (final raw in rawFields) {
           if (raw is! Map<String, dynamic>) throw const FormatException('Invalid field');
