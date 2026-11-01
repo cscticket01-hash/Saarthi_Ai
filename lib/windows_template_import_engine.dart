@@ -238,10 +238,23 @@ class SchoolTemplateImportEngine {
       }
       final value=valueFor(field.key,record);
       if(value.isEmpty){
-        final rowKey=RegExp(r'^(feeName|feeAmount|subjectName|subjectMarks)([0-7])
+        final rowKey=RegExp(
+          r'^(feeName|feeAmount|subjectName|subjectMarks)([0-7])',
+        ).firstMatch(field.key);
+        if(rowKey!=null){
+          final rows=rowKey.group(1)!.startsWith('fee')
+            ?record['feeItems']:record['marks'];
+          final index=int.parse(rowKey.group(2)!);
+          // Unused pre-detected row slots are intentionally white-masked.
+          if(rows is Map && index>=rows.length)continue;
+        }
+        throw FormatException('Missing record value for '+field.key);
+      }
+      fittedTextSize(field,value);
     }
-    // A printed source page has a fixed number of recognized row slots.
-    // If the school record differs, abort rather than dropping fees/marks.
+
+    // Records may contain fewer rows than the scanned page. The unused
+    // slots are masked in the PDF. Overflow is rejected, never clipped.
     for(final pair in [
       ('feeName',record['feeItems']),
       ('subjectName',record['marks']),
@@ -253,6 +266,7 @@ class SchoolTemplateImportEngine {
         }
       }
     }
+
     if(draft.kind==SchoolTemplateKind.receipt &&
        record['feeItems'] is Map && record['totalAmount'] is num){
       final fees=record['feeItems'] as Map;
@@ -267,6 +281,7 @@ class SchoolTemplateImportEngine {
         throw const FormatException('Receipt total does not match fee items.');
       }
     }
+
     if(draft.kind==SchoolTemplateKind.reportCard &&
       record['marks'] is Map && record['totalMarks'] is num){
       final marks=record['marks'] as Map;
@@ -289,6 +304,7 @@ class SchoolTemplateImportEngine {
         }
       }
     }
+
     if(draft.kind==SchoolTemplateKind.payslip){
       for(final key in const ['basicPaise','allowancePaise','deductionPaise',
         'bonusPaise','overtimePaise','netPaise','paidPaise']){
@@ -308,7 +324,9 @@ class SchoolTemplateImportEngine {
             (record['bonusPaise'] as int? ??0)+
             (record['overtimePaise'] as int? ??0)-
             (record['deductionPaise'] as int);
-          if(expected!=net)throw const FormatException('Salary components do not match net pay.');
+          if(expected!=net){
+            throw const FormatException('Salary components do not match net pay.');
+          }
         }
         if((record['paidPaise'] as int? ??0)>net){
           throw const FormatException('Paid salary exceeds net salary.');
