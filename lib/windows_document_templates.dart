@@ -79,6 +79,10 @@ class WindowsDocumentTemplates {
     Map<String,dynamic> settings,String kind,
   ) => WindowsTemplateCloudStore.importedTemplates(settings,kind);
 
+  static List<Map<String,dynamic>> availableImportedTemplates(
+    Map<String,dynamic> settings,String kind,String schoolId,
+  ) => WindowsTemplateCloudStore.availableSchoolTemplates(settings,kind,schoolId);
+
   static Map<String,dynamic>? importedAsset(
     Map<String,dynamic> settings,String kind,{String? templateId}
   ) => WindowsTemplateCloudStore.importedAsset(settings,kind,templateId:templateId);
@@ -682,7 +686,9 @@ class WindowsDocumentTemplates {
     };
     final customIndex=index-importedTemplateIndex(kind);
     if(['receipt','reportCard','payslip'].contains(kind) && customIndex>=0){
-      final customTemplates=importedTemplates(await selections(),kind);
+      final customTemplates=availableImportedTemplates(
+        await selections(),kind,
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
       if(customIndex<customTemplates.length){
         return renderImportedTemplate(kind,customTemplates[customIndex],{
           ...profile,...data,
@@ -846,7 +852,9 @@ class _SchoolDocumentTemplatesScreenState
     if (_kind == 'studentId') return 0;
     final value = _selected[_kind];
     if(value is String && value.startsWith('imported:')){
-      final templates=WindowsDocumentTemplates.importedTemplates(_selected,_kind);
+      final templates=WindowsDocumentTemplates.availableImportedTemplates(
+        _selected,_kind,
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
       final index=templates.indexWhere((asset)=>
         asset['approved']==true &&
         (asset['templateId']??asset['sourceHash'])==value.substring(9));
@@ -907,9 +915,9 @@ class _SchoolDocumentTemplatesScreenState
               ..._choices(kind).map((e) => e.name),
             ];
           for(final kind in ['receipt','reportCard','payslip']){
-            final assets=WindowsDocumentTemplates.importedTemplates(v,kind)
-              .where((asset)=>asset['approved']==true &&
-                asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']);
+            final assets=WindowsDocumentTemplates.availableImportedTemplates(
+              v,kind,
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
             _names[kind]=[
               ..._baseTemplateNames(kind),
               ...assets.map((asset)=>'School upload • ${asset['filename']??'A4 template'}'),
@@ -1016,7 +1024,8 @@ class _SchoolDocumentTemplatesScreenState
       db.activeProfileIdentity['schoolSyncId']!=school){
       throw StateError('School changed before template selection.');
     }
-    final templates=WindowsDocumentTemplates.importedTemplates(settings,kind);
+    final templates=WindowsDocumentTemplates.availableImportedTemplates(
+      settings,kind,school);
     final customIndex=index-_baseTemplateCount(kind);
     final asset=customIndex>=0 && customIndex<templates.length
       ?templates[customIndex]:null;
