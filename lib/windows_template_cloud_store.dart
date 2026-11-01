@@ -222,6 +222,14 @@ class WindowsTemplateCloudStore {
     return verified;
   }
 
+  static void verifyRecordSchool(Map<String,dynamic> record,String schoolId){
+    SchoolTemplateImportEngine.verifySchool(schoolId);
+    final recordSchool=record['schoolId'];
+    if(recordSchool!=null && recordSchool!=schoolId){
+      throw StateError('A document record from another school cannot be printed.');
+    }
+  }
+
   static Future<Uint8List> render(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
   ) async {
@@ -230,6 +238,7 @@ class WindowsTemplateCloudStore {
     final db=FirebaseFirestore.instance;
     final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     SchoolTemplateImportEngine.verifySchool(school);
+    verifyRecordSchool(record,school);
     if(manifest['schoolId']!=school || manifest['kind']!=kind){
       throw StateError('Imported template belongs to another school.');
     }
