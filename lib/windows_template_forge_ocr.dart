@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'windows_template_import_engine.dart';
 
