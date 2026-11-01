@@ -25,7 +25,7 @@ class TemplateForgeAutoMapper {
     'rollNo':['roll no','roll number','रोल नंबर','রোল নম্বর','ৰোল নং'],
     'class':['class','grade','कक्षा','শ্রেণি','শ্রেণী','শ্ৰেণী'],
     'dateText':['date of issue','payment date','date','दिनांक','तारीख','তারিখ','তাৰিখ'],
-    'totalAmount':['total amount','amount paid','total paid','कुल राशि','মোট টাকা','মোট পরিমাণ','মুঠ ধন'],
+    'totalAmount':['grand total','total amount','amount paid','total paid','कुल राशि','মোট টাকা','মোট পরিমাণ','মুঠ ধন'],
     'paymentMode':['payment mode','mode of payment','भुगतान का तरीका','পেমেন্ট পদ্ধতি'],
     'examName':['exam name','examination','परीक्षा का नाम','পরীক্ষার নাম','পৰীক্ষাৰ নাম'],
     'academicSession':['academic session','session','शैक्षणिक सत्र','শিক্ষাবর্ষ','শিক্ষাবৰ্ষ'],
