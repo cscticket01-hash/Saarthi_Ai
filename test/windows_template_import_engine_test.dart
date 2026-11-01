@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../lib/windows_template_import_engine.dart';
 import '../lib/windows_template_forge_auto.dart';
+import '../lib/windows_template_forge_visual_slots.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -180,6 +181,44 @@ void main() {
     expect(result.warnings,
       contains('Image/QR/signature slot needs verified automatic replacement.'));
     expect(result.safeToActivate,isFalse);
+  });
+
+  test('visual planner only recognizes verified bordered photo placeholders',() async {
+    final canvas=img.Image(width:1000,height:1400);
+    img.fill(canvas,color:img.ColorRgb8(255,255,255));
+    img.drawRect(canvas,x1:60,y1:50,x2:300,y2:250,
+      color:img.ColorRgb8(0,0,0),thickness:3);
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'photo-box.png',
+      bytes:Uint8List.fromList(img.encodePng(canvas)));
+    final candidates=TemplateForgeVisualSlots.detect(
+      source,sampleOcr(['PHOTO']));
+    expect(candidates,hasLength(1));
+    expect(candidates.single.role,'studentPhoto');
+    expect(candidates.single.x,closeTo(.06,.015));
+    expect(candidates.single.width,closeTo(.24,.015));
+    final empty=img.Image(width:1000,height:1400);
+    img.fill(empty,color:img.ColorRgb8(255,255,255));
+    final borderless=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'no-border.png',
+      bytes:Uint8List.fromList(img.encodePng(empty)));
+    expect(TemplateForgeVisualSlots.detect(borderless,sampleOcr(['PHOTO'])),
+      isEmpty,reason:'OCR labels alone must never invent a photo location');
+  });
+
+  test('visual planner refuses duplicate ambiguous photo labels',() async {
+    final canvas=img.Image(width:1000,height:1400);
+    img.fill(canvas,color:img.ColorRgb8(255,255,255));
+    img.drawRect(canvas,x1:60,y1:50,x2:300,y2:250,
+      color:img.ColorRgb8(0,0,0),thickness:3);
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'duplicate-photo.png',
+      bytes:Uint8List.fromList(img.encodePng(canvas)));
+    expect(TemplateForgeVisualSlots.detect(
+      draft,sampleOcr(['PHOTO','PHOTO'])),isEmpty);
   });
 
   test('document type suggestion rejects misleading receipt labels',() async {
