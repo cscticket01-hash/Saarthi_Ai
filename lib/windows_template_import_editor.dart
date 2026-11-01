@@ -32,38 +32,35 @@ class SchoolTemplateImportEditor {
         kind:kind,schoolId:school,filename:file.name,
         bytes:Uint8List.fromList(raw));
       if(!sameSchool())throw StateError('School changed while uploading.');
-      final aspect=draft.width/draft.height;
-      if((aspect-210/297).abs()>.075) {
-        throw const FormatException(
-          'Upload a straight A4 portrait page. Automatic crop/perspective correction is not yet verified.');
-      }
       final tsv=await TemplateForgeOfflineOcr.recognize(draft);
       if(!sameSchool())throw StateError('School changed during recognition.');
       final result=TemplateForgeAutoMapper.detect(draft,tsv);
       if(!context.mounted)return;
-      if(result.warnings.any((w)=>w.startsWith('Document appears to be '))){
-        throw StateError('This document type does not match the selected tab. No template was changed.');
+      if(!result.safeToActivate){
+        final missing=result.missing.isEmpty?'none':result.missing.join(', ');
+        final warnings=result.warnings.isEmpty?'none':result.warnings.join('; ');
+        throw StateError('This scan is not safe to publish. Missing fields: '
+          +missing+'. Recognition warnings: '+warnings+
+          '. Use a clearer A4 source; existing school templates remain unchanged.');
       }
-      if(result.missing.isNotEmpty || result.detected.isEmpty){
-        final missing=result.missing.join(', ');
-        throw StateError('Cannot safely auto-convert this page. '
-          'Missing reliable fields: '+missing+
-          '. Original document and existing templates were not changed.');
-      }
-      // Financial and marks tables are not guessed. Save a private, reviewable
-      // draft without activating or publishing it to other school PCs.
-      await SchoolTemplateImportEngine.saveLocalDraft(result.draft,
-        currentSchoolId:()=>sameSchool()?school:'');
+      final profile=(await db.collection('school_config')
+        .doc('school_profile_cache').get()).data()??{};
+      if(!sameSchool())throw StateError('School changed before preview.');
+      final record={
+        ...profile,...example,
+        'schoolName':profile['schoolName']??profile['name']??example['schoolName']??'',
+        'schoolAddress':profile['address']??example['schoolAddress']??'',
+        'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
+      };
+      SchoolTemplateImportEngine.validatePreviewRecord(result.draft,record);
+      final manifest=await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
       if(!sameSchool()||!context.mounted)return;
-      final output=await SchoolTemplateImportEngine.previewPdf(
-        result.draft,example);
+      final output=await WindowsDocumentTemplates.renderImportedTemplate(
+        kind.name,manifest,record);
       if(!sameSchool()||!context.mounted)return;
       await WindowsDocumentTemplates.preview(context,output,
-        title:kind.title+' • Auto-detected A4 draft',
-        notice:'Automatically detected '+result.detected.join(', ')+
-          '. '+result.warnings.join('; ')+
-          '. Draft saved locally only. Not the active school template; '
-          'existing receipt/marksheet/salary outputs remain unchanged.');
+        title:kind.title+' • School template preview',
+        notice:'Drive upload and content hash verified. This template is now available in the school template list. Select “Use for school” to apply it to future prints.');
     } catch(error) {
       if(context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
