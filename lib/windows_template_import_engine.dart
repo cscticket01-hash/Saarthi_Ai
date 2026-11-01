@@ -571,6 +571,15 @@ class SchoolTemplateImportEngine {
       fields.add(field);
     }
     validateFieldSet(kind,fields);
+    final rawVisual=manifest['visualSlots']??const [];
+    if(rawVisual is! List || rawVisual.length>5){
+      throw const FormatException('Published visual slot manifest is invalid.');
+    }
+    final visualSlots=<ForgeVisualSlot>[];
+    for(final raw in rawVisual){
+      if(raw is! Map)throw const FormatException('Invalid visual slot.');
+      visualSlots.add(ForgeVisualSlot.fromJson(Map<String,dynamic>.from(raw)));
+    }
     final sourceHash = manifest['sourceHash']?.toString() ?? '';
     if (sourceHash.length != 64 ||
         !RegExp(r'^[a-f0-9]{64}').hasMatch(sourceHash)) {
@@ -580,7 +589,9 @@ class SchoolTemplateImportEngine {
     if (templateId != null) {
       final engine = manifest['engine']?.toString() ?? '';
       final identity = sourceHash + ':' + manifest['contentHash'].toString() +
-        ':' + jsonEncode(fields.map((f)=>f.toJson()).toList()) + ':' + engine;
+        ':' + jsonEncode(fields.map((f)=>f.toJson()).toList()) +
+        (visualSlots.isEmpty?'':':'+jsonEncode(
+          visualSlots.map((v)=>v.toJson()).toList())) + ':' + engine;
       final expected = sha256.convert(utf8.encode(identity)).toString();
       if (templateId.length != 64 ||
           !RegExp(r'^[a-f0-9]{64}').hasMatch(templateId) ||
@@ -593,6 +604,7 @@ class SchoolTemplateImportEngine {
       filename: manifest['filename']?.toString() ?? 'School template',
       sourceHash: sourceHash, png: Uint8List.fromList(png),
       width: decoded.width, height: decoded.height, fields: fields,
+      visualSlots:visualSlots,
     );
   }
 
@@ -635,10 +647,20 @@ class SchoolTemplateImportEngine {
           field.validate(kind);
           fields.add(field);
         }
-        drafts.add(SchoolTemplateDraft(kind: kind, schoolId: schoolId,
+        final rawVisual=meta['visualSlots']??const [];
+        if(rawVisual is! List || rawVisual.length>5)continue;
+        final slots=<ForgeVisualSlot>[];
+        for(final raw in rawVisual){
+          if(raw is! Map)throw const FormatException('Invalid visual slot');
+          slots.add(ForgeVisualSlot.fromJson(Map<String,dynamic>.from(raw)));
+        }
+        final candidate=SchoolTemplateDraft(kind: kind, schoolId: schoolId,
           filename: meta['filename']?.toString() ?? 'Imported template',
           sourceHash: hash, png: Uint8List.fromList(imageBytes),
-          width: decoded.width, height: decoded.height, fields: fields));
+          width: decoded.width, height: decoded.height, fields: fields,
+          visualSlots:slots);
+        validateDraft(candidate);
+        drafts.add(candidate);
       } catch (_) {
         // A corrupt local draft must never hide other previously saved versions.
       }
@@ -671,6 +693,8 @@ class SchoolTemplateImportEngine {
       'sourceHash': draft.sourceHash, 'width': draft.width,
       'height': draft.height,
       'fields': draft.fields.map((f) => f.toJson()).toList(),
+      if(draft.visualSlots.isNotEmpty)
+        'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
     };
     try {
       await tmpPng.writeAsBytes(draft.png, flush: true);
