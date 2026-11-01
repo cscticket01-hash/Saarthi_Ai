@@ -48,8 +48,14 @@ foreach ($language in $models.Keys) {
   }
 }
 $license = Get-ChildItem $source -File -Filter 'LICENSE*' | Select-Object -First 1
+if (!$license) {
+  $chocoLicense = Join-Path $env:ProgramData 'chocolatey\lib\tesseract\legal\LICENSE.txt'
+  if (Test-Path $chocoLicense) { $license = Get-Item $chocoLicense }
+}
 if ($license) {
   Copy-Item $license.FullName (Join-Path $release 'ocr\TESSERACT-LICENSE.txt') -Force
+} else {
+  throw 'Tesseract Apache 2.0 licence file was not available for redistribution.'
 }
 $exe = Join-Path $target 'tesseract.exe'
 $list = & $exe --tessdata-dir $target --list-langs 2>&1
