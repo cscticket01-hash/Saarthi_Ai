@@ -45,7 +45,7 @@ class TemplateForgeAutoMapper {
   static const required=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
     SchoolTemplateKind.reportCard:['studentName','class','examName'],
-    SchoolTemplateKind.payslip:['name','month','netPaise'],
+    SchoolTemplateKind.payslip:['name','month','basicPaise','deductionPaise','netPaise'],
   };
   static String normalized(String value)=>value.toLowerCase()
     .replaceAll(RegExp(r'[^\p{L}\p{M}\p{N} ]',unicode:true),' ')
@@ -212,13 +212,11 @@ class TemplateForgeAutoMapper {
     else warnings.add('Too many detected fields for a safe import');
     final missing=(required[input.kind]??const <String>[])
       .where((f)=>!found.contains(f)).toList();
-    // Complex rows must be rebuilt as dynamic repeated tables before use.
-    final tableWarning=switch(input.kind){
-      SchoolTemplateKind.receipt=>'Fee-item rows not automatically reconstructed',
-      SchoolTemplateKind.reportCard=>'Subject/marks rows not automatically reconstructed',
-      SchoolTemplateKind.payslip=>'Earnings/deductions rows not automatically reconstructed',
-    };
-    warnings.add(tableWarning);
+    if(input.kind!=SchoolTemplateKind.payslip && dynamicRows.isEmpty){
+      warnings.add(input.kind==SchoolTemplateKind.receipt
+        ?'No verified fee-item rows found'
+        :'No verified subject/marks rows found');
+    }
     return ForgeRecognition(input.copyWith(fields:fields),found,missing,warnings);
   }
 }
