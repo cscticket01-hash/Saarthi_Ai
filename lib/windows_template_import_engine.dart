@@ -366,8 +366,220 @@ class SchoolTemplateImportEngine {
       fields.add(field);
     }
     final sourceHash = manifest['sourceHash']?.toString() ?? '';
-    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(sourceHash)) {
+    if (!RegExp(r'^[a-f0-9]{64}
+      kind: kind, schoolId: schoolId,
+      filename: manifest['filename']?.toString() ?? 'School template',
+      sourceHash: sourceHash, png: Uint8List.fromList(png),
+      width: decoded.width, height: decoded.height, fields: fields,
+    );
+  }
+
+  static Future<List<SchoolTemplateDraft>> loadLocalDrafts({
+    required SchoolTemplateKind kind, required String schoolId,
+  }) async {
+    verifySchool(schoolId);
+    final root = await getApplicationSupportDirectory();
+    final scope = sha256.convert(utf8.encode(schoolId)).toString().substring(0, 32);
+    final folder = Directory(root.path + Platform.pathSeparator + 'template_drafts' +
+      Platform.pathSeparator + scope + Platform.pathSeparator + kind.name);
+    if (!await folder.exists()) return [];
+    final entries = await folder.list(followLinks: false).toList();
+    final manifests = entries.whereType<File>()
+      .where((f) => f.path.endsWith('.json')).toList()
+      ..sort((a, b) => b.path.compareTo(a.path));
+    final drafts = <SchoolTemplateDraft>[];
+    for (final manifest in manifests.take(30)) {
+      try {
+        final meta = jsonDecode(await manifest.readAsString());
+        if (meta is! Map<String, dynamic> || meta['version'] != 1 ||
+            meta['approved'] != false || meta['schoolId'] != schoolId ||
+            meta['kind'] != kind.name) continue;
+        final hash = meta['sourceHash']?.toString() ?? '';
+        if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) continue;
+        final raster = File(manifest.path.substring(0, manifest.path.length - 5) + '.png');
+        if (!await raster.exists()) continue;
+        final imageBytes = await raster.readAsBytes();
+        if (imageBytes.length > maxPngBytes) continue;
+        final decoded = img.decodePng(imageBytes);
+        if (decoded == null || decoded.width != meta['width'] ||
+            decoded.height != meta['height'] ||
+            decoded.width * decoded.height > maxPixels) continue;
+        final rawFields = meta['fields'];
+        if (rawFields is! List || rawFields.length > 35) continue;
+        final fields = <SchoolTemplateField>[];
+        for (final raw in rawFields) {
+          if (raw is! Map<String, dynamic>) throw const FormatException('Invalid field');
+          final field = SchoolTemplateField.fromJson(raw);
+          field.validate(kind);
+          fields.add(field);
+        }
+        drafts.add(SchoolTemplateDraft(kind: kind, schoolId: schoolId,
+          filename: meta['filename']?.toString() ?? 'Imported template',
+          sourceHash: hash, png: Uint8List.fromList(imageBytes),
+          width: decoded.width, height: decoded.height, fields: fields));
+      } catch (_) {
+        // A corrupt local draft must never hide other previously saved versions.
+      }
+    }
+    return drafts;
+  }
+
+  /// Local school-scoped DRAFT ONLY; never replaces approved school templates.
+  static Future<void> saveLocalDraft(SchoolTemplateDraft draft, {
+    required String Function() currentSchoolId,
+  }) async {
+    verifySchool(draft.schoolId);
+    if (draft.fields.isEmpty || draft.fields.length > 35) {
+      throw StateError('Automatic field recognition is incomplete.');
+    }
+    for (final field in draft.fields) field.validate(draft.kind);
+    if (currentSchoolId() != draft.schoolId) {
+      throw StateError('School changed before template save.');
+    }
+    final root = await getApplicationSupportDirectory();
+    final scope = sha256.convert(utf8.encode(draft.schoolId)).toString().substring(0, 32);
+    final folder = Directory(root.path + Platform.pathSeparator + 'template_drafts' +
+      Platform.pathSeparator + scope + Platform.pathSeparator + draft.kind.name);
+    await folder.create(recursive: true);
+    if (currentSchoolId() != draft.schoolId) throw StateError('School changed.');
+    final base = folder.path + Platform.pathSeparator + draft.sourceHash + '-' +
+      DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final tmpPng = File('$base.png.tmp');
+    final tmpJson = File('$base.json.tmp');
+    final metadata = {
+      'version': 1, 'approved': false, 'schoolId': draft.schoolId,
+      'kind': draft.kind.name, 'filename': draft.filename,
+      'sourceHash': draft.sourceHash, 'width': draft.width,
+      'height': draft.height,
+      'fields': draft.fields.map((f) => f.toJson()).toList(),
+    };
+    try {
+      await tmpPng.writeAsBytes(draft.png, flush: true);
+      await tmpJson.writeAsString(jsonEncode(metadata), flush: true);
+      if (currentSchoolId() != draft.schoolId) {
+        throw StateError('School switched before template save.');
+      }
+      await tmpPng.rename('$base.png');
+      await tmpJson.rename('$base.json');
+    } finally {
+      if (await tmpPng.exists()) await tmpPng.delete();
+      if (await tmpJson.exists()) await tmpJson.delete();
+    }
+  }
+}
+).hasMatch(sourceHash)) {
       throw const FormatException('Published template source hash is invalid.');
+    }
+    final templateId=manifest['templateId']?.toString();
+    if(templateId!=null){
+      final engine=manifest['engine']?.toString()??'';
+      final expected=sha256.convert(utf8.encode(
+        '$sourceHash:${manifest['contentHash']}:${jsonEncode(fields.map((f)=>f.toJson()).toList())}:$engine')).toString();
+      if(!RegExp(r'^[a-f0-9]{64}
+      kind: kind, schoolId: schoolId,
+      filename: manifest['filename']?.toString() ?? 'School template',
+      sourceHash: sourceHash, png: Uint8List.fromList(png),
+      width: decoded.width, height: decoded.height, fields: fields,
+    );
+  }
+
+  static Future<List<SchoolTemplateDraft>> loadLocalDrafts({
+    required SchoolTemplateKind kind, required String schoolId,
+  }) async {
+    verifySchool(schoolId);
+    final root = await getApplicationSupportDirectory();
+    final scope = sha256.convert(utf8.encode(schoolId)).toString().substring(0, 32);
+    final folder = Directory(root.path + Platform.pathSeparator + 'template_drafts' +
+      Platform.pathSeparator + scope + Platform.pathSeparator + kind.name);
+    if (!await folder.exists()) return [];
+    final entries = await folder.list(followLinks: false).toList();
+    final manifests = entries.whereType<File>()
+      .where((f) => f.path.endsWith('.json')).toList()
+      ..sort((a, b) => b.path.compareTo(a.path));
+    final drafts = <SchoolTemplateDraft>[];
+    for (final manifest in manifests.take(30)) {
+      try {
+        final meta = jsonDecode(await manifest.readAsString());
+        if (meta is! Map<String, dynamic> || meta['version'] != 1 ||
+            meta['approved'] != false || meta['schoolId'] != schoolId ||
+            meta['kind'] != kind.name) continue;
+        final hash = meta['sourceHash']?.toString() ?? '';
+        if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) continue;
+        final raster = File(manifest.path.substring(0, manifest.path.length - 5) + '.png');
+        if (!await raster.exists()) continue;
+        final imageBytes = await raster.readAsBytes();
+        if (imageBytes.length > maxPngBytes) continue;
+        final decoded = img.decodePng(imageBytes);
+        if (decoded == null || decoded.width != meta['width'] ||
+            decoded.height != meta['height'] ||
+            decoded.width * decoded.height > maxPixels) continue;
+        final rawFields = meta['fields'];
+        if (rawFields is! List || rawFields.length > 35) continue;
+        final fields = <SchoolTemplateField>[];
+        for (final raw in rawFields) {
+          if (raw is! Map<String, dynamic>) throw const FormatException('Invalid field');
+          final field = SchoolTemplateField.fromJson(raw);
+          field.validate(kind);
+          fields.add(field);
+        }
+        drafts.add(SchoolTemplateDraft(kind: kind, schoolId: schoolId,
+          filename: meta['filename']?.toString() ?? 'Imported template',
+          sourceHash: hash, png: Uint8List.fromList(imageBytes),
+          width: decoded.width, height: decoded.height, fields: fields));
+      } catch (_) {
+        // A corrupt local draft must never hide other previously saved versions.
+      }
+    }
+    return drafts;
+  }
+
+  /// Local school-scoped DRAFT ONLY; never replaces approved school templates.
+  static Future<void> saveLocalDraft(SchoolTemplateDraft draft, {
+    required String Function() currentSchoolId,
+  }) async {
+    verifySchool(draft.schoolId);
+    if (draft.fields.isEmpty || draft.fields.length > 35) {
+      throw StateError('Automatic field recognition is incomplete.');
+    }
+    for (final field in draft.fields) field.validate(draft.kind);
+    if (currentSchoolId() != draft.schoolId) {
+      throw StateError('School changed before template save.');
+    }
+    final root = await getApplicationSupportDirectory();
+    final scope = sha256.convert(utf8.encode(draft.schoolId)).toString().substring(0, 32);
+    final folder = Directory(root.path + Platform.pathSeparator + 'template_drafts' +
+      Platform.pathSeparator + scope + Platform.pathSeparator + draft.kind.name);
+    await folder.create(recursive: true);
+    if (currentSchoolId() != draft.schoolId) throw StateError('School changed.');
+    final base = folder.path + Platform.pathSeparator + draft.sourceHash + '-' +
+      DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final tmpPng = File('$base.png.tmp');
+    final tmpJson = File('$base.json.tmp');
+    final metadata = {
+      'version': 1, 'approved': false, 'schoolId': draft.schoolId,
+      'kind': draft.kind.name, 'filename': draft.filename,
+      'sourceHash': draft.sourceHash, 'width': draft.width,
+      'height': draft.height,
+      'fields': draft.fields.map((f) => f.toJson()).toList(),
+    };
+    try {
+      await tmpPng.writeAsBytes(draft.png, flush: true);
+      await tmpJson.writeAsString(jsonEncode(metadata), flush: true);
+      if (currentSchoolId() != draft.schoolId) {
+        throw StateError('School switched before template save.');
+      }
+      await tmpPng.rename('$base.png');
+      await tmpJson.rename('$base.json');
+    } finally {
+      if (await tmpPng.exists()) await tmpPng.delete();
+      if (await tmpJson.exists()) await tmpJson.delete();
+    }
+  }
+}
+).hasMatch(templateId) ||
+        templateId!=expected){
+        throw const FormatException('Published template field-map identity is invalid.');
+      }
     }
     return SchoolTemplateDraft(
       kind: kind, schoolId: schoolId,
