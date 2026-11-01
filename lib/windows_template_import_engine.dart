@@ -429,7 +429,23 @@ class SchoolTemplateImportEngine {
       fields.add(field);
     }
     final sourceHash = manifest['sourceHash']?.toString() ?? '';
-    if (!RegExp(r'^[a-f0-9]{64}
+    if (sourceHash.length != 64 ||
+        !RegExp(r'^[a-f0-9]{64}').hasMatch(sourceHash)) {
+      throw const FormatException('Published template source hash is invalid.');
+    }
+    final templateId = manifest['templateId']?.toString();
+    if (templateId != null) {
+      final engine = manifest['engine']?.toString() ?? '';
+      final identity = sourceHash + ':' + manifest['contentHash'].toString() +
+        ':' + jsonEncode(fields.map((f)=>f.toJson()).toList()) + ':' + engine;
+      final expected = sha256.convert(utf8.encode(identity)).toString();
+      if (templateId.length != 64 ||
+          !RegExp(r'^[a-f0-9]{64}').hasMatch(templateId) ||
+          templateId != expected) {
+        throw const FormatException('Published template field-map identity is invalid.');
+      }
+    }
+    return SchoolTemplateDraft(
       kind: kind, schoolId: schoolId,
       filename: manifest['filename']?.toString() ?? 'School template',
       sourceHash: sourceHash, png: Uint8List.fromList(png),
