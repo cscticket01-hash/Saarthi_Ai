@@ -67,6 +67,19 @@ void main(){
       settings,'receipt','../other'),isEmpty);
   });
 
+  test('foreign-school documents are rejected before downloaded templates are used',(){
+    const school='vs-db8afb01a3be46a983c8284714d06e5d';
+    const other='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    expect(()=>WindowsTemplateCloudStore.verifyRecordSchool(
+      {'schoolId':school,'studentName':'Mira'},school),returnsNormally);
+    expect(()=>WindowsTemplateCloudStore.verifyRecordSchool(
+      {'studentName':'Mira'},school),returnsNormally);
+    expect(()=>WindowsTemplateCloudStore.verifyRecordSchool(
+      {'schoolId':other,'studentName':'Foreign student'},school),throwsStateError);
+    expect(()=>WindowsTemplateCloudStore.verifyRecordSchool(
+      {'schoolId':school},'../invalid'),throwsStateError);
+  });
+
   test('unknown template version and school type return no assets',(){
     expect(WindowsTemplateCloudStore.importedTemplates(
       {'templateAssets':{'receipt':{'unknown':'not-a-manifest'}}},'receipt'),isEmpty);
