@@ -80,6 +80,29 @@ void main(){
       {'schoolId':school},'../invalid'),throwsStateError);
   });
 
+  test('Drive image reuse is restricted by verified school and file identity',(){
+    const school='vs-db8afb01a3be46a983c8284714d06e5d';
+    const other='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const hash='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final asset=<String,dynamic>{
+      'schoolId':school,'kind':'receipt','approved':true,
+      'contentHash':hash,'fileId':'school_asset_123',
+      'fileUrl':'https://drive.google.com/file/d/school_asset_123/view',
+    };
+    bool reusable(Map<String,dynamic> item)=>
+      WindowsTemplateCloudStore.canReuseVerifiedAsset(item,
+        schoolId:school,kind:'receipt',contentHash:hash);
+    expect(reusable(asset),isTrue);
+    expect(reusable({...asset,'schoolId':other}),isFalse);
+    expect(reusable({...asset,'kind':'reportCard'}),isFalse);
+    expect(reusable({...asset,'approved':false}),isFalse);
+    expect(reusable({...asset,'contentHash':'other'}),isFalse);
+    expect(reusable({...asset,'fileId':'another_file'}),isFalse);
+    expect(reusable({...asset,
+      'fileUrl':'https://other.example/file/d/school_asset_123/view'}),
+      isFalse);
+  });
+
   test('unknown template version and school type return no assets',(){
     expect(WindowsTemplateCloudStore.importedTemplates(
       {'templateAssets':{'receipt':{'unknown':'not-a-manifest'}}},'receipt'),isEmpty);
