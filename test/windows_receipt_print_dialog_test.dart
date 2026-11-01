@@ -1,12 +1,88 @@
 import 'dart:typed_data';
+import 'dart:async';
+import 'package:image/image.dart' as img;
+import 'package:printing/src/interface.dart';
+import 'package:printing/src/method_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import '../lib/windows_receipt_print_dialog.dart';
 
+// Synthetic OS raster boundary: physical geometry comes from raster dimensions;
+// preview pixels are tiny because this test verifies settings, not printer hardware.
+class PaperSizeRaster extends PdfRaster {
+  PaperSizeRaster(int width, int height) : super(width,height,Uint8List(width*height*4));
+  @override
+  Future<Uint8List> toPng() async => Uint8List.fromList(img.encodePng(img.Image(width:2,height:2)));
+}
+class PaperSizePrinting extends MethodChannelPrinting {
+  PaperSizePrinting(this.width,this.height,{this.gate});
+  final int width,height;
+  final Future<void>? gate;
+  int rasterCalls=0;
+  @override
+  Stream<PdfRaster> raster(Uint8List document,{List<int>? pages,double dpi=72}) async* {
+    rasterCalls++;
+    if(gate!=null)await gate;
+    yield PaperSizeRaster(width,height);
+  }
+}
+
 void main() {
   const printer = Printer(url: 'test-epson', name: 'EPSON L3110', isDefault: true, isAvailable: true);
+  for(final landscape in [false,true]) {
+    testWidgets('Legal ${landscape?'landscape':'portrait'} preview selects matching printer stock without another raster', (tester) async {
+      tester.view.devicePixelRatio=1;
+      tester.view.physicalSize=const Size(1200,1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final native=PrintingPlatform.instance;
+      final platform=PaperSizePrinting(landscape?2800:1700,landscape?1700:2800);
+      PrintingPlatform.instance=platform;
+      addTearDown(()=>PrintingPlatform.instance=native);
+      final bytes=Uint8List.fromList([37,80,68,70,45]);
+      PdfPageFormat? sent;
+      await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
+        receipt:Future.value(bytes),title:'Legal receipt',subtitle:'School',isCurrent:()=>true,
+        printers:()async=>[printer],printJob:(_,original,format) async {
+          expect(identical(original,bytes),isTrue);sent=format;return true;
+        }))));
+      await tester.pumpAndSettle();
+      expect(find.text('Legal (216 × 356 mm)'),findsOneWidget);
+      expect(find.text(landscape?'Landscape':'Portrait'),findsOneWidget);
+      await tester.ensureVisible(find.widgetWithText(FilledButton,'Print'));
+      await tester.tap(find.widgetWithText(FilledButton,'Print'));
+      await tester.pumpAndSettle();
+      expect(sent?.width,landscape?PdfPageFormat.legal.height:PdfPageFormat.legal.width);
+      expect(sent?.height,landscape?PdfPageFormat.legal.width:PdfPageFormat.legal.height);
+      expect(platform.rasterCalls,1,reason:'Reuse the normal preview raster for paper detection');
+      expect(tester.takeException(),isNull);
+    });
+  }
+  testWidgets('late preview detection preserves explicit school paper selection', (tester) async {
+    tester.view.devicePixelRatio=1;
+    tester.view.physicalSize=const Size(1200,1000);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final native=PrintingPlatform.instance;
+    final gate=Completer<void>();
+    PrintingPlatform.instance=PaperSizePrinting(1654,2339,gate:gate.future);
+    addTearDown(()=>PrintingPlatform.instance=native);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:WindowsReceiptPrintDialog(
+      receipt:Future.value(Uint8List(1)),title:'Receipt',subtitle:'School',isCurrent:()=>true,
+      printers:()async=>[printer]))));
+    await tester.pump();await tester.pump();
+    await tester.ensureVisible(find.text('A4 (210 × 297 mm)'));
+    await tester.tap(find.text('A4 (210 × 297 mm)'));
+    await tester.pump(const Duration(milliseconds:300));
+    await tester.tap(find.text('Legal (216 × 356 mm)').last);
+    await tester.pump(const Duration(milliseconds:300));
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Legal (216 × 356 mm)'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
   testWidgets('full app preview defaults A4, never auto prints, and sends exact bytes for each copy', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1200, 900);

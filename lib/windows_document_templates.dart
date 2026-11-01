@@ -34,7 +34,6 @@ import 'windows_reference_documents.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_import_editor.dart';
 import 'windows_template_cloud_store.dart';
-import 'windows_template_import_engine.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -1043,7 +1042,7 @@ class _SchoolDocumentTemplatesScreenState
               FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
             _names[kind]=[
               ..._baseTemplateNames(kind),
-              ...assets.map((asset)=>'School upload • ${asset['filename']??'A4 template'}'),
+              ...assets.map((asset)=>'School upload • ${asset['filename']??'School template'}'),
             ];
           }
           _loading = false;
@@ -1123,9 +1122,34 @@ class _SchoolDocumentTemplatesScreenState
     }
   }
 
+  Map<String,dynamic>? _uploadedTemplate(int index) {
+    if(!const ['receipt','reportCard','payslip'].contains(_kind))return null;
+    final position=index-_baseTemplateCount(_kind);
+    if(position<0)return null;
+    final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final assets=WindowsDocumentTemplates.availableImportedTemplates(
+      _selected,_kind,school);
+    return position<assets.length?assets[position]:null;
+  }
+
+  String? _uploadedPaperLabel(int index) {
+    final asset=_uploadedTemplate(index);
+    if(asset==null)return null;
+    final width=asset['width'],height=asset['height'];
+    if(width is! num || height is! num)return 'Paper size unavailable';
+    try {
+      return SchoolTemplateImportEngine.pageSizeLabel(width.toInt(),height.toInt());
+    }on FormatException {
+      return 'Paper size unavailable';
+    }
+  }
+
   Future<void> _preview(int index) async {
+    final kind=_kind;
+    final title=index<0?'Default preview':_names[kind]![index];
+    final paper=_uploadedPaperLabel(index);
     final bytes = await WindowsDocumentTemplates.renderTemplate(
-      _kind,
+      kind,
       index,
       _sample,
     );
@@ -1133,7 +1157,8 @@ class _SchoolDocumentTemplatesScreenState
       await WindowsDocumentTemplates.preview(
         context,
         bytes!,
-        title: index < 0 ? 'Default preview' : _names[_kind]![index],
+        title:title,
+        notice:paper==null?null:'$paper. Print using matching paper at Actual size (100%).',
       );
   }
 
@@ -1252,7 +1277,7 @@ class _SchoolDocumentTemplatesScreenState
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
-              child:Text('Original A4 design is preserved. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
+              child:Text('A4 and Legal (8.5 × 14 in) designs keep their original paper size and orientation. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
                 style:TextStyle(fontSize:12)),
             ),
           ],
@@ -1342,7 +1367,7 @@ class _SchoolDocumentTemplatesScreenState
                               ? 'Front | Back • each 54 × 85.6 mm'
                               : _kind.endsWith('Id')
                               ? 'Front | Back • each 85.6 × 54 mm'
-                              : 'Printable school document',
+                              : _uploadedPaperLabel(i) ?? 'Printable school document',
                           style:  TextStyle(fontFamily: 'Segoe UI', 
                             color: WindowsAppearance.foreground(Colors.white54),
                             fontSize: 12,

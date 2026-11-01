@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-/// Offline conversion only. The existing PDF/A4 OCR pipeline is still the
+/// Offline conversion only. The existing A4/Legal PDF OCR pipeline is still the
 /// single authoritative template importer and print renderer.
 enum SchoolOfficeKind { word, spreadsheet }
 
@@ -264,7 +264,7 @@ try {
       if(!converted || !await outputFile.exists()){
         throw const FormatException(
           'Word/Excel conversion needs LibreOffice or Microsoft Office '
-          'installed locally. Alternatively upload one A4 PDF page.');
+          'installed locally. Alternatively upload one A4 or Legal PDF page.');
       }
       if(await outputFile.length()>maxConvertedPdfBytes){
         throw const FormatException(

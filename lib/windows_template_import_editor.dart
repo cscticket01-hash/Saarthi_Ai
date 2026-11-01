@@ -34,7 +34,7 @@ class SchoolTemplateImportEditor {
     void stage(String message){progress.value=message;}
     try {
       SchoolTemplateImportEngine.verifySchool(school);
-      const types=XTypeGroup(label:'A4 PDF, image, Word or Excel',
+      const types=XTypeGroup(label:'A4 / Legal PDF, image, Word or Excel',
         extensions:['pdf','png','jpg','jpeg','doc','docx','xls','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
@@ -60,7 +60,8 @@ class SchoolTemplateImportEditor {
         kind:kind,schoolId:school,filename:file.name,
         bytes:Uint8List.fromList(raw));
       if(!sameSchool())throw StateError('School changed while uploading.');
-      stage('Checking page orientation…');
+      final paperLabel=SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
+      stage('Checking '+paperLabel+' page orientation…');
       final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
       if(!sameSchool())throw StateError('School changed during orientation detection.');
       stage('Recognizing text and template fields…');
@@ -122,7 +123,7 @@ class SchoolTemplateImportEditor {
         final warnings=result.warnings.isEmpty?'none':result.warnings.join('; ');
         throw StateError('This scan is not safe to publish. Missing fields: '
           +missing+'. Recognition warnings: '+warnings+
-          '. Use a clearer A4 source; existing school templates remain unchanged.');
+          '. Use a clearer A4 or Legal source; existing school templates remain unchanged.');
       }
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
@@ -159,8 +160,9 @@ class SchoolTemplateImportEditor {
       if(!sameSchool()||!context.mounted)return;
       closeProgress();
       await WindowsDocumentTemplates.preview(context,output,
-        title:kind.title+' • School template preview',
-        notice:'Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
+        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+          result.draft.width,result.draft.height)+' • School template preview',
+        notice:'Use matching A4 or Legal paper at Actual Size (100%) when printing. Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
     } catch(error) {
       closeProgress();
       if(context.mounted) {
@@ -203,7 +205,8 @@ class SchoolTemplateImportEditor {
         builder:(ctx)=>SimpleDialog(
           title:Text(kind.title+' • Auto generated drafts'),
           children:drafts.map((d)=>SimpleDialogOption(
-            child:Text(d.filename+' • '+d.fields.length.toString()+
+            child:Text(d.filename+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+              d.width,d.height)+' • '+d.fields.length.toString()+
               ' auto-detected fields'),
             onPressed:()=>Navigator.pop(ctx,d),
           )).toList(),
@@ -229,7 +232,8 @@ class SchoolTemplateImportEditor {
         throw StateError('School changed before draft preview.');
       }
       if(context.mounted)await WindowsDocumentTemplates.preview(context,pdf,
-        title:kind.title+' • Saved auto draft',
+        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+          draft.width,draft.height)+' • Saved auto draft',
         notice:'A local draft, not an approved/published school template. '
           'Original school document selections remain in effect.');
     }catch(e){
