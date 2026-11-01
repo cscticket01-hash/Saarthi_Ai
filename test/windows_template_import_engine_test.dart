@@ -415,6 +415,25 @@ void main() {
       throwsFormatException);
   });
 
+  test('high-confidence page on dark camera background is automatically rectified',() async {
+    final camera=img.Image(width:1000,height:1000);
+    img.fill(camera,color:img.ColorRgb8(20,20,20));
+    img.fillRect(camera,x1:180,y1:50,x2:820,y2:950,
+      color:img.ColorRgb8(255,255,255));
+    final bytes=Uint8List.fromList(img.encodeJpg(camera,quality:95));
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'camera.jpg',bytes:bytes);
+    expect((draft.width/draft.height-210/297).abs(),lessThan(.075));
+    expect(draft.sourceHash,sha256.convert(bytes).toString(),
+      reason:'Rectification must not change the original source identity');
+    final unrecognizable=Uint8List.fromList(img.encodePng(
+      img.Image(width:1000,height:1000)));
+    await expectLater(SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'uncertain.png',bytes:unrecognizable),throwsFormatException);
+  });
+
   test('A4 landscape camera photo keeps its intended orientation and school scope',() async {
     final side=Uint8List.fromList(img.encodeJpg(img.Image(width:1400,height:1000)));
     final draft=await SchoolTemplateImportEngine.importBytes(
