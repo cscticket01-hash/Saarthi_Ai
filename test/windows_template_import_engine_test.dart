@@ -198,6 +198,13 @@ void main() {
     expect(candidates.single.role,'studentPhoto');
     expect(candidates.single.x,closeTo(.06,.015));
     expect(candidates.single.width,closeTo(.24,.015));
+    // A real A4 print often places PHOTO as a caption just under the
+    // portrait border rather than as text inside the box.
+    final captionBelow=sampleOcr(['PHOTO'])
+      .replaceFirst('\t95\t','\t290\t');
+    final belowSlots=TemplateForgeVisualSlots.detect(source,captionBelow);
+    expect(belowSlots,hasLength(1));
+    expect(belowSlots.single.role,'studentPhoto');
     final empty=img.Image(width:1000,height:1400);
     img.fill(empty,color:img.ColorRgb8(255,255,255));
     final borderless=await SchoolTemplateImportEngine.importBytes(
