@@ -106,6 +106,9 @@ class TemplateForgeVisualSlots {
           }
         }
       }
+      // A noisy photo or dense form may produce thousands of apparent
+      // horizontal edges. Never run an unbounded quadratic search.
+      if(edges.length>400)continue;
       final found=<ForgeVisualSlot>[];
       for(var i=0;i<edges.length;i++){
         final first=edges[i];
