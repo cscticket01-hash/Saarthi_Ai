@@ -129,7 +129,7 @@ void main(){
       history,'sha-from-pc-3',old);
     expect(retried.length,5);
     expect(retried.keys.toList(),history.keys.toList());
-    expect(WindowsTemplateCloudStore.appendedVersionHistory(
+    expect(()=>WindowsTemplateCloudStore.appendedVersionHistory(
       history,'sha-from-pc-1',{...old,'templateId':'sha-from-pc-1'}),
       throwsStateError,reason:'An immutable rollback version cannot be overwritten');
   });
