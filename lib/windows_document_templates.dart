@@ -530,9 +530,10 @@ class WindowsDocumentTemplates {
         data = {...student, ...data};
       }
     }
+    final templateSettings=await selections();
     final v = kind == 'studentId'
         ? 'manifest:$studentIdTemplateId'
-        : kind == 'reportCard' ? 0 : (await selections())[kind];
+        : templateSettings[kind] ?? 0;
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -542,6 +543,28 @@ class WindowsDocumentTemplates {
         {};
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
+    if(v is String && v.startsWith('imported:')){
+      final manifest=importedAsset(templateSettings,kind,templateId:v.substring(9));
+      if(manifest==null){
+        throw StateError('Selected school template manifest is missing or mismatched.');
+      }
+      final record={
+        ...profile,...data,
+        'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
+        'schoolAddress':profile['address']??data['schoolAddress']??'',
+        'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
+        if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
+          'dateText':_documentDate(data['timestamp']),
+      };
+      return renderImportedTemplate(kind,manifest,record);
+    }
+    if(kind=='payslip'){
+      return renderWindowsPayslip({
+        ...profile,...data,
+        'netPaise':data['netPaise']??data['salaryNetPaise']??0,
+        'paidPaise':data['paidPaise']??0,
+      },schoolName:profile['schoolName']?.toString()??profile['name']?.toString()??'');
+    }
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
       _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
