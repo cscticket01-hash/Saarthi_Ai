@@ -32,18 +32,66 @@ class TemplateForgeOfflineOcr {
     ...args,
   ];
 
-  static Future<List<String>> installedLanguages() async {
+  static Future<Set<String>> _availableLanguages() async {
     final runtime=_runtime();
     try {
       final result=await Process.run(runtime.executable,
         _arguments(['--list-langs'],runtime.tessdata),
         runInShell:false).timeout(const Duration(seconds:8));
-      if(result.exitCode!=0)return const [];
-      final available=(result.stdout.toString()+'\n'+result.stderr.toString())
+      if(result.exitCode!=0)return const {};
+      return (result.stdout.toString()+'\n'+result.stderr.toString())
         .split(RegExp(r'\s+')).toSet();
-      return supportedLanguages.where(available.contains).toList();
     } catch (_) {
-      return const [];
+      return const {};
+    }
+  }
+
+  static Future<List<String>> installedLanguages() async {
+    final available=await _availableLanguages();
+    return supportedLanguages.where(available.contains).toList();
+  }
+
+  /// Corrects a sideways camera capture using Tesseract's local OSD model.
+  /// The source artwork is rotated only when OSD returns a confident right
+  /// angle; uncertain scans remain untouched and are later rejected if needed.
+  static Future<SchoolTemplateDraft> normalizeOrientation(
+    SchoolTemplateDraft draft,
+  ) async {
+    if(!(await _availableLanguages()).contains('osd'))return draft;
+    final runtime=_runtime();
+    final dir=await Directory.systemTemp.createTemp('vs-template-osd-');
+    final path=dir.path+Platform.pathSeparator+'orientation.png';
+    try{
+      final decoded=img.decodePng(draft.png);
+      if(decoded==null)return draft;
+      await File(path).writeAsBytes(
+        img.encodePng(img.grayscale(decoded)),flush:true);
+      final result=await Process.run(runtime.executable,_arguments([
+        path,'stdout','--psm','0','osd',
+      ],runtime.tessdata),runInShell:false)
+        .timeout(const Duration(seconds:20));
+      if(result.exitCode!=0)return draft;
+      final output=result.stdout.toString()+'\n'+result.stderr.toString();
+      final match=RegExp(r'Rotate:\s*(0|90|180|270)').firstMatch(output);
+      if(match==null)return draft;
+      final angle=int.parse(match.group(1)!);
+      if(angle==0)return draft;
+      final rotated=img.copyRotate(decoded,angle:angle);
+      final ratio=rotated.width/rotated.height;
+      if((ratio-210/297).abs()>.075 && (ratio-297/210).abs()>.075){
+        return draft;
+      }
+      final bytes=Uint8List.fromList(img.encodePng(rotated));
+      if(bytes.length>SchoolTemplateImportEngine.maxPngBytes)return draft;
+      return SchoolTemplateDraft(
+        kind:draft.kind,schoolId:draft.schoolId,filename:draft.filename,
+        sourceHash:draft.sourceHash,png:bytes,
+        width:rotated.width,height:rotated.height,fields:draft.fields,
+      );
+    }catch(_){
+      return draft;
+    }finally{
+      try{await dir.delete(recursive:true);}catch(_){}
     }
   }
 
