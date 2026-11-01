@@ -31,6 +31,7 @@ import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_import_editor.dart';
+import 'windows_template_cloud_store.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -72,6 +73,26 @@ class WindowsDocumentTemplates {
               .get())
           .data() ??
       {};
+
+  static List<Map<String,dynamic>> importedTemplates(
+    Map<String,dynamic> settings,String kind,
+  ) => WindowsTemplateCloudStore.importedTemplates(settings,kind);
+
+  static Map<String,dynamic>? importedAsset(
+    Map<String,dynamic> settings,String kind,{String? templateId}
+  ) => WindowsTemplateCloudStore.importedAsset(settings,kind,templateId:templateId);
+
+  static int importedTemplateIndex(String kind) =>
+    windowsReferenceDocumentNames[kind]?.length ?? (kind=='payslip'?1:0);
+
+  static Future<Map<String,dynamic>> publishImportedTemplate(
+    SchoolTemplateDraft draft,
+  ) => WindowsTemplateCloudStore.publish(draft);
+
+  static Future<Uint8List> renderImportedTemplate(
+    String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
+  ) => WindowsTemplateCloudStore.render(kind,manifest,record);
+
   static Future<Uint8List?> _image(dynamic raw) async {
     final source = raw?.toString().trim() ?? '';
     if (source.startsWith('data:image/')) {
