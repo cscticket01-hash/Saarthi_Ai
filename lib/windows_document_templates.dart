@@ -175,14 +175,14 @@ class WindowsDocumentTemplates {
     if(_repairingQueuedIds)return 0;
     _repairingQueuedIds=true;
     final db=FirebaseFirestore.instance,origin=db.activeProfileId;
-    var repaired=0;
+    var repaired=0,probed=0;
     try {
       final connection=await CentralSchoolCloud.saved();
       if(connection['managed']!=true || connection['schoolId']!=school ||
         db.activeProfileIdentity['schoolSyncId']!=school)return 0;
       final queue=await db.collection('_windows_document_outbox').get();
       for(final item in queue.docs){
-        if(canAdmit?.call()==false || db.activeProfileId!=origin)break;
+        if(probed>=1 || canAdmit?.call()==false || db.activeProfileId!=origin)break;
         final expected=item.data();
         if(expected['schoolId']!=school || expected['syncState']!='conflict' ||
           expected['documentKind']!='idCard' || expected['inventoryCategory']!='generatedIdCard' ||
@@ -191,7 +191,7 @@ class WindowsDocumentTemplates {
         final last=_queuedIdChecks[key],now=DateTime.now();
         if(last!=null && now.difference(last)<const Duration(minutes:5))continue;
         if(_queuedIdChecks.length>=128)_queuedIdChecks.remove(_queuedIdChecks.keys.first);
-        _queuedIdChecks[key]=now;
+        _queuedIdChecks[key]=now;probed++;
         try {
           final role=expected['ownerRole'] as String,personId=expected['studentId']?.toString()??'';
           final kind=role=='student'?'studentId':'teacherId';
