@@ -321,7 +321,8 @@ jobs:
       - name: Smoke-test packaged offline OCR from Dart
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_forge_ocr_test.dart
+          $bundle = (Resolve-Path 'build/windows/x64/runner/Release/ocr/tesseract').Path
+          flutter test --concurrency=1 "--dart-define=TEMPLATEFORGE_BUNDLE_DIR=$bundle" test/windows_template_forge_ocr_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Packaged offline OCR smoke test failed.' }
 
       - name: Sign and verify application
