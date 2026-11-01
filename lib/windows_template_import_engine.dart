@@ -105,13 +105,39 @@ class SchoolTemplateImportEngine {
       !(requiredFields[kind]??const <String>[]).every(keys.contains)){
       throw const FormatException('Template is missing required unique fields.');
     }
-    if(kind==SchoolTemplateKind.receipt &&
-      (!keys.contains('feeName0') || !keys.contains('feeAmount0'))){
-      throw const FormatException('Receipt template has no verified fee-item row.');
+    final namePrefix=kind==SchoolTemplateKind.receipt?'feeName':
+      kind==SchoolTemplateKind.reportCard?'subjectName':'';
+    final valuePrefix=kind==SchoolTemplateKind.receipt?'feeAmount':
+      kind==SchoolTemplateKind.reportCard?'subjectMarks':'';
+    if(namePrefix.isNotEmpty){
+      var sawGap=false;
+      var count=0;
+      for(var i=0;i<8;i++){
+        final hasName=keys.contains(namePrefix+i.toString());
+        final hasValue=keys.contains(valuePrefix+i.toString());
+        if(hasName!=hasValue){
+          throw const FormatException('Template table row has an incomplete field pair.');
+        }
+        if(!hasName){
+          sawGap=true;
+        }else{
+          if(sawGap)throw const FormatException('Template table row slots are not contiguous.');
+          count++;
+        }
+      }
+      if(count==0){
+        throw const FormatException('Template has no verified table row.');
+      }
     }
-    if(kind==SchoolTemplateKind.reportCard &&
-      (!keys.contains('subjectName0') || !keys.contains('subjectMarks0'))){
-      throw const FormatException('Marksheet template has no verified subject row.');
+    for(var i=0;i<list.length;i++){
+      for(var j=i+1;j<list.length;j++){
+        final a=list[i],b=list[j];
+        if(a.mask && b.mask &&
+          a.x<b.x+b.width && b.x<a.x+a.width &&
+          a.y<b.y+b.size && b.y<a.y+a.size){
+          throw const FormatException('Template has overlapping masked fields.');
+        }
+      }
     }
   }
 
