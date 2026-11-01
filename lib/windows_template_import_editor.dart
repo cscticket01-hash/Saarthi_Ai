@@ -82,6 +82,12 @@ class SchoolTemplateImportEditor {
       final output=await SchoolTemplateImportEngine.previewPdf(
         result.draft,record,visualAssets:imageAssets);
       if(!sameSchool())throw StateError('School changed before publication.');
+      // Keep one immutable, verified local draft even if the school Drive
+      // becomes unavailable after recognition; repeat uploads are idempotent.
+      await SchoolTemplateImportEngine.saveLocalDraft(result.draft,
+        currentSchoolId:()=>db.activeProfileIdentity['schoolSyncId']
+          ?.toString()??'');
+      if(!sameSchool())throw StateError('School changed before publication.');
       // Publish verifies the Drive image hash and reads back the manifest.
       // Reuse the already validated PDF instead of downloading all assets
       // and rendering the identical preview a second time.
