@@ -80,11 +80,8 @@ class WindowsTemplateCloudStore {
       }
     }
     ensureSchool();
-    if(draft.fields.isEmpty || draft.fields.length>35){
-      throw StateError('Template has no safe automatic field map.');
-    }
-    if(draft.png.isEmpty || draft.png.length>SchoolTemplateImportEngine.maxPngBytes ||
-      draft.png.length>20*1024*1024){
+    SchoolTemplateImportEngine.validateDraft(draft);
+    if(draft.png.length>20*1024*1024){
       throw StateError('Template image is too large for verified Drive upload.');
     }
     final contentHash=sha256.convert(draft.png).toString();
