@@ -188,7 +188,7 @@ class TemplateForgeAutoMapper {
       warnings.add('Blank table has no readable total-row boundary');
       return const [];
     }
-    rowHeight=rowHeight.clamp(math.max(.022,headerHeight*1.6),.12).toDouble();
+    rowHeight=rowHeight.clamp(math.max(.018,headerHeight*.6),.12).toDouble();
     final firstRowY=rowTops.isNotEmpty
       ?rowTops.first
       :headerBottom+rowHeight*.25;
@@ -216,7 +216,7 @@ class TemplateForgeAutoMapper {
       final amountWidth=(hasSample
         ?math.min(amount.w+.008,.98-amountX)
         :math.min(math.max(.09,valueHeader.w+.045),.98-amountX)).toDouble();
-      final textHeight=hasSample?name.h:headerHeight*.8;
+      final textHeight=hasSample?name.h:math.min(headerHeight*.8,rowHeight*.4).toDouble();
       final y=hasSample?name.y:firstRowY+i*rowHeight;
       if(nameWidth<=.04 || amountWidth<=.025 ||
         nameX<0 || amountX<0 || y<0 || y>.96 ||
