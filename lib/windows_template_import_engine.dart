@@ -89,6 +89,32 @@ class SchoolTemplateImportEngine {
   static const maxSourceBytes=16*1024*1024;
   static const maxPngBytes=18*1024*1024;
   static const maxPixels=12000000;
+  static const requiredFields=<SchoolTemplateKind,List<String>>{
+    SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
+    SchoolTemplateKind.reportCard:['studentName','class','examName'],
+    SchoolTemplateKind.payslip:['name','month','basicPaise','allowancePaise',
+      'deductionPaise','netPaise'],
+  };
+
+  static void validateFieldSet(
+    SchoolTemplateKind kind,Iterable<SchoolTemplateField> fields,
+  ) {
+    final list=fields.toList();
+    final keys=list.map((f)=>f.key).toSet();
+    if(list.isEmpty || list.length>35 || keys.length!=list.length ||
+      !(requiredFields[kind]??const <String>[]).every(keys.contains)){
+      throw const FormatException('Template is missing required unique fields.');
+    }
+    if(kind==SchoolTemplateKind.receipt &&
+      (!keys.contains('feeName0') || !keys.contains('feeAmount0'))){
+      throw const FormatException('Receipt template has no verified fee-item row.');
+    }
+    if(kind==SchoolTemplateKind.reportCard &&
+      (!keys.contains('subjectName0') || !keys.contains('subjectMarks0'))){
+      throw const FormatException('Marksheet template has no verified subject row.');
+    }
+  }
+
   static bool isPdf(Uint8List b)=>b.length>5 &&
     String.fromCharCodes(b.take(5))=='%PDF-';
   static bool isPng(Uint8List b)=>b.length>8 &&
@@ -230,6 +256,7 @@ class SchoolTemplateImportEngine {
   static void validatePreviewRecord(
     SchoolTemplateDraft draft,Map<String,dynamic> record,
   ) {
+    validateFieldSet(draft.kind,draft.fields);
     final keys=<String>{};
     for(final field in draft.fields){
       field.validate(draft.kind);
@@ -428,6 +455,7 @@ class SchoolTemplateImportEngine {
       }
       fields.add(field);
     }
+    validateFieldSet(kind,fields);
     final sourceHash = manifest['sourceHash']?.toString() ?? '';
     if (sourceHash.length != 64 ||
         !RegExp(r'^[a-f0-9]{64}').hasMatch(sourceHash)) {
