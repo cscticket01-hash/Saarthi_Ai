@@ -79,13 +79,13 @@ class SchoolTemplateImportEditor {
         result.draft,record);
       if(!sameSchool())throw StateError('School changed during image preview.');
       // Render the complete source+live-record preview before any Drive write.
-      await SchoolTemplateImportEngine.previewPdf(
+      final output=await SchoolTemplateImportEngine.previewPdf(
         result.draft,record,visualAssets:imageAssets);
       if(!sameSchool())throw StateError('School changed before publication.');
-      final manifest=await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
-      if(!sameSchool()||!context.mounted)return;
-      final output=await WindowsDocumentTemplates.renderImportedTemplate(
-        kind.name,manifest,record);
+      // Publish verifies the Drive image hash and reads back the manifest.
+      // Reuse the already validated PDF instead of downloading all assets
+      // and rendering the identical preview a second time.
+      await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
       if(!sameSchool()||!context.mounted)return;
       await WindowsDocumentTemplates.preview(context,output,
         title:kind.title+' • School template preview',
