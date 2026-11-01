@@ -20,8 +20,10 @@ class WindowsTemplateCloudStore {
 
   static String _idFor(SchoolTemplateDraft draft,String contentHash) {
     final fields=jsonEncode(draft.fields.map((f)=>f.toJson()).toList());
+    final visuals=draft.visualSlots.isEmpty?'':':'+jsonEncode(
+      draft.visualSlots.map((s)=>s.toJson()).toList());
     return sha256.convert(utf8.encode(
-      '${draft.sourceHash}:$contentHash:$fields:$_engineVersion')).toString();
+      '${draft.sourceHash}:$contentHash:$fields$visuals:$_engineVersion')).toString();
   }
 
   static List<Map<String,dynamic>> importedTemplates(
@@ -170,6 +172,8 @@ class WindowsTemplateCloudStore {
       'templateId':templateId,'fileId':fileId,'fileUrl':fileUrl,
       'width':draft.width,'height':draft.height,
       'fields':draft.fields.map((f)=>f.toJson()).toList(),
+      if(draft.visualSlots.isNotEmpty)
+        'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
       'engine':_engineVersion,
     };
     ensureSchool();
