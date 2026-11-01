@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'windows_backend_bridge.dart';
+import 'windows_firebase_sync.dart';
+import 'platform/platform_config.dart';
 import 'windows_connection_center.dart';
 import 'windows_local_firestore.dart';
 
@@ -112,6 +114,61 @@ class WindowsExamService {
       _requireProfile(profile);
       return local;
     }
+  }
+
+  /// Only unused class exams may be removed. Failed verification keeps data.
+  static Future<void> deleteUnusedExam(String examId) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
+      throw StateError('Invalid exam identifier.');
+    }
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final identity = FirebaseFirestore.instance.activeProfileIdentity;
+    final schoolId = identity['schoolSyncId']?.toString() ?? '';
+    final managed = await CentralSchoolCloud.saved();
+    _requireProfile(profile);
+    if (managed['managed'] != true || managed['schoolId'] != schoolId) {
+      throw StateError(
+        'Exam deletion requires the verified managed school connection. '
+        'Legacy/offline records were preserved.',
+      );
+    }
+    final local = await WindowsBackendBridge.localExamAction({
+      'action': 'list_exam_center',
+    });
+    _requireProfile(profile);
+    if (local['success'] != true) throw StateError('Exam list not verified.');
+    final exams = (local['exams'] as List? ?? []).whereType<Map>();
+    if (!exams.any((row) => row['examId']?.toString() == examId)) {
+      throw StateError('Exam no longer exists. Refresh the screen.');
+    }
+    final results = (local['results'] as List? ?? []).whereType<Map>();
+    if (results.any((row) => row['examId']?.toString() == examId)) {
+      throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
+    }
+    // Signed remote results must also be empty; offline deletes fail closed.
+    final idToken = await CentralSchoolCloud.firebaseToken();
+    for (final collection in const ['exam_center_results', 'exam_results']) {
+      _requireProfile(profile);
+      final remote = await WindowsFirebaseRemote.readCollection(
+        projectId: platformProjectId, idToken: idToken, collection: collection,
+      );
+      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
+        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
+      }
+    }
+    _requireProfile(profile);
+    final current = await CentralSchoolCloud.saved();
+    if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
+      throw StateError('School identity changed. Delete cancelled.');
+    }
+    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
+    await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
+    _requireProfile(profile);
+    await FirebaseFirestore.instance.collection('_local_exam_center_exams')
+        .doc(examId).delete();
+    _requireProfile(profile);
+    await FirebaseFirestore.instance.collection('school_settings')
+        .doc('exam_$examId').delete();
   }
 
   static void _requireProfile(String profile) {
