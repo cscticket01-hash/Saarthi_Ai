@@ -86,7 +86,7 @@ class SchoolTemplateDraft {
 
 class SchoolTemplateImportEngine {
   static const maxSourceBytes=16*1024*1024;
-  static const maxPngBytes=24*1024*1024;
+  static const maxPngBytes=18*1024*1024;
   static const maxPixels=12000000;
   static bool isPdf(Uint8List b)=>b.length>5 &&
     String.fromCharCodes(b.take(5))=='%PDF-';
@@ -139,11 +139,9 @@ class SchoolTemplateImportEngine {
       }
       // Honour phone-camera EXIF orientation before A4 validation.
       // The original file hash remains unchanged for audit/reimport.
+      // Honour EXIF orientation, but preserve intentional A4 landscape layouts.
       final oriented=img.bakeOrientation(decoded);
-      final aspect=oriented.width/oriented.height;
-      final sideways=(aspect-(297/210)).abs()<.075;
-      final upright=sideways?img.copyRotate(oriented,angle:90):oriented;
-      imageBytes=Uint8List.fromList(img.encodePng(upright));
+      imageBytes=Uint8List.fromList(img.encodePng(oriented));
     }
     if(imageBytes.length>maxPngBytes) {
       throw const FormatException('Rendered page exceeds 24 MB.');
@@ -154,8 +152,10 @@ class SchoolTemplateImportEngine {
       throw const FormatException('Template page too small or too large.');
     }
     final aspect=decoded.width/decoded.height;
-    if ((aspect - 210/297).abs() > .075) {
-      throw const FormatException('An A4 portrait source is required.');
+    final portrait=(aspect-210/297).abs()<=.075;
+    final landscape=(aspect-297/210).abs()<=.075;
+    if(!portrait&&!landscape){
+      throw const FormatException('An A4 portrait or landscape source is required.');
     }
     return SchoolTemplateDraft(kind:kind,schoolId:schoolId,filename:filename,
       sourceHash:sha256.convert(bytes).toString(),png:imageBytes,
@@ -274,11 +274,13 @@ class SchoolTemplateImportEngine {
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
     // Generated documents print at real ISO A4; the imported page is
     // admitted by the automatic pipeline only if its aspect ratio is A4.
-    final width=PdfPageFormat.a4.width,height=PdfPageFormat.a4.height;
+    final pageFormat=draft.width>draft.height
+      ?PdfPageFormat.a4.landscape:PdfPageFormat.a4;
+    final width=pageFormat.width,height=pageFormat.height;
     final background=pw.MemoryImage(draft.png);
     final pdf=pw.Document();
     pdf.addPage(pw.Page(
-      pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,
+      pageFormat:pageFormat,margin:pw.EdgeInsets.zero,
       build:(_)=>pw.Stack(children:[
         // Give the stack the exact source page dimensions. Positioned-only
         // stacks have no intrinsic size in the PDF widget layout engine.
