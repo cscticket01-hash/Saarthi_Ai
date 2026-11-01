@@ -104,7 +104,9 @@ class TemplateForgeOfflineOcr {
 
   /// OCR-only adaptive contrast. Never modifies the source print raster.
   static img.Image recognitionRaster(img.Image input,{bool enhanced=false}){
-    final gray=img.grayscale(input);
+    // image.grayscale modifies its argument: never mutate caller-owned
+    // source artwork while enhancing the temporary OCR copy.
+    final gray=img.grayscale(img.Image.from(input));
     if(!enhanced)return gray;
     final pixels=gray.width*gray.height;
     final stride=pixels>4000000?4:2;
