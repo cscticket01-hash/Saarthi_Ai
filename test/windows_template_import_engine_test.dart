@@ -425,6 +425,74 @@ void main() {
     expect(draft.schoolId,school);
   });
 
+  test('verified photo and QR slots require live assets and print safely',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'verified-photo-qr.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
+    ],visualSlots:[
+      const ForgeVisualSlot(role:'studentPhoto',x:.78,y:.07,width:.15,height:.18),
+      const ForgeVisualSlot(role:'qrCode',x:.79,y:.3,width:.13,height:.13),
+    ]);
+    final record=<String,dynamic>{
+      'receiptNo':'VS-55','studentName':'Mira','totalAmount':100,
+      'feeItems':{'Tuition':100},'qr':'https://school.example/record/55',
+    };
+    expect(()=>SchoolTemplateImportEngine.validateDraft(mapped),returnsNormally);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,record),
+      throwsFormatException,
+      reason:'Old source portrait must not be used without a new one');
+    final output=await SchoolTemplateImportEngine.previewPdf(mapped,record,
+      visualAssets:{'studentPhoto':png});
+    expect(output.take(5).toList(),[37,80,68,70,45]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      ...record,'qr':'',
+    },visualAssets:{'studentPhoto':png}),throwsFormatException);
+  });
+
+  test('published visual slots are signed into template version identity',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'published-visual.png',bytes:png);
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
+    ];
+    const slots=[
+      ForgeVisualSlot(role:'studentPhoto',x:.78,y:.07,width:.15,height:.18),
+    ];
+    final hash=sha256.convert(png).toString();
+    final serialized=jsonEncode(fields.map((f)=>f.toJson()).toList());
+    final visuals=jsonEncode(slots.map((s)=>s.toJson()).toList());
+    final id=sha256.convert(utf8.encode(
+      '${draft.sourceHash}:$hash:$serialized:$visuals:TemplateForge-3')).toString();
+    final manifest={
+      'version':1,'approved':true,'schoolId':school,'kind':'receipt',
+      'sourceHash':draft.sourceHash,'filename':'published-visual.png',
+      'contentHash':hash,'width':1000,'height':1400,'engine':'TemplateForge-3',
+      'fields':fields.map((f)=>f.toJson()).toList(),
+      'visualSlots':slots.map((s)=>s.toJson()).toList(),
+      'templateId':id,
+    };
+    final restored=SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      manifest:manifest,png:png);
+    expect(restored.visualSlots.single.role,'studentPhoto');
+    expect(()=>SchoolTemplateImportEngine.fromPublishedManifest(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      manifest:{...manifest,'visualSlots':[
+        {'role':'studentPhoto','x':.58,'y':.07,'width':.15,'height':.18},
+      ]},png:png),throwsFormatException);
+  });
+
   test('published manifest is accepted only for matching school and image hash',() async {
     final source=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
