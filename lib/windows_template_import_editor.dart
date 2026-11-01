@@ -133,7 +133,21 @@ class SchoolTemplateImportEditor {
          db.activeProfileIdentity['schoolSyncId']!=school) {
         throw StateError('School changed.');
       }
-      final pdf=await SchoolTemplateImportEngine.previewPdf(draft,example);
+      final schoolProfile=(await db.collection('school_config')
+        .doc('school_profile_cache').get()).data()??{};
+      if(db.activeProfileId!=profile ||
+        db.activeProfileIdentity['schoolSyncId']!=school){
+        throw StateError('School changed during draft preview.');
+      }
+      final record={...schoolProfile,...example};
+      final images=await WindowsTemplateCloudStore.previewVisualAssets(
+        draft,record);
+      final pdf=await SchoolTemplateImportEngine.previewPdf(
+        draft,record,visualAssets:images);
+      if(db.activeProfileId!=profile ||
+        db.activeProfileIdentity['schoolSyncId']!=school){
+        throw StateError('School changed before draft preview.');
+      }
       if(context.mounted)await WindowsDocumentTemplates.preview(context,pdf,
         title:kind.title+' • Saved auto draft',
         notice:'A local draft, not an approved/published school template. '
