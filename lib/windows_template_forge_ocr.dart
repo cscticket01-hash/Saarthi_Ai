@@ -10,8 +10,11 @@ class TemplateForgeOfflineOcr {
   static const supportedLanguages=['eng','hin','ben','asm'];
 
   static ({String executable,String? tessdata}) _runtime() {
+    // Only the CI smoke test supplies a build-time override. Production
+    // always resolves the installed app's bundled runtime first.
+    const testBundle=String.fromEnvironment('TEMPLATEFORGE_BUNDLE_DIR');
     final appDir=File(Platform.resolvedExecutable).parent.path;
-    final bundled=appDir+Platform.pathSeparator+'ocr'+
+    final bundled=testBundle.isNotEmpty ? testBundle : appDir+Platform.pathSeparator+'ocr'+
       Platform.pathSeparator+'tesseract';
     final bundledExe=bundled+Platform.pathSeparator+'tesseract.exe';
     final bundledData=bundled+Platform.pathSeparator+'tessdata';
