@@ -391,7 +391,7 @@ void main() {
       'receiptNo':'VS-101','studentName':'Mira','totalAmount':1200,
       'feeItems':{'Tuition':1000,'Exam':200},
     });
-    expect(pdf,startsWith([37,80,68,70]));
+    expect(pdf.take(4).toList(),[37,80,68,70]);
   });
 
 }
