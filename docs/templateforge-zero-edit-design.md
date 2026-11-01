@@ -1,39 +1,28 @@
-# TemplateForge — zero-edit image/PDF import
+# TemplateForge — school document template import
 
-## Requested behavior
-An authenticated school operator uploads a **portrait A4 PDF / JPG / PNG** inside **Fee Receipt**, **Report Card** or **Staff Payslip**. The desired destination is a normal reusable, school-scoped template: select once, generate from the actual school record, show print preview, then print/PDF. **No drag-and-drop, manual coordinates or text edits.**
+## Purpose
 
-## Implemented in draft PR #198
-- One import and renderer engine shared by all three destinations, bounded input validation (size, source magic, raster dimension), school identity checks and immutable versioned local drafts.
-- Screen's visible Upload action invokes zero-edit OCR/automatic field detection, not the earlier manual editor.
-- Local-only Tesseract OCR adapter (TSV word bounding boxes) with 25-second timeout, temp-file cleanup and no external AI API.
-- Conservative label/position mapper with confidence threshold, multiple-label ambiguity detection, original background preservation, narrow masking of recognized sample values and A4 PDF sample preview.
-- Saved-draft preview reopening from each of the three tabs, without editing.
-- Test fixtures for three document kinds, invalid/foreign file rejection, automatic label locations, ambiguous fields and no false claims of grades or money values.
+A school uploads its existing A4 receipt, marksheet, or payslip as a single-page PDF, PNG, or JPG. Vidya Saarthi keeps the original artwork as the page background, detects the fields and table, and overlays the current school's record data during the ordinary print-preview flow. Schools do not have to redraw the document or manually place every field.
 
+## Implemented in draft PR #198 (not production-live)
 
-## TemplateForge 3 draft improvements (NOT LIVE)
-- Recognises common receipt/marksheet/payslip labels in English, Hindi, Bengali and Assamese when corresponding offline Tesseract packs are installed. Recognition never calls cloud AI. Existing school artwork stays full colour; a temporary grayscale copy goes to OCR.
-- Handles EXIF-oriented mobile pictures and rotates a sideways A4 photo to portrait. Strong perspective distortion, severe skew, illegible handwriting and arbitrary non-A4 photos are not promised.
-- Suggests document kind by evidence; rejects mismatched receipt/report-card/payslip uploads without overwriting school selections.
-- Detects up to eight OCR-verified repeated fee/subject row slots when both table headers and number cells are readable. Values come from the actual record feeItems/marks, not scanned sample amounts. A different row count blocks print instead of silently losing data.
-- Preview checks missing fields, excessive length, text auto-fit limits, receipt fee sum and payroll arithmetic before rendering. It fails closed on unsafe data rather than clipping text or guessing numbers.
-- Adds targeted regression tests for multilingual OCR, wrong kind, non-A4 input, sideways camera photos, row-count mismatch, invalid salary, fee totals and fitted text.
+- **Input and page safety:** single-page PDF, PNG and JPG/JPEG; portrait and landscape A4; EXIF orientation correction; high-resolution images are reduced to a 12 MP print-safe raster. Multi-page PDFs are rejected rather than silently truncating later pages.
+- **Offline OCR:** the Windows release packages Tesseract 5.5.3 with pinned English, Hindi, Bengali, Assamese and OSD orientation data. OCR is local; no photo is sent to an external AI/OCR service. Original full-colour artwork is preserved; only a temporary grayscale copy is used for OCR.
+- **Document understanding:** OCR-based receipt, marksheet and payslip type suggestion; multilingual label aliases; duplicate/overlapping field detection; confidence-gated field placement. A document-type mismatch or uncertain required field blocks publication.
+- **Blank and populated tables:** recognizes fee/description/amount and subject/marks headers. It can infer up to eight row slots from a blank table when a readable total-row boundary exists, or use readable sample rows. Current record values populate the detected slots; unused slots are masked so sample values do not leak into the new print. More rows than the scanned table can safely hold are rejected.
+- **Print preflight:** validates missing values, text fit, receipt fee totals, marksheet subject totals and percentage, and payslip arithmetic before PDF rendering. Long text is fitted only while it remains legible; it is never silently truncated.
+- **School Drive publication:** uploads the normalized page to that school's connected Drive, reads it back, and verifies its SHA-256. A school-scoped Firestore manifest stores the file identity, content hash, field map and engine version.
+- **Version safety:** up to three template versions are retained per document kind. Uploading a new version does not replace the currently selected version. The new version appears in the existing template grid and the school explicitly chooses which version to use.
+- **Real print routing:** the selected imported template is used by the receipt, marksheet and staff-payslip document render paths, not just by a standalone demo preview.
 
-**Still blocking production:** validated print comparison corpus on real school scans, photo/logo/signature/QR slot inference, multilingual OCR runtime installer bundling/integrity/licence review, richer variable-length table reflow, authenticated school Drive asset sync with verified ACK/rollback, multi-PC propagation, approval/selection and actual receipt/marksheet/payslip print route integration. The new checks do not imply arbitrary photos are correctly converted; unreadable or unmatched documents must be rejected. No existing school record or active template is modified by this draft.
+## Deliberate safety boundaries
 
-## NOT implemented or safe to activate yet
-- **Tesseract is not bundled by this PR.** The installed Windows app must have an approved, reviewed local OCR binary and English language pack available on PATH. Otherwise the app displays a clear OCR-unavailable error and does not alter current selected templates. Installer packaging, integrity/signature check and redistribution licence review remain required.
-- Arbitrary A4 scans are **not** perfectly convertible. Perspective/skew correction, unsupported languages, missing data labels, photo regions and multi-page PDF are out of scope; page 1 only.
-- Complex repeated **fee-item rows, subject-wise grades/marks and pay component tables** are *not* reconstructed automatically. The converter detects labels but deliberately keeps outputs **local drafts**. It never guesses financial values or student grades and never says the template is ready for school-wide print.
-- Existing native selectable document templates are untouched. **Imported drafts are not yet added to school-wide active template selection or 2–5-PC sync**, because their original background files must first be delivered through the existing authenticated school Drive document outbox with verified ACK, versioning, rollback and school isolation. Do not write large image blobs into ordinary Firestore school settings.
-- No Cloudflare/Firebase infrastructure change, no Apps Script overwrite, no licence change and no automatic production release.
+- A photo must still show a clean, near-A4 page. Automatic perspective/edge crop for a page photographed at a strong angle is not implemented; ambiguous or non-A4 pages are rejected rather than guessed.
+- The table engine supports up to eight detected row slots. It does not yet expand a table onto another page or invent additional rows when a school's record exceeds the uploaded table capacity.
+- Only receipt, marksheet and payslip are supported by this importer. It does not replace student/teacher ID-card designers.
+- A successful Drive image read-back does not by itself prove that the manifest has reached every other PC. End-to-end multi-PC propagation, offline/reconnect behaviour and rollback must pass the existing sync acceptance tests.
+- Real school scan corpus comparisons, actual printer tests, and the full Windows installer test remain required.
 
-## Required next acceptance gates
-1. Package an approved offline OCR runtime with Windows installer and check 10+ A4 samples of each template type, including scans and image-based PDFs.
-2. Build repeatable table/row layout reconstruction and record-schema mapping for all 3 types; validate amounts, totals and grades against the source record.
-3. Add a verified preview/print comparison and fail closed on unreadable fields, duplicate names or mismatched sum.
-4. Integrate school-owned asset sync and versioned template approvals using existing safe Drive storage. Prove 1/2/5-PC restart/offline and rollback acceptance.
-5. Only after all above: make approved imported templates appear beside built-in selections and route all receipt/report-card/payslip print functions through the common chosen renderer.
+## Release gate
 
-Keep PR #198 **DRAFT / NOT LIVE** until complete and tested. No manual mapping should be required from school users.
+PR #198 must pass the dedicated Windows TemplateForge workflow, the repository's platform/sync/security checks, and real A4 preview/print acceptance before merge or production deployment. No release is authorised by this design note alone.
