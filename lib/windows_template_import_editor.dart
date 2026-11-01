@@ -6,6 +6,8 @@ import 'windows_local_firestore.dart';
 import 'windows_template_import_engine.dart';
 import 'windows_template_forge_ocr.dart';
 import 'windows_template_forge_auto.dart';
+import 'windows_template_forge_visual_slots.dart';
+import 'windows_template_cloud_store.dart';
 
 /// Zero-edit TemplateForge upload and preview for the three supported tabs.
 /// Approved pages are hash-verified in the school's Drive and listed as selectable versions.
@@ -36,7 +38,22 @@ class SchoolTemplateImportEditor {
       if(!sameSchool())throw StateError('School changed during orientation detection.');
       final tsv=await TemplateForgeOfflineOcr.recognize(oriented);
       if(!sameSchool())throw StateError('School changed during recognition.');
-      final result=TemplateForgeAutoMapper.detect(oriented,tsv);
+      final textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
+      final labels=TemplateForgeVisualSlots.labelCounts(
+        tsv,oriented.width,oriented.height);
+      final slots=labels.isEmpty?const <ForgeVisualSlot>[]:
+        TemplateForgeVisualSlots.detect(oriented,tsv);
+      final allVerified=labels.isNotEmpty &&
+        labels.values.every((count)=>count==1) &&
+        slots.length==labels.length;
+      final warnings=[...textRecognition.warnings];
+      if(allVerified){
+        warnings.remove('Image/QR/signature slot needs verified automatic replacement.');
+      }
+      final result=ForgeRecognition(
+        textRecognition.draft.copyWith(
+          visualSlots:allVerified?slots:const <ForgeVisualSlot>[]),
+        textRecognition.detected,textRecognition.missing,warnings);
       if(!context.mounted)return;
       if(!result.safeToActivate){
         final missing=result.missing.isEmpty?'none':result.missing.join(', ');
@@ -58,6 +75,13 @@ class SchoolTemplateImportEditor {
         'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
       };
       SchoolTemplateImportEngine.validatePreviewRecord(result.draft,record);
+      final imageAssets=await WindowsTemplateCloudStore.previewVisualAssets(
+        result.draft,record);
+      if(!sameSchool())throw StateError('School changed during image preview.');
+      // Render the complete source+live-record preview before any Drive write.
+      await SchoolTemplateImportEngine.previewPdf(
+        result.draft,record,visualAssets:imageAssets);
+      if(!sameSchool())throw StateError('School changed before publication.');
       final manifest=await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
       if(!sameSchool()||!context.mounted)return;
       final output=await WindowsDocumentTemplates.renderImportedTemplate(
