@@ -422,6 +422,23 @@ void main() {
       throwsFormatException);
   });
 
+  test('A4-looking camera canvas still crops verified landscape page edges',() async {
+    final camera=img.Image(width:1400,height:1000);
+    img.fill(camera,color:img.ColorRgb8(15,15,15));
+    img.fillRect(camera,x1:80,y1:60,x2:1320,y2:940,
+      color:img.ColorRgb8(255,255,255));
+    final raw=Uint8List.fromList(img.encodePng(camera));
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'camera-landscape.png',bytes:raw);
+    expect((draft.width/draft.height-297/210).abs(),lessThan(.075));
+    final corrected=img.decodePng(draft.png)!;
+    final upper=corrected.getPixel(0,0);
+    expect(upper.r+upper.g+upper.b,greaterThan(570),
+      reason:'The dark camera background must not survive onto an A4 print');
+    expect(draft.sourceHash,sha256.convert(raw).toString());
+  });
+
   test('high-confidence page on dark camera background is automatically rectified',() async {
     final camera=img.Image(width:1000,height:1000);
     img.fill(camera,color:img.ColorRgb8(20,20,20));
