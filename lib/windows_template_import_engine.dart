@@ -10,6 +10,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'windows_template_forge_photo.dart';
+import 'windows_template_office_converter.dart';
 
 /// One school-scoped engine for fee receipts, report cards and staff payslips.
 /// Raster background stays unchanged; only mapped overlay fields are editable.
@@ -255,6 +256,7 @@ class SchoolTemplateImportEngine {
     required SchoolTemplateKind kind,required String schoolId,
     required String filename,required Uint8List bytes,
     Future<List<Uint8List>> Function(Uint8List)? pdfPagesRasterizer,
+    Future<Uint8List> Function(String,Uint8List)? officePdfConverter,
   }) async {
     verifySchool(schoolId);
     if(bytes.isEmpty || bytes.length>maxSourceBytes) {
@@ -265,10 +267,34 @@ class SchoolTemplateImportEngine {
       throw const FormatException('Invalid file name.');
     }
     final ext=filename.split('.').last.toLowerCase();
+    if(SchoolTemplateOfficeConverter.supports(filename)){
+      // This bridge produces a PDF only. Every office source still passes
+      // the SAME single-page A4 raster and OCR rules as a normal PDF.
+      // An injected converter is only for deterministic offline tests;
+      // Office signature and ZIP safety checks are never skipped.
+      SchoolTemplateOfficeConverter.validateSource(filename,bytes);
+      final converted=officePdfConverter!=null
+        ?await officePdfConverter(filename,bytes)
+        :await SchoolTemplateOfficeConverter.convert(
+          filename:filename,bytes:bytes);
+      if(converted.length>maxSourceBytes ||
+        !SchoolTemplateOfficeConverter.isPdf(converted)){
+        throw const FormatException('Office file did not convert to a safe PDF.');
+      }
+      final pdfDraft=await importBytes(
+        kind:kind,schoolId:schoolId,filename:'converted-office.pdf',
+        bytes:converted,pdfPagesRasterizer:pdfPagesRasterizer);
+      return SchoolTemplateDraft(
+        kind:kind,schoolId:schoolId,filename:filename,
+        // Preserve original Word/Excel bytes as the immutable identity.
+        sourceHash:sha256.convert(bytes).toString(),
+        png:pdfDraft.png,width:pdfDraft.width,height:pdfDraft.height);
+    }
     if(!['pdf','png','jpg','jpeg'].contains(ext) ||
       (ext=='pdf'&&!isPdf(bytes)) || (ext=='png'&&!isPng(bytes)) ||
       (['jpg','jpeg'].contains(ext)&&!isJpeg(bytes))) {
-      throw const FormatException('Please select a genuine PDF, PNG or JPG.');
+      throw const FormatException(
+        'Select a genuine PDF, PNG, JPG, DOC, DOCX, XLS or XLSX file.');
     }
     Uint8List imageBytes;
     if(ext=='pdf') {

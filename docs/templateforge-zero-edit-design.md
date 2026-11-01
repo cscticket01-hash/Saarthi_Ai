@@ -34,3 +34,12 @@ PR #198 must pass the dedicated Windows TemplateForge workflow, the repository's
 - **Physical print proof:** the TemplateForge Windows review workflow publishes `templateforge-a4-print-proof` as an artifact. Print the PDF at 100% scale, measure the 100 mm vertical/horizontal black lines and their 10 mm margin from paper edges. Only real measurements can confirm hardware accuracy.
 - **1/2/5-PC safety:** school-version readback checks that versions seen before the write remain present, and catches detectable lost updates. This is **not** atomic server CAS, nor proof of concurrent 5-device delivery or Drive rollback. Do not release until multi-PC real-cloud acceptance and rollback evidence exists.
 - **Real school corpus:** do not upload identifiable student/staff records to the repository. Record redacted, consented A4 PDF/JPG/PNG, poor scan, signature, image and multi-row samples; compare against a paper proof and manually mark pass/fail. The synthetic unit tests do not satisfy this gate.
+
+
+## Word and Excel import (draft PR #198)
+
+- The SAME import button supports .docx/.doc from Word and .xlsx/.xls from Excel alongside PDF/JPG/PNG. This is a local format adapter, not another OCR, template editor or school sync engine.
+- A locally installed LibreOffice desktop app converts the Word/Excel file to PDF without an online conversion service. On Windows, installed Microsoft Word or Excel desktop is a fallback with macros disabled and sources opened read-only. One of these desktop apps must be installed; browser-only Office does not supply a converter.
+- The original Office bytes remain the immutable source-hash identity. Converted PDF pages pass the existing A4 validation, offline OCR, school isolation, field detection, preview and Drive read-back. Multi-sheet Excel or multi-page Word files are rejected rather than silently dropping school records.
+- Office OpenXML ZIP metadata is checked for the expected document/workbook entries, archive expansion limits, and macro/external connections. Unsupported macro-enabled formats are rejected. Corrupt, oversized or encrypted files cannot activate a template.
+- Automated tests check Word/Excel signature matching, spoofed ZIPs, original hash identity, A4 preview integration and multi-page safety. Live installed Word/Excel/LibreOffice and school documents still require physical acceptance.

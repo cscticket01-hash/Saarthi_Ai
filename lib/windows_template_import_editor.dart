@@ -24,8 +24,8 @@ class SchoolTemplateImportEditor {
       db.activeProfileIdentity['schoolSyncId']==school;
     try {
       SchoolTemplateImportEngine.verifySchool(school);
-      const types=XTypeGroup(label:'A4 image or PDF',
-        extensions:['pdf','png','jpg','jpeg']);
+      const types=XTypeGroup(label:'A4 PDF, image, Word or Excel',
+        extensions:['pdf','png','jpg','jpeg','doc','docx','xls','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
       if(!sameSchool())throw StateError('School changed.');
