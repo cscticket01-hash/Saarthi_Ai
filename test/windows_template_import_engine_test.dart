@@ -394,4 +394,24 @@ void main() {
     expect(pdf.take(4).toList(),[37,80,68,70]);
   });
 
+  test('blank marksheet table maps subject slots and validates the real record',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.reportCard,schoolId:school,
+      filename:'blank-marksheet.png',bytes:png);
+    final ocr=sampleOcr([
+      'Student Name Mira','Class 5','Exam Name Final',
+      'Subject Marks','Total Marks 262',
+    ]);
+    final mapped=TemplateForgeAutoMapper.detect(draft,ocr);
+    expect(mapped.safeToActivate,isTrue);
+    expect(mapped.draft.fields.where((f)=>f.key.startsWith('subjectName')).length,
+      greaterThanOrEqualTo(3));
+    final pdf=await SchoolTemplateImportEngine.previewPdf(mapped.draft,{
+      'studentName':'Mira','class':'5','examName':'Final',
+      'marks':{'English':84,'Mathematics':91,'Science':87},
+      'totalMarks':262,'fullMarks':100,'percentage':'87.3',
+    });
+    expect(pdf.take(4).toList(),[37,80,68,70]);
+  });
+
 }
