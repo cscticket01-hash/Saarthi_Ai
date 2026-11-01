@@ -318,6 +318,12 @@ jobs:
         shell: powershell
         run: .github/scripts/bundle_templateforge_ocr.ps1 -ReleaseDirectory 'build/windows/x64/runner/Release'
 
+      - name: Smoke-test packaged offline OCR from Dart
+        shell: powershell
+        run: |
+          flutter test --concurrency=1 test/windows_template_forge_ocr_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged offline OCR smoke test failed.' }
+
       - name: Sign and verify application
         if: steps.publisher_signing.outputs.available == 'true'
         shell: powershell
