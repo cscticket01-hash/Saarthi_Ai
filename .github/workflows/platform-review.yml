@@ -395,6 +395,12 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
+    - name: Free space for Android compilation
+      shell: bash
+      run: |
+        # This isolated runner builds Android only; retain Java and Android SDK.
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+        df -h /
     - uses: actions/checkout@v4
     - uses: actions/setup-java@v4
       with:
