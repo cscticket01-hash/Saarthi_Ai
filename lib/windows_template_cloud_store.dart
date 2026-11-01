@@ -177,8 +177,13 @@ class WindowsTemplateCloudStore {
       'engine':_engineVersion,
     };
     ensureSchool();
-    final allAssets=settings['templateAssets'] is Map
-      ?Map<String,dynamic>.from(settings['templateAssets'] as Map)
+    // The Drive upload can take time. Merge from the latest local/cloud
+    // settings snapshot, not the stale state loaded before upload, to avoid
+    // erasing a version added by another device during that wait.
+    final latestSettings=await _settings();
+    ensureSchool();
+    final allAssets=latestSettings['templateAssets'] is Map
+      ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
       :<String,dynamic>{};
     final rawVersions=allAssets[draft.kind.name];
     final versions=<String,dynamic>{};
@@ -196,7 +201,7 @@ class WindowsTemplateCloudStore {
       }
     }
     versions[templateId]=manifest;
-    final selected=(settings[draft.kind.name]?.toString()??'');
+    final selected=(latestSettings[draft.kind.name]?.toString()??'');
     final selectedId=selected.startsWith('imported:')?selected.substring(9):'';
     while(versions.length>_maxVersions){
       final removable=versions.keys.firstWhere(
@@ -207,8 +212,8 @@ class WindowsTemplateCloudStore {
       versions.remove(removable);
     }
     allAssets[draft.kind.name]=versions;
-    final latest=settings['templateAssetLatest'] is Map
-      ?Map<String,dynamic>.from(settings['templateAssetLatest'] as Map)
+    final latest=latestSettings['templateAssetLatest'] is Map
+      ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
       :<String,dynamic>{};
     latest[draft.kind.name]=templateId;
     await db.collection('school_settings').doc('document_templates').set({
