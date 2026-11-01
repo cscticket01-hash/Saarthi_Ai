@@ -317,6 +317,24 @@ void main() {
       isEmpty,reason:'OCR labels alone must never invent a photo location');
   });
 
+  test('visually open photo border is rejected before reuse',() async {
+    final canvas=img.Image(width:1000,height:1400);
+    img.fill(canvas,color:img.ColorRgb8(255,255,255));
+    img.drawRect(canvas,x1:60,y1:50,x2:300,y2:250,
+      color:img.ColorRgb8(0,0,0),thickness:3);
+    img.fillRect(canvas,x1:146,y1:49,x2:156,y2:53,
+      color:img.ColorRgb8(255,255,255));
+    img.fillRect(canvas,x1:146,y1:247,x2:156,y2:251,
+      color:img.ColorRgb8(255,255,255));
+    final source=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'broken-border.png',
+      bytes:Uint8List.fromList(img.encodePng(canvas)));
+    expect(TemplateForgeVisualSlots.detect(
+      source,sampleOcr(['PHOTO'])),isEmpty,
+      reason:'Broken rectangle must not authorize old-image masking');
+  });
+
   test('visual planner refuses duplicate ambiguous photo labels',() async {
     final canvas=img.Image(width:1000,height:1400);
     img.fill(canvas,color:img.ColorRgb8(255,255,255));

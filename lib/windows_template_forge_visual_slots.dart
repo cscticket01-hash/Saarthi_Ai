@@ -52,9 +52,19 @@ class TemplateForgeVisualSlots {
   }
 
   static bool _closedBorder(img.Image raster,int l,int t,int r,int b){
+    // An OCR-detected photograph must be surrounded on ALL four sides.
+    // Two table columns or an open decorative box cannot authorise wiping
+    // a prior student's portrait into an unrelated document.
     for(var step=1;step<=7;step++){
       final y=t+((b-t)*step/8).round();
       if(!_darkNear(raster,l,y)||!_darkNear(raster,r,y))return false;
+      final x=l+((r-l)*step/8).round();
+      var top=false,bottom=false;
+      for(var d=-2;d<=2;d++){
+        if(_dark(raster,x,t+d))top=true;
+        if(_dark(raster,x,b+d))bottom=true;
+      }
+      if(!top||!bottom)return false;
     }
     return true;
   }

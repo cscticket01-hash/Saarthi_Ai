@@ -52,3 +52,10 @@ Use a **TEST school**, no real students, and the school's own connected Drive. E
 7. Run real Word/Excel conversions on Windows school PCs with locally installed LibreOffice/Word/Excel and inspect all printed pages for accidental extra Excel sheets or cropped Word layouts.
 
 **Status:** No real Windows printer enumeration, physical measurement, or real 5-PC Drive rollback data has been collected here. Keep release gated until those checks are actually performed.
+
+
+## Non-destructive template version retention
+
+- Instead of deleting historical templates after three uploads, the verified school manifest retains up to 32 immutable template versions. New uploads beyond that bound are rejected until a separate reviewed archiving process exists. Old selected versions and rollback copies remain in Drive.
+- The 1/2/5-device tests exercise the same manifest append helper as publication, including repeat upload and immutable-version protection. They remain synthetic: server-side atomic compare-and-swap and real concurrent online Drive publication still require live tests.
+- Visual-slot recognition now requires an enclosed border on all four sides. Open ornamental rectangles are rejected rather than treated as a safe old-photo replacement target.

@@ -103,6 +103,54 @@ void main(){
       isFalse);
   });
 
+  test('1/2/5-device upload history retains every version and rollback',(){
+    const school='vs-db8afb01a3be46a983c8284714d06e5d';
+    Map<String,dynamic> history={};
+    for(var device=1;device<=5;device++){
+      final id='sha-from-pc-$device';
+      history=WindowsTemplateCloudStore.appendedVersionHistory(
+        history,id,{
+          'version':1,'approved':true,'schoolId':school,
+          'kind':'receipt','sourceHash':id,'contentHash':'hash-$device',
+          'templateId':id,'filename':'PC $device',
+        });
+      expect(history.length,device);
+      expect(history.keys,contains('sha-from-pc-1'));
+    }
+    final initial={'templateAssets':{'receipt':history},
+      'receipt':'imported:sha-from-pc-1'};
+    expect(WindowsTemplateCloudStore.importedAsset(initial,'receipt')
+      ?['templateId'],'sha-from-pc-1');
+    expect(WindowsTemplateCloudStore.containsExpectedVersions(
+      initial,'receipt',history.keys),isTrue);
+    // Idempotent retry never adds a duplicate manifest or drops a version.
+    final old=Map<String,dynamic>.from(history['sha-from-pc-3'] as Map);
+    final retried=WindowsTemplateCloudStore.appendedVersionHistory(
+      history,'sha-from-pc-3',old);
+    expect(retried.length,5);
+    expect(retried.keys.toList(),history.keys.toList());
+    expect(WindowsTemplateCloudStore.appendedVersionHistory(
+      history,'sha-from-pc-1',{...old,'templateId':'sha-from-pc-1'}),
+      throwsStateError,reason:'An immutable rollback version cannot be overwritten');
+  });
+
+  test('history capacity rejects uploads rather than evicting rollback copies',(){
+    Map<String,dynamic> history={};
+    for(var n=0;n<WindowsTemplateCloudStore.maxStoredVersions;n++){
+      history=WindowsTemplateCloudStore.appendedVersionHistory(
+        history,'v-$n',{'version':1,'sourceHash':'v-$n',
+          'contentHash':'hash-$n','schoolId':'school',
+          'kind':'receipt','templateId':'v-$n'});
+    }
+    final last=Map<String,dynamic>.from(history['v-0'] as Map);
+    expect(()=>WindowsTemplateCloudStore.appendedVersionHistory(
+      history,'v-overflow',{...last,'templateId':'v-overflow',
+        'sourceHash':'v-overflow','contentHash':'different'}),
+      throwsStateError);
+    expect(history.keys.first,'v-0');
+    expect(history.length,WindowsTemplateCloudStore.maxStoredVersions);
+  });
+
   test('five-device manifest ACK simulation detects lost peer updates',(){
     const school='vs-db8afb01a3be46a983c8284714d06e5d';
     final assets=<String,dynamic>{

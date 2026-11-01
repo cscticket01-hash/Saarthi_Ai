@@ -12,7 +12,9 @@ import 'windows_template_import_engine.dart';
 /// Existing templates stay selected until the school explicitly chooses a new version.
 class WindowsTemplateCloudStore {
   static const _engineVersion='TemplateForge-3';
-  static const _maxVersions=3;
+  // Keep rollback history across up to five devices; do not silently remove
+  // verified Drive versions during another PC's concurrent upload.
+  static const maxStoredVersions=32;
 
   static Future<Map<String,dynamic>> _settings() async =>
     (await FirebaseFirestore.instance.collection('school_settings')
@@ -82,6 +84,45 @@ class WindowsTemplateCloudStore {
       return importedAsset(settings,kind,templateId:selected.substring(9));
     }
     return versions.first;
+  }
+
+  /// Pure, non-destructive manifest merge used by the real publisher and
+  /// by 1/2/5-device regression tests. An existing version is immutable.
+  /// Reaching the bounded catalog limit refuses a new upload: it never
+  /// silently evicts the active template or the rollback target.
+  static Map<String,dynamic> appendedVersionHistory(
+    dynamic rawVersions,String templateId,Map<String,dynamic> manifest,
+  ){
+    final versions=<String,dynamic>{};
+    if(rawVersions is Map){
+      if(rawVersions['version']==1 && rawVersions['sourceHash'] is String){
+        final old=Map<String,dynamic>.from(rawVersions);
+        final id=old['templateId']?.toString()??
+          old['sourceHash'].toString();
+        versions[id]=old;
+      }else{
+        for(final entry in rawVersions.entries){
+          if(entry.value is Map){
+            versions[entry.key.toString()]=
+              Map<String,dynamic>.from(entry.value as Map);
+          }
+        }
+      }
+    }
+    final prior=versions[templateId];
+    if(prior is Map && (prior['sourceHash']!=manifest['sourceHash'] ||
+      prior['contentHash']!=manifest['contentHash'] ||
+      prior['schoolId']!=manifest['schoolId'] ||
+      prior['kind']!=manifest['kind'])){
+      throw StateError('Template version identity collision; existing'
+        ' Drive version must not be overwritten.');
+    }
+    versions[templateId]=manifest;
+    if(versions.length>maxStoredVersions){
+      throw StateError('School template history is full.'
+        ' Archive older versions safely before publishing another template.');
+    }
+    return versions;
   }
 
   /// A matching PNG hash is not sufficient to borrow another school's
@@ -210,31 +251,8 @@ class WindowsTemplateCloudStore {
       ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
       :<String,dynamic>{};
     final rawVersions=allAssets[draft.kind.name];
-    final versions=<String,dynamic>{};
-    if(rawVersions is Map){
-      if(rawVersions['version']==1 && rawVersions['sourceHash'] is String){
-        final old=Map<String,dynamic>.from(rawVersions);
-        final oldId=old['templateId']?.toString()??old['sourceHash'].toString();
-        versions[oldId]=old;
-      }else{
-        for(final entry in rawVersions.entries){
-          if(entry.value is Map){
-            versions[entry.key.toString()]=Map<String,dynamic>.from(entry.value as Map);
-          }
-        }
-      }
-    }
-    versions[templateId]=manifest;
-    final selected=(latestSettings[draft.kind.name]?.toString()??'');
-    final selectedId=selected.startsWith('imported:')?selected.substring(9):'';
-    while(versions.length>_maxVersions){
-      final removable=versions.keys.firstWhere(
-        (key)=>key!=selectedId && key!=templateId,
-        orElse:()=>templateId,
-      );
-      if(removable==templateId)break;
-      versions.remove(removable);
-    }
+    final versions=appendedVersionHistory(
+      rawVersions,templateId,manifest);
     allAssets[draft.kind.name]=versions;
     final latest=latestSettings['templateAssetLatest'] is Map
       ?Map<String,dynamic>.from(latestSettings['templateAssetLatest'] as Map)
