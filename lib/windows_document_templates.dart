@@ -828,9 +828,22 @@ class _SchoolDocumentTemplatesScreenState
       : 0;
   List<IdCardCatalogEntry> _choices(String kind) =>
       _catalog.where((e) => e.kinds.contains(kind)).toList();
+  int _baseTemplateCount(String kind) =>
+      kind=='payslip' ? 1 : (windowsReferenceDocumentNames[kind]?.length ?? 0);
+  List<String> _baseTemplateNames(String kind) =>
+      kind=='payslip' ? const ['Classic • Staff payslip']
+        : List<String>.from(windowsReferenceDocumentNames[kind]??const <String>[]);
+
   int _chosen() {
     if (_kind == 'studentId') return 0;
     final value = _selected[_kind];
+    if(value is String && value.startsWith('imported:')){
+      final templates=WindowsDocumentTemplates.importedTemplates(_selected,_kind);
+      final index=templates.indexWhere((asset)=>
+        asset['approved']==true &&
+        (asset['templateId']??asset['sourceHash'])==value.substring(9));
+      return index<0?-1:_baseTemplateCount(_kind)+index;
+    }
     if (value is String && value.startsWith('manifest:')) {
       final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
       return i < 0 ? -1 : _legacyCount(_kind) + i;
@@ -883,6 +896,15 @@ class _SchoolDocumentTemplatesScreenState
                 ...windowsReferenceDocumentNames['teacherId']!,
               ..._choices(kind).map((e) => e.name),
             ];
+          for(final kind in ['receipt','reportCard','payslip']){
+            final assets=WindowsDocumentTemplates.importedTemplates(v,kind)
+              .where((asset)=>asset['approved']==true &&
+                asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']);
+            _names[kind]=[
+              ..._baseTemplateNames(kind),
+              ...assets.map((asset)=>'School upload • ${asset['filename']??'A4 template'}'),
+            ];
+          }
           _loading = false;
         });
     } catch (e) {
@@ -975,11 +997,20 @@ class _SchoolDocumentTemplatesScreenState
 
   Future<void> _select(int index) async {
     final kind = _kind, count = _legacyCount(_kind);
-    final value =
-        {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
+    final settings=await WindowsDocumentTemplates.selections();
+    final templates=WindowsDocumentTemplates.importedTemplates(settings,kind);
+    final customIndex=index-_baseTemplateCount(kind);
+    final asset=customIndex>=0 && customIndex<templates.length
+      ?templates[customIndex]:null;
+    final isImported=['receipt','reportCard','payslip'].contains(kind) &&
+      asset!=null && asset['approved']==true &&
+      asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    final value = isImported
+        ? 'imported:${asset['templateId']??asset['sourceHash']}'
+        : {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
             index >= count
-        ? 'manifest:${_choices(kind)[index - count].id}'
-        : index;
+          ? 'manifest:${_choices(kind)[index - count].id}'
+          : index;
     await FirebaseFirestore.instance
         .collection('school_settings')
         .doc('document_templates')
@@ -1046,38 +1077,25 @@ class _SchoolDocumentTemplatesScreenState
                 OutlinedButton.icon(
                   key:ValueKey('upload-template-'+_kind),
                   icon:const Icon(Icons.upload_file_outlined),
-                  label:const Text('Auto-create A4 template from PDF / Image'),
-                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.pickAutomatic(
-                    context,
-                    switch (_kind) {
-                      'receipt'=>SchoolTemplateKind.receipt,
-                      'reportCard'=>SchoolTemplateKind.reportCard,
-                      _=>SchoolTemplateKind.payslip,
-                    },
-                    _sample,
-                  ),
-                ),
-                TextButton.icon(
-                  key:ValueKey('open-local-template-drafts-'+_kind),
-                  icon:const Icon(Icons.folder_open_outlined),
-                  label:const Text('Preview generated drafts'),
-                  onPressed:_loading?null:()=>SchoolTemplateImportEditor.previewSavedAutomatic(
-                    context,
-                    switch (_kind) {
-                      'receipt'=>SchoolTemplateKind.receipt,
-                      'reportCard'=>SchoolTemplateKind.reportCard,
-                      _=>SchoolTemplateKind.payslip,
-                    },
-                    _sample,
-                  ),
+                  label:const Text('Upload A4 PDF / PNG / JPG template'),
+                  onPressed:_loading?null:() async {
+                    await SchoolTemplateImportEditor.pickAutomatic(
+                      context,
+                      switch (_kind) {
+                        'receipt'=>SchoolTemplateKind.receipt,
+                        'reportCard'=>SchoolTemplateKind.reportCard,
+                        _=>SchoolTemplateKind.payslip,
+                      },
+                      _sample,
+                    );
+                    if(mounted)await _initializeCatalog();
+                  },
                 ),
               ]),
             ),
             const Padding(
               padding:EdgeInsets.symmetric(vertical:9),
-              child:Text('One shared import engine: preserve the original design, '
-                'auto-detect fields and preview A4 PDF. Imports save as LOCAL '
-                'DRAFTS only; existing school-wide templates are not replaced.',
+              child:Text('Original A4 design is preserved. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
                 style:TextStyle(fontSize:12)),
             ),
           ],
