@@ -29,6 +29,10 @@ import 'package:printing/printing.dart';
 
 import 'windows_local_firestore.dart';
 import 'windows_reference_documents.dart';
+import 'windows_template_import_engine.dart';
+import 'windows_template_import_editor.dart';
+import 'windows_template_cloud_store.dart';
+import 'windows_template_import_engine.dart';
 import 'windows_student_id_cards.dart';
 import 'windows_sync_recovery.dart';
 
@@ -70,6 +74,30 @@ class WindowsDocumentTemplates {
               .get())
           .data() ??
       {};
+
+  static List<Map<String,dynamic>> importedTemplates(
+    Map<String,dynamic> settings,String kind,
+  ) => WindowsTemplateCloudStore.importedTemplates(settings,kind);
+
+  static List<Map<String,dynamic>> availableImportedTemplates(
+    Map<String,dynamic> settings,String kind,String schoolId,
+  ) => WindowsTemplateCloudStore.availableSchoolTemplates(settings,kind,schoolId);
+
+  static Map<String,dynamic>? importedAsset(
+    Map<String,dynamic> settings,String kind,{String? templateId}
+  ) => WindowsTemplateCloudStore.importedAsset(settings,kind,templateId:templateId);
+
+  static int importedTemplateIndex(String kind) =>
+    windowsReferenceDocumentNames[kind]?.length ?? (kind=='payslip'?1:0);
+
+  static Future<Map<String,dynamic>> publishImportedTemplate(
+    SchoolTemplateDraft draft,
+  ) => WindowsTemplateCloudStore.publish(draft);
+
+  static Future<Uint8List> renderImportedTemplate(
+    String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
+  ) => WindowsTemplateCloudStore.render(kind,manifest,record);
+
   static Future<Uint8List?> _image(dynamic raw) async {
     final source = raw?.toString().trim() ?? '';
     if (source.startsWith('data:image/')) {
@@ -507,9 +535,10 @@ class WindowsDocumentTemplates {
         data = {...student, ...data};
       }
     }
+    final templateSettings=await selections();
     final v = kind == 'studentId'
         ? 'manifest:$studentIdTemplateId'
-        : kind == 'reportCard' ? 0 : (await selections())[kind];
+        : templateSettings[kind] ?? 0;
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -519,6 +548,32 @@ class WindowsDocumentTemplates {
         {};
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
+    final schoolName=[profile['schoolName'],profile['name'],data['schoolName']]
+      .map((v)=>v?.toString().trim()??'')
+      .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
+    if(v is String && v.startsWith('imported:')){
+      final manifest=importedAsset(templateSettings,kind,templateId:v.substring(9));
+      if(manifest==null){
+        throw StateError('Selected school template manifest is missing or mismatched.');
+      }
+      final record={
+        ...profile,...data,
+        'schoolName':schoolName,
+        'schoolAddress':profile['address']??data['schoolAddress']??'',
+        'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
+        if(qr.isNotEmpty)'qr':qr,
+        if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
+          'dateText':_documentDate(data['timestamp']),
+      };
+      return renderImportedTemplate(kind,manifest,record);
+    }
+    if(kind=='payslip'){
+      return renderWindowsPayslip({
+        ...profile,...data,
+        'netPaise':data['netPaise']??data['salaryNetPaise']??0,
+        'paidPaise':data['paidPaise']??0,
+      },schoolName:schoolName);
+    }
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
       _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
@@ -545,7 +600,7 @@ class WindowsDocumentTemplates {
         {
           ...profile,
           ...data,
-          'schoolName': profile['schoolName'] ?? profile['name'] ?? '',
+          'schoolName': schoolName,
           'schoolAddress': profile['address'] ?? '',
           'designation':
               data['designation'] ??
@@ -620,13 +675,30 @@ class WindowsDocumentTemplates {
                 .get())
             .data() ??
         {};
+    final schoolName=[profile['schoolName'],profile['name'],data['schoolName']]
+      .map((v)=>v?.toString().trim()??'')
+      .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
     final branding = {
       ...data,
       ...profile,
-      'schoolName': profile['schoolName'] ?? '',
+      'schoolName': schoolName,
       'schoolAddress': profile['address'] ?? '',
       'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
     };
+    final customIndex=index-importedTemplateIndex(kind);
+    if(['receipt','reportCard','payslip'].contains(kind) && customIndex>=0){
+      final customTemplates=availableImportedTemplates(
+        await selections(),kind,
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
+      if(customIndex<customTemplates.length){
+        return renderImportedTemplate(kind,customTemplates[customIndex],{
+          ...profile,...data,
+          'schoolName':schoolName,
+          'schoolAddress':profile['address']??data['schoolAddress']??'',
+          'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
+        });
+      }
+    }
     if (kind == 'payslip') return renderWindowsPayslip({...data, ...{'netPaise':2850000,'paidPaise':2000000,'basicPaise':2500000,'allowancePaise':400000,'deductionPaise':50000,'role':'Teacher','month':'2026-10','status':'Part paid'}},schoolName:branding['schoolName']?.toString()??'');
     final images = await Future.wait<Uint8List?>([
       _image(profile['logoUrl']),
@@ -771,9 +843,24 @@ class _SchoolDocumentTemplatesScreenState
       : 0;
   List<IdCardCatalogEntry> _choices(String kind) =>
       _catalog.where((e) => e.kinds.contains(kind)).toList();
+  int _baseTemplateCount(String kind) =>
+      kind=='payslip' ? 1 : (windowsReferenceDocumentNames[kind]?.length ?? 0);
+  List<String> _baseTemplateNames(String kind) =>
+      kind=='payslip' ? const ['Classic • Staff payslip']
+        : List<String>.from(windowsReferenceDocumentNames[kind]??const <String>[]);
+
   int _chosen() {
     if (_kind == 'studentId') return 0;
     final value = _selected[_kind];
+    if(value is String && value.startsWith('imported:')){
+      final templates=WindowsDocumentTemplates.availableImportedTemplates(
+        _selected,_kind,
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
+      final index=templates.indexWhere((asset)=>
+        asset['approved']==true &&
+        (asset['templateId']??asset['sourceHash'])==value.substring(9));
+      return index<0?-1:_baseTemplateCount(_kind)+index;
+    }
     if (value is String && value.startsWith('manifest:')) {
       final i = _choices(_kind).indexWhere((e) => e.id == value.substring(9));
       return i < 0 ? -1 : _legacyCount(_kind) + i;
@@ -812,6 +899,8 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   Future<void> _initializeCatalog() async {
+    // Version ordering can change after an upload; never reuse an old card image.
+    _thumbnails.clear();
     try {
       final entries = await IdCardCatalog.load(),
           v = await WindowsDocumentTemplates.selections();
@@ -826,6 +915,15 @@ class _SchoolDocumentTemplatesScreenState
                 ...windowsReferenceDocumentNames['teacherId']!,
               ..._choices(kind).map((e) => e.name),
             ];
+          for(final kind in ['receipt','reportCard','payslip']){
+            final assets=WindowsDocumentTemplates.availableImportedTemplates(
+              v,kind,
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']?.toString()??'');
+            _names[kind]=[
+              ..._baseTemplateNames(kind),
+              ...assets.map((asset)=>'School upload • ${asset['filename']??'A4 template'}'),
+            ];
+          }
           _loading = false;
         });
     } catch (e) {
@@ -854,12 +952,22 @@ class _SchoolDocumentTemplatesScreenState
     'pinCode': '788001',
     'dob': '15/03/2015',
     'examName': 'Final Examination',
+    'academicSession': '2026-27',
     'marks': {'English': 84, 'Mathematics': 91, 'Science': 87},
     'fullMarks': 100,
     'totalMarks': 262,
     'percentage': '87.3',
     'result': 'PASS',
     'receiptNo': 'VS-000124',
+    'employeeId': 'EMP-001',
+    'role': 'Teacher',
+    'month': '2026-10',
+    'basicPaise': 2500000,
+    'allowancePaise': 400000,
+    'deductionPaise': 50000,
+    'netPaise': 2850000,
+    'paidPaise': 2000000,
+    'status': 'Part paid',
     'dateText': '01/10/2026',
     'feeItems': {'Tuition fee': 1000, 'Exam fee': 200},
     'totalAmount': 1200,
@@ -909,18 +1017,42 @@ class _SchoolDocumentTemplatesScreenState
 
   Future<void> _select(int index) async {
     final kind = _kind, count = _legacyCount(_kind);
-    final value =
-        {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
+    final db=FirebaseFirestore.instance;
+    final origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final settings=await WindowsDocumentTemplates.selections();
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed before template selection.');
+    }
+    final templates=WindowsDocumentTemplates.availableImportedTemplates(
+      settings,kind,school);
+    final customIndex=index-_baseTemplateCount(kind);
+    final asset=customIndex>=0 && customIndex<templates.length
+      ?templates[customIndex]:null;
+    final isImported=['receipt','reportCard','payslip'].contains(kind) &&
+      asset!=null && asset['approved']==true &&
+      asset['schoolId']==school;
+    final value = isImported
+        ? 'imported:${asset['templateId']??asset['sourceHash']}'
+        : {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
             index >= count
-        ? 'manifest:${_choices(kind)[index - count].id}'
-        : index;
-    await FirebaseFirestore.instance
-        .collection('school_settings')
+          ? 'manifest:${_choices(kind)[index - count].id}'
+          : index;
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed before template selection was saved.');
+    }
+    await db.collection('school_settings')
         .doc('document_templates')
         .set({
           kind: value,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed while template selection was saving.');
+    }
     if (mounted) setState(() => _selected[kind] = value);
   }
 
@@ -972,6 +1104,35 @@ class _SchoolDocumentTemplatesScreenState
                 ),
               ),
             const SizedBox(height: 10),
+          ],
+          if (const ['receipt','reportCard','payslip'].contains(_kind)) ...[
+            Align(
+              alignment:Alignment.centerLeft,
+              child:Wrap(spacing:12,runSpacing:8,children:[
+                OutlinedButton.icon(
+                  key:ValueKey('upload-template-'+_kind),
+                  icon:const Icon(Icons.upload_file_outlined),
+                  label:const Text('Upload single-page A4 PDF / PNG / JPG template'),
+                  onPressed:_loading?null:() async {
+                    await SchoolTemplateImportEditor.pickAutomatic(
+                      context,
+                      switch (_kind) {
+                        'receipt'=>SchoolTemplateKind.receipt,
+                        'reportCard'=>SchoolTemplateKind.reportCard,
+                        _=>SchoolTemplateKind.payslip,
+                      },
+                      _sample,
+                    );
+                    if(mounted)await _initializeCatalog();
+                  },
+                ),
+              ]),
+            ),
+            const Padding(
+              padding:EdgeInsets.symmetric(vertical:9),
+              child:Text('Original A4 design is preserved. Verified uploads are stored in this school’s Drive and appear below as selectable versions.',
+                style:TextStyle(fontSize:12)),
+            ),
           ],
           if (_loading) const LinearProgressIndicator(),
           Expanded(

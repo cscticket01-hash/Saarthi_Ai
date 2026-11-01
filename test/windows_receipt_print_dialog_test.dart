@@ -39,6 +39,81 @@ void main() {
     expect(find.text('2 copies sent to printer.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('all Windows-installed printers remain visible and Add printer opens settings', (tester) async {
+    tester.view.devicePixelRatio=1;
+    tester.view.physicalSize=const Size(1200,900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    const offline=Printer(url:'installed-hp',name:'HP offline USB',
+      isDefault:false,isAvailable:false);
+    var opened=0,systemDialog=0;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:WindowsReceiptPrintDialog(
+        receipt:Future.value(Uint8List.fromList([37,80,68,70,45])),
+        title:'Printer TEST',subtitle:'Any school printer',isCurrent:()=>true,
+        printers:()async=>[printer,offline],
+        openPrinterSettings:()async{opened++;},
+        systemPrintJob:(bytes,format)async{
+          systemDialog++;
+          expect(format.width,PdfPageFormat.legal.width);
+          expect(bytes.take(5).toList(),[37,80,68,70,45]);
+          return true;
+        },
+        previewBuilder:(_)=>const SizedBox()))));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add printer'));
+    await tester.tap(find.text('Add printer'));
+    await tester.pumpAndSettle();
+    expect(opened,1);
+    await tester.ensureVisible(find.text('EPSON L3110'));
+    await tester.tap(find.text('EPSON L3110'));
+    await tester.pumpAndSettle();
+    expect(find.text('HP offline USB'),findsOneWidget,
+      reason:'Temporary offline status must not hide installed printers');
+    await tester.tap(find.text('HP offline USB').last);
+    await tester.pumpAndSettle();
+    // Select a Legal stock size without modifying the original PDF bytes.
+    await tester.ensureVisible(find.text('A4 (210 × 297 mm)'));
+    await tester.tap(find.text('A4 (210 × 297 mm)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Legal (216 × 356 mm)').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('More printers / system print dialog'));
+    await tester.tap(find.text('More printers / system print dialog'));
+    await tester.pumpAndSettle();
+    expect(systemDialog,1);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('printer list refreshes when returning from Windows settings', (tester) async {
+    tester.view.devicePixelRatio=1;
+    tester.view.physicalSize=const Size(1200,900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    var lookups=0;
+    const installed=Printer(url:'network-laser',
+      name:'Newly installed network printer',isDefault:false,isAvailable:true);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(
+      body:WindowsReceiptPrintDialog(
+        receipt:Future.value(Uint8List.fromList([37,80,68,70,45])),
+        title:'Install printer',subtitle:'School',isCurrent:()=>true,
+        printers:()async{
+          lookups++;
+          return lookups==1?[printer]:[printer,installed];
+        },
+        previewBuilder:(_)=>const SizedBox()))));
+    await tester.pumpAndSettle();
+    expect(lookups,1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(lookups,2);
+    await tester.ensureVisible(find.text('EPSON L3110'));
+    await tester.tap(find.text('EPSON L3110'));
+    await tester.pumpAndSettle();
+    expect(find.text('Newly installed network printer'),findsOneWidget);
+  });
+
   testWidgets('invalid copies and a school switch cannot submit another print', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1200, 900);

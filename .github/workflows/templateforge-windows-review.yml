@@ -1,0 +1,132 @@
+name: TemplateForge Windows review
+
+on:
+  # A PR update already runs on each commit. Running a second copy on
+  # feature-branch push wastes Windows builders and duplicates failure reports.
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'lib/windows_template_*.dart'
+      - 'lib/windows_document_templates.dart'
+      - 'lib/windows_staff_payroll.dart'
+      - 'lib/windows_receipt_print_dialog.dart'
+      - 'test/windows_receipt_print_dialog_test.dart'
+      - 'test/windows_template_import_engine_test.dart'
+      - 'test/windows_template_office_converter_test.dart'
+      - 'test/windows_template_private_corpus_test.dart'
+      - '.github/scripts/bundle_templateforge_ocr.ps1'
+      - '.github/scripts/templateforge_school_pc_acceptance.ps1'
+      - '.github/workflows/templateforge-windows-review.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: templateforge-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-templateforge:
+    runs-on: windows-2022
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner and brand assets
+        shell: powershell
+        run: |
+          flutter create --platforms=windows --no-pub .
+          python -m pip install --disable-pip-version-check "Pillow==11.3.0"
+          if ($LASTEXITCODE -ne 0) { throw 'Pillow installation failed.' }
+          python .github/scripts/apply_vidya_saarthi_brand.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows brand asset verification failed.' }
+          python .github/scripts/configure_windows_single_instance.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows single-instance configuration failed.' }
+
+      - name: Prepare Windows-only dependencies
+        shell: powershell
+        run: |
+          $pubspec = Get-Content 'pubspec.yaml' -Raw
+          $removePackages = @(
+            'agora_rtc_engine','geolocator','mobile_scanner',
+            'firebase_core','firebase_auth','firebase_messaging',
+            'flutter_local_notifications','firebase_storage',
+            'firebase_analytics','firebase_database','firebase_crashlytics',
+            'firebase_app_check','firebase_remote_config','firebase_functions',
+            'firebase_performance','cloud_firestore'
+          )
+          foreach ($package in $removePackages) {
+            $pattern = "(?m)^\s*" + [regex]::Escape($package) + ":\s*[^\r\n]+\r?\n"
+            $pubspec = [regex]::Replace($pubspec, $pattern, '')
+          }
+          Set-Content -Path 'pubspec.yaml' -Value $pubspec -Encoding UTF8
+
+      - name: Resolve dependencies
+        shell: powershell
+        run: |
+          flutter clean
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter dependency resolution failed.' }
+
+      - name: Validate Windows printer and Office evidence script syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/templateforge_school_pc_acceptance.ps1').Path,
+            [ref]$tokens,[ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+
+      - name: Run TemplateForge and document regression tests
+        shell: powershell
+        run: |
+          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_office_converter_test.dart test/windows_template_private_corpus_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart test/windows_template_print_acceptance_test.dart test/windows_receipt_print_dialog_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'TemplateForge regression tests failed.' }
+
+      - name: Attach real A4 printer calibration PDF for physical acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: templateforge-a4-print-proof
+          path: |
+            build/templateforge_a4_print_proof.pdf
+            build/templateforge_legal_print_proof.pdf
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build Windows application
+        shell: powershell
+        run: |
+          flutter build windows --release -t lib/main_windows.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true
+          if ($LASTEXITCODE -ne 0) { throw 'Windows application build failed.' }
+
+      - name: Bundle offline OCR runtime and language packs
+        shell: powershell
+        run: .github/scripts/bundle_templateforge_ocr.ps1 -ReleaseDirectory 'build/windows/x64/runner/Release'
+
+      - name: Smoke-test bundled OCR through the Dart runtime
+        shell: powershell
+        run: |
+          $bundle = (Resolve-Path 'build/windows/x64/runner/Release/ocr/tesseract').Path
+          flutter test --concurrency=1 "--dart-define=TEMPLATEFORGE_BUNDLE_DIR=$bundle" test/windows_template_forge_ocr_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled offline OCR runtime test failed.' }
+
+      - name: Verify bundled OCR runtime
+        shell: powershell
+        run: |
+          $ocr = 'build\windows\x64\runner\Release\ocr\tesseract'
+          if (!(Test-Path "$ocr\tesseract.exe")) { throw 'Tesseract executable missing from Windows release.' }
+          foreach ($language in @('eng','hin','ben','asm','osd')) {
+            if (!(Test-Path "$ocr\tessdata\$language.traineddata")) {
+              throw "Missing OCR language pack: $language"
+            }
+          }
+          Write-Host 'TemplateForge Windows build and offline OCR package verified.'
