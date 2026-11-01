@@ -61,6 +61,17 @@ class TemplateForgeVisualSlots {
     if(raster==null)return const [];
     final w=raster.width,h=raster.height;
     final results=<ForgeVisualSlot>[];
+    final roleCounts=<String,int>{};
+    for(final line in lines){
+      final label=TemplateForgeAutoMapper.normalized(
+        line.map((word)=>word.text).join(' '));
+      for(final entry in roleLabels.entries){
+        if(entry.value.any((value)=>
+          TemplateForgeAutoMapper.normalized(value)==label)){
+          roleCounts[entry.key]=(roleCounts[entry.key]??0)+1;
+        }
+      }
+    }
     for(final line in lines){
       final label=TemplateForgeAutoMapper.normalized(
         line.map((word)=>word.text).join(' '));
@@ -68,7 +79,7 @@ class TemplateForgeVisualSlots {
         (phrase)=>TemplateForgeAutoMapper.normalized(phrase)==label)).toList();
       if(matching.length!=1)continue;
       final key=matching.single.key;
-      if(results.any((r)=>r.role==key))continue;
+      if(roleCounts[key]!=1 || results.any((r)=>r.role==key))continue;
       final labelLeft=line.map((v)=>v.x).reduce(math.min);
       final labelRight=line.map((v)=>v.x+v.w).reduce(math.max);
       final labelTop=line.map((v)=>v.y).reduce(math.min);
