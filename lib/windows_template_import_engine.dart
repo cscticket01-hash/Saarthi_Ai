@@ -147,6 +147,13 @@ class SchoolTemplateImportEngine {
     }
     return selected;
   }
+  static String pageSizeLabel(int width,int height){
+    final format=pageFormatForDimensions(width,height);
+    final shortSide=math.min(format.width,format.height);
+    final paper=(shortSide-PdfPageFormat.legal.width).abs()<.01
+      ?'Legal (8.5 × 14 in)':'A4';
+    return '$paper • ${format.width>format.height?'Landscape':'Portrait'}';
+  }
   static bool isSupportedPageAspect(double ratio)=>
     ratio.isFinite && ratio>0 && [
       PdfPageFormat.a4,PdfPageFormat.legal,
@@ -238,7 +245,7 @@ class SchoolTemplateImportEngine {
       if(slot.role=='qrCode'){
         final aspect=(slot.width*draft.width/draft.height)/slot.height;
         if(aspect<.85||aspect>1.15){
-          throw const FormatException('QR placeholder must be square on A4.');
+          throw const FormatException('QR placeholder must be square on the template page.');
         }
       }
       if(draft.fields.any((f)=>
@@ -288,7 +295,7 @@ class SchoolTemplateImportEngine {
     final ext=filename.split('.').last.toLowerCase();
     if(SchoolTemplateOfficeConverter.supports(filename)){
       // This bridge produces a PDF only. Every office source still passes
-      // the SAME single-page A4 raster and OCR rules as a normal PDF.
+      // the SAME single-page A4/Legal raster and OCR rules as a normal PDF.
       // An injected converter is only for deterministic offline tests;
       // Office signature and ZIP safety checks are never skipped.
       SchoolTemplateOfficeConverter.validateSource(filename,bytes);
@@ -335,7 +342,7 @@ class SchoolTemplateImportEngine {
         imageBytes=pages.single;
       } catch (error) {
         if(error is FormatException)rethrow;
-        throw const FormatException('Cannot render the single A4 PDF page. Encrypted/damaged PDF?');
+        throw const FormatException('Cannot render the single A4 or Legal PDF page. Encrypted/damaged PDF?');
       }
     } else {
       final decoded=img.decodeImage(bytes);
@@ -431,7 +438,7 @@ class SchoolTemplateImportEngine {
     return estimated<maximumFont?estimated:maximumFont;
   }
 
-  /// Continuation sheets show only rows beyond the confirmed A4 slots.
+  /// Continuation sheets show only rows beyond the confirmed page slots.
   /// They never stretch the school's original scanned artwork.
   static List<MapEntry<dynamic,dynamic>> continuationRows(
     SchoolTemplateDraft draft,Map<String,dynamic> record,
@@ -449,7 +456,7 @@ class SchoolTemplateImportEngine {
     final rows=raw.entries.toList();
     if(rows.length>maxRecordRows ||
         rows.length>slots+continuationRowsPerPage*maxContinuationPages){
-      throw const FormatException('Excessive A4 continuation row count.');
+      throw const FormatException('Excessive continuation row count.');
     }
     for(final row in rows){
       final name=row.key.toString().trim();
@@ -495,7 +502,7 @@ class SchoolTemplateImportEngine {
         pageWidth:pageFormat.width,pageHeight:pageFormat.height);
     }
 
-    // Extra record rows are printed on separately labelled A4 sheets.
+    // Extra record rows are printed on separately labelled matching-stock sheets.
     // No over-capacity row can disappear from a document.
     continuationRows(draft,record);
 

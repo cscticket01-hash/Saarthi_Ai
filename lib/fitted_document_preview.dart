@@ -2,25 +2,45 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
+import 'package:pdf/pdf.dart';
 
 /// Single-page documents (including the complete front/back ID pair) fit the
 /// viewport. Multi-page documents keep the normal page navigation/scrolling.
 /// Raster scaling is display-only; the original PDF remains unchanged.
 class FittedDocumentPreview extends StatefulWidget {
-  const FittedDocumentPreview({super.key, required this.bytes});
+  const FittedDocumentPreview({super.key, required this.bytes, this.onPageFormat});
   final Uint8List bytes;
+  /// First-page physical dimensions from the existing preview raster, not a second render.
+  final ValueChanged<PdfPageFormat?>? onPageFormat;
   @override
   State<FittedDocumentPreview> createState() => _FittedDocumentPreviewState();
 }
 
 class _FittedDocumentPreviewState extends State<FittedDocumentPreview> {
   late Future<List<Uint8List>> pages;
+  int generation = 0;
   Future<List<Uint8List>> raster() async {
+    final current = ++generation;
+    final bytes = widget.bytes;
     final result = <Uint8List>[];
-    await for (final page in Printing.raster(widget.bytes, dpi: 200).take(2)) {
-      result.add(await page.toPng());
+    var reported = false;
+    try {
+      await for (final page in Printing.raster(bytes, dpi: 200).take(2)) {
+        if (!mounted || current != generation) return result;
+        if (!reported) {
+          reported = true;
+          widget.onPageFormat?.call(PdfPageFormat(
+            page.width * PdfPageFormat.inch / 200,
+            page.height * PdfPageFormat.inch / 200));
+        }
+        result.add(await page.toPng());
+      }
+      if (!reported && mounted && current == generation) widget.onPageFormat?.call(null);
+      return result;
+    } catch (_) {
+      if (!reported && mounted && current == generation) widget.onPageFormat?.call(null);
+      rethrow;
     }
-    return result;
   }
 
   @override

@@ -59,3 +59,9 @@ PR #198 must pass the dedicated Windows TemplateForge workflow, the repository's
 
 - The same existing visual-slot analyzer now applies a conservative bounded colour-block check for **unlabelled multicolour photograph-like regions**. If a substantial colour block cannot be covered by an independently verified image replacement rectangle, the upload fails closed rather than reprinting a previous person's portrait. Small accents and simple coloured headings are excluded.
 - This is a safety alarm, not face recognition. Grayscale photos, arbitrary visual layouts, unlabelled monochrome QR codes and difficult scans still require real-document review and must not be represented as universally supported.
+
+## A4 / Legal selection feedback
+
+- Upload selection, saved drafts and school catalog identify A4 or US Legal (8.5 × 14 inches), including portrait/landscape. Paper is detected from the original page dimensions; no manual stretch or size conversion is applied.
+- The receipt print dialog uses the existing preview raster to choose matching A4/Legal stock and orientation by default. A school can still choose its printer paper explicitly. Saved PDFs retain their original page geometry.
+- Legal PDF regression coverage checks the exported MediaBox for both orientations and confirms overflow pages retain Legal stock. Actual printer/tray alignment still requires a physical print at 100% scale.

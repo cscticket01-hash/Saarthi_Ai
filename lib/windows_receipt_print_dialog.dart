@@ -34,15 +34,55 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   String? selected;
   bool loadingPrinters = true, printing = false;
   String paper = 'A4';
+  bool landscape = false, paperChosen = false;
+  late bool pageFormatReady;
   String message = '';
+  String? sourcePaperLabel;
   int submitted = 0;
   bool savingPdf = false, openingSystemDialog = false;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    pageFormatReady = widget.previewBuilder != null;
     loadPrinters();
   }
+  @override
+  void didUpdateWidget(covariant WindowsReceiptPrintDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.receipt != widget.receipt) {
+      paper = 'A4'; landscape = false; paperChosen = false;
+      sourcePaperLabel = null;
+      pageFormatReady = widget.previewBuilder != null;
+    }
+  }
+  void acceptPageFormat(PdfPageFormat? format) {
+    if (!mounted || !widget.isCurrent()) return;
+    String? matched;
+    if (format != null) {
+      final width = format.width < format.height ? format.width : format.height;
+      final height = format.width < format.height ? format.height : format.width;
+      for (final stock in ['A4','Legal','Letter']) {
+        final candidate = paperFormat(stock);
+        if ((candidate.width-width).abs() <= 2 && (candidate.height-height).abs() <= 2) {
+          matched = stock; break;
+        }
+      }
+    }
+    setState(() {
+      sourcePaperLabel = matched == null ? null :
+        matched! + (format!.width > format.height ? ' • Landscape' : ' • Portrait');
+      if (paperChosen) return;
+      pageFormatReady = matched != null;
+      if (matched != null) {
+        paper = matched!;
+        landscape = format!.width > format.height;
+      } else {
+        message = 'Could not identify the original paper size. Select paper size before printing.';
+      }
+    });
+  }
+  PdfPageFormat get selectedFormat => landscape ? paperFormat(paper).landscape : paperFormat(paper);
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Returning from Windows "Add printer" should enumerate the newly
@@ -81,7 +121,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     }
   }
   Future<void> printReceipt(Uint8List bytes) async {
-    if (printing || !widget.isCurrent()) return;
+    if (printing || !pageFormatReady || !widget.isCurrent()) return;
     final count = int.tryParse(copies.text.trim());
     if (count == null || count < 1 || count > 20) {
       setState(() => message = 'Enter 1 to 20 copies.'); return;
@@ -89,7 +129,7 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
     final matches = printers.where((p) => p.url == selected);
     if (matches.isEmpty) { setState(() => message = 'Select an available printer.'); return; }
     final printer = matches.first;
-    final format = paperFormat(paper);
+    final format = selectedFormat;
     setState(() { printing = true; submitted = 0; message = ''; });
     try {
       for (var i = 0; i < count; i++) {
@@ -137,10 +177,10 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
   }
 
   Future<void> showSystemPrinterDialog(Uint8List bytes) async {
-    if(printing||openingSystemDialog||!widget.isCurrent())return;
+    if(printing||openingSystemDialog||!pageFormatReady||!widget.isCurrent())return;
     setState(()=>openingSystemDialog=true);
     try{
-      final format=paperFormat(paper);
+      final format=selectedFormat;
       final submitted=await (widget.systemPrintJob!=null
         ?widget.systemPrintJob!(bytes,format)
         :Printing.layoutPdf(name:widget.title,format:format,
@@ -198,27 +238,41 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
         keyboardType: TextInputType.number,
         decoration: const InputDecoration(labelText: 'Copies', helperText: '1–20')),
       const SizedBox(height: 16),
+      if (!pageFormatReady && message.isEmpty)
+        const Text('Detecting original paper size…'),
       DropdownButtonFormField<String>(value: paper, isExpanded: true,
         decoration: const InputDecoration(labelText: 'Paper size'),
         items: const [DropdownMenuItem(value: 'A4', child: Text('A4 (210 × 297 mm)', overflow: TextOverflow.ellipsis)),
           DropdownMenuItem(value: 'Letter', child: Text('Letter (216 × 279 mm)', overflow: TextOverflow.ellipsis)),
           DropdownMenuItem(value: 'Legal', child: Text('Legal (216 × 356 mm)', overflow: TextOverflow.ellipsis))],
-        onChanged: printing ? null : (v) => setState(() => paper = v ?? 'A4')),
+        onChanged: printing ? null : (v) => setState(() {
+          paper = v ?? 'A4'; paperChosen = true; pageFormatReady = true;
+          if (message.startsWith('Could not identify')) message = '';
+        })),
+      const SizedBox(height: 12),
+      DropdownButtonFormField<bool>(value: landscape, isExpanded: true,
+        decoration: const InputDecoration(labelText: 'Orientation'),
+        items: const [DropdownMenuItem(value: false, child: Text('Portrait')),
+          DropdownMenuItem(value: true, child: Text('Landscape'))],
+        onChanged: printing || !pageFormatReady ? null : (value) => setState(() {
+          landscape = value ?? false; paperChosen = true; pageFormatReady = true;
+        })),
       const SizedBox(height: 20),
       const Text('Pages: All receipt pages'),
       const SizedBox(height: 8),
-      const Text('Layout: Original receipt'),
+      Text(sourcePaperLabel == null ? 'Layout: Original receipt'
+        : 'Original document: '+sourcePaperLabel!),
       const SizedBox(height: 5),
       const Text('For full-size Legal artwork, generate a Legal-size '
         'document. Changing printer paper does not resize an existing PDF.',
         style:TextStyle(fontSize:11)),
       const SizedBox(height: 20),
       if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(message)),
-      FilledButton.icon(onPressed: printing || loadingPrinters || selected == null || bytes == null || !widget.isCurrent()
+      FilledButton.icon(onPressed: printing || !pageFormatReady || loadingPrinters || selected == null || bytes == null || !widget.isCurrent()
           ? null : () => printReceipt(bytes),
         icon: const Icon(Icons.print), label: Text(printing ? 'Sending…' : 'Print')),
       TextButton.icon(
-        onPressed:printing||openingSystemDialog||bytes==null||!widget.isCurrent()
+        onPressed:printing||openingSystemDialog||!pageFormatReady||bytes==null||!widget.isCurrent()
           ?null:()=>showSystemPrinterDialog(bytes),
         icon:const Icon(Icons.print_outlined),
         label:Text(openingSystemDialog?'Opening Windows print dialog…'
@@ -244,7 +298,8 @@ class _WindowsReceiptPrintDialogState extends State<WindowsReceiptPrintDialog>
           if (!widget.isCurrent()) return const Center(child: Text('School changed. Reopen receipt history.'));
           final preview = snapshot.hasError ? Center(child: Text('Receipt unavailable: ${snapshot.error}'))
               : !snapshot.hasData ? const Center(child: CircularProgressIndicator())
-              : widget.previewBuilder?.call(snapshot.data!) ?? FittedDocumentPreview(bytes: snapshot.data!);
+              : widget.previewBuilder?.call(snapshot.data!) ?? FittedDocumentPreview(bytes: snapshot.data!,
+                  onPageFormat: (format) => acceptPageFormat(format));
           return LayoutBuilder(builder: (context, limits) => limits.maxWidth >= 760
             ? Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Expanded(child: preview), const VerticalDivider(width: 1), SizedBox(width: 290, child: settings(snapshot.data))])

@@ -61,6 +61,60 @@ void main() {
       isNot(identity));
   });
 
+  test('page size labels follow physical stock and orientation',(){
+    expect(SchoolTemplateImportEngine.pageSizeLabel(2100,2970),
+      'A4 • Portrait');
+    expect(SchoolTemplateImportEngine.pageSizeLabel(2970,2100),
+      'A4 • Landscape');
+    expect(SchoolTemplateImportEngine.pageSizeLabel(850,1400),
+      'Legal (8.5 × 14 in) • Portrait');
+    expect(SchoolTemplateImportEngine.pageSizeLabel(1400,850),
+      'Legal (8.5 × 14 in) • Landscape');
+    expect(()=>SchoolTemplateImportEngine.pageSizeLabel(900,900),
+      throwsFormatException);
+  });
+
+  test('Legal PDF imports preserve orientation and continuation paper stock',() async {
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.42,width:.3),
+      const SchoolTemplateField(key:'feeAmount0',x:.62,y:.42,width:.25),
+      const SchoolTemplateField(key:'totalAmount',x:.62,y:.82,width:.2),
+    ];
+    for(final landscape in [false,true]){
+      final format=landscape?PdfPageFormat.legal.landscape:PdfPageFormat.legal;
+      final source=pw.Document();
+      source.addPage(pw.Page(pageFormat:format,
+        build:(_)=>pw.Text('Legal school receipt')));
+      final originalBytes=Uint8List.fromList(await source.save());
+      final width=landscape?1008:612,height=landscape?612:1008;
+      final draft=(await SchoolTemplateImportEngine.importBytes(
+        kind:SchoolTemplateKind.receipt,schoolId:school,
+        filename:'legal-template.pdf',bytes:originalBytes,
+        pdfPagesRasterizer:(bytes) async {
+          expect(bytes,orderedEquals(originalBytes));
+          return [Uint8List.fromList(img.encodePng(
+            img.Image(width:width,height:height)))];
+        })).copyWith(fields:fields);
+      final printed=await SchoolTemplateImportEngine.previewPdf(draft,{
+        'receiptNo':'LEGAL-CONT','studentName':'Mira',
+        'feeItems':{'Tuition':100,'Exam':50},'totalAmount':150,
+      });
+      // PDF page dictionaries are outside compressed content streams.
+      // Assert the exported PDF geometry, not only the helper's selection.
+      final boxes=RegExp(r'/MediaBox\s*\[([^\]]+)\]')
+        .allMatches(latin1.decode(printed)).map((match)=>
+          match.group(1)!.trim().split(RegExp(r'\s+'))
+            .map(double.parse).toList()).toList();
+      expect(boxes,hasLength(2));
+      expect(boxes.first,[0,0,format.width,format.height]);
+      expect(boxes.last,[0,0,PdfPageFormat.legal.width,
+        PdfPageFormat.legal.height],
+        reason:'Extra rows must never switch a Legal document onto A4 stock');
+    }
+  });
+
   test('Legal-size portrait and landscape retain physical 8.5 × 14 inch print geometry',() async {
     final legal=Uint8List.fromList(img.encodePng(
       img.Image(width:612,height:1008)));
