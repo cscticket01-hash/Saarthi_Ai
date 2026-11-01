@@ -69,8 +69,16 @@ class TemplateForgeAutoMapper {
       final group=[c[1],c[2],c[3],c[4]].join(':');
       (grouped[group]??=[]).add(ForgeWord(word,left/width,top/height,w/width,h/height,conf));
     }
-    return grouped.values.map((words)=>words..sort((a,b)=>a.x.compareTo(b.x)))
-      .where((x)=>x.isNotEmpty).toList();
+    // Tesseract may group lines by block/column rather than top-to-bottom.
+    // Sorting geometry first keeps fee/marks row indexes tied to their real
+    // printed positions instead of accidental TSV insertion order.
+    final ordered=grouped.values.map((words)=>words..sort((a,b)=>a.x.compareTo(b.x)))
+      .where((line)=>line.isNotEmpty).toList();
+    ordered.sort((a,b){
+      final vertical=a.first.y.compareTo(b.first.y);
+      return vertical!=0?vertical:a.first.x.compareTo(b.first.x);
+    });
+    return ordered;
   }
 
   /// Suggest a document type without overriding the user's destination.
