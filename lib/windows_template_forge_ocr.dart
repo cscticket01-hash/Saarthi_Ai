@@ -51,6 +51,9 @@ class TemplateForgeOfflineOcr {
     return supportedLanguages.where(available.contains).toList();
   }
 
+  static Future<bool> hasOrientationModel() async =>
+    (await _availableLanguages()).contains('osd');
+
   /// Corrects a sideways camera capture using Tesseract's local OSD model.
   /// The source artwork is rotated only when OSD returns a confident right
   /// angle; uncertain scans remain untouched and are later rejected if needed.
