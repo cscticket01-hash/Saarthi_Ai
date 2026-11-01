@@ -59,9 +59,10 @@ if ($license) {
 }
 $exe = Join-Path $target 'tesseract.exe'
 $list = & $exe --tessdata-dir $target --list-langs 2>&1
+$listText = $list | Out-String
 if ($LASTEXITCODE -ne 0) { throw 'Bundled Tesseract could not load its traineddata.' }
 foreach ($language in $models.Keys) {
-  if ($list -notmatch "(?m)^\s*$language\s*$") {
+  if ($listText -notmatch "(?m)^\s*$language\s*$") {
     throw "Bundled OCR is missing required language: $language"
   }
 }
