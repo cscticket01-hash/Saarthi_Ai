@@ -140,10 +140,16 @@ void main() {
       kind:SchoolTemplateKind.receipt,schoolId:school,
       filename:'sample.png',bytes:png);
     final mapped=imported.copyWith(fields:[
-      const SchoolTemplateField(key:'receiptNo',x:.1,y:.2,mask:true),
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.8,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.5,width:.3,mask:true),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.5,width:.15,mask:true),
     ]);
-    final pdf=await SchoolTemplateImportEngine.previewPdf(
-      mapped,{'receiptNo':'VS-100'});
+    final pdf=await SchoolTemplateImportEngine.previewPdf(mapped,{
+      'receiptNo':'VS-100','studentName':'Mira','totalAmount':100,
+      'feeItems':{'Tuition':100},
+    });
     expect(String.fromCharCodes(pdf.take(5)),'%PDF-');
     expect(imported.fields,isEmpty,
       reason:'Preview cannot publish or mutate the source draft');
