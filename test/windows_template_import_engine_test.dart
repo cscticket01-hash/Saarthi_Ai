@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:crypto/crypto.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import '../lib/windows_template_import_engine.dart';
 import '../lib/windows_template_forge_auto.dart';
 
@@ -311,6 +313,35 @@ void main() {
       filename:'landscape.png',bytes:landscape);
     expect(draft.width,1400);
     expect(draft.height,1000);
+  });
+
+  test('single-page A4 landscape PDF keeps its orientation',() async {
+    final pdf=pw.Document();
+    pdf.addPage(pw.Page(
+      pageFormat:PdfPageFormat.a4.landscape,
+      build:(_)=>pw.Center(child:pw.Text('School receipt template')),
+    ));
+    final bytes=Uint8List.fromList(await pdf.save());
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'landscape.pdf',bytes:bytes);
+    expect(draft.width,greaterThan(draft.height));
+  });
+
+  test('multi-page PDF is rejected instead of silently dropping later pages',() async {
+    final pdf=pw.Document();
+    pdf.addPage(pw.Page(
+      pageFormat:PdfPageFormat.a4,
+      build:(_)=>pw.Center(child:pw.Text('Page one')),
+    ));
+    pdf.addPage(pw.Page(
+      pageFormat:PdfPageFormat.a4,
+      build:(_)=>pw.Center(child:pw.Text('Page two')),
+    ));
+    final bytes=Uint8List.fromList(await pdf.save());
+    await expectLater(SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'two-pages.pdf',bytes:bytes),throwsFormatException);
   });
 
 }
