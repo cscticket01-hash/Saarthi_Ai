@@ -504,7 +504,7 @@ class SchoolTemplateImportEngine {
 
   static pw.Widget _renderField(
     SchoolTemplateField field,Map<String,dynamic> record,
-    pw.Font font,double pageWidth,double pageHeight,
+    pw.Font font,List<pw.Font> fontFallback,double pageWidth,double pageHeight,
   ) {
     final value=valueFor(field.key,record);
     return pw.Positioned(
@@ -514,7 +514,7 @@ class SchoolTemplateImportEngine {
         color:field.mask?PdfColors.white:null,
         child:value.isEmpty?null:pw.Text(value,
           maxLines:1,overflow:pw.TextOverflow.clip,
-          style:pw.TextStyle(font:font,
+          style:pw.TextStyle(font:font,fontFallback:fontFallback,
             fontSize:fittedTextSize(field,value,pageWidth:pageWidth,pageHeight:pageHeight),
             color:PdfColors.black)),
       ),
@@ -577,6 +577,18 @@ class SchoolTemplateImportEngine {
     validatePreviewRecord(draft,record);
     validateVisualAssets(draft,record,visualAssets);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+    // The OCR engine recognises Hindi, Bengali and Assamese, and the final
+    // printed overlay must also contain their glyphs. Load the already
+    // bundled fonts only when the current school record needs them.
+    final indic=RegExp(r'[\u0900-\u097f\u0980-\u09ff]');
+    final needIndic=draft.fields.any(
+      (field)=>indic.hasMatch(valueFor(field.key,record)));
+    final fontFallback=needIndic?<pw.Font>[
+      pw.Font.ttf(await rootBundle.load(
+        'assets/fonts/NotoSansDevanagari[wdth,wght].ttf')),
+      pw.Font.ttf(await rootBundle.load(
+        'assets/fonts/NotoSansBengali[wdth,wght].ttf')),
+    ]:<pw.Font>[];
     // Generated documents print at real ISO A4; the imported page is
     // admitted by the automatic pipeline only if its aspect ratio is A4.
     final pageFormat=draft.width>draft.height
@@ -593,7 +605,7 @@ class SchoolTemplateImportEngine {
         pw.Positioned(left:0,top:0,
           child:pw.Image(background,width:width,height:height,fit:pw.BoxFit.fill)),
         for(final f in draft.fields)
-          _renderField(f,record,normal,width,height),
+          _renderField(f,record,normal,fontFallback,width,height),
         for(final slot in draft.visualSlots)
           _renderVisualSlot(slot,record,visualAssets,width,height),
       ]),
