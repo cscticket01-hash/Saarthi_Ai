@@ -561,6 +561,7 @@ class WindowsDocumentTemplates {
         'schoolName':schoolName,
         'schoolAddress':profile['address']??data['schoolAddress']??'',
         'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
+        if(qr.isNotEmpty)'qr':qr,
         if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
           'dateText':_documentDate(data['timestamp']),
       };
