@@ -59,3 +59,13 @@ Use a **TEST school**, no real students, and the school's own connected Drive. E
 - Instead of deleting historical templates after three uploads, the verified school manifest retains up to 32 immutable template versions. New uploads beyond that bound are rejected until a separate reviewed archiving process exists. Old selected versions and rollback copies remain in Drive.
 - The 1/2/5-device tests exercise the same manifest append helper as publication, including repeat upload and immutable-version protection. They remain synthetic: server-side atomic compare-and-swap and real concurrent online Drive publication still require live tests.
 - Visual-slot recognition now requires an enclosed border on all four sides. Open ornamental rectangles are rejected rather than treated as a safe old-photo replacement target.
+
+## On-device Windows evidence collector
+
+For each real school PC, print the A4 or Legal calibration artifact at **Actual Size (100%)**. Measure both 100 mm lines and their top/left 10 mm margins with a ruler. Run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .github/scripts/templateforge_school_pc_acceptance.ps1 -Paper Legal -DeviceNumber 1 -PrinterName "School Printer" -CalibrationPdf ".\templateforge_legal_print_proof.pdf" -HorizontalMm 100 -VerticalMm 100 -TopMarginMm 10 -LeftMarginMm 10
+```
+
+The script reports locally installed printers, Office/LibreOffice prerequisites and operator-measured print accuracy. It never accesses student documents or Drive credentials and never claims live 5-PC sync success. Omitting measurements leaves `physicalVerified=false`. For five PCs run separately on each device; synthetic CI results cannot substitute for actual hardware.

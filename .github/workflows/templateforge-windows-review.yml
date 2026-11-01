@@ -15,6 +15,7 @@ on:
       - 'test/windows_template_import_engine_test.dart'
       - 'test/windows_template_office_converter_test.dart'
       - '.github/scripts/bundle_templateforge_ocr.ps1'
+      - '.github/scripts/templateforge_school_pc_acceptance.ps1'
       - '.github/workflows/templateforge-windows-review.yml'
 
 permissions:
@@ -73,6 +74,16 @@ jobs:
           flutter clean
           flutter pub get
           if ($LASTEXITCODE -ne 0) { throw 'Flutter dependency resolution failed.' }
+
+      - name: Validate Windows printer and Office evidence script syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.github/scripts/templateforge_school_pc_acceptance.ps1').Path,
+            [ref]$tokens,[ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
 
       - name: Run TemplateForge and document regression tests
         shell: powershell
