@@ -370,7 +370,7 @@ class SchoolTemplateImportEngine {
       throw const FormatException('Published template source hash is invalid.');
     }
     return SchoolTemplateDraft(
-      kind: kind, schoolId: school,
+      kind: kind, schoolId: schoolId,
       filename: manifest['filename']?.toString() ?? 'School template',
       sourceHash: sourceHash, png: Uint8List.fromList(png),
       width: decoded.width, height: decoded.height, fields: fields,
