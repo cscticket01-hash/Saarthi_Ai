@@ -105,7 +105,7 @@ class TemplateForgeAutoMapper {
     if(kind==SchoolTemplateKind.payslip)return const [];
     final nameHeaders=kind==SchoolTemplateKind.receipt
       ?const ['description','particulars','fee details','fee head','fee description',
-        'item','fee name','বিবরণ','विवरण']
+        'item','fee name','বিবরণ','বিৱৰণ','विवरण']
       :const ['subject','subjects','subject name','বিষয়','বিষয়','विषय'];
     final valueHeaders=kind==SchoolTemplateKind.receipt
       ?const ['amount','price','total','value','টাকা','রাশি','राशि']
