@@ -141,6 +141,34 @@ class SchoolTemplateImportEngine {
     }
   }
 
+  static void validateDraft(SchoolTemplateDraft draft) {
+    verifySchool(draft.schoolId);
+    if(draft.png.isEmpty || draft.png.length>maxPngBytes ||
+      draft.width<80 || draft.height<80 ||
+      draft.width*draft.height>maxPixels){
+      throw const FormatException('Template raster is outside safe limits.');
+    }
+    if(draft.filename.isEmpty || draft.filename.length>180 ||
+      draft.filename.contains('/') || draft.filename.contains('\\')){
+      throw const FormatException('Template filename is invalid.');
+    }
+    if(draft.sourceHash.length!=64 ||
+      !RegExp(r'^[a-f0-9]{64}').hasMatch(draft.sourceHash)){
+      throw const FormatException('Template source hash is invalid.');
+    }
+    final decoded=img.decodePng(draft.png);
+    if(decoded==null || decoded.width!=draft.width ||
+      decoded.height!=draft.height){
+      throw const FormatException('Template raster dimensions do not match.');
+    }
+    final ratio=decoded.width/decoded.height;
+    if((ratio-210/297).abs()>.075 && (ratio-297/210).abs()>.075){
+      throw const FormatException('Template raster is not A4.');
+    }
+    validateFieldSet(draft.kind,draft.fields);
+    for(final field in draft.fields)field.validate(draft.kind);
+  }
+
   static bool isPdf(Uint8List b)=>b.length>5 &&
     String.fromCharCodes(b.take(5))=='%PDF-';
   static bool isPng(Uint8List b)=>b.length>8 &&
@@ -409,8 +437,7 @@ class SchoolTemplateImportEngine {
 
   static Future<Uint8List> previewPdf(
     SchoolTemplateDraft draft,Map<String,dynamic> record) async {
-    verifySchool(draft.schoolId);
-    if(draft.fields.length>35) throw const FormatException('Too many fields.');
+    validateDraft(draft);
     validatePreviewRecord(draft,record);
     final normal=pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
     // Generated documents print at real ISO A4; the imported page is
@@ -562,8 +589,7 @@ class SchoolTemplateImportEngine {
     required String Function() currentSchoolId,
   }) async {
     verifySchool(draft.schoolId);
-    validateFieldSet(draft.kind,draft.fields);
-    for (final field in draft.fields) field.validate(draft.kind);
+    validateDraft(draft);
     if (currentSchoolId() != draft.schoolId) {
       throw StateError('School changed before template save.');
     }
