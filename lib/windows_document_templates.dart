@@ -889,6 +889,8 @@ class _SchoolDocumentTemplatesScreenState
   }
 
   Future<void> _initializeCatalog() async {
+    // Version ordering can change after an upload; never reuse an old card image.
+    _thumbnails.clear();
     try {
       final entries = await IdCardCatalog.load(),
           v = await WindowsDocumentTemplates.selections();
