@@ -34,3 +34,23 @@ test('monitor converts real interval bytes to bits/second, distinguishes ops/sec
  assert.equal(c.outboundBitsPerSecond.value,2000);assert.equal(c.readsPerSecond.value,2);assert.equal(c.writesPerSecond.value,1);assert.equal(c.storageBytes,null);assert.equal(c.inboundBitsPerSecond,null);
  const missing=summarize([{available:true,type:'firestore.googleapis.com/document/read_count',unit:'1',series:[{points:[{value:{int64Value:'10'}}]}]}]);assert.equal(missing.readsPerSecond,null);
 });
+test('quota service outage does not hide measured Firestore storage',async()=>{
+ const monitor=createMonitor({projectId:'project',credential:{getAccessToken:async()=>({access_token:'private'})},fetchImpl:async url=>{
+  if(url.includes('cloudresourcemanager'))throw Error('quota outage');
+  return {ok:true,json:async()=>url.includes('metricDescriptors')?{metricDescriptors:[{type:'firestore.googleapis.com/storage/total_size',unit:'By',metricKind:'GAUGE'}]}:{timeSeries:[{points:[{value:{int64Value:'123'}}]}]}};
+ }});
+ const r=await monitor();assert.equal(r.available,true);assert.equal(r.quotas.available,false);assert.equal(r.cards.storageBytes.value,123);
+});
+test('metric reads run with bounded concurrency and retain other metrics after a timeout',async()=>{
+ let active=0,peak=0;
+ const monitor=createMonitor({projectId:'project',credential:{getAccessToken:async()=>({access_token:'private'})},fetchImpl:async url=>{
+  if(url.includes('cloudresourcemanager'))return {ok:false,status:403};
+  if(url.includes('metricDescriptors'))return {ok:true,json:async()=>({metricDescriptors:Array.from({length:7},(_,i)=>({type:'firestore.googleapis.com/storage/size'+i,unit:'By'}))})};
+  active++;peak=Math.max(peak,active);await new Promise(resolve=>setImmediate(resolve));active--;
+  if(decodeURIComponent(url).includes('size0'))throw Error('private timeout');
+  return {ok:true,status:200,json:async()=>({timeSeries:[{points:[{value:{int64Value:'123'}}]}]})};
+ }});
+ const r=await monitor();assert.equal(r.available,true);assert.equal(peak,4);assert.equal(r.metrics.length,7);
+ assert.equal(r.metrics[0].available,false);assert.equal(r.metrics.filter(m=>m.available).length,6);
+ assert(!JSON.stringify(r).includes('private timeout'));
+});

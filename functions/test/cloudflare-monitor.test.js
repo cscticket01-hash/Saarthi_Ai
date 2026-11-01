@@ -40,3 +40,17 @@ test('analytics authorization failure remains unavailable, not zero traffic',asy
  const r=await monitor();assert.equal(r.available,false);assert.equal(r.requests,undefined);
  assert.match(r.reason,/403/);
 });
+test('malformed Worker counters are unavailable rather than fabricated zero',async()=>{
+ const monitor=createCloudflareMonitor({accountId:ID,workerName:'saarthi',analyticsToken:'read-only-token-example',
+  fetchImpl:async()=>({ok:true,json:async()=>({data:{viewer:{accounts:[{workersInvocationsAdaptive:[{sum:{requests:5}}]}]}}})})});
+ const r=await monitor();assert.equal(r.available,false);assert.equal(r.requests,undefined);
+});
+test('optional D1 failure retains valid Worker telemetry',async()=>{
+ const monitor=createCloudflareMonitor({accountId:ID,workerName:'saarthi',databaseId:DB,analyticsToken:'read-only-token-example',
+  fetchImpl:async(url,options)=>{
+   if(JSON.parse(options.body).query.includes('d1Analytics'))throw Error('private transport detail');
+   return {ok:true,json:async()=>({data:{viewer:{accounts:[{workersInvocationsAdaptive:[{sum:{requests:5,errors:0}}]}]}}})};
+  }});
+ const r=await monitor();assert.equal(r.available,true);assert.equal(r.requests,5);assert.equal(r.d1.available,false);
+ assert(!JSON.stringify(r).includes('private transport'));
+});

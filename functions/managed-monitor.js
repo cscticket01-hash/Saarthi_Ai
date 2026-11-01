@@ -7,14 +7,23 @@ function createMonitor({credential,projectId,fetchImpl=fetch,now=Date.now}){
    const token=(await credential.getAccessToken()).access_token;
    const base='https://monitoring.googleapis.com/v3/projects/'+encodeURIComponent(projectId);
    let quotas={available:false,reason:'Project quota read access unavailable'};
-   const project=await fetchImpl('https://cloudresourcemanager.googleapis.com/v1/projects/'+encodeURIComponent(projectId),{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});
+   try{const project=await fetchImpl('https://cloudresourcemanager.googleapis.com/v1/projects/'+encodeURIComponent(projectId),{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});
    if(project.ok){const number=(await project.json()).projectNumber;if(/^\d+$/.test(String(number))){const q=await fetchImpl('https://serviceusage.googleapis.com/v1beta1/projects/'+number+'/services/firestore.googleapis.com/consumerQuotaMetrics?view=FULL&pageSize=100',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});if(q.ok){const data=await q.json();quotas={available:true,metrics:data.metrics||[],partial:!!data.nextPageToken};}else quotas={available:false,reason:'Project quotas unavailable (HTTP '+q.status+')'};}}
+   }catch{quotas={available:false,reason:'Project quota service unavailable'};}
    const descriptors=await fetchImpl(base+'/metricDescriptors?filter='+encodeURIComponent('metric.type = starts_with("firestore.googleapis.com/")')+'&pageSize=100',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(15000)});
    if(!descriptors.ok)return {available:false,quotas,reason:'Cloud Monitoring read access unavailable (HTTP '+descriptors.status+')'};
    const descriptorData=await descriptors.json();
    const all=descriptorData.metricDescriptors||[];
    const chosen=all.filter(d=>/document\/(read|write|delete|count)|storage|total_size|network\/(sent|received)_bytes|request.*latenc/.test(d.type)).slice(0,20);
-   const metrics=[];for(const d of chosen){const u=new URL(base+'/timeSeries');u.searchParams.set('filter','metric.type="'+d.type+'"');u.searchParams.set('interval.startTime',new Date(now()-86400000).toISOString());u.searchParams.set('interval.endTime',new Date(now()).toISOString());u.searchParams.set('pageSize','100');const r=await fetchImpl(u.href,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});const data=r.ok?await r.json():null;metrics.push({type:d.type,unit:d.unit,kind:d.metricKind,description:d.description,available:r.ok,status:r.status,...(r.ok?{series:data.timeSeries||[],partial:!!data.nextPageToken}:{reason:'Metric access unavailable (HTTP '+r.status+')'})});}
+   // A slow/denied metric must not erase successful independent measurements.
+   // Four bounded readers avoid up to 20 serial 10-second provider waits.
+   const metrics=new Array(chosen.length);let cursor=0;
+   async function worker(){while(cursor<chosen.length){const index=cursor++,d=chosen[index];
+    try{const u=new URL(base+'/timeSeries');u.searchParams.set('filter','metric.type="'+d.type+'"');u.searchParams.set('interval.startTime',new Date(now()-86400000).toISOString());u.searchParams.set('interval.endTime',new Date(now()).toISOString());u.searchParams.set('pageSize','100');const r=await fetchImpl(u.href,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(10000)});const data=r.ok?await r.json():null;
+     metrics[index]={type:d.type,unit:d.unit,kind:d.metricKind,description:d.description,available:r.ok,status:r.status,...(r.ok?{series:data.timeSeries||[],partial:!!data.nextPageToken}:{reason:'Metric access unavailable (HTTP '+r.status+')'})};
+    }catch{metrics[index]={type:d.type,unit:d.unit,kind:d.metricKind,available:false,reason:'Metric read timed out or unavailable'};}
+   }}
+   await Promise.all(Array.from({length:Math.min(4,chosen.length)},()=>worker()));
    const value={available:true,cards:summarize(metrics),metrics,quotas,window:'last 24 hours',sampledAt:now(),partial:!!descriptorData.nextPageToken};cached={at:now(),value};return value;
   }catch{return {available:false,reason:'Monitoring unavailable; usage and capacity are not estimated'};}
  }

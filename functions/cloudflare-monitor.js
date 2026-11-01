@@ -40,7 +40,9 @@ function createCloudflareMonitor({
     if(!account||!Array.isArray(account.workersInvocationsAdaptive))
       return {available:false,reason:'Cloudflare Worker measurements not reported'};
     const groups=account.workersInvocationsAdaptive;
-    const count=(field)=>groups.reduce((n,row)=>n+(Number.isSafeInteger(row?.sum?.[field])&&row.sum[field]>=0?row.sum[field]:0),0);
+    const count=(field)=>measuredTotal(groups,field);
+    if(count('requests')===null||count('errors')===null)
+      return {available:false,reason:'Cloudflare Worker measurements incomplete'};
     const result={available:true,window:'Last 5 minutes (provider sampled)',sampledAt:end.getTime(),
       workerName,requests:count('requests'),errors:count('errors'),d1:{available:false,reason:'D1 database ID not configured'}};
     if(typeof databaseId==='string'&&/^[a-f0-9-]{32,40}$/.test(databaseId)) {
@@ -53,12 +55,15 @@ function createCloudflareMonitor({
         }}
       }`;
       const response=await req(d1Query,{accountTag:accountId,start:day,
-        end:end.toISOString().slice(0,10),databaseId});
+        end:end.toISOString().slice(0,10),databaseId}).catch(()=>({available:false,reason:'D1 analytics unavailable'}));
       if(response.available){
         const rows=response.accounts[0]?.d1AnalyticsAdaptiveGroups;
         if(Array.isArray(rows)){
-          const total=key=>rows.reduce((n,v)=>n+
-            (Number.isSafeInteger(v?.sum?.[key])&&v.sum[key]>=0?v.sum[key]:0),0);
+          const total=key=>measuredTotal(rows,key);
+          if(total('readQueries')===null||total('writeQueries')===null) {
+            result.d1={available:false,reason:'D1 measurements incomplete'};
+            return result;
+          }
           result.d1={available:true,readQueries:total('readQueries'),
             writeQueries:total('writeQueries'),window:'Current and previous UTC day'};
         }else result.d1={available:false,reason:'D1 analytics dataset not reported'};
@@ -73,5 +78,14 @@ function createCloudflareMonitor({
       .finally(()=>{inflight=null;});
     return inflight;
   };
+}
+// Empty provider datasets legitimately mean no traffic. Malformed rows do not.
+function measuredTotal(rows,key){
+ let total=0;
+ for(const row of rows){const value=row?.sum?.[key];
+  if(!Number.isSafeInteger(value)||value<0||!Number.isSafeInteger(total+value))return null;
+  total+=value;
+ }
+ return total;
 }
 module.exports={createCloudflareMonitor};
