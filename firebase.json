@@ -16,12 +16,12 @@
     "redirects": [
       {
         "source": "/downloads/windows.exe",
-        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.221/Vidya_Saarthi_Setup_2.1.221.exe",
+        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.222/Vidya_Saarthi_Setup_2.1.222.exe",
         "type": 302
       },
       {
         "source": "/downloads/android.apk",
-        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.666/Vidya-Saarthi-v1.0.666.apk",
+        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.667/Vidya-Saarthi-v1.0.667.apk",
         "type": 302
       }
     ],
