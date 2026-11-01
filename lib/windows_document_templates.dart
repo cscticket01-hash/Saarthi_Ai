@@ -673,16 +673,17 @@ class WindowsDocumentTemplates {
       'schoolAddress': profile['address'] ?? '',
       'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
     };
-    final settings=await selections();
     final customIndex=index-importedTemplateIndex(kind);
-    final customTemplates=importedTemplates(settings,kind);
-    if(customIndex>=0 && customIndex<customTemplates.length){
-      return renderImportedTemplate(kind,customTemplates[customIndex],{
-        ...profile,...data,
-        'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
-        'schoolAddress':profile['address']??data['schoolAddress']??'',
-        'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
-      });
+    if(['receipt','reportCard','payslip'].contains(kind) && customIndex>=0){
+      final customTemplates=importedTemplates(await selections(),kind);
+      if(customIndex<customTemplates.length){
+        return renderImportedTemplate(kind,customTemplates[customIndex],{
+          ...profile,...data,
+          'schoolName':profile['schoolName']??profile['name']??data['schoolName']??'',
+          'schoolAddress':profile['address']??data['schoolAddress']??'',
+          'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
+        });
+      }
     }
     if (kind == 'payslip') return renderWindowsPayslip({...data, ...{'netPaise':2850000,'paidPaise':2000000,'basicPaise':2500000,'allowancePaise':400000,'deductionPaise':50000,'role':'Teacher','month':'2026-10','status':'Part paid'}},schoolName:branding['schoolName']?.toString()??'');
     final images = await Future.wait<Uint8List?>([
