@@ -1005,27 +1005,41 @@ class _SchoolDocumentTemplatesScreenState
 
   Future<void> _select(int index) async {
     final kind = _kind, count = _legacyCount(_kind);
+    final db=FirebaseFirestore.instance;
+    final origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     final settings=await WindowsDocumentTemplates.selections();
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed before template selection.');
+    }
     final templates=WindowsDocumentTemplates.importedTemplates(settings,kind);
     final customIndex=index-_baseTemplateCount(kind);
     final asset=customIndex>=0 && customIndex<templates.length
       ?templates[customIndex]:null;
     final isImported=['receipt','reportCard','payslip'].contains(kind) &&
       asset!=null && asset['approved']==true &&
-      asset['schoolId']==FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+      asset['schoolId']==school;
     final value = isImported
         ? 'imported:${asset['templateId']??asset['sourceHash']}'
         : {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
             index >= count
           ? 'manifest:${_choices(kind)[index - count].id}'
           : index;
-    await FirebaseFirestore.instance
-        .collection('school_settings')
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed before template selection was saved.');
+    }
+    await db.collection('school_settings')
         .doc('document_templates')
         .set({
           kind: value,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+    if(db.activeProfileId!=origin ||
+      db.activeProfileIdentity['schoolSyncId']!=school){
+      throw StateError('School changed while template selection was saving.');
+    }
     if (mounted) setState(() => _selected[kind] = value);
   }
 
