@@ -2215,6 +2215,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         await WindowsBackendBridge.repairIdenticalDocumentConflicts(
           _activeSchoolSyncId,canAdmit:()=>!isPaused);
+        // Cloud reads/rendering for a derived repair must not block other data.
+        unawaited(WindowsDocumentTemplates.repairQueuedIdCards(
+          _activeSchoolSyncId,canAdmit:()=>!isPaused).then<void>((_) {},
+            onError:(Object _,StackTrace __) {}));
         // Keep locally acknowledged people and their cards in the same priority
         // dependency job, ahead of unrelated cloud pulls and audits.
         final priorityCardFailure = await _measure('priorityCardStage', () => WindowsPersonCardSync.priorityPass(() async {

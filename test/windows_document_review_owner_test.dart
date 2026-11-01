@@ -171,6 +171,56 @@ void main() {
   tearDown(() async {
     await dir.delete(recursive: true);
   });
+  for(final mode in ['verified','unsynced-input','source-race','foreign-school']) {
+    test('derived ID conflict regeneration: $mode retains source authority and originals',()async{
+      await CentralSchoolCloud.updateSession(school,{'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+      final person=<String,dynamic>{'schoolId':school,'_syncRevision':'person-r1',
+        'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'Class 1','rollNo':'12'};
+      final profile=<String,dynamic>{'schoolId':school,'_syncRevision':'profile-r1',
+        'schoolName':'Synthetic School','principalName':'Principal','schoolContactNo':'0000000000'};
+      final templates=<String,dynamic>{'schoolId':school,'_syncRevision':'templates-r1','studentId':'manifest:school-id-v1'};
+      await db.collection('students_directory').doc('S1').set(person);
+      await db.collection('school_config').doc('school_profile_cache').set(profile);
+      await db.collection('school_settings').doc('document_templates').set(templates);
+      final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+        'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+      final card=WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','S1',person);
+      final pending={...local,'documentId':card,'inventoryCategory':'generatedIdCard'};
+      final published={...cloud,'id':card,'documentId':card};
+      await db.collection('_local_student_documents').doc(card).set(pending);
+      await db.collection('_windows_document_outbox').doc(card).set(pending);
+      var personReads=0;
+      Future<Map<String,dynamic>> readSources(String collection,String key)async{
+        Map<String,dynamic>? row;
+        if(collection=='students_directory'){
+          personReads++;
+          row={...person,if(mode=='unsynced-input')'name':'Different school input'};
+          if(mode=='source-race'&&personReads==2)
+            await db.collection('students_directory').doc('S1').update({'name':'Edited during render'});
+        } else if(collection=='school_config')row=profile;
+        else if(collection=='school_settings')row=templates;
+        else row={...published,if(mode=='foreign-school')'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
+        return {'success':true,'schoolId':school,'syncProtocol':2,'records':{key:row}};
+      }
+      final printing=PrintingPlatform.instance;PrintingPlatform.instance=OwnerReviewPrinting(qr);
+      try{
+        final count=await WindowsDocumentTemplates.repairQueuedIdCards(school,readRecord:readSources);
+        final result=(await db.collection('_windows_document_outbox').doc(card).get()).data()!;
+        if(mode=='verified'){
+          expect(count,1);expect(result['syncState'],'Pending');
+          expect(result['documentRevision'],isNot(pending['documentRevision']));
+          expect(result['baseCloudRevision'],published['documentRevision']);
+          expect(result['reviewedRecordRevision'],published['_syncRevision']);
+          expect(result['localPath'],isNot(pending['localPath']));
+          expect(await File(result['localPath']).exists(),true);
+          expect((await db.collection('_windows_sync_conflict_history').get()).docs,isNotEmpty);
+        }else{expect(count,0);expect(result,pending);}
+        expect(await File(pending['localPath'] as String).exists(),true);
+        expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+      }finally{PrintingPlatform.instance=printing;}
+    });
+  }
   test('self repair clears only an identical authenticated document ACK; differing inputs remain retained',()async{
     cloud={...local,'id':id,'_syncRevision':'verified-record',
       'contentHash':sha256.convert([1,2,3]).toString(),
