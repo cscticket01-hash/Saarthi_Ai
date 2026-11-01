@@ -2510,6 +2510,8 @@ class WindowsBackendBridge {
     // device/old client). Verify before automatic regeneration, just as on a
     // new device, instead of manufacturing an unbased replacement conflict.
     final missingBaseline=automatic && pendingBeforeRead==null &&
+        captured?['inputRevision']!=inputRevision &&
+        captured?['ownerCloudChoiceInputRevision']!=inputRevision &&
         (captured?['cloudRevision']?.toString().isNotEmpty!=true);
     if (captured == null || missingBaseline) {
       Map<String, dynamic>? reply;
