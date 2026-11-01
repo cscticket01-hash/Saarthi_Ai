@@ -31,6 +31,35 @@ void main() {
     return tsv.toString();
   }
 
+  test('automatic school draft identity is idempotent but changes on edits',() async {
+    final imported=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'draft-idempotence.png',bytes:png);
+    final fields=[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.2),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.16,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.6,y:.85,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.4,width:.3),
+      const SchoolTemplateField(key:'feeAmount0',x:.6,y:.4,width:.2),
+    ];
+    final draft=imported.copyWith(fields:fields);
+    final identity=SchoolTemplateImportEngine.localDraftIdentity(draft);
+    expect(identity,hasLength(64));
+    expect(SchoolTemplateImportEngine.localDraftIdentity(
+      imported.copyWith(fields:[...fields])),identity);
+    final adjusted=imported.copyWith(fields:[
+      ...fields.take(1),fields[1].copyWith(x:.12),...fields.skip(2),
+    ]);
+    expect(SchoolTemplateImportEngine.localDraftIdentity(adjusted),
+      isNot(identity));
+    final withVisual=imported.copyWith(fields:fields,visualSlots:[
+      const ForgeVisualSlot(role:'studentPhoto',
+        x:.78,y:.1,width:.15,height:.18),
+    ]);
+    expect(SchoolTemplateImportEngine.localDraftIdentity(withVisual),
+      isNot(identity));
+  });
+
   test('automatic OCR maps receipt labels without manual coordinates',() async {
     final original=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.receipt,schoolId:school,
