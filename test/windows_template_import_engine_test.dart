@@ -355,4 +355,24 @@ void main() {
     expect((draft.width/draft.height-210/297).abs(),lessThan(.075));
   });
 
+  test('marksheet preview rejects a total or percentage that contradicts subjects',() async {
+    final draft=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.reportCard,schoolId:school,
+      filename:'marks.png',bytes:png);
+    final mapped=draft.copyWith(fields:[
+      const SchoolTemplateField(key:'studentName',x:.1,y:.1,width:.3),
+      const SchoolTemplateField(key:'class',x:.1,y:.15,width:.2),
+      const SchoolTemplateField(key:'examName',x:.1,y:.2,width:.3),
+      const SchoolTemplateField(key:'subjectName0',x:.1,y:.3,width:.2,mask:true),
+      const SchoolTemplateField(key:'subjectMarks0',x:.6,y:.3,width:.1,mask:true),
+      const SchoolTemplateField(key:'subjectName1',x:.1,y:.4,width:.2,mask:true),
+      const SchoolTemplateField(key:'subjectMarks1',x:.6,y:.4,width:.1,mask:true),
+    ]);
+    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
+      'studentName':'Mira','class':'5','examName':'Final',
+      'marks':{'Math':70,'English':30},
+      'totalMarks':100,'fullMarks':100,'percentage':'80',
+    }),throwsFormatException);
+  });
+
 }
