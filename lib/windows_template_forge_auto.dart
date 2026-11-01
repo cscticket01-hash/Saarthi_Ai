@@ -120,7 +120,9 @@ class TemplateForgeAutoMapper {
          label.startsWith('net total')||label.startsWith('মোট ')||
          label.startsWith('कुल '))break;
       if(line.first.y-lines[start].first.y>.42)break;
-      final last=line.last.text.replaceAll(RegExp(r'[^0-9.,]'),'');
+      final last=line.last.text
+        .replaceFirst(RegExp(r'^(?:₹|Rs\.?|INR)\s*',caseSensitive:false),'')
+        .trim();
       if(line.length<2||!numeric.hasMatch(last))continue;
       final nameWords=line.sublist(0,line.length-1);
       if(nameWords.isNotEmpty && numeric.hasMatch(nameWords.first.text)
