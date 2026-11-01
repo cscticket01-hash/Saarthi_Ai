@@ -20,6 +20,24 @@ class TemplateForgeVisualSlots {
     'qrCode':['qr code','qr','scan qr','কিউআর','क्यूआर'],
   };
 
+  /// Return counts, not only roles: two PHOTO labels on one page are
+  /// ambiguous and must not silently bind to a single student portrait.
+  static Map<String,int> labelCounts(String tsv,int width,int height){
+    final lines=TemplateForgeAutoMapper.parseTsv(tsv,width,height);
+    final counts=<String,int>{};
+    for(final line in lines){
+      final label=TemplateForgeAutoMapper.normalized(
+        line.map((word)=>word.text).join(' '));
+      for(final entry in roleLabels.entries){
+        if(entry.value.any((value)=>
+          TemplateForgeAutoMapper.normalized(value)==label)){
+          counts[entry.key]=(counts[entry.key]??0)+1;
+        }
+      }
+    }
+    return counts;
+  }
+
   static bool _dark(img.Image raster,int x,int y){
     if(x<0||y<0||x>=raster.width||y>=raster.height)return false;
     final p=raster.getPixel(x,y);
@@ -52,17 +70,7 @@ class TemplateForgeVisualSlots {
     if(raster==null)return const [];
     final w=raster.width,h=raster.height;
     final results=<ForgeVisualSlot>[];
-    final roleCounts=<String,int>{};
-    for(final line in lines){
-      final label=TemplateForgeAutoMapper.normalized(
-        line.map((word)=>word.text).join(' '));
-      for(final entry in roleLabels.entries){
-        if(entry.value.any((value)=>
-          TemplateForgeAutoMapper.normalized(value)==label)){
-          roleCounts[entry.key]=(roleCounts[entry.key]??0)+1;
-        }
-      }
-    }
+    final roleCounts=labelCounts(tsv,draft.width,draft.height);
     for(final line in lines){
       final label=TemplateForgeAutoMapper.normalized(
         line.map((word)=>word.text).join(' '));
