@@ -119,15 +119,15 @@ class WindowsDocumentTemplates {
       throw StateError('Connect this school to its own Drive before publishing a template.');
     }
     final uploadKey=sha256.convert(utf8.encode(
-      '\$school:document-template:\${draft.kind.name}:\$contentHash')).toString();
+      '$school:document-template:${draft.kind.name}:$contentHash')).toString();
     final cloud=CentralSchoolCloud(
       endpoint:connection['endpoint'],expectedSchoolId:school);
     late final Map<String,dynamic> uploaded;
     try{
       uploaded=await cloud.upload(
-        'school_template_\${draft.kind.name}_\$contentHash.png',
+        'school_template_${draft.kind.name}_$contentHash.png',
         'image/png',
-        'data:image/png;base64,\${base64Encode(draft.png)}',
+        'data:image/png;base64,${base64Encode(draft.png)}',
         uploadKey:uploadKey,
       );
     }finally{cloud.close();}
