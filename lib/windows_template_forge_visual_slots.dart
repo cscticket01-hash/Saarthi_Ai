@@ -8,15 +8,6 @@ import 'windows_template_forge_auto.dart';
 /// An OCR label alone is not a usable image slot. Only a bounded, enclosed
 /// rectangular border near a role label is returned. This module NEVER
 /// activates a template, removes an old portrait, or guesses missing assets.
-class ForgeVisualSlot {
-  const ForgeVisualSlot({
-    required this.role,required this.x,required this.y,
-    required this.width,required this.height,
-  });
-  final String role;
-  final double x,y,width,height;
-}
-
 class TemplateForgeVisualSlots {
   static const roleLabels=<String,List<String>>{
     'studentPhoto':['student photo','passport photo','photo','photograph',
