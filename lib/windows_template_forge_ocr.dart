@@ -102,7 +102,43 @@ class TemplateForgeOfflineOcr {
     }
   }
 
-  static Future<String> recognize(SchoolTemplateDraft draft) async {
+  /// OCR-only adaptive contrast. Never modifies the source print raster.
+  static img.Image recognitionRaster(img.Image input,{bool enhanced=false}){
+    final gray=img.grayscale(input);
+    if(!enhanced)return gray;
+    final pixels=gray.width*gray.height;
+    final stride=pixels>4000000?4:2;
+    final histogram=List<int>.filled(256,0);
+    var count=0;
+    for(var y=0;y<gray.height;y+=stride){
+      for(var x=0;x<gray.width;x+=stride){
+        final v=gray.getPixel(x,y).r.toInt().clamp(0,255);
+        histogram[v]++;
+        count++;
+      }
+    }
+    var low=0,high=255,total=0;
+    while(low<255 && total+histogram[low]<count*.04){
+      total+=histogram[low++];
+    }
+    total=0;
+    while(high>0 && total+histogram[high]<count*.04){
+      total+=histogram[high--];
+    }
+    if(high-low<22)return gray;
+    for(var y=0;y<gray.height;y++){
+      for(var x=0;x<gray.width;x++){
+        final v=gray.getPixel(x,y).r.toInt();
+        final out=((v-low)*255/(high-low)).round().clamp(0,255);
+        gray.setPixelRgb(x,y,out,out,out);
+      }
+    }
+    return gray;
+  }
+
+  static Future<String> recognize(SchoolTemplateDraft draft,{
+    bool enhanced=false,
+  }) async {
     final runtime=_runtime();
     final langs=await installedLanguages();
     if(!langs.contains('eng')){
@@ -122,7 +158,7 @@ class TemplateForgeOfflineOcr {
       if(decoded==null || decoded.width!=draft.width || decoded.height!=draft.height){
         throw const FormatException('Invalid OCR raster dimensions.');
       }
-      await File(path).writeAsBytes(img.encodePng(img.grayscale(decoded)),flush:true);
+      await File(path).writeAsBytes(img.encodePng(recognitionRaster(decoded,enhanced:enhanced)),flush:true);
       late Process process;
       try {
         process=await Process.start(runtime.executable,_arguments([

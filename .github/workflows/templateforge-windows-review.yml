@@ -74,8 +74,16 @@ jobs:
       - name: Run TemplateForge and document regression tests
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart
+          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart test/windows_template_print_acceptance_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'TemplateForge regression tests failed.' }
+
+      - name: Attach real A4 printer calibration PDF for physical acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: templateforge-a4-print-proof
+          path: build/templateforge_a4_print_proof.pdf
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Build Windows application
         shell: powershell

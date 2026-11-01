@@ -36,9 +36,35 @@ class SchoolTemplateImportEditor {
       if(!sameSchool())throw StateError('School changed while uploading.');
       final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
       if(!sameSchool())throw StateError('School changed during orientation detection.');
-      final tsv=await TemplateForgeOfflineOcr.recognize(oriented);
+      var tsv=await TemplateForgeOfflineOcr.recognize(oriented);
       if(!sameSchool())throw StateError('School changed during recognition.');
-      final textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
+      var textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
+      // Retry faint, low-contrast OCR once, on a TEMPORARY enhanced raster.
+      // A source warning for an old photo, duplicated field, wrong document
+      // kind or unsafe overlapping boxes must never be erased by this retry.
+      final unsafe=textRecognition.warnings.any((w)=>
+        w.contains('Image/QR/signature') ||
+        w.contains('ambiguous') || w.contains('Overlapping') ||
+        w.contains('appears to be'));
+      if(!textRecognition.safeToActivate && !unsafe){
+        final enhanced=await TemplateForgeOfflineOcr.recognize(
+          oriented,enhanced:true);
+        if(!sameSchool())throw StateError('School changed during OCR retry.');
+        final second=TemplateForgeAutoMapper.detect(oriented,enhanced);
+        final consistent=textRecognition.draft.fields.every((first){
+          final matches=second.draft.fields.where((f)=>f.key==first.key);
+          return matches.length==1 &&
+            (matches.single.x-first.x).abs()<=.028 &&
+            (matches.single.y-first.y).abs()<=.028;
+        });
+        if(consistent && second.missing.length<textRecognition.missing.length &&
+            second.warnings.where((w)=>w.contains('ambiguous') ||
+              w.contains('Overlapping')||w.contains('Image/QR/signature'))
+              .isEmpty){
+          tsv=enhanced;
+          textRecognition=second;
+        }
+      }
       final labels=TemplateForgeVisualSlots.labelCounts(
         tsv,oriented.width,oriented.height);
       final slots=labels.isEmpty?const <ForgeVisualSlot>[]:

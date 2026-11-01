@@ -126,6 +126,9 @@ class SchoolTemplateImportEngine {
   static const maxPngBytes=18*1024*1024;
   static const maxPixels=12000000;
   static const maxTableRows=12;
+  static const continuationRowsPerPage=24;
+  static const maxContinuationPages=8;
+  static const maxRecordRows=maxTableRows+continuationRowsPerPage*maxContinuationPages;
   static const maxFields=45;
   static const requiredFields=<SchoolTemplateKind,List<String>>{
     SchoolTemplateKind.receipt:['receiptNo','studentName','totalAmount'],
@@ -336,7 +339,7 @@ class SchoolTemplateImportEngine {
     final rowKey=RegExp(r'^(feeName|feeAmount|subjectName|subjectMarks)(1[01]|[0-9])$').firstMatch(key);
     if(rowKey!=null){
       final items=rowKey.group(1)!.startsWith('fee')?record['feeItems']:record['marks'];
-      if(items is! Map || items.length>maxTableRows)return '';
+      if(items is! Map)return '';
       final index=int.parse(rowKey.group(2)!);
       if(index>=items.length)return '';
       final entry=items.entries.elementAt(index);
@@ -388,6 +391,39 @@ class SchoolTemplateImportEngine {
     return estimated<maximumFont?estimated:maximumFont;
   }
 
+  /// Continuation sheets show only rows beyond the confirmed A4 slots.
+  /// They never stretch the school's original scanned artwork.
+  static List<MapEntry<dynamic,dynamic>> continuationRows(
+    SchoolTemplateDraft draft,Map<String,dynamic> record,
+  ){
+    final isFee=draft.kind==SchoolTemplateKind.receipt;
+    if(!isFee && draft.kind!=SchoolTemplateKind.reportCard)return const [];
+    final raw=record[isFee?'feeItems':'marks'];
+    if(raw is! Map)return const [];
+    final prefix=isFee?'feeName':'subjectName';
+    final slots=draft.fields.where((f)=>f.key.startsWith(prefix)).length;
+    if(slots==0){
+      if(raw.isNotEmpty)throw const FormatException('No verified table slots.');
+      return const [];
+    }
+    final rows=raw.entries.toList();
+    if(rows.length>maxRecordRows ||
+        rows.length>slots+continuationRowsPerPage*maxContinuationPages){
+      throw const FormatException('Excessive A4 continuation row count.');
+    }
+    for(final row in rows){
+      final name=row.key.toString().trim();
+      final value=row.value;
+      final rendered=value?.toString().trim()??'';
+      if(name.isEmpty||name.runes.length>70||rendered.isEmpty||
+          rendered.runes.length>30||(value is! String && value is! num)||
+          (value is num && (!value.isFinite||value<0))){
+        throw const FormatException('Invalid fee or subject row.');
+      }
+    }
+    return rows.length<=slots?const []:rows.skip(slots).toList();
+  }
+
   /// Imported documents do not invent school data. Do not print an overlay
   /// if its matching record value is missing or cannot fit its OCR box.
   static void validatePreviewRecord(
@@ -420,19 +456,9 @@ class SchoolTemplateImportEngine {
         pageWidth:pageFormat.width,pageHeight:pageFormat.height);
     }
 
-    // Records may contain fewer rows than the scanned page. The unused
-    // slots are masked in the PDF. Overflow is rejected, never clipped.
-    for(final pair in [
-      ('feeName',record['feeItems']),
-      ('subjectName',record['marks']),
-    ]){
-      if(pair.$2 is Map && draft.fields.any((f)=>f.key.startsWith(pair.$1))){
-        final available=draft.fields.where((f)=>f.key.startsWith(pair.$1)).length;
-        if((pair.$2 as Map).length>available){
-          throw FormatException('More rows than the scanned table can safely hold: '+pair.$1);
-        }
-      }
-    }
+    // Extra record rows are printed on separately labelled A4 sheets.
+    // No over-capacity row can disappear from a document.
+    continuationRows(draft,record);
 
     if(draft.kind==SchoolTemplateKind.receipt &&
        record['feeItems'] is Map && record['totalAmount'] is num){
@@ -610,6 +636,54 @@ class SchoolTemplateImportEngine {
           _renderVisualSlot(slot,record,visualAssets,width,height),
       ]),
     ));
+    final extra=continuationRows(draft,record);
+    final pages=(extra.length+continuationRowsPerPage-1)~/
+      continuationRowsPerPage;
+    final isFee=draft.kind==SchoolTemplateKind.receipt;
+    final font=pw.TextStyle(font:normal,fontFallback:fontFallback,fontSize:10);
+    for(var index=0;index<pages;index++){
+      final start=index*continuationRowsPerPage;
+      final rows=extra.sublist(start,
+        math.min(start+continuationRowsPerPage,extra.length));
+      pdf.addPage(pw.Page(
+        // Continuation is a separate clean portrait A4 sheet, even when
+        // the school's original imported design is landscape.
+        pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.all(36),
+        build:(_)=>pw.Column(
+          crossAxisAlignment:pw.CrossAxisAlignment.start,
+          children:[
+            pw.Text(isFee?'Fee receipt – continuation':'Report card – continuation',
+              style:pw.TextStyle(font:normal,fontFallback:fontFallback,fontSize:18)),
+            pw.SizedBox(height:8),
+            pw.Text('Student: '+valueFor('studentName',record),style:font),
+            pw.Text('Reference: '+valueFor(
+              isFee?'receiptNo':'examName',record),style:font),
+            pw.Text('Continuation ${index+1} / $pages – original A4 is page 1',
+              style:font),
+            pw.SizedBox(height:12),
+            pw.Divider(),
+            pw.Row(children:[
+              pw.Expanded(child:pw.Text(isFee?'Fee head':'Subject',style:font)),
+              pw.SizedBox(width:120,child:pw.Text(
+                isFee?'Amount':'Marks',style:font)),
+            ]),
+            pw.Divider(),
+            for(final row in rows)
+              pw.Container(padding:pw.EdgeInsets.symmetric(vertical:4),
+                child:pw.Row(children:[
+                  pw.Expanded(child:pw.Text(row.key.toString(),
+                    maxLines:1,style:font)),
+                  pw.SizedBox(width:120,child:pw.Text(row.value.toString(),
+                    maxLines:1,style:font)),
+                ])),
+            pw.Spacer(),
+            pw.Divider(),
+            pw.Text('Extra record rows only. The full original total'
+              ' remains on the source A4 sheet.',style:font),
+          ],
+        ),
+      ));
+    }
     return pdf.save();
   }
 

@@ -103,6 +103,33 @@ void main(){
       isFalse);
   });
 
+  test('five-device manifest ACK simulation detects lost peer updates',(){
+    const school='vs-db8afb01a3be46a983c8284714d06e5d';
+    final assets=<String,dynamic>{
+      for(var device=1;device<=5;device++)
+        'pc-$device':{
+          'templateId':'pc-$device','schoolId':school,
+          'kind':'receipt','approved':true,
+        },
+    };
+    final all={'templateAssets':{'receipt':assets},
+      'receipt':'imported:pc-2',
+      'templateAssetLatest':{'receipt':'pc-5'}};
+    expect(WindowsTemplateCloudStore.containsExpectedVersions(
+      all,'receipt',assets.keys),isTrue);
+    final stale={'templateAssets':{'receipt':{
+      'pc-1':assets['pc-1'],'pc-2':assets['pc-2'],'pc-5':assets['pc-5'],
+    }}};
+    expect(WindowsTemplateCloudStore.containsExpectedVersions(
+      stale,'receipt',assets.keys),isFalse);
+    // A newly published file must not silently change the active school
+    // selection, and a rollback must still find the older version.
+    expect(WindowsTemplateCloudStore.importedAsset(
+      all,'receipt')?['templateId'],'pc-2');
+    expect(WindowsTemplateCloudStore.importedAsset(
+      all,'receipt',templateId:'pc-1')?['templateId'],'pc-1');
+  });
+
   test('unknown template version and school type return no assets',(){
     expect(WindowsTemplateCloudStore.importedTemplates(
       {'templateAssets':{'receipt':{'unknown':'not-a-manifest'}}},'receipt'),isEmpty);

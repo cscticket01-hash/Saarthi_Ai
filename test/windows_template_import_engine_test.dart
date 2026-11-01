@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../lib/windows_template_import_engine.dart';
 import '../lib/windows_template_forge_auto.dart';
 import '../lib/windows_template_forge_visual_slots.dart';
+import '../lib/windows_template_forge_ocr.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -411,11 +412,16 @@ void main() {
       returnsNormally);
     expect(SchoolTemplateImportEngine.valueFor('feeName11',record),'Tuition 11');
     expect(SchoolTemplateImportEngine.valueFor('feeAmount11',record),'100');
-    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(mapped,{
-      ...record,'feeItems':<String,int>{
+    final overflow={...record,'totalAmount':1300,
+      'feeItems':<String,int>{
         for(var i=0;i<13;i++) 'Tuition $i':100,
-      },
-    }),throwsFormatException,reason:'Never omit an overflow fee silently');
+      }};
+    expect(SchoolTemplateImportEngine.continuationRows(mapped,overflow),
+      hasLength(1));
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(mapped,overflow),
+      returnsNormally);
+    final extended=await SchoolTemplateImportEngine.previewPdf(mapped,overflow);
+    expect(extended.take(5).toList(),[37,80,68,70,45]);
     final report=await SchoolTemplateImportEngine.importBytes(
       kind:SchoolTemplateKind.reportCard,schoolId:school,
       filename:'twelve-subjects.png',bytes:png);
@@ -454,10 +460,55 @@ void main() {
       const SchoolTemplateField(key:'feeName0',x:.1,y:.3,width:.2,size:.015,mask:true),
       const SchoolTemplateField(key:'feeAmount0',x:.6,y:.3,width:.2,size:.015,mask:true),
     ]);
-    await expectLater(SchoolTemplateImportEngine.previewPdf(mapped,{
-      'receiptNo':'VS-101','studentName':'Mira',
-      'feeItems':{'Tuition':100,'Exam':50},'totalAmount':150,
-    }),throwsFormatException);
+    final record={'receiptNo':'VS-101','studentName':'Mira',
+      'feeItems':{'Tuition':100,'Exam':50},'totalAmount':150};
+    expect(SchoolTemplateImportEngine.continuationRows(mapped,record),
+      hasLength(1));
+    final generated=await SchoolTemplateImportEngine.previewPdf(mapped,record);
+    expect(generated.take(5).toList(),[37,80,68,70,45]);
+  });
+
+  test('bounded multi-page A4 continuation prints complete school rows',() async {
+    final original=await SchoolTemplateImportEngine.importBytes(
+      kind:SchoolTemplateKind.receipt,schoolId:school,
+      filename:'many-fees.png',bytes:png);
+    final draft=original.copyWith(fields:[
+      const SchoolTemplateField(key:'receiptNo',x:.1,y:.08,width:.3),
+      const SchoolTemplateField(key:'studentName',x:.1,y:.15,width:.3),
+      const SchoolTemplateField(key:'totalAmount',x:.65,y:.84,width:.2),
+      const SchoolTemplateField(key:'feeName0',x:.1,y:.4,width:.3),
+      const SchoolTemplateField(key:'feeAmount0',x:.65,y:.4,width:.2),
+    ]);
+    final record={'receiptNo':'VS-52','studentName':'Mira',
+      'feeItems':{for(var i=0;i<52;i++) 'Fee $i':100},
+      'totalAmount':5200};
+    expect(SchoolTemplateImportEngine.continuationRows(draft,record),
+      hasLength(51));
+    final bytes=await SchoolTemplateImportEngine.previewPdf(draft,record);
+    expect(bytes.take(5).toList(),[37,80,68,70,45]);
+    final tooMany={'receiptNo':'VS-250','studentName':'Mira',
+      'feeItems':{for(var i=0;i<250;i++) 'Fee $i':1},
+      'totalAmount':250};
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,tooMany),
+      throwsFormatException);
+    final badAmount={'receiptNo':'VS-BAD','studentName':'Mira',
+      'feeItems':{'Tuition':100,'Exam':-10},'totalAmount':90};
+    expect(()=>SchoolTemplateImportEngine.validatePreviewRecord(draft,badAmount),
+      throwsFormatException);
+  });
+
+  test('faint photo OCR retry enhances only the temporary raster',(){
+    final source=img.Image(width:100,height:140);
+    img.fill(source,color:img.ColorRgb8(188,188,188));
+    img.fillRect(source,x1:10,y1:20,x2:90,y2:40,
+      color:img.ColorRgb8(113,113,113));
+    final enhanced=TemplateForgeOfflineOcr.recognitionRaster(
+      source,enhanced:true);
+    final before=source.getPixel(10,20).r.toInt();
+    final after=enhanced.getPixel(10,20).r.toInt();
+    expect(after,lessThan(before));
+    expect(source.getPixel(10,20).r.toInt(),before,
+      reason:'Original school artwork cannot be altered by OCR preprocessing');
   });
 
   test('small printable text boxes auto-fit without ever truncating data',() {

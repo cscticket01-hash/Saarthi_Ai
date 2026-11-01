@@ -98,6 +98,16 @@ class WindowsTemplateCloudStore {
       id.isNotEmpty && schoolDriveFileId(url)==id;
   }
 
+  /// A completed upload must not report success if the last save dropped
+  /// an already observed school version. This detects a concurrent writer
+  /// whose manifest overtook our read-modify-write; it is not a cloud CAS.
+  static bool containsExpectedVersions(
+    Map<String,dynamic> settings,String kind,Iterable<String> expected,
+  ){
+    return expected.every((id)=>importedAsset(
+      settings,kind,templateId:id)!=null);
+  }
+
   static Future<Map<String,dynamic>> publish(SchoolTemplateDraft draft) async {
     final db=FirebaseFirestore.instance;
     final origin=db.activeProfileId;
@@ -241,6 +251,15 @@ class WindowsTemplateCloudStore {
     if(verified==null || verified['contentHash']!=contentHash ||
       verified['fileId']!=fileId || verified['schoolId']!=school){
       throw StateError('School template manifest read-back failed.');
+    }
+    if(!containsExpectedVersions(
+      savedSettings,draft.kind.name,versions.keys)){
+      throw StateError('Concurrent template update detected;'
+        ' published version history is incomplete. Recheck before selection.');
+    }
+    // Selecting an imported version remains an explicit separate action.
+    if(savedSettings[draft.kind.name]!=latestSettings[draft.kind.name]){
+      throw StateError('Selected school template changed during upload.');
     }
     return verified;
   }
