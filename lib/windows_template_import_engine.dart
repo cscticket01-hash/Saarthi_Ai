@@ -713,6 +713,8 @@ class SchoolTemplateImportEngine {
         if (!await raster.exists()) continue;
         final imageBytes = await raster.readAsBytes();
         if (imageBytes.length > maxPngBytes) continue;
+        if(meta['contentHash']!=null &&
+          meta['contentHash']!=sha256.convert(imageBytes).toString())continue;
         final decoded = img.decodePng(imageBytes);
         if (decoded == null || decoded.width != meta['width'] ||
             decoded.height != meta['height'] ||
@@ -747,6 +749,18 @@ class SchoolTemplateImportEngine {
     return drafts;
   }
 
+  /// Stable across retries: the same source, OCR fields and verified image
+  /// geometry are one draft, not a new duplicate on every upload attempt.
+  static String localDraftIdentity(SchoolTemplateDraft draft){
+    final digest=sha256.convert(draft.png).toString();
+    final map=jsonEncode([
+      draft.schoolId,draft.kind.name,draft.sourceHash,digest,
+      draft.fields.map((f)=>f.toJson()).toList(),
+      draft.visualSlots.map((slot)=>slot.toJson()).toList(),
+    ]);
+    return sha256.convert(utf8.encode(map)).toString();
+  }
+
   /// Local school-scoped DRAFT ONLY; never replaces approved school templates.
   static Future<void> saveLocalDraft(SchoolTemplateDraft draft, {
     required String Function() currentSchoolId,
@@ -762,15 +776,31 @@ class SchoolTemplateImportEngine {
       Platform.pathSeparator + scope + Platform.pathSeparator + draft.kind.name);
     await folder.create(recursive: true);
     if (currentSchoolId() != draft.schoolId) throw StateError('School changed.');
+    final identity=localDraftIdentity(draft);
+    final contentHash=sha256.convert(draft.png).toString();
     final base = folder.path + Platform.pathSeparator + draft.sourceHash + '-' +
-      DateTime.now().toUtc().microsecondsSinceEpoch.toString();
-    final tmpPng = File('$base.png.tmp');
-    final tmpJson = File('$base.json.tmp');
+      identity.substring(0,24);
+    final finalPng=File('$base.png'),finalJson=File('$base.json');
+    if(await finalPng.exists() && await finalJson.exists()){
+      try{
+        final raw=jsonDecode(await finalJson.readAsString());
+        final pngHash=sha256.convert(await finalPng.readAsBytes()).toString();
+        if(raw is Map && raw['draftIdentity']==identity &&
+            raw['contentHash']==pngHash && pngHash==contentHash){
+          return; // Verified idempotent save.
+        }
+      }catch(_){}
+      throw StateError('Existing same-version school draft failed integrity verification.');
+    }
+    final attempt=DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+    final tmpPng = File('$base.$attempt.png.tmp');
+    final tmpJson = File('$base.$attempt.json.tmp');
     final metadata = {
       'version': 1, 'approved': false, 'schoolId': draft.schoolId,
       'kind': draft.kind.name, 'filename': draft.filename,
       'sourceHash': draft.sourceHash, 'width': draft.width,
-      'height': draft.height,
+      'height': draft.height, 'contentHash':contentHash,
+      'draftIdentity':identity,
       'fields': draft.fields.map((f) => f.toJson()).toList(),
       if(draft.visualSlots.isNotEmpty)
         'visualSlots':draft.visualSlots.map((s)=>s.toJson()).toList(),
