@@ -37,6 +37,24 @@ int windowsReferenceDocumentIndex(String kind, dynamic value) {
       : 0;
 }
 
+// The built-in PDF font uses no embedded TTF bytes, which is important for
+// 30 KiB receipts. It is safe ONLY for plain ASCII receipt values. Any Hindi,
+// Bengali, Assamese or other Unicode input keeps the actual embedded fonts;
+// never silently swap text into boxes/tofu to pass a size test.
+bool _receiptCanUseStandardPdfFonts(dynamic input) {
+  if (input is String) {
+    return input.runes.every((r) => r == 9 || r == 10 || r == 13 ||
+        (r >= 32 && r <= 126));
+  }
+  if (input is Map) {
+    return input.values.every(_receiptCanUseStandardPdfFonts);
+  }
+  if (input is Iterable) {
+    return input.every(_receiptCanUseStandardPdfFonts);
+  }
+  return true;
+}
+
 int? windowsReferenceTermNumber(Map<String, dynamic> data) {
   if (data['isFinal'] == true) return null;
   final explicit = int.tryParse(data['quarter']?.toString() ?? '');
@@ -156,12 +174,14 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final i = windowsReferenceDocumentIndex(kind, template);
   // Optimize the embedded assets only; original school images remain intact.
   final embeddedPhoto = SchoolPdfMedia.portrait(photo);
-  final embeddedLogo = SchoolPdfMedia.branding(logo);
-  final embeddedSeal = SchoolPdfMedia.branding(seal);
+  final embeddedLogo = SchoolPdfMedia.branding(logo,
+      maxPrintEdge: kind == 'receipt' ? 120 : 256);
+  final embeddedSeal = SchoolPdfMedia.branding(seal,
+      maxPrintEdge: kind == 'receipt' ? 144 : 256);
   final printSignature = SchoolPdfMedia.branding(await _signatureInk(
     signature,
     white: false,
-  ));
+  ), maxPrintEdge: kind == 'receipt' ? 192 : 256);
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -178,10 +198,14 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final name = kind == 'teacherId'
       ? first(['name', 'teacherName'], 'Teacher name')
       : first(['studentName', 'name'], 'Student name');
-  final regular = pw.Font.ttf(
-    await rootBundle.load('assets/id_card_regular.ttf'),
-  );
-  final bold = pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
+  final useStandardReceiptFont =
+      kind == 'receipt' && _receiptCanUseStandardPdfFonts(data);
+  final regular = useStandardReceiptFont
+      ? pw.Font.helvetica()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+  final bold = useStandardReceiptFont
+      ? pw.Font.helveticaBold()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
