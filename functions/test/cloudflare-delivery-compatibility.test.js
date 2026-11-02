@@ -89,7 +89,7 @@ test('small-file optimization remains disabled until the exact Worker version is
   if(b.command==='status')return {state:'pending',manifest:{...manifest,received:bytes.length},due:Date.now()};
   throw Error('Unexpected command');
  }};
- const manifest={uploadKey:key,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length,name:'pic.jpg',mime:'image/jpeg'};
+ manifest={uploadKey:key,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length,name:'pic.jpg',mime:'image/jpeg'};
  const adapter=createCloudflareDelivery({edge,atomicSmallFilesEnabled:false});
  await adapter.wholeFile(A,{...manifest,base64:bytes.toString('base64')});
  assert.deepEqual(commands,['begin','part','status']);
