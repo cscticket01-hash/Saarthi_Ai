@@ -137,3 +137,22 @@ experimental authority to a real school before the above gates pass.
 Pure Dart replay checks: `dart .github/tests/live_sync_protocol.dart`.
 Windows adapter: `flutter test test/windows_live_sync_store_test.dart`.
 CI extends the existing Cloudflare review workflow with both client checks.
+
+### Durable migration admission
+
+The broker now persists per-school migration state and legacy request markers in
+`school_live_migrations`. Preparation closes admission before examining existing
+writers, waits a two-minute deployment drain grace, requires both legacy record
+and notice queues to have zero pending and zero review jobs, and only marks a
+collection active after verified seeding. Live commits require that active state.
+Legacy writes to an active collection fail closed; local outboxes must retain
+those requests. Broad batch/restore actions are fenced across collections.
+
+Markers deliberately have no timeout expiry: a timed-out Google request may
+still complete. Failed/uncertain requests or a crashed broker therefore require
+operator investigation before migration; retrying preparation cannot clear them.
+Successful requests remove their own marker. Rollout must replace every old
+broker instance before beginning the grace period; an older deployment cannot
+participate in this admission protocol. This is a safety gate, not completed
+business-screen routing or an automatic rollback implementation. Live schools
+remain disabled in production pending those integrations.

@@ -1,0 +1,55 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {createLiveMigration}=require('../live-sync-migration');
+const {fixture,A,B}=require('./helpers/managed-school-broker');
+const write={action:'managed_records',collection:'school_expenses',operation:'write'};
+test('migration closes admission before waiting for an existing writer and queued delivery',async()=>{
+ const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});let finish,started;
+ const ready=new Promise(r=>started=r),pending=gate.legacy(A,write,()=>{started();return new Promise(r=>finish=r);});
+ await ready;let seeds=0;
+ const seed=async()=>{seeds++;return {state:'active'};};
+ await assert.rejects(gate.prepare(A,write.collection,async()=>true,seed),e=>e.code==='LIVE_LEGACY_WRITES_IN_FLIGHT');
+ await assert.rejects(gate.legacy(A,write,async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ finish('saved');assert.equal(await pending,'saved');
+ await assert.rejects(gate.prepare(A,write.collection,async()=>false,seed),e=>e.code==='LIVE_LEGACY_DELIVERY_PENDING');
+ assert.equal(seeds,0);
+ await gate.prepare(A,write.collection,async()=>true,seed);assert.equal(seeds,1);
+ await gate.assertActive(A,write.collection);
+ await assert.rejects(gate.legacy(A,write,async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ assert.equal(await gate.legacy(B,write,async()=>42),42);
+ assert.equal(await gate.legacy(A,{...write,operation:'read'},async()=>43),43);
+ await gate.prepare(A,write.collection,async()=>false,seed);assert.equal(seeds,1);
+});
+test('uncertain write, broker restart and failed seeding never reopen legacy admission',async()=>{
+ const f=fixture();let gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ await assert.rejects(gate.legacy(A,write,async()=>{throw Error('transport timeout');}));
+ gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ await assert.rejects(gate.prepare(A,write.collection,async()=>true,async()=>({state:'active'})),e=>e.code==='LIVE_LEGACY_WRITES_IN_FLIGHT');
+ await assert.rejects(gate.assertActive(A,write.collection),e=>e.code==='LIVE_MIGRATION_NOT_ACTIVE');
+ await assert.rejects(gate.prepare(B,write.collection,async()=>true,async()=>{throw Error('seed failed');}));
+ await assert.rejects(gate.legacy(B,{action:'managed_recycle',operation:'restore'},async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ await gate.prepare(B,write.collection,async()=>true,async()=>({state:'active'}));
+ await gate.assertActive(B,write.collection);
+});
+test('deployment drain grace survives retries and broad actions cannot spoof a collection',async()=>{
+ const f=fixture();let time=1000;const gate=createLiveMigration({db:f.db,now:()=>time});let seeded=0;
+ const seed=async()=>{seeded++;return {state:'active'};};
+ await assert.rejects(gate.prepare(A,write.collection,async()=>true,seed),e=>e.code==='LIVE_LEGACY_DRAIN_GRACE');
+ time+=119999;
+ await assert.rejects(gate.prepare(A,write.collection,async()=>true,seed),e=>e.code==='LIVE_LEGACY_DRAIN_GRACE');
+ assert.equal(seeded,0);
+ time++;
+ await gate.prepare(A,write.collection,async()=>true,seed);assert.equal(seeded,1);
+ await assert.rejects(gate.legacy(A,{action:'managed_records_batch',collection:'unrelated',operation:'read'},async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+});
+test('public broker cannot commit before activation or seed while legacy delivery is pending',async()=>{
+ const commands=[],edge={enabled:()=>true,rpc:async(s,l,b)=>{commands.push({lane:l,command:b.command});return {pending:l==='records'?1:0,needsAttention:0};}};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(f.call({action:'managed/live/commit',liveProtocol:1,collection:write.collection,id:'one',operation:'write'}),e=>e.code==='LIVE_MIGRATION_NOT_ACTIVE');
+ assert.equal(commands.length,0);
+ const {time}=require('./helpers/managed-school-broker');
+ f.docs.set('school_live_migrations/'+A,{collections:{[write.collection]:{state:'preparing',startedAt:time-120001}},inflight:{}});
+ await assert.rejects(f.call({action:'managed/live/prepare',liveProtocol:1,collection:write.collection,confirmIsolatedMigration:true}),e=>e.code==='LIVE_LEGACY_DELIVERY_PENDING');
+ assert.deepEqual(commands,[{lane:'records',command:'stats'},{lane:'notices',command:'stats'}]);
+ assert.equal(f.sent.length,0);
+});

@@ -137,6 +137,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  const queue=createAttendanceQueue({store:legacyAttendanceStore,now,deliver:deliverAttendance,retryAtForSchool:school=>googlePressure.retryAt(googleQuotaScopes[school]||school,'SCRIPT_QUOTA_EXCEEDED')});
  const edgeEnabled=school=>cloudflareSync?.enabled(school)===true;
  const liveSync=require('./live-sync').createLiveSync({edge:cloudflareSync,schools:liveSyncSchools,now});
+ const liveMigration=require('./live-sync-migration').createLiveMigration({db,now});
  const allEdge=school=>cloudflareAllDataEnabled===true&&edgeEnabled(school);
  const edgeDelivery=cloudflareSync?createCloudflareDelivery({edge:cloudflareSync,now,recordParallelism:edgeRecordParallelism}):null;
  const edgeQueue=(school,lane)=>createAttendanceQueue({store:cloudflareSync.attendanceStore(school,lane),now,deliver:deliverAttendance,retryAtForSchool:id=>googlePressure.retryAt(googleQuotaScopes[id]||id,'SCRIPT_QUOTA_EXCEEDED')});
@@ -241,6 +242,9 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
+  return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
+ }
+ async function signedLegacy(m,body){
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1){
    if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return edgeDelivery.record(m.schoolId,body);
    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body);
@@ -615,7 +619,11 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   const operation=action.slice('managed/live/'.length);
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
-   return {success:true,...await liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body))};
+   const drained=async()=>{
+    const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
+    return stats.every(s=>s.pending===0&&s.needsAttention===0);
+   };
+   return {success:true,...await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)))};
   }
   if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
   const allowed=new Set(['commit','read','head','changes','snapshot','received','stats']);
@@ -624,6 +632,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor','createIntent','cachedBaseline'].filter(k=>b[k]!==undefined).map(k=>[k,['data','cachedBaseline'].includes(k)?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
   const drive=record=>signedRequest(m,record);
+  if(operation==='commit')await liveMigration.assertActive(m.schoolId,body.collection);
   const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
     operation==='commit'?await liveSync.commit(m.schoolId,body,drive):
     ['changes','snapshot'].includes(operation)?await liveSync.replay(m.schoolId,body,drive):await liveSync.command(m.schoolId,body);
