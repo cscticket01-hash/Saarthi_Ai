@@ -89,10 +89,13 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
         upload['fileId'] is! String ||
         upload['fileUrl'] is! String)
       throw StateError('School image upload failed. Local image retained.');
+    // The verified local preview must be the exact compressed bytes sent to
+    // this school's Drive, so PC1 and PC2–5 display the same portrait rather
+    // than PC1 showing a different uncompressed original.
     await WindowsSchoolImageCache.store(
       school,
       upload['fileId'] as String,
-      raw,
+      'data:$mime;base64,${base64Encode(bytes)}',
       profileId: profile,
     );
     result['${prefix}Url'] = upload['fileUrl'];
