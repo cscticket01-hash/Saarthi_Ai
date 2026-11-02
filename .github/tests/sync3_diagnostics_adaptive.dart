@@ -67,6 +67,22 @@ void main() {
     }, now: now).contains('PRIVATE_TOKEN'),
     'Raw server error exposed',
   );
+  final brief = pendingQueueBrief({
+    ...row,
+    'failureCode': 'SCRIPT_TIMEOUT',
+    'lastError': 'SECRET_SHOULD_NOT_SHOW',
+  }, now: now);
+  check(brief.contains('Reason: networkPath') &&
+        brief.contains('Code: SCRIPT_TIMEOUT') &&
+        brief.contains('in 2 min'), 'Queue retry evidence not shown');
+  check(!brief.contains('SECRET_SHOULD_NOT_SHOW'), 'Private raw error leaked');
+  check(pendingQueueBrief({
+    ...row, 'failureCode': 'token:secret',
+    'failureCategory': 'unauthorized-category',
+  }, now: now).contains('token:secret') == false,
+    'Unrecognized failure details must be hidden');
+  check(pendingQueueBrief({'syncState':'pending'}, now:now).isEmpty,
+      'A fresh queued record invented a failure');
   var size = 2;
   for (var i = 0; i < 20; i++)
     size = managedBatchWindow(
