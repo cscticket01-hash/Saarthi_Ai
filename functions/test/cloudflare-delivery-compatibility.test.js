@@ -1,11 +1,11 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict');
+const test=require('node:test'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const {fixture,A}=require('./helpers/managed-school-broker');
 function setup({native=false,enabled=true}={}){
  const actions=[],commands=[];let manifest;
  const edge={enabled:()=>true,rpc:async(school,lane,body)=>{
   assert.equal(school,A);commands.push(body.command);
-  if(body.command==='begin'){manifest={...body.manifest,received:0};return {state:'receiving',manifest};}
+  if(body.command==='begin'){manifest??={...body.manifest,received:0};return {state:'receiving',manifest};}
   if(body.command==='part'){manifest.received+=Buffer.from(body.base64,'base64').length;return {state:'pending',manifest};}
   if(body.command==='status')return {state:'pending',manifest,due:Date.now(),response:null};
   throw Error('Unexpected edge command');
@@ -38,4 +38,28 @@ test('legacy caller preserves original full upload without a new capability depe
 test('admission rollback preserves verified full uploads without a new health probe',async()=>{
  const f=setup({native:true,enabled:false});assert.equal((await f.call(upload)).fileId,'real-legacy-drive-file');
  assert.deepEqual(f.actions,['managed_upload']);assert.deepEqual(f.commands,[]);
+});
+
+const chunk=Buffer.from('synthetic TEST school image bytes'),sha=createHash('sha256').update(chunk).digest('hex');
+const resumable={action:'managed/file/upload/resumable',operation:'begin',uploadKey:'stable-image-session-00001',
+ name:'test_portrait.jpg',mime:'image/jpeg',sha256:sha,sizeBytes:chunk.length,edgeDeliveryVersion:1};
+test('Cloudflare-capable school starts portrait manifest and bytes on the same edge owner, never Script',async()=>{
+ const f=setup({native:true});
+ const begin=await f.call(resumable);
+ assert.equal(begin.cloudflareAccepted,true);
+ assert.equal(begin.driveState,'receiving');
+ assert.equal(begin.offset,0);
+ const part=await f.call({...resumable,operation:'part',offset:0,base64:chunk.toString('base64'),chunkSha256:sha});
+ assert.equal(part.cloudflareAccepted,true);
+ assert.equal(part.driveState,'pending');
+ assert.equal(part.fileId,undefined,'A Cloudflare ACK is not a Google Drive file ID');
+ assert.deepEqual(f.actions,['managed_health'],'verified health is cached across begin and part');
+ assert.deepEqual(f.commands,['begin','begin','part','status']);
+});
+test('older school Script cannot split a Cloudflare-opted resumable portrait between Script and edge',async()=>{
+ const f=setup({native:false});
+ await assert.rejects(f.call(resumable),e=>e.status===503&&e.code==='EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+ await assert.rejects(f.call({...resumable,operation:'part',offset:0,base64:chunk.toString('base64'),chunkSha256:sha}),e=>e.code==='EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+ assert.deepEqual(f.actions,['managed_health'],'no direct Script upload session was started');
+ assert.deepEqual(f.commands,[],'no edge chunks accepted without a drainable provider');
 });
