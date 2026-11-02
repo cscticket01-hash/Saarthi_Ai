@@ -1,3 +1,4 @@
+import 'school_media_budgets.dart';
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -352,7 +353,7 @@ Future<Uint8List> renderSchoolDocument(
                       const pw.TextStyle(fontSize: 8, color: PdfColors.grey600))
             ]));
   }
-  return pdf.save();
+  return SchoolMediaBudgets.enforcePdf(kind, await pdf.save());
 }
 
 // A named alias keeps the dense card layout readable without Flutter types.
