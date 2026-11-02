@@ -21,7 +21,11 @@ class SchoolPdfMedia {
     Uint8List source, {
     required double widthMm,
     required double heightMm,
+    int jpegQuality = 92,
   }) {
+    if (jpegQuality < 88 || jpegQuality > 94) {
+      throw const FormatException('Unsafe printed ID background quality.');
+    }
     final decoded = img.decodeImage(source);
     if (decoded == null || widthMm <= 0 || heightMm <= 0 ||
         widthMm > 500 || heightMm > 500 ||
@@ -50,7 +54,7 @@ class SchoolPdfMedia {
       p.a = 255;
     }
     final jpeg = Uint8List.fromList(img.encodeJpg(
-      rgb.convert(numChannels: 3), quality: 92));
+      rgb.convert(numChannels: 3), quality: jpegQuality));
     // A lossless source that is already smaller stays pixel-identical.
     // JPEG only replaces the bitmap when it actually reduces the PDF.
     return jpeg.length < source.length ? jpeg : source;
