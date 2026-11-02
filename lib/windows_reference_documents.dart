@@ -271,7 +271,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
                   ? IdCardLayout.image(bytes, cover: cover,
                        printDpi: cover
                            ? [300, 280, 260][printPass]
-                           : [250, 220, 220][printPass])
+                           : [250, 220, 220][printPass],
+                       jpegQuality: [88, 84, 80][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
