@@ -146,9 +146,9 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? logo,
   Uint8List? signature,
   Uint8List? seal,
-  int _printPass = 0,
+  int printPass = 0,
 }) async {
-  if (_printPass < 0 || _printPass > 2) {
+  if (printPass < 0 || printPass > 2) {
     throw const FormatException('Invalid ID print optimization stage.');
   }
   if (!windowsReferenceDocumentNames.containsKey(kind))
@@ -270,8 +270,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: kind == 'teacherId'
                   ? IdCardLayout.image(bytes, cover: cover,
                        printDpi: cover
-                           ? [300, 280, 260][_printPass]
-                           : [250, 220, 220][_printPass])
+                           ? [300, 280, 260][printPass]
+                           : [250, 220, 220][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
@@ -1072,14 +1072,14 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final output = await pdf.save();
   if (kind == 'teacherId' &&
       output.length > SchoolMediaBudgets.idCard &&
-      _printPass < 2) {
+      printPass < 2) {
     // Only the print-bitmap DPI changes; vector QR, text, dimensions and
     // school media source bytes stay identical. Fail safely if all print
     // variants still exceed the strict PDF budget.
     return renderWindowsReferenceDocument(
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
-      _printPass: _printPass + 1,
+      printPass: printPass + 1,
     );
   }
   return SchoolMediaBudgets.enforcePdf(kind, output);
