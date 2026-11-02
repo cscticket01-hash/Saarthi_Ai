@@ -16,6 +16,8 @@ test('verified 24h cache preserves replay until expiry',async t=>{
  assert.equal((await live.command(school,{command:'compact',before:1})).floor,0);
  assert.equal((await live.drain(school,read)).processed,1);
  assert.equal((await live.command(school,{command:'compact',before:1})).floor,0);
+ assert.equal((await live.command(school,{command:'expireVerified'})).expired,0);
+ const next=await live.command(school,{command:'retention'});assert.equal(next.retentionHours,24);assert.ok(next.nextCleanupAt>Date.now());
  const head=await live.command(school,{command:'head'});assert.equal(head.cursor,1);assert.equal(head.collections[0].cursor,1);
  assert.equal((await live.replay(school,{command:'changes',after:0},read)).events.length,1);
  const snapshot=await live.replay(school,{command:'snapshot',collection,at:1,after:''},read);assert.equal(snapshot.records[0].record.amount,1);
