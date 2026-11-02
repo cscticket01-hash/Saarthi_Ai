@@ -85,12 +85,18 @@ void main() {
     final originalCopy = Uint8List.fromList(source);
     final compact = SchoolPdfMedia.cardBackground(
       source, widthMm: 54, heightMm: 85.6);
-    expect(compact.length, lessThan(source.length));
+    // Already PNG-optimized artwork may be smaller than JPEG; never force
+    // a larger lossy output just to claim a compression improvement.
+    expect(compact.length, lessThanOrEqualTo(source.length));
     expect(source, originalCopy);
     final decoded = img.decodeImage(compact)!;
     expect(decoded.width, lessThanOrEqualTo(600));
     expect(decoded.height, lessThanOrEqualTo(900));
-    expect(compact.sublist(0, 2), [0xff, 0xd8]);
+    if (compact.length < source.length) {
+      expect(compact.sublist(0, 2), [0xff, 0xd8]);
+    } else {
+      expect(compact, source);
+    }
   });
 
   test('ID PDF portrait photo is print-resolution JPEG, with transparent ink as PNG', () {
