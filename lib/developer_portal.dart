@@ -11,6 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -386,6 +387,14 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ? selected : eligible.first['id'].toString();
     bool paid = true, busy = false;
     String? error;
+    final random=Random.secure();
+    final renewalId=List.generate(16,(_)=>random.nextInt(256).toRadixString(16).padLeft(2,'0')).join();
+    Map<String,dynamic>? currentLicence(String schoolId) {
+      final matching=_schools.where((s)=>s['id']==schoolId).firstOrNull;
+      if(matching==null)return null;
+      return _licenses.where((l)=>l['schoolId']==schoolId&&l['revoked']!=true&&
+        l['id']==(matching['licenseId']??matching['activeLicenseHash'])).firstOrNull;
+    }
     final days = TextEditingController(text: '365'),
         amount = TextEditingController(text: '0');
     final result = await showDialog<Map<String, dynamic>>(
@@ -393,7 +402,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialog) => AlertDialog(
-          title: const Text('Create a school licence'),
+          title: Text(currentLicence(school)!=null?'Renew existing licence — same key':'Create a school licence'),
           content: SizedBox(
             width: 420,
             child: Column(
@@ -437,9 +446,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   onChanged: busy ? null : (v) => setDialog(() => paid = v!),
                   title: const Text('Payment received'),
                 ),
-                const Text(
-                  'The key will work only for this school. Share it manually after creation.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                Text(
+                  currentLicence(school)!=null
+                    ? 'Existing school-bound key will remain valid; renewal extends expiry without changing the school, key, Drive or stored data.'
+                    : 'New key is shown only once. Share it with this school and activate it in Windows.',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
                 ),
                 if (error != null)
                   Text(error!, style: const TextStyle(color: Colors.redAccent)),
@@ -460,11 +471,13 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         error = null;
                       });
                       try {
-                        final r = await _call('license/issue', {
+                        final existing=currentLicence(school);
+                        final r = await _call(existing==null?'license/issue':'license/renew', {
                           'schoolId': school,
                           'days': int.tryParse(days.text),
                           'paid': paid,
                           'amount': double.tryParse(amount.text) ?? 0,
+                          if(existing!=null)...{'licenseId':existing['id'],'renewalId':renewalId},
                         });
                         if (ctx.mounted) Navigator.pop(ctx, r);
                       } catch (e) {
@@ -474,7 +487,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         });
                       }
                     },
-              child: Text(busy ? 'Creating…' : 'Generate key'),
+              child: Text(busy ? 'Saving…' : currentLicence(school)!=null ? 'Renew same key' : 'Generate key'),
             ),
           ],
         ),
@@ -483,6 +496,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     days.dispose();
     amount.dispose();
     if (result == null || !mounted) return;
+    if(result['sameKey']==true){
+      await _load(silent:true);
+      if(!mounted)return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Existing licence renewed'),
+        content:Text('Expiry extended to ${_date(result['expiresAt'])}. Same school account, licence key, Drive files and school records are preserved. If a replacement key was previously issued but not activated, it must be activated once from the school app.'),
+        actions:[FilledButton(onPressed:()=>Navigator.pop(ctx),child:const Text('OK'))]));
+      return;
+    }
     if(result['key'] is String && (result['key'] as String).isNotEmpty)
       _issuedSessionKeys[sha256.convert(utf8.encode((result['key'] as String).trim().toUpperCase())).toString()]=result['key'] as String;
     await _load(silent:true);
@@ -935,6 +957,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         Row(
                           mainAxisSize:MainAxisSize.min,
                           children: [
+                            if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
+                              (s['licenseId']??s['activeLicenseHash'])==l['id']) &&
+                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now+30*86400000)
+                              TextButton(onPressed:()=>_issue(l['schoolId'].toString()),
+                                child:const Text('Renew same key')),
                             TextButton(
                               onPressed: l['revoked'] == true
                                   ? null
