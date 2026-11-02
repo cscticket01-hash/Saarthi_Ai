@@ -1,5 +1,7 @@
 import {initSpool,spoolCommand,spoolLane} from './spool';
 import {mobileRequest} from './mobile';
+import {initLive,liveCommand} from './live-records';
+import {liveSocketGrant,LiveSocketGrant} from './live-socket';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
 type Json=Record<string,unknown>;
@@ -19,8 +21,19 @@ export class SyncLane extends DurableObject<Env>{
  private setMeta(key:string,value:string){this.ctx.storage.sql.exec('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,value);}
  private job(id:string):Job|undefined{return this.ctx.storage.sql.exec<Job>('SELECT * FROM jobs WHERE id=?',id).toArray()[0];}
  async command(school:string,lane:string,b:Json):Promise<unknown>{
-  demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane)||spoolLane(lane)));
+  demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
   const identity=school+'/'+lane;demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);
+  if(lane==='live'){
+   demand((this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'Live authority is not enabled for this school',412);
+   initLive(this.ctx.storage);
+   if(b.command==='commit'||b.command==='backupFinish')await this.wake(Date.now()+250);
+   const result=liveCommand(this.ctx.storage,school,b);
+   if(b.command==='commit')for(const socket of this.ctx.getWebSockets()){
+    const grant=socket.deserializeAttachment() as LiveSocketGrant;
+    try{if(grant.schoolId!==school||grant.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');else socket.send(JSON.stringify({liveProtocol:1,schoolId:school,cursor:result.cursor}));}catch{}
+   }
+   return result;
+  }
   if(spoolLane(lane))return spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
   const action=String(b.command||''),id=String(b.id||'');
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
@@ -86,8 +99,32 @@ export class SyncLane extends DurableObject<Env>{
   throw Object.assign(new Error('Unknown sync command'),{status:400});
  }
  private async wake(at:number){const existing=await this.ctx.storage.getAlarm();if(existing===null||existing>at)await this.ctx.storage.setAlarm(Math.max(Date.now()+100,at));}
+ async fetch(request:Request):Promise<Response>{
+  return this.connectLive(await liveSocketGrant(request,this.env.EDGE_KEY));
+ }
+ async connectLive(grant:LiveSocketGrant):Promise<Response>{
+  demand(grant.schoolId===(this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID&&grant.expiresAt>Date.now(),'Live stream unavailable',412);
+  const identity=grant.schoolId+'/live';demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);initLive(this.ctx.storage);
+  for(const socket of this.ctx.getWebSockets()){const old=socket.deserializeAttachment() as LiveSocketGrant;if(old.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');}
+  demand(this.ctx.getWebSockets().length<100,'Live connection limit',429);
+  const pair=new WebSocketPair();this.ctx.acceptWebSocket(pair[1]);pair[1].serializeAttachment(grant);
+  pair[1].send(JSON.stringify(liveCommand(this.ctx.storage,grant.schoolId,{command:'head'})));
+  return new Response(null,{status:101,webSocket:pair[0],headers:{'Sec-WebSocket-Protocol':'vidya-live-v1'}});
+ }
+ webSocketMessage(socket:WebSocket,message:string|ArrayBuffer):void{
+  const grant=socket.deserializeAttachment() as LiveSocketGrant;
+  if(grant.expiresAt<=Date.now()){socket.close(1008,'Refresh school authorization');return;}
+  if(typeof message!=='string'||message!=='head'){socket.close(1008,'Unsupported live message');return;}
+  socket.send(JSON.stringify(liveCommand(this.ctx.storage,grant.schoolId,{command:'head'})));
+ }
  async alarm(){
   const identity=this.meta('identity');if(!identity)return;const [school,lane]=identity.split('/');
+  if(lane==='live'){
+   const raw=JSON.stringify({action:'managed/live/drain',schoolId:school}),time=String(Date.now());
+   try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});await response.body?.cancel();}catch{}
+   const rows=this.ctx.storage.sql.exec<{due:number}>("SELECT min(b.due) AS due FROM live_backup b WHERE b.state IN ('pending','retry','processing') AND NOT EXISTS(SELECT 1 FROM live_backup earlier WHERE earlier.collection=b.collection AND earlier.id=b.id AND earlier.seq<b.seq AND earlier.state!='verified')").toArray();
+   if(rows[0]?.due!=null)await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,rows[0].due));return;
+  }
   if(lane!=='delivery'){await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;}
   const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes WHERE due < 9007199254740991 ORDER BY due,name LIMIT 1').toArray()[0];
   const backoff=Number(this.meta('deliveryBackoff')||0);if(backoff>Date.now()){await this.ctx.storage.setAlarm(backoff);return;}
@@ -109,10 +146,15 @@ export default {
   const headers={'Cache-Control':'no-store','Content-Type':'application/json','X-Content-Type-Options':'nosniff'};
   try{
    const url=new URL(request.url);if(url.pathname==='/healthz'&&request.method==='GET')return Response.json({service:'vidya-saarthi-cloudflare-sync',version:2,edgeDeliveryVersion:1,attendancePartitions:256},{headers});
+   if(url.pathname==='/live'&&request.method==='GET'){
+    const grant=await liveSocketGrant(request,env.EDGE_KEY);
+    demand(grant.schoolId===(env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID,'Live authority is not enabled',412);
+    return env.LANES.getByName(grant.schoolId+'/live').fetch(request);
+   }
    if(request.method==='POST'&&url.pathname==='/mobile')return Response.json(await mobileRequest(request,env),{headers});
    demand(request.method==='POST'&&url.pathname==='/internal','Not found',404);const raw=await boundedBody(request,800000);
    demand(await authenticated(env.EDGE_KEY,raw,request.headers),'Sync authorization rejected',401);
-   const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery)$/.test(lane)||spoolLane(lane)));
+   const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
    demand(raw.length<=(/^file-[a-f0-9]{64}$/.test(lane)?800000:400000),'Request too large',413);
    const value=await env.LANES.getByName(school+'/'+lane).command(school,lane,body);
    return Response.json({success:true,schoolId:school,value},{headers});

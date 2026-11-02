@@ -1,4 +1,5 @@
 import 'student_lifecycle_policy.dart';
+import 'live_sync_protocol.dart';
 import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
@@ -282,6 +283,30 @@ class FirebaseFirestore {
     }
     return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
       ()=>_database.applyOperations(operations));
+  }
+
+  /// Retain a complete live page and its cursor in the same serialized disk
+  /// transaction. These are incoming records, never upload or Drive receipts.
+  Future<void> retainLiveSyncPage(LiveSyncPage page) async {
+    final profile=activeProfileId;
+    final school=activeProfileIdentity['schoolSyncId'];
+    if(school!=page.schoolId)throw StateError('Live page belongs to another school.');
+    LiveSyncPage.parse({'success':true,'liveProtocol':1,'schoolId':page.schoolId,
+      'cursor':page.cursor,'head':page.head,'more':page.more,'events':page.events},
+      page.schoolId,page.after);
+    final ref=collection('_windows_live_checkpoints').doc(page.schoolId);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    if(activeProfileId!=profile || old!=null&&old['schoolId']!=school ||
+        (old?['cursor']??0)!=page.after)throw StateError('Live checkpoint changed.');
+    final operations=[
+      for(final event in page.events)_WriteOperation._(type:_WriteType.set,
+        collection:'_windows_live_incoming',documentId:'${page.schoolId}-${event['sequence']}',
+        data:{'schoolId':page.schoolId,...event,'state':'retained'}),
+      _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
+        documentId:page.schoolId,data:{'schoolId':page.schoolId,'cursor':page.cursor}),
+    ];
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{page.schoolId:old}}));
   }
 
   /// Readback evidence only. A retained newer edit must never count as a download.
@@ -1215,6 +1240,7 @@ class _LocalSchoolDatabase {
           o.type == _WriteType.delete && o.collection == '_windows_firebase_outbox' &&
           o.acknowledgedRevision != null && o.data?['operationId'] is String);
         final metadataOnly = operations.every((o) => const {
+          '_windows_live_checkpoints','_windows_live_incoming',
           '_windows_verified_cloud_records','_windows_sync_downloads',
           '_windows_sync_manifest','_windows_sync_status','_windows_sync_dependencies',
         }.contains(o.collection) && o.acknowledgedRevision == null);

@@ -21,7 +21,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={},cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repairKnowledgeOptions={},cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
@@ -136,6 +136,7 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
  };
  const queue=createAttendanceQueue({store:legacyAttendanceStore,now,deliver:deliverAttendance,retryAtForSchool:school=>googlePressure.retryAt(googleQuotaScopes[school]||school,'SCRIPT_QUOTA_EXCEEDED')});
  const edgeEnabled=school=>cloudflareSync?.enabled(school)===true;
+ const liveSync=require('./live-sync').createLiveSync({edge:cloudflareSync,schools:liveSyncSchools,now});
  const allEdge=school=>cloudflareAllDataEnabled===true&&edgeEnabled(school);
  const edgeDelivery=cloudflareSync?createCloudflareDelivery({edge:cloudflareSync,now,recordParallelism:edgeRecordParallelism}):null;
  const edgeQueue=(school,lane)=>createAttendanceQueue({store:cloudflareSync.attendanceStore(school,lane),now,deliver:deliverAttendance,retryAtForSchool:id=>googlePressure.retryAt(googleQuotaScopes[id]||id,'SCRIPT_QUOTA_EXCEEDED')});
@@ -315,6 +316,14 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
  }
  const handler=async req=>{
  const b=req.body||{},action=b.action;if(req.method!=='POST')fail(405,'Use POST');
+ if(action==='managed/live/drain'){
+  if(!liveSync.enabled(b.schoolId)||!cloudflareSync.verify(b,req.headers||{}))fail(403,'Cloudflare delivery authorization required');
+  const state=await mobileState(b.schoolId),e={...state.entitlement};
+  if(!state.school||!e.active||e.blocked||state.school.deletedAt)fail(403,'School is inactive');
+  if(e.status!=='trial'){if(!state.licence||state.licence.revoked||state.licence.schoolId!==b.schoolId)fail(403,'School licence inactive');e.expiresAt=Number(state.licence.expiresAt?.toMillis?.()??state.licence.expiresAt);}
+  const owner={schoolId:b.schoolId,entitlement:e};if(!lease(owner).allowed||e.status!=='trial'&&!e.activated)fail(403,'School licence inactive');
+  return {success:true,schoolId:b.schoolId,...await liveSync.drain(b.schoolId,body=>signedRequest(owner,body))};
+ }
  if(action==='managed/cloudflare/drain'){
   if(!edgeEnabled(b.schoolId)||!cloudflareSync.verify(b,req.headers||{})||! /^(?:attendance-[a-f0-9]{2}|notices|records|file-[a-f0-9]{64})$/.test(b.lane||''))fail(403,'Cloudflare delivery authorization required');
   let result;
@@ -600,6 +609,22 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
  if(action==='managed/licence/activate'){if(hash(String(b.key||'').trim().toUpperCase())!==m.entitlement.licenseHash||!lease(m).allowed)fail(403,'Licence does not belong to this school or has expired');const ref=db.doc('school_entitlements/'+m.schoolId);
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
+ if(typeof action==='string'&&action.startsWith('managed/live/')){
+  if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
+  if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
+  const operation=action.slice('managed/live/'.length);
+  if(operation==='prepare'){
+   if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
+   return {success:true,...await liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body))};
+  }
+  if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
+  const allowed=new Set(['commit','read','head','changes','snapshot','received','stats']);
+  if(!allowed.has(operation))fail(400,'Unknown live sync operation');
+  // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
+  const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor'].filter(k=>b[k]!==undefined).map(k=>[k,k==='data'?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
+  if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
+  return {success:true,schoolId:m.schoolId,...await liveSync.command(m.schoolId,body)};
+ }
  // Lightweight enrollment metadata is independent of the PC and school Drive.
  // Media and operational records remain in the school's own storage.
  if(action==='managed/profile'){
