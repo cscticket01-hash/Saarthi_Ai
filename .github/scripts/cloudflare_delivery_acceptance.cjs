@@ -38,7 +38,7 @@ async function acceptance({env=process.env,request=transport}={}){
    }
    return r.data;
   }
-  stage='verified TEST school membership';const session=await call({action:'managed/session'});requireCheck(session.allowed===true&&session.uid===r.data.localId);
+  stage='verified TEST school membership';const session=await call({action:'managed/session'});report.accessProof={allowed:session.allowed===true,expired:session.status==='expired',identityMatched:session.uid===r.data.localId};requireCheck(session.allowed===true&&session.uid===r.data.localId);
   stage='new delivery capability';const health=await call({action:'managed/storage/check'});
   requireCheck(health.storageReady===true&&health.brokerEdgeDeliveryVersion===1&&health.recordSyncVersion===2&&health.uploadResumableVersion===1);
   report.checks.push({name:stage,status:'PASS'});
