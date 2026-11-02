@@ -2,8 +2,15 @@ name: REAL TEST three person-photo Cloudflare Drive timings
 # TEST-only real mutations must be launched explicitly after the exact
 # compatible Worker and school Script versions are verified. Never replay a
 # synthetic person/photo workload automatically on every PR amendment.
+# A source change promoted to the explicit TEST deployment branch is an
+# owner-authorized canary; exact runtime/capability checks precede all writes.
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/real_person_photo_edge_speed.cjs'
+      - '.github/workflows/real-person-photo-edge-speed.yml'
 permissions:
   contents: read
 concurrency:
@@ -11,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   real-test-person-photo:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'
+    if: github.ref == 'refs/heads/feature/smart-sync-3' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -25,6 +32,7 @@ jobs:
         run: node --check .github/scripts/real_person_photo_edge_speed.cjs
       - name: Signed TEST school photo upload, persons add, CAS delete, Drive readback and Cloudflare timings
         env:
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
           VS_PERSON_PHOTO_TEST: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}

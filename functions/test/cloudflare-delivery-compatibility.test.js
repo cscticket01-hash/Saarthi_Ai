@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const {fixture,A}=require('./helpers/managed-school-broker');
-function setup({native=false,enabled=true}={}){
+function setup({native=false,enabled=true,atomic=false}={}){
  const actions=[],commands=[];let manifest;
  const edge={enabled:()=>true,rpc:async(school,lane,body)=>{
   assert.equal(school,A);commands.push(body.command);
@@ -16,7 +16,7 @@ function setup({native=false,enabled=true}={}){
   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:outer.schoolId,
    ...(body.action==='managed_health'?{storageReady:true,uploadResumableVersion:native?1:0}:
     {fileId:'real-legacy-drive-file',fileUrl:'https://drive.google.com/file/d/real-legacy-drive-file/view'})})};
- },{cloudflareSync:edge,cloudflareAllDataEnabled:enabled});
+ },{cloudflareSync:edge,cloudflareAllDataEnabled:enabled,cloudflareAtomicSmallFiles:atomic});
  return {...f,actions,commands};
 }
 const upload={action:'managed/file/upload',name:'Synthetic.pdf',mime:'application/pdf',base64:'YWJj',uploadKey:'stable-owner-upload-00001',edgeDeliveryVersion:1};
@@ -93,4 +93,14 @@ test('small-file optimization remains disabled until the exact Worker version is
  const adapter=createCloudflareDelivery({edge,atomicSmallFilesEnabled:false});
  await adapter.wholeFile(A,{...manifest,base64:bytes.toString('base64')});
  assert.deepEqual(commands,['begin','part','status']);
+});
+
+test('health advertises atomic upload only when both existing admission flags enable it',async()=>{
+ for(const [atomic,enabled,version] of [[true,true,1],[false,true,0],[true,false,0]]){
+  const f=setup({native:true,atomic,enabled});
+  const health=await f.call({action:'managed/storage/check'});
+  assert.equal(health.brokerAtomicSmallFilesVersion,version);
+  assert.equal(health.schoolId,A);
+  assert.deepEqual(f.commands,[],'read-only capability negotiation never stages a file');
+ }
 });

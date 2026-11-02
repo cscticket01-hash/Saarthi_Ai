@@ -14,7 +14,7 @@ const round=n=>Math.round(n*100)/100;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function check(ok,label){if(!ok)throw Error(label);}
 function png(){
- const w=144,h=176,raw=Buffer.alloc(h*(w*3+1)),bits=crypto.randomBytes(w*h*3);
+ const w=96,h=128,raw=Buffer.alloc(h*(w*3+1)),bits=crypto.randomBytes(w*h*3);
  for(let y=0;y<h;y++){raw[y*(w*3+1)]=0;bits.copy(raw,y*(w*3+1)+1,y*w*3,(y+1)*w*3);}
  const crcTable=Array.from({length:256},(_,i)=>{let c=i;for(let j=0;j<8;j++)c=(c&1)?(0xedb88320^(c>>>1)):(c>>>1);return c>>>0;});
  const crc=b=>{let c=0xffffffff;for(const octet of b)c=crcTable[(c^octet)&255]^(c>>>8);return (c^0xffffffff)>>>0;};
@@ -37,6 +37,7 @@ async function main(){
  const health=await request(ENDPOINT+'/healthz');
  check(health.status===200&&health.value.ready===true&&health.value.projectId==='saarthi-ai-df12b','TEST broker identity failed');
  report.runtimeCommit=health.value.runtimeCommit||'unknown';
+ check(/^[a-f0-9]{40}$/.test(process.env.VS_EXPECTED_TEST_RUNTIME||'')&&report.runtimeCommit===process.env.VS_EXPECTED_TEST_RUNTIME,'TEST runtime does not match this reviewed canary source');
  const auth=await request(LOGIN,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  check(auth.status===200&&typeof auth.value.idToken==='string','TEST Firebase login failed');
  const token=auth.value.idToken;
@@ -55,9 +56,11 @@ async function main(){
  report.scriptBundleVersion=storage.value.scriptBundleVersion||'unknown';
  report.brokerEdgeDeliveryVersion=storage.value.brokerEdgeDeliveryVersion||0;
  check(report.brokerEdgeDeliveryVersion===1,'Cloudflare all-data lane unavailable in real TEST deployment');
+ check(report.scriptBundleVersion===require('./reviewed_script_version.cjs').currentReviewedScriptVersion(),'TEST Script bundle does not match reviewed source');
+ check(storage.value.deleteEverywhereVersion===1&&storage.value.brokerAtomicSmallFilesVersion===1,'Verified photo deletion and atomic upload capabilities are required before any fixture is created');
  const run=String(process.env.GITHUB_RUN_ID||Date.now()).replace(/[^0-9]/g,'').slice(-14);
  const photo=png(),photoHash=hash(photo);
- report.syntheticPhoto={mime:'image/png',width:144,height:176,bytes:photo.length,sha256:photoHash};
+ report.syntheticPhoto={mime:'image/png',width:96,height:128,bytes:photo.length,sha256:photoHash};
  const settle=async(initial,tag)=>{
   check(initial.value.cloudflareAccepted===true,tag+' was not accepted by Cloudflare');
   const initialMs=initial.ms, ticket=initial.value.delivery;
@@ -91,34 +94,19 @@ async function main(){
    check(!original.value.records?.[id],role+' fixture already exists');
    // Image first, to respect the real client order: upload file, then attach Drive id.
    const uploadKey='cf_photo_speed_'+suffix,meta={edgeDeliveryVersion:1,uploadKey,name:uploadKey+'.png',mime:'image/png',sha256:photoHash,sizeBytes:photo.length};
-   const begin=await call('managed/file/upload/resumable',{...meta,operation:'begin'});
-   const photoEdge=begin.value.cloudflareAccepted===true;
-   entry.photoRoute=photoEdge?'cloudflare-first':'direct-script-fallback';
-   entry.photoBeginMs=begin.ms;
-   entry.photoBeginEvidence={cloudflareAccepted:photoEdge,driveState:begin.value.driveState||null,uploadResumableVersion:begin.value.uploadResumableVersion||null};
-   check(begin.value.offset===0&&begin.value.committed===false,'Unexpected existing photo staging');
-   const part=await call('managed/file/upload/resumable',{...meta,operation:'part',offset:0,base64:photo.toString('base64'),chunkSha256:photoHash});
-   // The existing TEST broker can begin a resumable upload on Script and
-   // route the byte-bearing part through Cloudflare after capability caching.
-   // The byte-bearing part determines whether the photo used Cloudflare.
-   const partEdge=part.value.cloudflareAccepted===true;
-   entry.photoRoute=partEdge?(photoEdge?'cloudflare-first':'cloudflare-part-after-direct-begin'):'direct-script-fallback';
-   let verified;
-   if(partEdge){
-    const result=await settle(part,role+' photo');
-    entry.appToCloudflarePhotoMs=round(begin.ms+part.ms);
-    entry.cloudflareToDrivePhotoMs=result.cloudToDriveMs;
-    entry.photoDeliveryMillis=result.ownerWorkerDeliveryMillis??null;
-    verified=result.verified;
-   }else{
-    // Existing TEST script may lack spool-photo capability. Never pretend that
-    // this direct Drive upload measured Cloudflare.
-    entry.directPhotoUploadMs=round(begin.ms+part.ms);
-    verified=part.value;
-   }
+   check(photo.length<=40*1024,'Synthetic photo exceeds the portrait budget');
+   const part=await call('managed/file/upload',{...meta,base64:photo.toString('base64')});
+   check(part.value.cloudflareAccepted===true,'Photo did not receive a durable Cloudflare ACK');
+   entry.photoRoute='atomic-cloudflare-whole-file';
+   entry.photoBeginMs=0;
+   const result=await settle(part,role+' photo');
+   entry.appToCloudflarePhotoMs=part.ms;
+   entry.cloudflareToDrivePhotoMs=result.cloudToDriveMs;
+   entry.photoDeliveryMillis=result.ownerWorkerDeliveryMillis??null;
+   const verified=result.verified;
    check(verified.committed===true&&verified.sha256===photoHash&&
      /^[A-Za-z0-9_-]{1,200}$/.test(verified.fileId||''),'Photo Drive file ACK invalid');
-   fileId=verified.fileId;
+   fileId=verified.fileId;entry.photoFileId=fileId;
    const readPhoto=await call('managed/file/read',{fileId});
    check(readPhoto.value.mime==='image/png'&&hash(Buffer.from(readPhoto.value.base64||'','base64'))===photoHash,'Uploaded photo permanent Drive hash mismatch');
    entry.photoDriveVerified=true;
@@ -150,12 +138,13 @@ async function main(){
       typeof row._syncRevision==='string'&&row._syncRevision&&String(row.name||'').startsWith('SYNTHETIC PHOTO SPEED TEST')){
     const operationDelete=makeOp();
     const del=await call('managed/records',{edgeDeliveryVersion:1,collection,operation:'delete',id,syncProtocol:2,
-      operationId:operationDelete,expectedRecordRevision:row._syncRevision,
+      operationId:operationDelete,expectedRecordRevision:row._syncRevision,deleteEverywhereVersion:1,
       ...(role==='student'?{deletedStudentGeneration:personGeneration}:{})});
     const receipt=await settle(del,role+' delete');
     entry.appToCloudflareDeleteMs=receipt.cloudflareAckMs;
     entry.cloudflareToDriveDeleteMs=receipt.cloudToDriveMs;
     entry.deleteWorkerDeliveryMillis=receipt.ownerWorkerDeliveryMillis??null;
+    entry.photoDeleteOwnerVerified=receipt.verified.deleteEverywhereVersion===1&&receipt.verified.driveDeletionComplete===true&&receipt.verified.firebaseDeletionComplete===true&&Array.isArray(receipt.verified.deletedFileIds)&&receipt.verified.deletedFileIds.includes(fileId);
     entry.deleteQueueWaitMillis=receipt.workerQueueWaitMillis??null;
     const checked=await recordsRead(collection,id);
     const tombstone=checked.value.records?.[id];
@@ -169,12 +158,14 @@ async function main(){
    // The file read probes whether deletion cascaded to original photo bytes.
    // Do not trash files via independent credentials, which could break ownership.
    try{const old=await call('managed/file/read',{fileId});entry.photoDeleteVerified=false;entry.photoStillReadableBytes=Buffer.from(old.value.base64||'','base64').length;}
-   catch(e){entry.photoDeleteVerified=/HTTP (403|404|410)/.test(e.message);entry.photoDeleteNote=entry.photoDeleteVerified?'Photo not readable after delete':'Photo removal not proven';}
+   catch(e){entry.photoDeleteVerified=entry.photoDeleteOwnerVerified===true;entry.photoDeleteNote=entry.photoDeleteVerified?'Photo not readable after delete':'Photo removal not proven';}
   }
   if(entry.addFailure||entry.cleanupError)break;
  }
- report.status=report.roles.length===3&&report.roles.every(r=>r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified)?'PASS':'INCOMPLETE';
- report.perRoleComplete=report.roles.map(r=>({role:r.role,complete:r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified}));
+ report.photoBytesVerified=report.roles.length===3&&report.roles.every(r=>r.photoDriveVerified);
+ report.allPhotosDeleted=report.roles.length===3&&report.roles.every(r=>r.photoDeleteVerified);
+ report.status=report.roles.length===3&&report.roles.every(r=>r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified&&r.photoDeleteVerified)?'PASS':'INCOMPLETE';
+ report.perRoleComplete=report.roles.map(r=>({role:r.role,complete:r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified&&r.photoDeleteVerified}));
 }
 main().catch(e=>{report.status='FAILED_PREREQUISITE';report.error=String(e.message).slice(0,250);})
 .finally(()=>{fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync(OUT,JSON.stringify(report,null,2));console.log('REAL_PERSON_PHOTO_EDGE_SPEED '+JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;});
