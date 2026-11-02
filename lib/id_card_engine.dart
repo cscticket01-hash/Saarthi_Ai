@@ -181,7 +181,7 @@ class IdCardEngine {
         ),
       ),
     );
-    return SchoolMediaBudgets.enforcePdf('idCard', await pdf.save());
+    return SchoolMediaBudgets.verifyGeneratedPdf('idCard', await pdf.save());
   }
 }
 
