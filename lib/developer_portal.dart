@@ -30,8 +30,11 @@ List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
   return schools.where((school){
     final id=school['id'];
     if(school['deletedAt']!=null||school['blocked']==true||school['loginDisabled']==true) return false;
+    // Older replaced keys are historical; only the school's CURRENT licence
+    // can block renewal of that existing school-bound key.
+    final current=school['licenseId']??school['activeLicenseHash'];
     return !licenses.any((l)=>
-      l['schoolId']==id&&l['revoked']!=true&&
+      l['schoolId']==id&&(current==null||l['id']==current)&&l['revoked']!=true&&
       l['expiresAt'] is num &&
       (l['expiresAt'] as num)>nowMillis+renewalWindow.inMilliseconds);
   }).toList();
