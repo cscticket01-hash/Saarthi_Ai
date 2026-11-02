@@ -185,6 +185,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
+  final imageCache = <String, pw.MemoryImage>{};
   final idRegions = <pw.Widget, List<double>>{};
   final idDecorations = <pw.Widget>{};
   pw.Widget at(double x, double y, double w, double h, pw.Widget child,
@@ -268,7 +269,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: label(placeholder, size: 11, color: PdfColors.grey600))
           : pw.ClipRect(
               child: kind == 'teacherId'
-                  ? IdCardLayout.image(bytes, cover: cover,
+                  ? IdCardLayout.image(bytes, cover: cover, imageCache: imageCache,
                        printDpi: cover
                            ? [300, 280, 260][printPass]
                            : [250, 220, 220][printPass],

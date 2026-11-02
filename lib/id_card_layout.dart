@@ -1,4 +1,5 @@
 import 'school_image_input.dart';
+import 'package:crypto/crypto.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -286,6 +287,7 @@ class IdCardLayout {
     double focusY = .35,
     int printDpi = 300,
     int jpegQuality = 88,
+    Map<String, pw.MemoryImage>? imageCache,
   }) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
@@ -313,8 +315,15 @@ class IdCardLayout {
             maxPrintEdge: printPixels,
             jpegQuality: jpegQuality,
           );
+          // A shared provider lets PDF reuse the exact same encoded image
+          // object across front/back placements. The cache belongs to this
+          // document only; cropping, alpha and print resolution are unchanged.
+          final provider = imageCache == null
+              ? pw.MemoryImage(prepared)
+              : imageCache.putIfAbsent(sha256.convert(prepared).toString(),
+                  () => pw.MemoryImage(prepared));
           return pw.ClipRect(
-            child: pw.Image(pw.MemoryImage(prepared), fit: pw.BoxFit.contain),
+            child: pw.Image(provider, fit: pw.BoxFit.contain),
           );
         },
       );
