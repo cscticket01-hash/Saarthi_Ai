@@ -104,7 +104,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     demand(b.data&&typeof b.data==='object'&&!Array.isArray(b.data)&&(b.data as Json).schoolId===school&&old._syncDeleted!==true&&payloadHash(b.data as Json)===current.payload_hash,'Offline create differs; retain both versions for review',409);
     const backup=sql.exec<{state:string}>('SELECT state FROM live_backup WHERE collection=? AND id=? ORDER BY seq DESC LIMIT 1',col,String(b.id)).toArray()[0];
     const backedUp=!backup||backup.state==='verified';
-    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:backedUp?null:old,duplicate:true,resolution:'cloudRetained',reconcileRequired:true,...(backedUp?{source:'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash}:{})};
+    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:current.body?old:null,duplicate:true,resolution:'cloudRetained',reconcileRequired:true,...(backedUp?{source:current.body?'cloudflare':'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash}:{})};
     sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));return receipt;
    }
    demand((current?.revision||'')===b.expectedRevision,'Record revision conflict',409);
@@ -123,7 +123,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    if(current&&(b.operation==='delete'&&old._syncDeleted===true||b.operation!=='delete'&&old._syncDeleted!==true&&canonical(business(old))===canonical(business(data)))){
     const backup=sql.exec<{state:string}>('SELECT state FROM live_backup WHERE collection=? AND id=? ORDER BY seq DESC LIMIT 1',col,String(b.id)).toArray()[0];
     const backedUp=!backup||backup.state==='verified';
-    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:backedUp?null:old,unchanged:true,...(backedUp?{source:'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash,reconcileRequired:true}:{})};
+    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:current.body?old:null,unchanged:true,...(backedUp?{source:current.body?'cloudflare':'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash,reconcileRequired:true}:{})};
     sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));return receipt;
    }
    demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_events').toArray()[0].n<1000000,'Live history capacity reached; retain local work',503);
@@ -185,7 +185,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(typeof job.drive_revision==='string'&&job.drive_revision.length>0&&rec.recordRevision&&rec.operationId===job.operation_id,'Unverified retention receipt',409);
    const original=sql.exec<{body:string}>('SELECT body FROM live_backup WHERE seq=?',job.seq).toArray()[0]?.body;
    demand(!!original&&payloadHash(JSON.parse(original))===rec.payloadHash,'Backup payload changed; retain',409);
-   sql.exec("UPDATE live_events SET body='' WHERE seq=? AND operation_id=?",job.seq,job.operation_id);
+   sql.exec("UPDATE live_events SET body='',receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE seq=? AND operation_id=?",job.seq,job.operation_id);
    sql.exec("UPDATE live_backup SET body='' WHERE seq=? AND state='verified' AND verified_at>0",job.seq);
    // Exact version may have unchanged/duplicate operation receipts too.
    sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE json_extract(receipt,'$.recordRevision')=? AND json_extract(receipt,'$.backupState')='verified'",rec.recordRevision);
