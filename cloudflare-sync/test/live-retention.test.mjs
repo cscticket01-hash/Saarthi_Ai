@@ -14,6 +14,10 @@ async function verificationClockWorker(t){
  const base=await readFile(new URL('../dist/worker.js',import.meta.url),'utf8');
  const wrapper=[
   'export class VerificationLane extends SyncLane {',
+  // The test explicitly invokes the production expiry command after backdating
+  // one row. A scheduled alarm must not consume it between those two calls.
+  // Production SyncLane alarms are unchanged and covered in delivery tests.
+  'async alarm(){}',
   'async fetch(request){',
   'if(new URL(request.url).pathname==="/__verified_clock_test"){',
   'const b=await request.json();const sql=this.ctx.storage.sql;',

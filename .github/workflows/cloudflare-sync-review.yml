@@ -71,6 +71,8 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - name: Verify 40 KB portrait size and retained quality
+        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart
       - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
         env:
           APPDATA: ${{ runner.temp }}/live-five-pc-queues
