@@ -160,7 +160,15 @@ export class SyncLane extends DurableObject<Env>{
    const due=pendingDue===null?cleanupDue:cleanupDue===null?pendingDue:Math.min(pendingDue,cleanupDue);
    if(due!==null)await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,due));return;
   }
-  if(lane!=='delivery'){await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;}
+  if(lane!=='delivery'){
+   if(spoolLane(lane)){
+    try{
+     const expired=await spoolCommand(this.ctx.storage,school,lane,{command:'expireVerified'},at=>this.wake(at)) as {expired:number;nextCleanupAt:number|null};
+     if(expired.nextCleanupAt!==null)await this.wake(expired.expired>=200?Date.now()+1000:expired.nextCleanupAt);
+    }catch{await this.wake(Date.now()+60_000);} // Do not delete on failed proof.
+   }
+   await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;
+  }
   const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes WHERE due < 9007199254740991 ORDER BY due,name LIMIT 1').toArray()[0];
   const backoff=Number(this.meta('deliveryBackoff')||0);if(backoff>Date.now()){await this.ctx.storage.setAlarm(backoff);return;}
   if(!next)return;if(next.due>Date.now()){await this.ctx.storage.setAlarm(next.due);return;}
