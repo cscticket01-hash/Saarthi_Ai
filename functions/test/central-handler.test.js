@@ -42,6 +42,19 @@ test('isolated TEST mode fails closed and forwards only its school to existing a
 test('uncoded runtime errors remain unavailable without hiding diagnostic correlation',async()=>{
  const r=await request(new TypeError('NEVER_LOG_THIS'));assert.equal(r.status,503);assert.equal(r.body.success,false);assert.equal(r.logs[0].code,'UNKNOWN');
 });
+test('500-class school cloud failures expose only bounded SDK cause category, never credentials',async()=>{
+ for(const [code,expected] of [[8,'UPSTREAM_QUOTA'],[14,'UPSTREAM_UNAVAILABLE'],[4,'UPSTREAM_DEADLINE'],[7,'UPSTREAM_PERMISSION'],[13,'UPSTREAM_INTERNAL'],[16,'UPSTREAM_AUTH']]){
+  const error=Object.assign(Error('NEVER_LOG_THIS'),{code});
+  const r=await request(error);
+  assert.equal(r.status,503);assert.equal(r.logs[0].failureClass,expected);
+  assert.equal(r.body.failureClass,undefined);
+  assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
+ }
+ const type=await request(new TypeError('NEVER_LOG_THIS'));
+ assert.equal(type.logs[0].failureClass,'RUNTIME_TYPE');
+ const unknown=await request(new Error('NEVER_LOG_THIS'));
+ assert.equal(unknown.logs[0].failureClass,undefined);
+});
 test('TEST login bootstrap still rejects another school through real membership verification',async()=>{
  const {fixture,A}=require('./helpers/managed-school-broker');
  const f=fixture();
