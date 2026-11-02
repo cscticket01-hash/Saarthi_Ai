@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -9,6 +10,26 @@ import '../lib/school_media_budgets.dart';
 import '../lib/id_card_layout.dart';
 
 void main() {
+  test('PDF preflight rejects truncated render output before publishing', () {
+    final correct = Uint8List.fromList(utf8.encode(
+      '%PDF-1.7\n1 0 obj <</Type /Catalog>> endobj\n%%EOF\n'));
+    expect(identical(SchoolMediaBudgets.verifyGeneratedPdf('receipt', correct),
+      correct), isTrue);
+    final truncated = Uint8List.fromList(
+      utf8.encode('%PDF-1.7\n1 0 obj <</Type /Catalog>> endobj'));
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf('receipt', truncated),
+      throwsFormatException);
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf(
+      'idCard', Uint8List.fromList(utf8.encode('not a PDF %%EOF'))),
+      throwsFormatException);
+    final oversized = Uint8List(30 * 1024 + 1);
+    oversized.setRange(0, 5, utf8.encode('%PDF-'));
+    oversized.setRange(oversized.length - 5, oversized.length,
+      utf8.encode('%%EOF'));
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf('receipt', oversized),
+      throwsFormatException);
+  });
+
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
     expect(SchoolMediaBudgets.idCard, 85 * 1024);
     expect(SchoolMediaBudgets.reportCard, 150 * 1024);
