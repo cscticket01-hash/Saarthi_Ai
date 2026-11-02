@@ -82,7 +82,18 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
           ...(['SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_TIMEOUT'].includes(code)&&
             ['request','redirect','response'].includes(context.scriptStage)&&['timeout','socket','dns','connection','other'].includes(context.transportKind)
             ?{scriptStage:context.scriptStage,transportKind:context.transportKind}:{})}:{};
-      logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,...diagnostic});
+      // Exact upstream failure classification without leaking service-account
+      // credentials, Google error messages, school IDs or record contents.
+      const grpc=e?.code;
+      const failureClass=code==='UNKNOWN'&&status===503
+        ? ({4:'UPSTREAM_DEADLINE',7:'UPSTREAM_PERMISSION',8:'UPSTREAM_QUOTA',
+            13:'UPSTREAM_INTERNAL',14:'UPSTREAM_UNAVAILABLE',
+            16:'UPSTREAM_AUTH'}[grpc]
+          || ({TypeError:'RUNTIME_TYPE',RangeError:'RUNTIME_RANGE',
+              SyntaxError:'RUNTIME_SYNTAX',AbortError:'UPSTREAM_ABORT'}[e?.name])
+          || ''):'';
+      logger({event:'central_failure',action,...(operation?{operation}:{}),status,code,requestId,
+        ...(failureClass?{failureClass}:{}),...diagnostic});
       const retryAfterMs=status===429&&Number.isFinite(e.retryAfterMs)?Math.max(1000,Math.min(86400000,Math.ceil(e.retryAfterMs))):0;
       if(retryAfterMs)res.setHeader('Retry-After',String(Math.ceil(retryAfterMs/1000)));
       return send(status,{success:false,code,...diagnostic,...(retryAfterMs?{retryAfterMs}:{}),message:authErrors[code]||(e.publicMessage===true?e.message:'School cloud is unavailable. Retry the same school.')});
