@@ -518,6 +518,14 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
    invalidate(id);
    return renewed;
   }else if(action==='developer/managed/licence'){
+   // Never rotate or replace an existing active/expired school-bound key by mistake.
+   // The original key is renewed via the exact-identity transaction above.
+   const current=await ref.get(),prior=current.exists?current.data():{};
+   if(prior.status!=='trial'&&/^[a-f0-9]{64}$/.test(prior.licenseHash||'')){
+    const previous=await db.doc('platform_license_status/'+prior.licenseHash).get();
+    if(previous.exists&&previous.data().schoolId===id&&previous.data().revoked===false)
+     fail(409,'Existing school licence must be renewed, not replaced','LICENCE_RENEW_EXISTING');
+   }
    if(!Number.isInteger(b.days)||b.days<1||b.days>3650)fail(400,'Licence duration must be 1–3650 days');
    const amount=b.amount===undefined?0:Number(b.amount);
    if(!Number.isFinite(amount)||amount<0||amount>100000000)fail(400,'Invalid licence purchase amount');
