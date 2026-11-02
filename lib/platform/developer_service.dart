@@ -56,7 +56,8 @@ class DeveloperService {
     _cached = null;
     if (action == 'school/block' ||
         action == 'school/delete' ||
-        action == 'license/issue') {
+        action == 'license/issue' ||
+        action == 'license/renew') {
       final id = body['schoolId']?.toString() ?? '';
       final school = (await _db.collection('platform_schools').doc(id).get())
           .data();
@@ -66,6 +67,8 @@ class DeveloperService {
               ? 'delete'
               : action == 'school/block'
               ? 'block'
+              : action == 'license/renew'
+              ? 'licence/renew'
               : 'licence',
           body,
         );
@@ -100,6 +103,7 @@ class DeveloperService {
 
     if (action == 'school/create') return _createSchool(body);
     if (action == 'license/issue') return _issue(body, user.uid);
+    if (action == 'license/renew') return _renew(body, user.uid);
     if (action == 'license/revoke') {
       final id = body['licenseId'].toString();
       final doc = _db.collection('platform_licenses').doc(id);
@@ -362,6 +366,147 @@ class DeveloperService {
         'monitorPassword': password,
       },
     };
+  }
+
+  /// Extends the exact current school key. No new licence, school, account,
+  /// Google Drive binding or school records are created on renewal.
+  Future<Map<String, dynamic>> _renew(Map<String, dynamic> b, String uid) async {
+    final days=b['days'], amount=b['amount'], schoolId=b['schoolId']?.toString()??'';
+    final requestId=b['renewalId']?.toString()??'', licenseId=b['licenseId']?.toString()??'';
+    if(days is! int||days<1||days>3650||amount is! num||!amount.isFinite||
+       amount<0||amount>100000000||!RegExp(r'^[a-f0-9]{32}    Map<String, dynamic> b,
+    String uid,
+  ) async {
+    final days = b['days'];
+    final amount = b['amount'];
+    if (days is! int ||
+        days < 1 ||
+        days > 3650 ||
+        amount is! num ||
+        !amount.isFinite ||
+        amount < 0) {
+      throw ArgumentError('Use 1–3650 days and a valid purchase amount');
+    }
+    final schoolId = b['schoolId'].toString();
+    final setup = await _createSchool(b);
+    final school = _db.collection('platform_schools').doc(schoolId);
+    final key = 'VS-${_random(16).toUpperCase()}';
+    final id = sha256.convert(utf8.encode(key)).toString();
+    final expires = DateTime.now().toUtc().add(Duration(days: days));
+    final batch = _db.batch();
+    batch.set(_db.collection('platform_licenses').doc(id), {
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'issuedAt': FieldValue.serverTimestamp(),
+      'issuedBy': uid,
+      'paid': b['paid'] == true,
+      'amount': amount,
+      'revoked': false,
+      'keyHint': key.substring(key.length - 6),
+    });
+    batch.set(_db.collection('platform_license_status').doc(id), {
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'revoked': false,
+    });
+    batch.set(school, {
+      'licenseId': id,
+      'licenseExpiresAt': Timestamp.fromDate(expires),
+      if (b['paid'] == true) 'purchased': true,
+    }, SetOptions(merge: true));
+    await batch.commit();
+    return {
+      'success': true,
+      'key': key,
+      'expiresAt': expires.millisecondsSinceEpoch,
+      if (setup['setup'] != null)
+        'setup': {...setup['setup'] as Map, 'licenseKey': key},
+    };
+  }
+}
+).hasMatch(requestId)||
+       !RegExp(r'^[a-f0-9]{64}    Map<String, dynamic> b,
+    String uid,
+  ) async {
+    final days = b['days'];
+    final amount = b['amount'];
+    if (days is! int ||
+        days < 1 ||
+        days > 3650 ||
+        amount is! num ||
+        !amount.isFinite ||
+        amount < 0) {
+      throw ArgumentError('Use 1–3650 days and a valid purchase amount');
+    }
+    final schoolId = b['schoolId'].toString();
+    final setup = await _createSchool(b);
+    final school = _db.collection('platform_schools').doc(schoolId);
+    final key = 'VS-${_random(16).toUpperCase()}';
+    final id = sha256.convert(utf8.encode(key)).toString();
+    final expires = DateTime.now().toUtc().add(Duration(days: days));
+    final batch = _db.batch();
+    batch.set(_db.collection('platform_licenses').doc(id), {
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'issuedAt': FieldValue.serverTimestamp(),
+      'issuedBy': uid,
+      'paid': b['paid'] == true,
+      'amount': amount,
+      'revoked': false,
+      'keyHint': key.substring(key.length - 6),
+    });
+    batch.set(_db.collection('platform_license_status').doc(id), {
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'revoked': false,
+    });
+    batch.set(school, {
+      'licenseId': id,
+      'licenseExpiresAt': Timestamp.fromDate(expires),
+      if (b['paid'] == true) 'purchased': true,
+    }, SetOptions(merge: true));
+    await batch.commit();
+    return {
+      'success': true,
+      'key': key,
+      'expiresAt': expires.millisecondsSinceEpoch,
+      if (setup['setup'] != null)
+        'setup': {...setup['setup'] as Map, 'licenseKey': key},
+    };
+  }
+}
+).hasMatch(licenseId)||schoolId.isEmpty)
+      throw ArgumentError('Valid school licence, duration and renewal request required');
+    final school=_db.collection('platform_schools').doc(schoolId);
+    final licence=_db.collection('platform_licenses').doc(licenseId);
+    final status=_db.collection('platform_license_status').doc(licenseId);
+    final result=await _db.runTransaction((tx)async {
+      final snapshots=await Future.wait([tx.get(school),tx.get(licence),tx.get(status)]);
+      final owner=snapshots[0].data(), old=snapshots[1].data(), state=snapshots[2].data();
+      if(owner==null||owner['deletedAt']!=null||owner['blocked']==true||
+         owner['loginDisabled']==true||owner['licenseId']!=licenseId||
+         old==null||old['schoolId']!=schoolId||old['revoked']!=false||
+         state==null||state['schoolId']!=schoolId||state['revoked']!=false)
+        throw StateError('Existing active school licence changed or was revoked. School data remains safe.');
+      if(old['lastRenewalId']==requestId)
+        return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
+          'sameKey':true,'unchanged':true,'renewed':true,
+          'expiresAt':(old['expiresAt'] as Timestamp).millisecondsSinceEpoch};
+      final previous=old['expiresAt'] is Timestamp
+          ?(old['expiresAt'] as Timestamp).millisecondsSinceEpoch
+          :old['expiresAt'] is num?(old['expiresAt'] as num).toInt():0;
+      if(previous<=0)throw StateError('Existing licence expiry requires developer review.');
+      final now=DateTime.now().toUtc().millisecondsSinceEpoch;
+      final expiry=max(now,previous)+days*86400000;
+      final validUntil=Timestamp.fromMillisecondsSinceEpoch(expiry);
+      tx.set(licence,{'expiresAt':validUntil,'renewedAt':Timestamp.fromMillisecondsSinceEpoch(now),
+        'renewedBy':uid,'paid':b['paid']==true,'amount':amount,'lastRenewalId':requestId},SetOptions(merge:true));
+      tx.set(status,{'expiresAt':validUntil,'revoked':false},SetOptions(merge:true));
+      tx.set(school,{'licenseExpiresAt':validUntil,'purchased':b['paid']==true},SetOptions(merge:true));
+      return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
+        'sameKey':true,'renewed':true,'expiresAt':expiry};
+    });
+    return result;
   }
 
   Future<Map<String, dynamic>> _issue(
