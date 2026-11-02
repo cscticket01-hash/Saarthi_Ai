@@ -1,4 +1,5 @@
 import 'school_media_budgets.dart';
+import 'school_pdf_media.dart';
 import 'windows_maroon_marksheet.dart';
 import 'id_card_engine.dart';
 import 'id_card_layout.dart';
@@ -149,10 +150,14 @@ Future<Uint8List> renderWindowsReferenceDocument({
   if (!windowsReferenceDocumentNames.containsKey(kind))
     throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
-  final printSignature = await _signatureInk(
+  // Optimize the embedded assets only; original school images remain intact.
+  final embeddedPhoto = SchoolPdfMedia.portrait(photo);
+  final embeddedLogo = SchoolPdfMedia.branding(logo);
+  final embeddedSeal = SchoolPdfMedia.branding(seal);
+  final printSignature = SchoolPdfMedia.branding(await _signatureInk(
     signature,
     white: false,
-  );
+  ));
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -388,11 +393,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
                 shape: pw.BoxShape.circle,
                 border: pw.Border.all(color: white, width: 4),
               ),
-              child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
+              child: pw.ClipOval(child: asset(embeddedPhoto, 'PHOTO', cover: true)),
             ),
           ),
           at(23, 296, 264, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
-          at(234, 76, 45, 45, asset(logo, 'LOGO')),
+          at(234, 76, 45, 45, asset(embeddedLogo, 'LOGO')),
           at(
             12,
             403,
@@ -403,7 +408,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
         ]);
       } else {
         front.addAll([
-          at(49, 15, 172, 192, asset(photo, 'PHOTO', cover: true)),
+          at(49, 15, 172, 192, asset(embeddedPhoto, 'PHOTO', cover: true)),
           at(
             49,
             15,
@@ -423,7 +428,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             label('TEACHER', size: 48, color: white, heavy: true),
           ),
           at(31, 335, 244, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
-          at(35, 432, 45, 40, asset(logo, 'LOGO')),
+          at(35, 432, 45, 40, asset(embeddedLogo, 'LOGO')),
           at(
             86,
             432,
@@ -513,9 +518,9 @@ Future<Uint8List> renderWindowsReferenceDocument({
       if (i == 0)
         back.addAll([
           at(171, 237, 66, 66, qrCode(58)),
-          at(180, 19, 43, 43, asset(logo, 'LOGO')),
+          at(180, 19, 43, 43, asset(embeddedLogo, 'LOGO')),
         ]);
-      if (i == 1) back.add(at(236, 17, 54, 76, asset(logo, 'LOGO')));
+      if (i == 1) back.add(at(236, 17, 54, 76, asset(embeddedLogo, 'LOGO')));
       back.addAll([
         at(
           28,
@@ -586,7 +591,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
           144,
           pw.Container(
             decoration: pw.BoxDecoration(border: pw.Border.all(color: ink)),
-            child: asset(photo, 'PHOTO', cover: true),
+            child: asset(embeddedPhoto, 'PHOTO', cover: true),
           ),
         ),
         at(
@@ -601,11 +606,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
             heavy: true,
           ),
         ),
-        at(335, 224, 114, 44, asset(logo, 'SCHOOL LOGO')),
+        at(335, 224, 114, 44, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(88, 221, 57, 57, qrCode(49)),
       ]);
       back.addAll([
-        at(18, 12, 143, 46, asset(logo, 'SCHOOL LOGO')),
+        at(18, 12, 143, 46, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(
           254,
           14,
@@ -656,7 +661,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
       ]);
     } else {
       front.addAll([
-        at(17, 19, 40, 40, asset(logo, 'LOGO')),
+        at(17, 19, 40, 40, asset(embeddedLogo, 'LOGO')),
         at(63, 26, 155, 22, label(school, size: 15, color: white, heavy: true)),
         at(
           63,
@@ -697,7 +702,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
                 width: 6,
               ),
             ),
-            child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
+            child: pw.ClipOval(child: asset(embeddedPhoto, 'PHOTO', cover: true)),
           ),
         ),
         at(
@@ -759,7 +764,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
         at(247, 440, 47, 42, qrCode(34)),
       ]);
       back.addAll([
-        at(20, 22, 40, 36, asset(logo, 'LOGO')),
+        at(20, 22, 40, 36, asset(embeddedLogo, 'LOGO')),
         at(
           70,
           22,
@@ -863,7 +868,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
     validateIdSide(back, w, h);
     addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
-    return renderMaroonMarksheet(data, photo:photo,logo:logo,signature:printSignature,seal:seal);
+    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal);
   } else {
     final items = data['feeItems'] is Map
         ? Map<String, dynamic>.from(data['feeItems'])
@@ -901,7 +906,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             ),
           ),
         ),
-        at(86, 78, 75, 39, asset(logo, 'SCHOOL LOGO')),
+        at(86, 78, 75, 39, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(86, 126, 245, 24, label(school, size: 16, heavy: true)),
         at(
           86,
@@ -1024,7 +1029,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             rowHeight: 18.6,
           ),
         ),
-        if (seal != null) at(285, 638, 60, 48, asset(seal, '')),
+        if (seal != null) at(285, 638, 60, 48, asset(embeddedSeal, '')),
         at(
           86,
           625,
