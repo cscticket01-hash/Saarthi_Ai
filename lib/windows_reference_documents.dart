@@ -221,10 +221,25 @@ Future<Uint8List> _renderWindowsReferenceDocument({
   final name = kind == 'teacherId'
       ? first(['name', 'teacherName'], 'Teacher name')
       : first(['studentName', 'name'], 'Student name');
-  final regular = pw.Font.ttf(
-    await rootBundle.load('assets/id_card_regular.ttf'),
-  );
-  final bold = pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
+  // Core PDF fonts need no embedded TTF program for ASCII school receipts.
+  // This is a lossless PDF-byte optimization: text stays selectable vector
+  // text and page measurements stay unchanged. Any non-ASCII record continues
+  // using the bundled Unicode-capable school font rather than losing glyphs.
+  bool isAscii(dynamic v) {
+    if (v == null || v is num || v is bool || v is Uint8List) return true;
+    if (v is String) return v.runes.every((r) => r <= 0x7f);
+    if (v is Map) return v.entries.every(
+      (entry) => isAscii(entry.key) && isAscii(entry.value));
+    if (v is Iterable) return v.every(isAscii);
+    return false;
+  }
+  final receiptCoreFonts = kind == 'receipt' && isAscii(data);
+  final regular = receiptCoreFonts
+      ? pw.Font.helvetica()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+  final bold = receiptCoreFonts
+      ? pw.Font.helveticaBold()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
