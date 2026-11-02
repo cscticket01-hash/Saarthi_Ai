@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'school_media_budgets.dart';
 import 'id_card_manifest.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
@@ -180,7 +181,7 @@ class IdCardEngine {
         ),
       ),
     );
-    return pdf.save();
+    return SchoolMediaBudgets.enforcePdf('idCard', await pdf.save());
   }
 }
 
