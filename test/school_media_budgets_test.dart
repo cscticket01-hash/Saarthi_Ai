@@ -117,7 +117,7 @@ void main() {
     expect(img.decodeJpg(smallerJpeg), isNotNull);
     expect(() => IdCardLayout.preparePdfImage(
       Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
-      aspect: .8, cover: true, jpegQuality: 77,
+      aspect: .8, cover: true, jpegQuality: 76,
     ), throwsFormatException);
 
     final stamp = img.Image(width: 200, height: 200, numChannels: 4);
