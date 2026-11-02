@@ -5,6 +5,7 @@ function setup({native=false,enabled=true}={}){
  const actions=[],commands=[];let manifest;
  const edge={enabled:()=>true,rpc:async(school,lane,body)=>{
   assert.equal(school,A);commands.push(body.command);
+  if(body.command==='putSmall'){manifest={...body.manifest,received:Buffer.from(body.base64,'base64').length};return {id:body.id,state:'pending',manifest};}
   if(body.command==='begin'){manifest??={...body.manifest,received:0};return {state:'receiving',manifest};}
   if(body.command==='part'){manifest.received+=Buffer.from(body.base64,'base64').length;return {state:'pending',manifest};}
   if(body.command==='status')return {state:'pending',manifest,due:Date.now(),response:null};
@@ -62,4 +63,34 @@ test('older school Script cannot split a Cloudflare-opted resumable portrait bet
  await assert.rejects(f.call({...resumable,operation:'part',offset:0,base64:chunk.toString('base64'),chunkSha256:sha}),e=>e.code==='EDGE_UPLOAD_PROVIDER_UNVERIFIED');
  assert.deepEqual(f.actions,['managed_health'],'no direct Script upload session was started');
  assert.deepEqual(f.commands,[],'no edge chunks accepted without a drainable provider');
+});
+
+test('feature-gated small portrait uses one atomic Durable Object RPC without forged Drive success',async()=>{
+ const f=setup({native:true});
+ const {createCloudflareDelivery}=require('../cloudflare-delivery');
+ const body={action:'managed_upload',uploadKey:'atomic-photo-owner-00001',name:'portrait.jpg',mime:'image/jpeg',base64:Buffer.from('small-image').toString('base64')};
+ const upload=createCloudflareDelivery({edge:{rpc:f.edge?.rpc||async(_school,_lane,b)=>{
+  assert.equal(b.command,'putSmall');const bytes=Buffer.from(b.base64,'base64');
+  return {id:b.id,state:'pending',manifest:{...b.manifest,received:bytes.length}};
+ }},atomicSmallFilesEnabled:true});
+ const pending=await upload.wholeFile(A,body);
+ assert.equal(pending.cloudflareAccepted,true);
+ assert.equal(pending.driveState,'pending');
+ assert.equal(pending.fileId,undefined);
+ assert.equal(pending.delivery.lane,'file-'+pending.delivery.id);
+});
+test('small-file optimization remains disabled until the exact Worker version is enabled',async()=>{
+ const {createCloudflareDelivery}=require('../cloudflare-delivery');
+ const commands=[],bytes=Buffer.from('test photo'),key='school-photo-owner-test-1';let manifest;
+ const edge={rpc:async(school,lane,b)=>{
+  commands.push(b.command);
+  if(b.command==='begin'){manifest={...b.manifest,received:0};return {state:'receiving',manifest};}
+  if(b.command==='part')return {state:'pending',manifest:{...manifest,received:bytes.length}};
+  if(b.command==='status')return {state:'pending',manifest:{...manifest,received:bytes.length},due:Date.now()};
+  throw Error('Unexpected command');
+ }};
+ const manifest={uploadKey:key,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length,name:'pic.jpg',mime:'image/jpeg'};
+ const adapter=createCloudflareDelivery({edge,atomicSmallFilesEnabled:false});
+ await adapter.wholeFile(A,{...manifest,base64:bytes.toString('base64')});
+ assert.deepEqual(commands,['begin','part','status']);
 });
