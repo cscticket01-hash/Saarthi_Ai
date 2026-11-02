@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {createHash,randomUUID} from 'node:crypto';
-import {writeFile,unlink} from 'node:fs/promises';
+import {readFile,writeFile,unlink} from 'node:fs/promises';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const require=createRequire(import.meta.url),{createLiveSync}=require('../../functions/live-sync'),{createCloudflareSync}=require('../../functions/cloudflare-sync'),{storage}=require('../../functions/test/helpers/managed-storage');
 const {protect}=require('../../functions/managed-schools'),{attendancePayloadFinishValues,attendanceReceiptOwns}=require('../../functions/attendance-payload-receipt');
@@ -11,9 +11,9 @@ const school='vs-'+'a'.repeat(32),key='isolated-live-retention-key-000001';
 
 async function verificationClockWorker(t){
  const file=new URL('../dist/verification-clock-'+randomUUID()+'.mjs',import.meta.url);
+ const base=await readFile(new URL('../dist/worker.js',import.meta.url),'utf8');
  const wrapper=[
-  'import runtime,{SyncLane as Parent} from "./worker.js";',
-  'export class SyncLane extends Parent {',
+  'export class VerificationLane extends SyncLane {',
   'async fetch(request){',
   'if(new URL(request.url).pathname==="/__verified_clock_test"){',
   'const b=await request.json();const sql=this.ctx.storage.sql;',
@@ -24,9 +24,8 @@ async function verificationClockWorker(t){
   '}return super.fetch(request);',
   '}',
   '}',
-  'export default runtime;',
  ].join('\n');
- await writeFile(file,wrapper);
+ await writeFile(file,base+'\n'+wrapper);
  t.after(()=>unlink(file).catch(()=>{}));
  return file.pathname;
 }
@@ -102,7 +101,7 @@ test('verified 24h cache preserves replay until expiry',async t=>{
 
 test('24h expiry clears only Drive-verified live snapshot, never a newer pending edit',async t=>{
  const scriptPath=await verificationClockWorker(t);
- const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'VerificationLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
  t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
  const live=createLiveSync({edge,schools:[school]});
@@ -136,7 +135,7 @@ test('24h expiry clears only Drive-verified live snapshot, never a newer pending
 });
 test('24h expiry removes verified delivery payload but never pending school records',async t=>{
  const scriptPath=await verificationClockWorker(t);
- const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'spool-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'spool-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'VerificationLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
  t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
  const delivery=createCloudflareDelivery({edge,payloadGcEnabled:true});
