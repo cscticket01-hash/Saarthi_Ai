@@ -98,8 +98,13 @@ async function main(){
    entry.photoBeginEvidence={cloudflareAccepted:photoEdge,driveState:begin.value.driveState||null,uploadResumableVersion:begin.value.uploadResumableVersion||null};
    check(begin.value.offset===0&&begin.value.committed===false,'Unexpected existing photo staging');
    const part=await call('managed/file/upload/resumable',{...meta,operation:'part',offset:0,base64:photo.toString('base64'),chunkSha256:photoHash});
+   // The existing TEST broker can begin a resumable upload on Script and
+   // route the byte-bearing part through Cloudflare after capability caching.
+   // The byte-bearing part determines whether the photo used Cloudflare.
+   const partEdge=part.value.cloudflareAccepted===true;
+   entry.photoRoute=partEdge?(photoEdge?'cloudflare-first':'cloudflare-part-after-direct-begin'):'direct-script-fallback';
    let verified;
-   if(photoEdge){
+   if(partEdge){
     const result=await settle(part,role+' photo');
     entry.appToCloudflarePhotoMs=round(begin.ms+part.ms);
     entry.cloudflareToDrivePhotoMs=result.cloudToDriveMs;
@@ -109,7 +114,6 @@ async function main(){
     // Existing TEST script may lack spool-photo capability. Never pretend that
     // this direct Drive upload measured Cloudflare.
     entry.directPhotoUploadMs=round(begin.ms+part.ms);
-    check(part.value.cloudflareAccepted!==true,'Photo routing changed during upload');
     verified=part.value;
    }
    check(verified.committed===true&&verified.sha256===photoHash&&
