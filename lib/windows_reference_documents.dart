@@ -148,6 +148,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? signature,
   Uint8List? seal,
   int _printPass = 0,
+  ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? _preparedMedia,
 }) async {
   if (_printPass < 0 || _printPass > 4) {
     throw const FormatException('Invalid ID print optimization stage.');
@@ -164,17 +165,28 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Future<Uint8List?> brandingForPrint(Uint8List? bytes) =>
       bytes == null ? Future<Uint8List?>.value(null)
           : compute(SchoolPdfMedia.branding, bytes);
-  final visualPair = await Future.wait<Uint8List?>([
-    portraitForPrint(photo), brandingForPrint(logo),
-  ]);
-  final signatureInk = await _signatureInk(signature, white: false);
-  final brandingPair = await Future.wait<Uint8List?>([
-    brandingForPrint(seal), brandingForPrint(signatureInk),
-  ]);
-  final embeddedPhoto = visualPair[0];
-  final embeddedLogo = visualPair[1];
-  final embeddedSeal = brandingPair[0];
-  final printSignature = brandingPair[1];
+  late final Uint8List? embeddedPhoto, embeddedLogo, embeddedSeal, printSignature;
+  if (_preparedMedia != null) {
+    // A size retry reuses the exact verified source of the previous pass.
+    // Re-compressing unchanged media on every print-DPI attempt wastes CPU,
+    // memory and time on low-end school PCs.
+    embeddedPhoto = _preparedMedia.photo;
+    embeddedLogo = _preparedMedia.logo;
+    embeddedSeal = _preparedMedia.seal;
+    printSignature = _preparedMedia.signature;
+  } else {
+    final visualPair = await Future.wait<Uint8List?>([
+      portraitForPrint(photo), brandingForPrint(logo),
+    ]);
+    final signatureInk = await _signatureInk(signature, white: false);
+    final brandingPair = await Future.wait<Uint8List?>([
+      brandingForPrint(seal), brandingForPrint(signatureInk),
+    ]);
+    embeddedPhoto = visualPair[0];
+    embeddedLogo = visualPair[1];
+    embeddedSeal = brandingPair[0];
+    printSignature = brandingPair[1];
+  }
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -1093,6 +1105,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
       _printPass: _printPass + 1,
+      _preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
+          seal: embeddedSeal, signature: printSignature),
     );
   }
   return SchoolMediaBudgets.verifyGeneratedPdf(kind, output);
