@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const require=createRequire(import.meta.url),{createLiveSync}=require('../../functions/live-sync'),{createCloudflareSync}=require('../../functions/cloudflare-sync'),{storage}=require('../../functions/test/helpers/managed-storage');
 const {protect}=require('../../functions/managed-schools'),{attendancePayloadFinishValues,attendanceReceiptOwns}=require('../../functions/attendance-payload-receipt');
+const {createCloudflareDelivery}=require('../../functions/cloudflare-delivery');
 const school='vs-'+'a'.repeat(32),key='isolated-live-retention-key-000001';
 test('verified prefix compaction preserves monotonic global/collection heads, immutable receipts and Drive recovery',async t=>{
  const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));t.after(()=>mf.dispose());
@@ -44,4 +45,25 @@ test('verified prefix compaction preserves monotonic global/collection heads, im
  assert.equal(attendanceReceiptOwns({schoolId:school,operationId,row:complete,permit:{role:'student',documentId:'Class_1_Roll_12'}}),true);
  assert.equal(attendanceReceiptOwns({schoolId:school,operationId,row:complete,permit:{role:'student',documentId:'Class_1_Roll_13'}}),false);
  assert(!JSON.stringify(complete).includes('private-session-token'));assert(!JSON.stringify(complete).includes('latitude'));
+ let guarded=false;
+ const guardedEdge={...edge,rpc:async(s,l,b)=>{
+  if(b.command==='finish'&&b.values?.payloadPurged===true&&!guarded){
+   const fake=JSON.parse(JSON.stringify(b));fake.values.result.recordRevision='live-fake-drive-proof';fake.values.result.recordSource.recordRevision='live-fake-drive-proof';
+   await assert.rejects(edge.rpc(s,l,fake));guarded=true;
+  }
+  return edge.rpc(s,l,b);
+ }};
+ const delivery=createCloudflareDelivery({edge:guardedEdge,payloadGcEnabled:true}),fee={action:'managed_records',collection:'fee_settings',id:'verified-fee',operation:'write',syncProtocol:2,operationId:'verified-fee-cleanup-0001',expectedRecordRevision:'',data:{schoolId:school,amount:25}};
+ const accepted=await delivery.record(school,fee,read);assert.equal(accepted.driveState,'pending');
+ assert.equal((await delivery.drain(school,'records',read)).processed,1);assert.equal(guarded,true);
+ const raw=await edge.rpc(school,'records',{command:'status',id:accepted.delivery.id});assert.equal(raw.response.payloadPurged,true);assert.equal(raw.response.result.record,null);
+ assert.equal((await delivery.status(school,'records',accepted.delivery.id,read)).record.amount,25);
+ const projected=await edge.rpc(school,'records',{command:'projection',id:accepted.delivery.id});assert.equal(projected.identity.id,'verified-fee');assert.equal(projected.request,undefined);
+ await live.command(school,{command:'seedBegin',collection:'school_calendar',fingerprint:'0'.repeat(64),count:1,sourceRevision:'interrupted-source'});
+ await live.command(school,{command:'seedPage',collection:'school_calendar',fingerprint:'0'.repeat(64),rows:[{id:'stale-seed',data:{schoolId:school,title:'stale provisional seed',_syncRevision:'old-provisional-revision'}}]});
+ assert.equal(gs.call({action:'managed_records',collection:'school_calendar',operation:'write',id:'fresh',syncProtocol:2,operationId:'calendar-fresh-seed-operation',expectedRecordRevision:'',data:{schoolId:school,title:'verified fresh baseline'}}).success,true);
+ await live.prepare(school,'school_calendar',read);
+ assert.equal((await live.read(school,'school_calendar','stale-seed',read)).source,'missing');
+ assert.equal((await live.read(school,'school_calendar','fresh',read)).record.title,'verified fresh baseline');
+ await assert.rejects(live.command(school,{command:'seedBegin',collection:'school_calendar',fingerprint:'1'.repeat(64),count:0,sourceRevision:'unsafe-reset',replaceSeeding:true}));
 });

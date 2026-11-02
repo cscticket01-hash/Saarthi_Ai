@@ -16,7 +16,8 @@ abstract interface class WindowsLiveRuntimeStore implements LiveSyncStore {
   Future<List<WindowsLiveIncoming>> pending();
   /// Called only after the ordinary sync owner verified current business state.
   Future<void> applied(List<WindowsLiveIncoming> entries);
-  Future<void> replaceCheckpoint(int expectedCursor, int nextCursor);
+  Future<void> replaceCheckpoint(int expectedCursor, int nextCursor,
+      [Set<String>? verifiedCollections]);
 }
 
 /// Uses the existing local serialized disk writer. Cursor retention and pending
@@ -69,9 +70,11 @@ class WindowsLiveRuntimeLocalStore implements WindowsLiveRuntimeStore {
     incoming.sort((a, b) => a.sequence.compareTo(b.sequence));
     return incoming.take(100).toList();
   }
-  @override Future<void> replaceCheckpoint(int expectedCursor, int nextCursor) async {
+  @override Future<void> replaceCheckpoint(int expectedCursor, int nextCursor,
+      [Set<String>? verifiedCollections]) async {
     _check();
-    await db.replaceLiveSyncCheckpointAfterVerifiedSnapshot(school, expectedCursor, nextCursor);
+    await db.replaceLiveSyncCheckpointAfterVerifiedSnapshot(school, expectedCursor, nextCursor,
+      verifiedCollections:verifiedCollections);
     _check();
   }
   @override Future<void> applied(List<WindowsLiveIncoming> entries) async {
@@ -187,29 +190,34 @@ class WindowsLiveSyncRuntime {
         cursor is! int || cursor<expected || raw is! List) {
       throw StateError('Live recovery head did not verify; checkpoint retained.');
     }
-    final collections=<String>{};
+    final collections=<String>{}, states=<String,String>{};
     for(final row in raw) {
-      if(row is! Map || !liveSyncCollections.contains(row['collection']))
+      if(row is! Map || !liveSyncCollections.contains(row['collection']) ||
+          !{'active','legacy','seeding'}.contains(row['state']) ||
+          states.containsKey(row['collection']))
         throw StateError('Live recovery collection did not verify.');
-      if(row['state']=='active')collections.add(row['collection'] as String);
+      states[row['collection'] as String]=row['state'] as String;
+      if(row['state']=='active'||row['state']=='legacy')collections.add(row['collection'] as String);
     }
     if(collections.isEmpty || !await recover(collections))return false;
     _check();
     final verified = await _call('managed/live/head', {'liveProtocol':1,'schoolId':school});
     final verifiedRows=verified['collections'];
-    final verifiedCollections=<String>{};
+    final verifiedStates=<String,String>{};
     if(verifiedRows is List)for(final row in verifiedRows) {
-      if(row is! Map || !liveSyncCollections.contains(row['collection']))
+      if(row is! Map || !liveSyncCollections.contains(row['collection']) ||
+          !{'active','legacy','seeding'}.contains(row['state']) ||
+          verifiedStates.containsKey(row['collection']))
         throw StateError('Live recovery collection changed; checkpoint retained.');
-      if(row['state']=='active')verifiedCollections.add(row['collection'] as String);
+      verifiedStates[row['collection'] as String]=row['state'] as String;
     }
     if(verified['success']!=true || verified['schoolId']!=school ||
         verified['liveProtocol']!=1 || verified['cursor']!=cursor ||
-        verifiedRows is! List || verifiedCollections.length!=collections.length ||
-        !verifiedCollections.containsAll(collections)) {
+        verifiedRows is! List || verifiedStates.length!=states.length ||
+        states.entries.any((entry)=>verifiedStates[entry.key]!=entry.value)) {
       throw StateError('Live recovery snapshot changed; checkpoint retained.');
     }
-    await store.replaceCheckpoint(expected,cursor);
+    await store.replaceCheckpoint(expected,cursor,collections);
     _check();
     await _call('managed/live/received',{'liveProtocol':1,'schoolId':school,
       'deviceId':_deviceId,'cursor':cursor});

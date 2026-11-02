@@ -69,7 +69,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  }
  function verifiedRecord(result,school,request){
   if(result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
-    typeof result.recordRevision!=='string'||!result.recordRevision||result.recordRevision.startsWith('cf-'))return false;
+    typeof result.recordRevision!=='string'||!result.recordRevision||/^(live-|cf-)/.test(result.recordRevision))return false;
   const record=result.record;if(!record)return true;
   if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
   if(!request)return true;

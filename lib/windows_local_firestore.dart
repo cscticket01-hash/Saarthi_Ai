@@ -316,7 +316,8 @@ class FirebaseFirestore {
   /// Recovery-only checkpoint replacement after the runtime verified a pinned
   /// authoritative snapshot through the ordinary pending-aware business owner.
   Future<void> replaceLiveSyncCheckpointAfterVerifiedSnapshot(
-      String school, int expectedCursor, int nextCursor) async {
+      String school, int expectedCursor, int nextCursor,
+      {Set<String>? verifiedCollections}) async {
     final profile=activeProfileId;
     if(activeProfileIdentity['schoolSyncId']!=school || expectedCursor<0 ||
         nextCursor<expectedCursor)throw StateError('Live snapshot scope differs.');
@@ -331,8 +332,12 @@ class FirebaseFirestore {
       if(data['schoolId']!=school || sequence is! int || sequence<1 ||
           row.id!='$school-$sequence' || sequence>nextCursor)
         throw StateError('Live snapshot incoming identity differs.');
-      operations.add(_WriteOperation._(type:_WriteType.delete,
-        collection:'_windows_live_incoming',documentId:row.id));
+      // A snapshot of active collections cannot consume a retained invalidation
+      // whose authority has already returned to Drive. Its ordinary reconciler
+      // must still verify and apply that key before compacting the hint.
+      if(verifiedCollections==null || verifiedCollections.contains(data['collection']))
+        operations.add(_WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_live_incoming',documentId:row.id));
     }
     operations.add(_WriteOperation._(type:_WriteType.set,
       collection:'_windows_live_checkpoints',documentId:school,

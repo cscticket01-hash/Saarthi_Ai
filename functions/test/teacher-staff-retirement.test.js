@@ -14,6 +14,7 @@ test('teacher retirement revokes exact access, preserves salary/attendance histo
  assert.equal(write(s,'teacher_salary','salary',{teacherId:'T1',personId:G,amount:100}).success,true);
  assert.equal(write(s,'teacher_attendance','attendance',{teacherId:'T1',personId:G,day:'2026-11-02'}).success,true);
  assert.equal(write(s,'documents','card',{teacherId:'T1',personId:G,ownerRole:'teacher',documentKind:'idCard',documentRevision:'card-v1'}).success,true);
+ assert.equal(write(s,'teachers_directory','teacher-two',{name:'Other teacher',teacherId:'T2',mobileStableId:N}).success,true);
  assert.equal(write(s,'documents','other',{teacherId:'T2',personId:N,ownerRole:'teacher',documentKind:'idCard',documentRevision:'card-v2'}).success,true);
  const login=mobile(s,{action:'mobile_login',role:'teacher',personId:ID,linkToken:TOKEN,projectId:A});assert.equal(login.success,true,JSON.stringify(login));
  const request={action:'managed_records',collection:'teachers_directory',id:ID,operation:'delete',syncProtocol:2,operationId:'teacher-retirement-delete-0001',expectedRecordRevision:a.recordRevision,deletedTeacherGeneration:G};
@@ -45,7 +46,7 @@ test('teacher inactive retirement blocks fresh and existing mobile sessions whil
 test('retirement preserves shared Drive references and removes only unshared teacher card bytes',()=>{
  const s=storage({lifecycle:true,bundle:true}),shared=s.roots[A].createFile('shared','image','image/png'),card=s.roots[A].createFile('card','pdf','application/pdf');
  const a=write(s,'teachers_directory',ID,{name:'Teacher',teacherId:'T1',mobileStableId:G,photoFileId:shared.id});assert.equal(a.success,true);
- assert.equal(write(s,'school_config','shared-assets',{logoUrl:'https://drive.google.com/file/d/'+shared.id+'/view'}).success,true);
+ assert.equal(write(s,'school_config','shared-assets',{logoUrl:'https://drive.google.com/uc?export=view&id='+shared.id}).success,true);
  assert.equal(write(s,'documents','card',{teacherId:'T1',personId:G,ownerRole:'teacher',fileId:card.id,documentRevision:'card-v1'}).success,true);
  const retired=s.call({action:'managed_records',collection:'teachers_directory',id:ID,operation:'delete',syncProtocol:2,operationId:'teacher-retirement-files-0001',expectedRecordRevision:a.recordRevision,deletedTeacherGeneration:G});assert.equal(retired.success,true,JSON.stringify(retired));
  assert.equal(shared.isTrashed(),false);assert.equal(card.isTrashed(),true);
@@ -61,4 +62,52 @@ test('staff active false retires access identity without removing payroll histor
  assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[{...row,employeeId:'E2'}]},retired.recordRevision).success,false);
  assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[{...row,active:false},{id:'staff:2',employeeId:'e1',role:'Guard'}]},retired.recordRevision).success,false);
  const health=s.call({action:'managed_health'});assert.equal(health.teacherRetirementVersion,1);assert.equal(health.staffRetirementVersion,1);assert.equal(health.scriptBundleVersion,'2026-11-02.1');
+});
+test('active teacher dependents require exact explicit person generation and never borrow another teacher generation',()=>{
+ const s=storage({lifecycle:true,bundle:true}),a=teacher(s);assert.equal(a.success,true);
+ assert.equal(write(s,'documents','wrong-generation',{teacherId:'T1',personId:N,ownerRole:'teacher',documentRevision:'wrong-v1'}).success,false);
+ assert.equal(read(s,'documents','wrong-generation').records['wrong-generation'],undefined);
+ assert.equal(write(s,'teacher_attendance','wrong-attendance',{teacherId:'T1',personId:N,role:'teacher',day:'2026-11-02'}).success,false);
+ assert.equal(write(s,'documents','proper-generation',{teacherId:'T1',personId:G,ownerRole:'teacher',documentRevision:'proper-v1'}).success,true);
+ assert.equal(write(s,'documents','pending-parent',{teacherId:'T2',personId:N,ownerRole:'teacher',documentRevision:'pending-v1'}).success,false);
+});
+test('legacy salary history without generation remains auditable but cannot acquire a guessed generation after retirement',()=>{
+ const s=storage({lifecycle:true,bundle:true}),a=teacher(s),before=write(s,'teacher_salary','legacy-payroll',{teacherId:'T1',amount:500});assert.equal(before.success,true);
+ const retired=s.call({action:'managed_records',collection:'teachers_directory',id:ID,operation:'delete',syncProtocol:2,operationId:'legacy-teacher-retirement-0001',expectedRecordRevision:a.recordRevision,deletedTeacherGeneration:G});assert.equal(retired.success,true);
+ const corrected=write(s,'teacher_salary','legacy-payroll',{teacherId:'T1',amount:501},before.recordRevision);assert.equal(corrected.success,true);
+ assert.equal(write(s,'teacher_salary','legacy-payroll',{teacherId:'T1',personId:G,amount:502},corrected.recordRevision).success,false);
+ assert.equal(read(s,'teacher_salary','legacy-payroll').records['legacy-payroll'].amount,501);
+});
+test('addStaff shaped legacy entries retain stable IDs, paid history and optional employee enrollment across retirement/return',()=>{
+ const s=storage({lifecycle:true,bundle:true}),row={id:'staff:legacy-1',name:'Legacy staff',role:'Driver',designation:'Driver'};
+ const directory=write(s,'school_settings','staff_payroll_directory',{staff:[row]});assert.equal(directory.success,true);
+ const history={staffId:row.id,teacherId:'',employeeId:'',month:'2026-11',amount:500,netPaise:50000,paidPaise:50000,status:'Paid',payments:[{id:'payment-1',amountPaise:50000}]};
+ const paid=write(s,'teacher_salary','paid-staff-history',history);assert.equal(paid.success,true);
+ const inactive=write(s,'school_settings','staff_payroll_directory',{staff:[{...row,active:false}]},directory.recordRevision);assert.equal(inactive.success,true);
+ const enrolled=write(s,'school_settings','staff_payroll_directory',{staff:[{...row,active:true,employeeId:'E1'}]},inactive.recordRevision);assert.equal(enrolled.success,true);
+ const updated=write(s,'teacher_salary','paid-staff-history',{...history,employeeId:'E1'},paid.recordRevision);assert.equal(updated.success,true,JSON.stringify(updated));
+ const final=read(s,'teacher_salary','paid-staff-history').records['paid-staff-history'];assert.equal(final.paidPaise,50000);assert.equal(final.status,'Paid');assert.equal(final.payments[0].id,'payment-1');
+ assert.equal(write(s,'teacher_salary','paid-staff-history',{...history,employeeId:'E2'},updated.recordRevision).success,false);
+});
+test('nested staff photos and template arrays protect shared Drive URLs including encoded uc IDs',()=>{
+ const s=storage({lifecycle:true,bundle:true}),photo=s.roots[A].createFile('photo','image','image/png'),card=s.roots[A].createFile('card','pdf','application/pdf');
+ const a=write(s,'teachers_directory',ID,{name:'Teacher',teacherId:'T1',mobileStableId:G,photoFileId:photo.id});assert.equal(a.success,true);
+ assert.equal(write(s,'documents','card',{teacherId:'T1',personId:G,ownerRole:'teacher',fileId:card.id,documentRevision:'card-v1'}).success,true);
+ const encoded='%'+photo.id.charCodeAt(0).toString(16)+photo.id.slice(1);
+ assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[{id:'staff:shared',name:'Shared photo',photoUrl:'https://drive.google.com/uc?export=view&id='+encoded}]}).success,true);
+ assert.equal(write(s,'school_settings','nested_templates',{templates:[{layers:[{assetUrl:'https://drive.google.com/file/d/'+card.id+'/view'}]}]}).success,true);
+ const retired=s.call({action:'managed_records',collection:'teachers_directory',id:ID,operation:'delete',syncProtocol:2,operationId:'teacher-nested-shared-retire-0001',expectedRecordRevision:a.recordRevision,deletedTeacherGeneration:G});assert.equal(retired.success,true,JSON.stringify(retired));
+ assert.equal(photo.isTrashed(),false);assert.equal(card.isTrashed(),false);
+ assert.deepEqual(Array.from(s.context.VS_referencedDriveFileIds('https://evil.example/uc?id='+photo.id)),[]);
+});
+test('unverified missing active records and over-deep reference scans retain bytes rather than guess unshared',()=>{
+ for(const missing of [true,false]){
+  const s=storage({lifecycle:true,bundle:true}),photo=s.roots[A].createFile('uncertain-photo','image','image/png');
+  const a=write(s,'teachers_directory',ID,{name:'Teacher',teacherId:'T1',mobileStableId:G,photoFileId:photo.id});assert.equal(a.success,true);
+  let deep={};if(!missing){deep='https://drive.google.com/uc?id='+photo.id;for(let i=0;i<20;i++)deep={nested:[deep]};}
+  assert.equal(write(s,'school_config','unverified-reference',{nested:deep}).success,true);
+  if(missing){const store=s.context.VS_managedSheet('school_config'),item=s.context.VS_sheetItem(store,'unverified-reference');store.sheet.getRange(item.row,1,1,33).setValues([Array(33).fill('')]);}
+  const retired=s.call({action:'managed_records',collection:'teachers_directory',id:ID,operation:'delete',syncProtocol:2,operationId:'teacher-uncertain-retire-'+(missing?'missing':'deep')+'-0001',expectedRecordRevision:a.recordRevision,deletedTeacherGeneration:G});assert.equal(retired.success,true,JSON.stringify(retired));
+  assert.equal(photo.isTrashed(),false);
+ }
 });

@@ -25,9 +25,11 @@ class MemoryInbox implements WindowsLiveRuntimeStore {
   value=page.cursor;
  }
  @override Future<List<WindowsLiveIncoming>> pending()async=>List.of(entries);
- @override Future<void> replaceCheckpoint(int expectedCursor,int nextCursor)async{
+ @override Future<void> replaceCheckpoint(int expectedCursor,int nextCursor,
+   [Set<String>? verifiedCollections])async{
   if(value!=expectedCursor)throw StateError('cursor changed');
-  entries.removeWhere((e)=>e.sequence<=nextCursor);value=nextCursor;
+  entries.removeWhere((e)=>e.sequence<=nextCursor &&
+    (verifiedCollections==null||verifiedCollections.contains(e.collection)));value=nextCursor;
  }
  @override Future<void> applied(List<WindowsLiveIncoming> rows)async{
   entries.removeWhere((e)=>rows.contains(e));cleared+=rows.length;
@@ -49,6 +51,21 @@ void main(){
   runtime.hint();runtime.reconnect();expect(scheduled,2);expect(reconciled,0);
   await runtime.run();expect(reconciled,1);expect(store.cleared,1);
   expect(store.entries,isEmpty);
+ });
+ test('concurrent run requests share one replay and one business reconciliation',()async{
+  final store=MemoryInbox(),response=Completer<Map<String,dynamic>>();
+  var reads=0,applies=0;
+  final runtime=WindowsLiveSyncRuntime(school:school,profile:'one',deviceId:'persistent-device-one',
+   store:store,currentSchool:()=>school,currentProfile:()=>'one',canRun:()=>true,
+   onWork:(){},reconcile:(targets)async{applies++;return true;},
+   call:(action,body)async{
+    if(action.endsWith('/received'))return {'success':true};
+    reads++;return response.future;
+   });
+  final first=runtime.run(),second=runtime.run();expect(identical(first,second),isTrue);
+  await Future<void>.delayed(Duration.zero);expect(reads,1);
+  response.complete(page(0));await Future.wait([first,second]);
+  expect(applies,1);expect(store.cleared,1);
  });
  test('blocked local apply retains incoming work and retries despite an advanced delivery cursor',()async{
   final store=MemoryInbox();var verified=false,reconciled=0;
@@ -108,6 +125,59 @@ void main(){
    expect(recoveries,1);expect(store.value,variant=='verified'?5:1);
    expect(receipts,variant=='verified'?1:0);
   }
+ });
+ test('compacted replay verifies retired Drive collections and rejects authority changes',()async{
+  for(final variant in ['verified','blocked','state-changed']){
+   final store=MemoryInbox()..value=1;
+   store.entries.add(const WindowsLiveIncoming('$school-1',1,'school_notices','one'));
+   var heads=0,reconciled=0;
+   final runtime=WindowsLiveSyncRuntime(school:school,profile:'one',deviceId:'persistent-device-one',
+    store:store,currentSchool:()=>school,currentProfile:()=>'one',canRun:()=>true,
+    onWork:(){},reconcile:(targets)async{reconciled++;return true;},
+    recoverSnapshot:(collections)async{
+     expect(collections,{'school_expenses','school_notices'});return variant!='blocked';
+    },call:(action,body)async{
+     if(action.endsWith('/changes'))throw CentralCloudException(409,'school_cloud','Snapshot required',diagnosticCode:'LIVE_SNAPSHOT_REQUIRED');
+     if(action.endsWith('/received'))return {'success':true};
+     heads++;return {'success':true,'liveProtocol':1,'schoolId':school,'cursor':5,
+      'collections':[{'collection':'school_expenses','state':'active'},
+       {'collection':'school_notices','state':variant=='state-changed'&&heads>1?'active':'legacy'}]};
+    });
+   if(variant=='state-changed'){await expectLater(runtime.run(),throwsStateError);}else{await runtime.run();}
+   expect(store.value,variant=='verified'?5:1);
+   expect(store.entries.length,variant=='verified'?0:1);expect(reconciled,0);
+  }
+ });
+ test('snapshot checkpoint CAS cannot delete a newer replay page',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('runtime-cas-${DateTime.now().microsecondsSinceEpoch}',
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  await store.retainPage(LiveSyncPage.parse(page(0),school,0));
+  // Snapshot verification started at cursor1, but another replay has now
+  // durably retained cursor2. The old snapshot cannot discard either row.
+  await store.retainPage(LiveSyncPage(school,1,2,2,[{
+   'sequence':2,'collection':'school_expenses','id':'two',
+   'record':{'schoolId':school,'_syncRevision':'live-two','amount':2}}]));
+  await expectLater(store.replaceCheckpoint(1,5),throwsStateError);
+  expect(await store.cursor(school),2);
+  expect((await store.pending()).map((row)=>row.sequence).toList(),[1,2]);
+ });
+ test('active snapshot preserves retired Drive-owned incoming hints for their own reconciler',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('runtime-retired-${DateTime.now().microsecondsSinceEpoch}',
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  await store.retainPage(LiveSyncPage(school,0,1,1,[{
+    'sequence':1,'collection':'school_notices','id':'one','retired':true,
+    'source':'drive','recordAuthority':'school-drive','record':null}]));
+  await store.replaceCheckpoint(1,5,{'school_expenses'});
+  expect(await store.cursor(school),5);
+  expect((await store.pending()).single.collection,'school_notices');
  });
  test('local runtime compacts only verified incoming payloads and preserves a pending business edit',()async{
   FlutterSecureStorage.setMockInitialValues({});

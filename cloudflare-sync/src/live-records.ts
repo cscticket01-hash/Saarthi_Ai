@@ -47,7 +47,14 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  const row=(id:string)=>sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',col,id).toArray()[0];
  if(command==='seedBegin'){
   collection();demand(typeof b.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(b.fingerprint)&&Number.isSafeInteger(b.count)&&Number(b.count)>=0&&Number(b.count)<=100000&&typeof b.sourceRevision==='string'&&b.sourceRevision.length>0&&b.sourceRevision.length<=100,'Invalid seed');
-  const old=state();if(old){demand(old.fingerprint===b.fingerprint&&old.expected_count===b.count&&old.source_revision===b.sourceRevision,'Seed identity changed; retain existing state',409);return {state:old.state};}
+  const old=state();if(old){
+   if(old.fingerprint===b.fingerprint&&old.expected_count===b.count&&old.source_revision===b.sourceRevision)return {state:old.state};
+   demand(old.state==='seeding'&&b.replaceSeeding===true,'Seed identity changed; retain existing state',409);
+   return storage.transactionSync(()=>{
+    demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_events WHERE collection=?',col).toArray()[0].n===0&&sql.exec<{n:number}>('SELECT count(*) AS n FROM live_backup WHERE collection=?',col).toArray()[0].n===0,'Committed collection cannot reseed',409);
+    sql.exec('DELETE FROM live_records WHERE collection=?',col);sql.exec('UPDATE live_collections SET fingerprint=?,expected_count=?,source_revision=? WHERE collection=?',b.fingerprint,Number(b.count),b.sourceRevision,col);return {state:'seeding'};
+   });
+  }
   sql.exec("INSERT INTO live_collections VALUES(?,'seeding',?,?,?)",col,b.fingerprint,Number(b.count),b.sourceRevision);return {state:'seeding'};
  }
  if(command==='seedPage'){

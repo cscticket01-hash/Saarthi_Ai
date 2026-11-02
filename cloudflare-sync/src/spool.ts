@@ -134,8 +134,8 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
    else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
-    const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!ack.recordRevision.startsWith('cf-')),'Unverified operation receipt');seen.add(ack.operationId);}
-   }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!result.recordRevision.startsWith('cf-'),'Unverified record receipt');
+    const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
+   }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
   }
   if(values.payloadPurged===true){
    demand(lane==='records'&&values.state==='completed','Only verified record delivery may purge payloads');
@@ -145,7 +145,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    const receipts=original.action==='managed_records_batch'?result.acknowledgements as Json[]:[result];
    demand(receipts.length===requests.length&&receipts.every((receipt,index)=>{
     const request=requests[index],source=receipt.recordSource as Json;
-    return receipt.success===true&&receipt.record===null&&source?.version===1&&source.collection===request.collection&&source.id===request.id&&source.operationId===request.operationId&&source.recordRevision===receipt.recordRevision&&typeof source.payloadHash==='string'&&operationPattern.test(source.payloadHash);
+    return receipt.success===true&&receipt.schoolId===school&&receipt.syncProtocol===2&&receipt.record===null&&source?.version===1&&source.collection===request.collection&&source.id===request.id&&source.operationId===request.operationId&&source.recordRevision===receipt.recordRevision&&typeof source.recordRevision==='string'&&source.recordRevision.length>0&&source.recordRevision.length<=100&&!/^(live-|cf-)/.test(source.recordRevision)&&typeof source.payloadHash==='string'&&operationPattern.test(source.payloadHash);
    }),'Verified canonical source metadata required');
   }
   storage.transactionSync(()=>{

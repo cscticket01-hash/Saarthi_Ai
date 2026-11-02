@@ -698,10 +698,10 @@ function VS_managedRecordUnlocked(b,readContext) {
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory')VS_validateTeacherPayrollIdentity(b.id,b.data);
-  if(VS_sheetLifecycleEnabled()&&b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted){for(const key of ['teacherId','personId','staffId','employeeId'])if(existing.data[key]!=null&&b.data[key]!==existing.data[key])throw new Error('Payroll history owner is immutable');}
+  if(VS_sheetLifecycleEnabled()&&b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted){for(const key of ['teacherId','personId','staffId','employeeId'])if(existing.data[key]!=null&&b.data[key]!==existing.data[key]){const directory=key==='employeeId'&&!String(existing.data.employeeId||'').trim()&&existing.data.staffId===b.data.staffId?VS_sheetItem(VS_managedSheet('school_settings'),'staff_payroll_directory'):null;const enrolled=directory&&(directory.data.staff||[]).some(row=>row.id===existing.data.staffId&&row.employeeId===b.data.employeeId);if(!enrolled)throw new Error('Payroll history owner is immutable');}}
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory'&&existing){const old=existing.data,next=b.data;if((old.teacherId||old._syncRetiredTeacherId||b.id)!==(next.teacherId||b.id)||VS_teacherGeneration(old,b.id)!==VS_teacherGeneration(next,b.id))throw new Error('Teacher identity reassignment requires review');if(next.active===false)VS_retireTeacherAccess(b.id,old,b.operationId||Utilities.getUuid());}
   if(VS_sheetLifecycleEnabled()&&b.collection==='school_settings'&&b.id==='staff_payroll_directory')VS_validateStaffPayrollDirectory(b.data,existing);
-  if(VS_sheetLifecycleEnabled()&&b.collection!=='teachers_directory'&&b.data.teacherId&&b.data.ownerRole!=='student'&&b.data.role!=='student'){const teachers=VS_sheetRecords(VS_managedSheet('teachers_directory'));const retired=Object.keys(teachers).some(id=>{const row=teachers[id];return (row.teacherId||row._syncRetiredTeacherId||id)===b.data.teacherId&&(row._syncDeleted||row.active===false);});if(retired&&!(b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted))throw new Error('Teacher generation was retired; stale dependent rejected');}
+  if(VS_sheetLifecycleEnabled()&&b.collection!=='teachers_directory')VS_guardTeacherDependent(b,existing);
   if(VS_sheetLifecycleEnabled()&&b.collection==='students_directory'&&existing&&!existing.data._syncDeleted&&existing.data.mobileStableId&&b.data.mobileStableId!==existing.data.mobileStableId&&b.data.replacesStudentGeneration!==existing.data.mobileStableId)throw new Error('Record revision conflict');
   if(VS_sheetLifecycleEnabled()&&b.collection!=='students_directory'&&b.data.personId&&b.data.studentId){
     const parentStore=VS_managedSheet('students_directory'),parent=VS_sheetItem(parentStore,b.data.studentId),head=VS_recordHead('students_directory',b.data.studentId);
@@ -1684,14 +1684,36 @@ function VS_isTeacherAccessRecord(collection,data,id,parentId,parent){
   if(collection==='mobile_users'&&id===Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,'teacher/'+generation,Utilities.Charset.UTF_8).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join(''))return true;
   return data.teacherId===teacherId||data.teacherDocumentId===parentId||collection==='mobile_sessions'&&data.role==='teacher'&&data.documentId===parentId;
 }
+function VS_referencedDriveFileIds(value){
+  if(typeof value!=='string')return [];
+  const path=value.match(/^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]{1,200})(?:\/|[?#]|$)/);if(path)return [path[1]];
+  if(!/^https:\/\/drive\.google\.com\/uc\?/.test(value))return [];
+  const found=[];for(const pair of value.split('#')[0].split('?').slice(1).join('?').split('&')){
+    const split=pair.indexOf('=');if(split<0)continue;
+    try{const key=decodeURIComponent(pair.slice(0,split).replace(/\+/g,' ')),id=decodeURIComponent(pair.slice(split+1).replace(/\+/g,' '));if(key==='id'&&/^[A-Za-z0-9_-]{1,200}$/.test(id))found.push(id);}catch(_){}
+  }
+  return [...new Set(found)];
+}
+function VS_collectRetirementReferences(value,references,depth,budget){
+  if(depth>16||--budget.remaining<0){references.retirementScanComplete=false;return;}
+  if(!value||typeof value!=='object')return;
+  for(const key of Object.keys(value)){
+    if(--budget.remaining<0){references.retirementScanComplete=false;return;}
+    const item=value[key];if((key==='fileId'||/FileId$/.test(key))&&typeof item==='string')references.add(item);
+    else if(typeof item==='string')VS_referencedDriveFileIds(item).forEach(id=>references.add(id));
+    else VS_collectRetirementReferences(item,references,depth+1,budget);
+    if(references.retirementScanComplete===false)return;
+  }
+}
 function VS_personRetirementReferences(collection,parentId){
-  const references=new Set();
+  const references=new Set();references.retirementScanComplete=true;
   for(const category of VS_LAYOUT_COLLECTIONS){
-    const records=VS_sheetRecords(VS_managedSheet(category));
+    const store=VS_managedSheet(category),records=VS_sheetRecords(store);
+    if(VS_missingRecordHeads(store,records).some(head=>!head.deleted&&!(category===collection&&head.id===parentId))){references.retirementScanComplete=false;return references;}
     for(const id of Object.keys(records)){
       if(category===collection&&id===parentId||records[id]._syncDeleted)continue;
-      function collect(value){if(!value||typeof value!=='object')return;Object.keys(value).forEach(key=>{const item=value[key];if((key==='fileId'||/FileId$/.test(key))&&typeof item==='string')references.add(item);else if(typeof item==='string'){const match=item.match(/^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/);if(match)references.add(match[1]);}else collect(item);});}
-      collect(records[id]);
+      VS_collectRetirementReferences(records[id],references,0,{remaining:10000});
+      if(references.retirementScanComplete===false)return references;
     }
   }
   return references;
@@ -1713,6 +1735,21 @@ function VS_retireTeacherAccess(parentId,parent,operationId){
   }
   if(cleanup.size){const references=VS_personRetirementReferences('teachers_directory',parentId);cleanup.forEach(fileId=>VS_removeStudentOwnedFile(fileId,parentId,generation,references));}
 }
+function VS_guardTeacherDependent(b,existing){
+  const data=b.data;if(!data||data.ownerRole==='student'||data.role==='student')return;
+  const explicit=data.ownerRole==='teacher'||data.role==='teacher'||['teacher_salary','teacher_attendance','teacher_schedules'].indexOf(b.collection)>=0;
+  if(!data.teacherId&&!(explicit&&data.personId))return;
+  const teachers=VS_sheetRecords(VS_managedSheet('teachers_directory')),matches=Object.keys(teachers).filter(id=>data.teacherId?(teachers[id].teacherId||teachers[id]._syncRetiredTeacherId||id)===data.teacherId:VS_teacherGeneration(teachers[id],id)===data.personId);
+  // A historical payroll correction retains its exact previously verified
+  // owner. It cannot create a row or assign that history to a new generation.
+  const history=b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted&&['teacherId','personId','staffId','employeeId'].every(key=>existing.data[key]===data[key]);
+  if(history)return;
+  if(matches.some(id=>teachers[id]._syncDeleted||teachers[id].active===false))throw new Error('Teacher generation was retired; stale dependent rejected');
+  if(explicit&&data.personId){
+    if(matches.length!==1)throw new Error('New teacher parent must sync first');
+    if(VS_teacherGeneration(teachers[matches[0]],matches[0])!==data.personId)throw new Error('Teacher generation was retired; stale dependent rejected');
+  }
+}
 function VS_validateTeacherPayrollIdentity(parentId,data){
   const employee=String(data.teacherId||parentId).trim().toLowerCase(),teachers=VS_sheetRecords(VS_managedSheet('teachers_directory'));
   if(!employee||employee.length>200)throw new Error('Invalid teacher payroll identity');
@@ -1724,9 +1761,9 @@ function VS_validateStaffPayrollDirectory(data,existing){
   if(!Array.isArray(data.staff)||data.staff.length>1000)throw new Error('Invalid staff payroll directory');
   const ids=new Set(),employees=new Set(),teachers=VS_sheetRecords(VS_managedSheet('teachers_directory'));
   const teacherIds=new Set(Object.keys(teachers).map(id=>String(teachers[id].teacherId||teachers[id]._syncRetiredTeacherId||id).trim().toLowerCase()));
-  data.staff.forEach(row=>{const employee=String(row&&row.employeeId||'').trim().toLowerCase();if(!row||typeof row.id!=='string'||!row.id||row.id.length>200||row.id.indexOf('/')>=0||ids.has(row.id)||!employee||employee.length>60||employees.has(employee)||teacherIds.has(employee))throw new Error('Staff employee identity conflict');ids.add(row.id);employees.add(employee);});
+  data.staff.forEach(row=>{const employee=String(row&&row.employeeId||'').trim().toLowerCase();if(!row||typeof row.id!=='string'||!row.id||row.id.length>200||row.id.indexOf('/')>=0||ids.has(row.id)||employee&&(employee.length>60||employees.has(employee)||teacherIds.has(employee)))throw new Error('Staff employee identity conflict');ids.add(row.id);if(employee)employees.add(employee);});
   const previous=existing&&existing.data&&existing.data.staff||[];
-  previous.forEach(row=>{const next=data.staff.find(item=>item.id===row.id);if(!next||next.employeeId!==row.employeeId)throw new Error('Retire staff with active false; payroll identity is permanent');});
+  previous.forEach(row=>{const next=data.staff.find(item=>item.id===row.id);if(!next||String(row.employeeId||'').trim()&&next.employeeId!==row.employeeId)throw new Error('Retire staff with active false; payroll identity is permanent');});
 }
 
 function VS_studentGeneration(data,id){return data.mobileStableId||id;}
@@ -1759,21 +1796,11 @@ function VS_deleteStudentOwnedRecords(parentId,parent,operationId,replacement){
 }
 
 function VS_studentFileReferences(parentId,stable){
-  const references=new Set();
-
-  // Check every active reference, including shared school assets, before trash.
-  for(const collection of VS_LAYOUT_COLLECTIONS){
-    const records=VS_sheetRecords(VS_managedSheet(collection));
-    for(const id of Object.keys(records)){
-      const row=records[id];if(row._syncDeleted||collection==='students_directory'&&id===parentId&&VS_studentGeneration(row,id)===stable)continue;
-      function collect(value){if(!value||typeof value!=='object')return;Object.keys(value).forEach(k=>{if((k==='fileId'||/FileId$/.test(k))&&typeof value[k]==='string')references.add(value[k]);else if(typeof value[k]==='string'){const match=value[k].match(/^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/);if(match)references.add(match[1]);}else collect(value[k]);});}
-      collect(row);
-    }
-  }
-  return references;
+  return VS_personRetirementReferences('students_directory',parentId);
 }
 function VS_removeStudentOwnedFile(fileId,parentId,stable,references){
   if(!fileId)return 'none';
+  if(references.retirementScanComplete===false)return 'retained-unverified';
   if(references.has(fileId))return 'retained-shared';
   const file=VS_managedFile(fileId);if(!file.isTrashed())file.setTrashed(true);
   if(!file.isTrashed())throw new Error('Student file deletion not acknowledged');return 'deleted';

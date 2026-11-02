@@ -363,7 +363,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       reconcile:(targets)async {
         final generation=_remoteChangeGeneration;
         await _pullManagedChanges(schoolOverride:school,verifyInventory:false,
-          selectedCollections:targets.keys.toSet(),targetRecordIds:targets);
+          selectedCollections:targets.keys.toSet(),targetRecordIds:targets,
+          // Point reads remain exact when a verified baseline is available.
+          // A fallback collection read must fetch actual records, rather than
+          // treating an unchanged manifest as proof of local business apply.
+          batchReader:(group)=>WindowsFirebaseRemote.readManagedBatch(
+            school,{for(final name in group.keys)name:''}));
         // The same verified point download also satisfies an older ordinary
         // feed hint. Preserve hints that arrived during the read.
         if(_lastManagedApplyVerified && generation==_remoteChangeGeneration) {

@@ -49,6 +49,7 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
     // be smuggled through a field patch. The Script verifies other fields.
     const patch=body.data._syncFieldPatch;
     if(!parent||parent._syncDeleted||patch.version!==1||!patch.set||typeof patch.set!=='object'||!Array.isArray(patch.remove)||[...Object.keys(patch.set),...patch.remove].some(k=>['mobileStableId','teacherId','replacesStudentGeneration'].includes(k)))fail(409,'PERSON_GENERATION_PATCH_REJECTED');
+    retiring=teacher&&!parent._syncDeleted&&patch.set.active===false;
    }else if(student){
     generation=body.data.mobileStableId;
     if(typeof generation!=='string'||!/^p-[a-f0-9]{32,64}$/.test(generation))fail(400,'PERSON_GENERATION_INVALID');
@@ -66,15 +67,15 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
    }else{
     if(!Array.isArray(body.data.staff)||body.data.staff.length>1000)fail(400,'STAFF_DIRECTORY_INVALID');
     const ids=new Set(),employees=new Set(),teachers=await read(school,'teachers_directory');
-    const teacherIds=new Set(Object.entries(teachers).filter(([,r])=>!r._syncDeleted).map(([id,r])=>String(r.teacherId||id).trim().toLowerCase()));
+    const teacherIds=new Set(Object.entries(teachers).map(([id,r])=>String(r.teacherId||r._syncRetiredTeacherId||id).trim().toLowerCase()));
     for(const row of body.data.staff){
      const employee=String(row?.employeeId||'').trim().toLowerCase();
-     if(!row||!validId(row.id)||ids.has(row.id)||!employee||employee.length>60||employees.has(employee)||teacherIds.has(employee))fail(409,'STAFF_EMPLOYEE_ID_CONFLICT');
-     ids.add(row.id);employees.add(employee);
+     if(!row||!validId(row.id)||ids.has(row.id)||employee&&(employee.length>60||employees.has(employee)||teacherIds.has(employee)))fail(409,'STAFF_EMPLOYEE_ID_CONFLICT');
+     ids.add(row.id);if(employee)employees.add(employee);
     }
     for(const previous of parent?.staff||[]){
      const current=body.data.staff.find(row=>row.id===previous.id);
-     if(!current||current.employeeId!==previous.employeeId)fail(409,'STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
+     if(!current||String(previous.employeeId||'').trim()&&current.employeeId!==previous.employeeId)fail(409,'STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
     }
    }
   }else{

@@ -88,3 +88,23 @@ test('staff field patch preserves GS field intent while validating the resulting
  const invalid=write('school_settings','staff_payroll_directory',{_syncFieldPatch:{version:1,set:{staff:[]},remove:[],before:{staff:{exists:true,revision:ack.record._syncFieldRevisions.staff}}}},ack.recordRevision,'staff-remove-patch-operation-0001');
  await assert.rejects(f.gate().execute(A,invalid),e=>e.code==='STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
 });
+test('teacher inactive field patch requires deployed retirement capability before durable admission',async()=>{
+ const f=setup(),a=await f.gate().execute(A,write('teachers_directory','teacher-1',{name:'Teacher',teacherId:'T1',mobileStableId:G}));
+ assert.equal(f.s.call(write('documents','field-card',{teacherId:'T1',personId:G,ownerRole:'teacher',documentRevision:'field-card-v1'},'','teacher-field-card-operation-0001')).success,true);
+ const patch=write('teachers_directory','teacher-1',{_syncFieldPatch:{version:1,set:{active:false},remove:[],before:{active:{exists:false,revision:'absent'}},identity:{teacherId:'T1',mobileStableId:G}}},a.recordRevision,'teacher-retire-fieldpatch-0001');
+ const old=createLivePersonLifecycle({db:f.f.db,rpc:async(school,body)=>{const reply=await f.rpc(school,body);if(body.action==='managed_health')delete reply.teacherRetirementVersion;return reply;}});
+ await assert.rejects(old.execute(A,patch),e=>e.code==='PERSON_RETIREMENT_UPGRADE_REQUIRED');
+ assert.equal([...f.f.docs.values()].some(row=>row.operationId===patch.operationId),false);
+ assert.equal(f.s.call({action:'managed_records',collection:'teachers_directory',operation:'read',id:'teacher-1',syncProtocol:2}).records['teacher-1'].active,undefined);
+ const done=await f.gate().execute(A,patch);assert.equal(done.record.active,false);
+ const journal=[...f.f.docs.entries()].find(([path,row])=>path.startsWith('school_person_lifecycle_operations/')&&row.operationId===patch.operationId)[1];
+ assert.equal(journal.retiredGeneration,G);assert.equal(journal.state,'verified');assert.equal(journal.children.some(row=>row.collection==='documents'&&row.id==='field-card'),true);
+ assert.equal(f.s.call({action:'managed_records',collection:'documents',operation:'read',id:'field-card',syncProtocol:2}).records['field-card']._syncDeleted,true);
+});
+test('existing addStaff shape uses stable staff ID without imposing an employee field and permits explicit first enrollment',async()=>{
+ const f=setup(),row={id:'staff:legacy-1',name:'Existing staff',role:'Driver',designation:'Driver'};
+ const a=await f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[row]},'','legacy-staff-create-0001'));assert.equal(a.record.staff[0].employeeId,undefined);
+ const retired=await f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[{...row,active:false}]},a.recordRevision,'legacy-staff-retire-0001'));assert.equal(retired.record.staff[0].active,false);
+ const enrolled=await f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[{...row,active:true,employeeId:'E1'}]},retired.recordRevision,'legacy-staff-enroll-0001'));assert.equal(enrolled.record.staff[0].employeeId,'E1');
+ await assert.rejects(f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[{...row,employeeId:'E2'}]},enrolled.recordRevision,'legacy-staff-reassign-0001')),e=>e.code==='STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
+});

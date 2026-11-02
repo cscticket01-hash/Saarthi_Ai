@@ -54,7 +54,7 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   if(source.success!==true||source.schoolId!==school||source.syncProtocol!==2||!source.records||typeof source.records!=='object'||Array.isArray(source.records)||typeof source.collectionRevision!=='string'||source.missingRecords?.length)refuse(502,'LIVE_BASELINE_UNVERIFIED');
   const entries=Object.entries(source.records).filter(([id])=>collection!=='school_settings'||id!=='staff_payroll_directory');if(entries.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
   const fingerprint=createHash('sha256').update(canonical(Object.fromEntries(entries))).digest('hex');
-  const started=await command(school,{command:'seedBegin',collection,count:entries.length,fingerprint,sourceRevision:source.collectionRevision});
+  const started=await command(school,{command:'seedBegin',collection,count:entries.length,fingerprint,sourceRevision:source.collectionRevision,replaceSeeding:true});
   if(started.state==='active')return {liveProtocol:1,schoolId:school,state:'active'};
   // Bound pages by bytes as well as record count; every original row remains.
   let rows=[],bytes=0;
