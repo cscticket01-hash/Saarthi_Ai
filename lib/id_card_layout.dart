@@ -249,12 +249,17 @@ class IdCardLayout {
     bool cover = false,
     double focusX = .5,
     double focusY = .35,
+    int maxPrintEdge = 480,
   }) {
     final normalized = prepareImage(bytes, aspect: aspect, cover: cover,
       focusX: focusX, focusY: focusY);
     final decoded = img.decodePng(normalized);
     if (decoded == null) throw const FormatException('Invalid normalized ID photo.');
-    const longestPrintEdge = 480;
+    // The ID card design is 306 x 486 logical units on a physical CR80
+    // 54 x 85.6 mm card. 300dpi is ~2.08 pixels per logical unit.
+    // Do NOT embed tiny 8mm logos at 480px (~1500dpi), which bloats PDF
+    // without improving any printed detail.
+    final longestPrintEdge = maxPrintEdge.clamp(96, 480).toInt();
     final frame = math.max(decoded.width, decoded.height) > longestPrintEdge
         ? img.copyResize(decoded,
             width: decoded.width >= decoded.height ? longestPrintEdge : null,
@@ -275,6 +280,7 @@ class IdCardLayout {
     bool cover = false,
     double focusX = .5,
     double focusY = .35,
+    int printDpi = 300,
   }) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
@@ -287,12 +293,19 @@ class IdCardLayout {
             throw const FormatException(
                 'ID image region has invalid dimensions.');
           }
+          if (printDpi < 220 || printDpi > 600) {
+            throw const FormatException('Unsupported ID artwork print DPI.');
+          }
+          final printPixels = (math.max(bounds.maxWidth, bounds.maxHeight) *
+                  2.1 * printDpi / 300).ceil()
+              .clamp(printDpi < 300 ? 72 : 96, 480).toInt();
           final prepared = preparePdfImage(
             bytes,
             aspect: bounds.maxWidth / bounds.maxHeight,
             cover: cover,
             focusX: focusX,
             focusY: focusY,
+            maxPrintEdge: printPixels,
           );
           return pw.ClipRect(
             child: pw.Image(pw.MemoryImage(prepared), fit: pw.BoxFit.contain),
