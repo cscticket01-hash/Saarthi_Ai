@@ -187,7 +187,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(!!original&&payloadHash(JSON.parse(original))===rec.payloadHash,'Backup payload changed; retain',409);
    sql.exec("UPDATE live_events SET body='' WHERE seq=? AND operation_id=?",job.seq,job.operation_id);
    sql.exec("UPDATE live_backup SET body='' WHERE seq=? AND state='verified' AND verified_at>0",job.seq);
-   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE operation_id=? AND json_extract(receipt,'$.recordRevision')=?",job.operation_id,rec.recordRevision);
+   // Exact version may have unchanged/duplicate operation receipts too.
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE json_extract(receipt,'$.recordRevision')=? AND json_extract(receipt,'$.backupState')='verified'",rec.recordRevision);
    sql.exec("UPDATE live_records SET body='' WHERE collection=? AND id=? AND revision=? AND drive_revision=?",
      job.collection,job.id,rec.recordRevision,job.drive_revision);
   }
@@ -202,8 +203,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(Number.isSafeInteger(b.before)&&Number(b.before)>=0&&Number(b.before)<=head(),'Invalid retention boundary');
   const floor=sql.exec<{floor:number}>('SELECT floor FROM live_retention WHERE id=1').toArray()[0].floor;
   // Only a contiguous prefix whose exact snapshots reached Drive is eligible.
-  const rows=sql.exec<{seq:number;state:string}>("SELECT e.seq,b.state FROM live_events e LEFT JOIN live_backup b ON b.seq=e.seq WHERE e.seq>? AND e.seq<=? ORDER BY e.seq LIMIT 1000",floor,Number(b.before)).toArray();
-  let next=floor;for(const row of rows){if(row.state!=='verified')break;next=row.seq;}
+  const rows=sql.exec<{seq:number;state:string;body:string}>("SELECT e.seq,e.body,b.state FROM live_events e LEFT JOIN live_backup b ON b.seq=e.seq WHERE e.seq>? AND e.seq<=? ORDER BY e.seq LIMIT 1000",floor,Number(b.before)).toArray();
+  let next=floor;for(const row of rows){if(row.state!=='verified'||row.body!=='')break;next=row.seq;}
   if(next>floor){sql.exec('DELETE FROM live_events WHERE seq<=? AND body=\'\'',next);sql.exec("DELETE FROM live_backup WHERE seq<=? AND state='verified' AND body=''",next);sql.exec('UPDATE live_retention SET floor=? WHERE id=1',next);}
   return {liveProtocol:1,schoolId:school,cursor:head(),floor:next,snapshotRequiredBefore:next};
  });
