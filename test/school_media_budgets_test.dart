@@ -64,8 +64,12 @@ void main() {
     expect(result['transparencyPreserved'], true);
     final decoded = img.decodePng(output)!;
     expect(decoded.getPixel(0, 0).a.toInt(), 0);
-    expect(decoded.getPixel(decoded.width ~/ 2, decoded.height ~/ 2).a.toInt(),
-      greaterThan(0));
+    // The actual synthetic stroke crosses (350,225): (350+225) % 115=0.
+    // The old test sampled the transparent center (350,250), which is not ink.
+    final strokeX = (decoded.width * 350 / 700).floor().clamp(0, decoded.width - 1);
+    final strokeY = (decoded.height * 225 / 500).floor().clamp(0, decoded.height - 1);
+    expect(decoded.getPixel(strokeX, strokeY).a.toInt(), greaterThan(0));
+    expect(decoded.getPixel(0, decoded.height - 1).a.toInt(), 0);
   });
 
   test('ID PDF portrait photo is print-resolution JPEG, with transparent ink as PNG', () {
