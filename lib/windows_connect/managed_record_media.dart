@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import '../windows_school_image_cache.dart';
 import '../windows_local_firestore.dart';
 import 'central_school_cloud.dart';
+import 'school_drive_images.dart' show schoolDriveFileId;
 
 /// Upload images to this school's Drive before publishing a text-only record.
 Future<Map<String, dynamic>> prepareManagedRecord(
@@ -92,7 +93,8 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     });
     own();
     if (upload['success'] != true || upload['schoolId'] != school ||
-        upload['fileId'] is! String || upload['fileUrl'] is! String) {
+        upload['fileId'] is! String || upload['fileUrl'] is! String ||
+        schoolDriveFileId(upload['fileUrl'] as String) != upload['fileId']) {
       throw StateError('School image upload failed. Local image retained.');
     }
     // Preserve the input for verified quality recovery. Stable upload keys
