@@ -314,7 +314,9 @@ Future<Uint8List> _renderWindowsReferenceDocument({
                   ? IdCardLayout.image(bytes, cover: cover,
                        printDpi: cover
                            ? [300, 280, 260, 240, 220][printPass]
-                           : [250, 220, 220, 220, 220][printPass])
+                           : [250, 220, 220, 220, 220][printPass],
+                       jpegQuality: cover
+                           ? [88, 86, 84, 82, 80][printPass] : 88)
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
