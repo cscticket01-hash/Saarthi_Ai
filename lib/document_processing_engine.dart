@@ -23,6 +23,7 @@ class DocumentProcessingEngine {
     if (source.isEmpty || source.length > 20 * 1024 * 1024) {
       throw const FormatException('Template artwork exceeds the 20 MiB safe upload limit.');
     }
+    try {
     final decoder = img.PngDecoder();
     final info = decoder.startDecode(source);
     if (info == null || info.width <= 0 || info.height <= 0 ||
@@ -63,6 +64,11 @@ class DocumentProcessingEngine {
       'lossless': true, 'pixelsVerified': true,
       'reusedSource': identical(result, source),
     };
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException('Template artwork cannot be safely decoded.');
+    }
   }
 
   /// Optimize school logo, seal and signature for a strict 30 KB upload.
