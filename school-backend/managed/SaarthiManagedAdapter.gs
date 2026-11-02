@@ -1033,7 +1033,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.2',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.3',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -2153,13 +2153,29 @@ function VS_permanentlyEraseOwnedFile(fileId){
   if(verified.getResponseCode()!==404)throw new Error('Delete everywhere Drive file deletion pending');
 }
 function VS_eraseArchiveInventory(){
-  const pending=[VS_managedRoot()],seen={},jobs=[];let visited=0;
+  const pending=[VS_managedRoot()],seen={},jobs=[];let visited=0,inspected=0;
   while(pending.length){const folder=pending.shift();if(seen[folder.getId()])continue;seen[folder.getId()]=true;
     if(++visited>250)throw new Error('Delete everywhere archive inventory requires bounded review');
-    const files=folder.getFiles();while(files.hasNext()){if(jobs.length>=2000)throw new Error('Delete everywhere archive inventory requires bounded review');jobs.push(files.next().getId());}
+    const files=folder.getFiles();while(files.hasNext()){
+      const file=files.next();if(++inspected>2000)throw new Error('Delete everywhere archive inventory requires bounded review');
+      // Inventory metadata is already obtained from a folder under the verified
+      // root. Ordinary photos/PDFs and the live workbook are not archives.
+      // Keep every supported legacy archive form; ownership is checked again
+      // before any content is read or changed.
+      if(!VS_isRecordArchive(file,folder.getName()))continue;
+      if(jobs.length>=2000)throw new Error('Delete everywhere archive inventory requires bounded review');jobs.push(file.getId());
+    }
     const children=folder.getFolders();while(children.hasNext()){if(pending.length+visited>=250)throw new Error('Delete everywhere archive inventory requires bounded review');pending.push(children.next());}
   }
   return [...new Set(jobs)].sort();
+}
+function VS_isRecordArchive(file,parentName){
+  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),mime=file.getMimeType(),marker=String(file.getDescription()||'');
+  if(mime==='application/vnd.google-apps.spreadsheet')return marker==='VIDYA_SHEET_BACKUP:'+school;
+  if(mime!=='application/json')return false;
+  if(/^VIDYA_(?:RECORD_JSON|RECYCLE|RECORD_BACKUP|LAYOUT_BACKUP|JSON|REDACTED_BACKUP):/.test(marker))return true;
+  if(!marker&&(/^School_Backup_/.test(file.getName())||/^Audit_[A-Za-z0-9_-]+\.json$/.test(file.getName())))return true;
+  return String(parentName||'').indexOf('records_')===0&&VS_LAYOUT_COLLECTIONS.indexOf(String(parentName).slice(8))>=0;
 }
 function VS_eraseArchiveGeneration(target,row){
   const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner);
@@ -2172,15 +2188,19 @@ function VS_eraseArchiveGeneration(target,row){
 function VS_eraseExactRecordArchives(targets,plan,onProgress){
   if(!plan.archiveIds){plan.archiveIds=VS_eraseArchiveInventory();plan.archiveCursor=0;onProgress();}
   let count=0;
-  while(plan.archiveCursor<plan.archiveIds.length&&count<5){
+  // Archive removal/redaction is idempotent. Persist the cursor once per
+  // bounded batch, including on failure, rather than rewriting the parent
+  // Sheet/head for every unrelated file inspected.
+  const started=Date.now();
+  try{while(plan.archiveCursor<plan.archiveIds.length&&count<5&&Date.now()-started<25000){
     const fileId=plan.archiveIds[plan.archiveCursor];let file;
     try{file=VS_managedFile(fileId);}catch(error){
       const response=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(fileId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
       if(response.getResponseCode()!==404)throw error;
     }
     if(file)VS_eraseOneRecordArchive(file,targets,plan.files);
-    plan.archiveCursor++;count++;onProgress();
-  }
+    plan.archiveCursor++;count++;
+  }}finally{onProgress();}
   return plan.archiveCursor===plan.archiveIds.length;
 }
 function VS_eraseOneRecordArchive(file,targets,deletedFiles){

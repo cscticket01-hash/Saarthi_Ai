@@ -42,3 +42,26 @@ test('mixed Sheet backups redact only deleted record, preserving unrelated finan
  const s=storage({lifecycle:true});rest(s);const a=write(s,'fee_payments','one',{amount:100});assert(a.success);assert(write(s,'fee_payments','other',{amount:200},'','write_operation_other').success);const backup=s.call({action:'managed_backup'});assert(backup.success);
  const r=s.call(deletion('one',a.recordRevision,'fee_payments'));assert.equal(r.success,true,JSON.stringify(r));const sheet=s.books.get(backup.fileId).getSheetByName('fee_payments'),rows=s.context.VS_sheetRecords({school:A,sheet,collection:'fee_payments'});assert.equal(rows.one.amount,undefined);assert.equal(rows.one._syncDeleted,true);assert.equal(rows.other.amount,200);
 });
+
+test('archive inventory omits ordinary media but retains every supported archive owner',()=>{
+ const s=storage({lifecycle:true});rest(s);
+ for(let n=0;n<80;n++)s.roots[A].createFile('Portrait'+n,'photo','image/png');
+ const legacy=s.roots[A].createFile('School_Backup_legacy.json','{}','application/json');
+ const audit=s.roots[A].createFile('Audit_photo-id.json','{}','application/json');
+ const marked=s.roots[A].createFile('Exact.json','{}','application/json');marked.setDescription('VIDYA_RECORD_JSON:'+A+':hash');
+ const folder=s.roots[A].createFolder('records_students_directory');
+ const record=folder.createFile('legacy.json','{}','application/json');
+ const ids=Array.from(s.context.VS_eraseArchiveInventory());
+ for(const f of [legacy,audit,marked,record])assert(ids.includes(f.id));
+ assert.equal(ids.length,4);
+});
+test('archive cursor persists once per batch and remains resumable on failure',()=>{
+ const s=storage({lifecycle:true});rest(s);const files=[];
+ for(let n=0;n<5;n++)files.push(s.roots[A].createFile('unrelated'+n,'bytes','image/png').id);
+ const plan={archiveIds:files,archiveCursor:0,files:[]};let saves=0;
+ assert.equal(s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),true);assert.equal(saves,1);assert.equal(plan.archiveCursor,5);
+ plan.archiveCursor=0;saves=0;let calls=0;
+ s.context.VS_eraseOneRecordArchive=()=>{if(++calls===3)throw Error('synthetic failure');};
+ assert.throws(()=>s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),/synthetic failure/);
+ assert.equal(plan.archiveCursor,2);assert.equal(saves,1);
+});

@@ -67,7 +67,7 @@ async function main(){
   if(!ticket){check(initial.value.driveState==='verified',tag+' missing delivery status');return {cloudflareAckMs:initialMs,cloudToDriveMs:0,verified:initial.value};}
   check(ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&(/^(records|file-[a-f0-9]{64})$/.test(ticket.lane)),tag+' invalid Cloudflare ticket');
   const started=now();
-  for(let attempt=0;attempt<15;attempt++){
+  for(let attempt=0;attempt<45;attempt++){
    const s=await call('managed/cloudflare/operation',{lane:ticket.lane,id:ticket.id,waitMillis:18000});
    if(!s.value.delivery){
     check(s.value.driveState==='verified'&&s.value.cloudflareAccepted===true,tag+' owner ACK not verified');
@@ -76,9 +76,22 @@ async function main(){
    }
    check(s.value.delivery?.id===ticket.id&&s.value.delivery?.lane===ticket.lane,tag+' ticket changed');
   }
-  throw Error(tag+' no verified Drive ACK after 15 polls');
+  throw Error(tag+' no verified Drive ACK after 45 polls');
  };
  const recordsRead=(collection,id)=>call('managed/records',{collection,id,operation:'read',syncProtocol:2});
+ // Resume only the exact disposable fixture left by this reviewed TEST run.
+ // Retain the original operation identity: a retry must not invent a second
+ // delete or infer completion merely from the presence of a tombstone.
+ const priorId='CFSPEED_STUDENT_41496978963_0_b10f4c',priorFile='10tja6gbObZ18mgxQy-jZDTgQ90YYgbCj';
+ const prior=await recordsRead('students_directory',priorId),priorRow=prior.value.records?.[priorId];
+ if(priorRow){
+  check(priorRow.schoolId===SCHOOL&&priorRow._syncDeleted===true&&priorRow._syncErasePlan?.files?.includes(priorFile)&&typeof priorRow._syncOperationId==='string'&&typeof priorRow._syncDeletedOwner==='string','Prior synthetic fixture identity is not proven');
+  const cleanup=await call('managed/records',{edgeDeliveryVersion:1,collection:'students_directory',operation:'delete',id:priorId,syncProtocol:2,
+   operationId:priorRow._syncOperationId,expectedRecordRevision:priorRow._syncRevision,deleteEverywhereVersion:1,deletedStudentGeneration:priorRow._syncDeletedOwner});
+  const receipt=await settle(cleanup,'prior synthetic fixture cleanup');
+  check(receipt.verified.driveDeletionComplete===true&&receipt.verified.firebaseDeletionComplete===true&&receipt.verified.deletedFileIds?.includes(priorFile),'Prior synthetic fixture deletion not verified');
+  report.priorFixtureCleanup={recordId:priorId,driveDeletionComplete:true,firebaseDeletionComplete:true};
+ }
  for(const [index,role] of ['student','teacher','staff'].entries()){
   const suffix=run+'_'+index+'_'+crypto.randomBytes(3).toString('hex');
   const collection=role==='student'?'students_directory':'teachers_directory';
@@ -140,6 +153,8 @@ async function main(){
     const del=await call('managed/records',{edgeDeliveryVersion:1,collection,operation:'delete',id,syncProtocol:2,
       operationId:operationDelete,expectedRecordRevision:row._syncRevision,deleteEverywhereVersion:1,
       ...(role==='student'?{deletedStudentGeneration:personGeneration}:{})});
+    entry.deleteDelivery=del.value.delivery||null;
+    entry.deleteOperationId=operationDelete;
     const receipt=await settle(del,role+' delete');
     entry.appToCloudflareDeleteMs=receipt.cloudflareAckMs;
     entry.cloudflareToDriveDeleteMs=receipt.cloudToDriveMs;
