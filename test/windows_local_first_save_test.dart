@@ -271,7 +271,7 @@ void main() {
       await firstPair.future.timeout(const Duration(seconds: 15));
       expect(inFlight, lessThanOrEqualTo(2));
       inFlight--;
-      final id = 'verified-$name';
+      final id = 'verified-${(body['uploadKey'] as String).substring(0, 20)}';
       return {
         'success': true, 'schoolId': school, 'fileId': id,
         'fileUrl': 'https://drive.google.com/file/d/$id/view',
