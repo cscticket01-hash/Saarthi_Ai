@@ -259,7 +259,7 @@ class IdCardLayout {
     // 54 x 85.6 mm card. 300dpi is ~2.08 pixels per logical unit.
     // Do NOT embed tiny 8mm logos at 480px (~1500dpi), which bloats PDF
     // without improving any printed detail.
-    final longestPrintEdge = maxPrintEdge.clamp(96, 480);
+    final longestPrintEdge = maxPrintEdge.clamp(96, 480).toInt();
     final frame = math.max(decoded.width, decoded.height) > longestPrintEdge
         ? img.copyResize(decoded,
             width: decoded.width >= decoded.height ? longestPrintEdge : null,
@@ -293,7 +293,7 @@ class IdCardLayout {
                 'ID image region has invalid dimensions.');
           }
           final printPixels = (math.max(bounds.maxWidth, bounds.maxHeight) *
-                  2.1).ceil().clamp(96, 480);
+                  2.1).ceil().clamp(96, 480).toInt();
           final prepared = preparePdfImage(
             bytes,
             aspect: bounds.maxWidth / bounds.maxHeight,
