@@ -481,6 +481,42 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
   }else if(action==='developer/managed/block'||action==='developer/managed/disable'){
    const blocked=b.blocked===true;await ref.set({...(action.endsWith('/block')?{blocked}:{active:!blocked}),sessionValidAfter:Math.floor(now()/1000)},{merge:true});
    if(action.endsWith('/disable'))await auth.updateUser(data.authUid,{disabled:blocked});await auth.revokeRefreshTokens(data.authUid);await db.doc('platform_schools/'+id).set(action.endsWith('/disable')?{loginDisabled:blocked}:{blocked},{merge:true});
+  }else if(action==='developer/managed/licence/renew'){
+   // Renew the SAME existing school-bound key. No new school, UID, Drive root,
+   // record, outbox, device authorization or key is created or replaced.
+   if(!Number.isInteger(b.days)||b.days<1||b.days>3650)fail(400,'Licence duration must be 1–3650 days');
+   if(!/^[a-f0-9]{32}$/.test(b.renewalId||''))fail(400,'Unique licence renewal request required');
+   const amount=b.amount===undefined?0:Number(b.amount);
+   if(!Number.isFinite(amount)||amount<0||amount>100000000)fail(400,'Invalid licence purchase amount');
+   const t=now(),renewed=await db.runTransaction(async tx=>{
+    const entitlement=await tx.get(ref),currentSchool=await tx.get(db.doc('platform_schools/'+id));
+    const e=entitlement.exists?entitlement.data():null,owner=currentSchool.exists?currentSchool.data():null;
+    if(!e||!owner||e.active!==true||e.blocked===true||owner.deletedAt||
+       owner.loginDisabled===true||owner.managed!==true||owner.blocked===true)
+      fail(403,'School is blocked or disabled');
+    const licenceId=e.licenseHash;
+    if(!/^[a-f0-9]{64}$/.test(licenceId||'')||e.status==='trial'||(owner.activeLicenseHash||owner.licenseId)!==licenceId)
+      fail(409,'No current existing licence to renew; generate the first key instead');
+    const licenceRef=db.doc('platform_licenses/'+licenceId),statusRef=db.doc('platform_license_status/'+licenceId);
+    const [licence,status]=await Promise.all([tx.get(licenceRef),tx.get(statusRef)]);
+    const l=licence.exists?licence.data():null,s=status.exists?status.data():null;
+    if(!l||!s||l.schoolId!==id||s.schoolId!==id||l.revoked!==false||s.revoked!==false)
+      fail(409,'Existing licence was revoked or replaced; review the current school licence');
+    // An old retry cannot claim success after the licence has been revoked.
+    if(e.lastRenewalId===b.renewalId)return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:e.expiresAt,activated:e.activated===true};
+    const prior=Number(l.expiresAt?.toMillis?.()??l.expiresAt);
+    if(!Number.isSafeInteger(prior)||prior<=0)fail(409,'Invalid licence expiry; review before renewing');
+    const expiry=Math.max(t,prior)+b.days*86400000;
+    if(!Number.isSafeInteger(expiry))fail(400,'Invalid renewal expiry');
+    tx.set(licenceRef,{expiresAt:expiry,paid:b.paid===true,amount,renewedAt:t,renewedBy:admin.uid},{merge:true});
+    tx.set(statusRef,{expiresAt:expiry,revoked:false},{merge:true});
+    tx.set(ref,{expiresAt:expiry,status:b.paid===true?'paid':'licensed',lastRenewalId:b.renewalId},{merge:true});
+    tx.set(db.doc('platform_schools/'+id),{licenseExpiresAt:expiry,purchased:b.paid===true},{merge:true});
+    return {success:true,schoolId:id,renewed:true,sameKey:true,licenseId:licenceId,expiresAt:expiry,activated:e.activated===true};
+   });
+   if(!renewed.unchanged)await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:t,licenseId:renewed.licenseId,expiresAt:renewed.expiresAt});
+   invalidate(id);
+   return renewed;
   }else if(action==='developer/managed/licence'){
    if(!Number.isInteger(b.days)||b.days<1||b.days>3650)fail(400,'Licence duration must be 1–3650 days');
    const amount=b.amount===undefined?0:Number(b.amount);

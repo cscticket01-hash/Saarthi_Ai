@@ -541,6 +541,59 @@ test('verified school licence stays bound until expiry; only developer renewal r
 });
 
 
+test('developer renews the same activated licence after expiry without changing school, Drive, queues or key',async()=>{
+ const f=fixture(),first=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');
+ await f.call({action:'managed/licence/activate',key:first.key});
+ const licenceHash=f.docs.get('school_entitlements/'+A).licenseHash;
+ const identity=structuredClone(f.docs.get('school_memberships/A'));
+ const storage=structuredClone(f.docs.get('school_storage_private/'+A));
+ f.docs.set('school_local_outbox/'+A,{pending:true,operationId:'original-unchanged'});
+ const initial=structuredClone(f.docs.get('school_local_outbox/'+A));
+ const old=f.docs.get('platform_license_status/'+licenceHash);
+ old.expiresAt=time-1000;
+ f.docs.get('platform_license_status/'+licenceHash).expiresAt=time-1000;
+ f.docs.get('platform_licenses/'+licenceHash).expiresAt=time-1000;
+ f.docs.get('school_entitlements/'+A).expiresAt=time-1000;
+ assert.equal((await f.call({action:'managed/session'})).allowed,false);
+ const payload={action:'developer/managed/licence/renew',schoolId:A,days:90,paid:true,amount:1250,renewalId:'a'.repeat(32)};
+ await assert.rejects(f.call(payload),e=>e.status===403); // school cannot renew itself
+ const renewal=await f.call(payload,'developer');
+ assert.equal(renewal.sameKey,true);
+ assert.equal(renewal.licenseId,licenceHash);
+ assert.equal(renewal.activated,true);
+ assert.equal(renewal.expiresAt,time+90*86400000);
+ const session=await f.call({action:'managed/session'},'A-new-pc');
+ assert.equal(session.allowed,true);assert.equal(session.activated,true);
+ assert.equal(session.expiresAt,renewal.expiresAt);
+ assert.equal(f.docs.get('school_entitlements/'+A).licenseHash,licenceHash);
+ assert.deepEqual(f.docs.get('school_memberships/A'),identity);
+ assert.deepEqual(f.docs.get('school_storage_private/'+A),storage);
+ assert.deepEqual(f.docs.get('school_local_outbox/'+A),initial);
+ assert.equal(f.sent.length,0,'licence operations must not call Google or upload any records');
+ const repeated=await f.call(payload,'developer');
+ assert.equal(repeated.unchanged,true);
+ assert.equal(repeated.expiresAt,renewal.expiresAt);
+ assert.equal(f.docs.get('platform_licenses/'+licenceHash).expiresAt,renewal.expiresAt);
+});
+test('renewal rejects foreign/revoked/rotated/blocked licence and cannot activate an unactivated school',async()=>{
+ const f=fixture(),issued=await f.call({action:'developer/managed/licence',schoolId:A,days:1,paid:true},'developer');
+ const hash=f.docs.get('school_entitlements/'+A).licenseHash;
+ const request={action:'developer/managed/licence/renew',schoolId:A,days:10,paid:true,renewalId:'b'.repeat(32)};
+ const before=structuredClone(f.docs.get('school_storage_private/'+A));
+ const unactivated=await f.call(request,'developer');
+ assert.equal(unactivated.activated,false,'renewal is not an authorization bypass');
+ assert.equal((await f.call({action:'managed/session'})).activated,false);
+ await assert.rejects(f.call({...request,schoolId:B,renewalId:'c'.repeat(32)},'developer'),e=>e.status===409);
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call({...request,renewalId:'d'.repeat(32)},'developer'),e=>e.status===403);
+ f.docs.get('school_entitlements/'+A).blocked=false;
+ f.docs.get('platform_license_status/'+hash).revoked=true;
+ await assert.rejects(f.call({...request,renewalId:'e'.repeat(32)},'developer'),e=>e.status===409);
+ await assert.rejects(f.call(request,'developer'),e=>e.status===409,'an old renewal retry must not revive a revoked licence');
+ assert.deepEqual(f.docs.get('school_storage_private/'+A),before);
+ await assert.rejects(f.call({...request,renewalId:'invalid'},'developer'),e=>e.status===400);
+});
+
 test('signed school schedule rejects outside captures, retains valid delayed capture and fences foreign school',async()=>{
  const day=new Date(time+19800000).toISOString().slice(0,10),at=new Date(time+19800000),minute=at.getUTCHours()*60+at.getUTCMinutes();
  const session='schedule-session',qr='x'.repeat(48),rows=new Map();
