@@ -590,6 +590,7 @@ test('renewal rejects foreign/revoked/rotated/blocked licence and cannot activat
  f.docs.get('school_entitlements/'+A).blocked=false;
  f.docs.get('platform_license_status/'+hash).revoked=true;
  await assert.rejects(f.call({...request,renewalId:'e'.repeat(32)},'developer'),e=>e.status===409);
+ await assert.rejects(f.call(request,'developer'),e=>e.status===409,'an old renewal retry must not revive a revoked licence');
  assert.deepEqual(f.docs.get('school_storage_private/'+A),before);
  await assert.rejects(f.call({...request,renewalId:'invalid'},'developer'),e=>e.status===400);
 });
