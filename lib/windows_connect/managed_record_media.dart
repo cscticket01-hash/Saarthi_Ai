@@ -47,28 +47,29 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     if(parent?['mobileStableId'] is String)result['personId']=parent!['mobileStableId'];
   }
 
-  for (final prefix in ['photo', 'logo', 'seal', 'principalSignature']) {
+  // Photos, logos and seals have no business ordering dependency. Prepare
+  // at most two concurrently to avoid saturating older school PCs or the
+  // provider; the original sync/outbox owner remains the single writer.
+  // A failed item never publishes partially prepared record metadata.
+  Future<Map<String, dynamic>?> prepareImage(String prefix) async {
     final pending = data['${prefix}Base64'];
     final raw = pending is String && pending.startsWith('data:image/')
         ? pending
         : data['${prefix}Url'];
-    if (raw is! String || !raw.startsWith('data:image/')) continue;
-    final image = UriData.parse(raw);
+    if (raw is! String || !raw.startsWith('data:image/')) return null;
     own();
+    final image = UriData.parse(raw);
     var bytes = image.contentAsBytes(), mime = image.mimeType;
     final originalDigest = sha256.convert(bytes).toString();
     if (prefix == 'photo') {
       final processed = await compute(DocumentProcessingEngine.portraitUpload, {
-        'bytes': bytes,
-        'kind': 'portrait',
+        'bytes': bytes, 'kind': 'portrait',
         'targetBytes': DocumentProcessingEngine.portraitTarget,
       });
       own();
-      bytes = processed['optimized'];
-      mime = processed['mimeType'];
+      bytes = processed['optimized'] as Uint8List;
+      mime = processed['mimeType'] as String;
     } else {
-      // Logo / principal signature / seal share the existing isolate engine,
-      // but preserve transparent ink and obey their independent 30 KB ceiling.
       final processed = await compute(DocumentProcessingEngine.brandingUpload, {
         'bytes': bytes,
       });
@@ -83,34 +84,41 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
           : '${prefix}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}',
       'mime': mime,
       'uploadKey': sha256
-          .convert(
-            utf8.encode(
-              prefix == 'photo'
-                  ? '$school:$prefix:$mime:$originalDigest:$digest'
-                  : '$school:$prefix:$mime:$digest',
-            ),
-          )
+          .convert(utf8.encode(prefix == 'photo'
+              ? '$school:$prefix:$mime:$originalDigest:$digest'
+              : '$school:$prefix:$mime:$digest'))
           .toString(),
       'base64': base64Encode(bytes),
     });
     own();
-    if (upload['success'] != true ||
-        upload['schoolId'] != school ||
-        upload['fileId'] is! String ||
-        upload['fileUrl'] is! String)
+    if (upload['success'] != true || upload['schoolId'] != school ||
+        upload['fileId'] is! String || upload['fileUrl'] is! String) {
       throw StateError('School image upload failed. Local image retained.');
-    // Keep each original school portrait available for quality-preserving
-    // local recovery. The optimized Drive copy retains its independent digest.
+    }
+    // Preserve the input for verified quality recovery. Stable upload keys
+    // make a retry idempotent even if one parallel request completed earlier.
     await WindowsSchoolImageCache.store(
-      school,
-      upload['fileId'] as String,
-      raw,
-      profileId: profile,
+      school, upload['fileId'] as String, raw, profileId: profile,
     );
-    result['${prefix}Url'] = upload['fileUrl'];
-    result['${prefix}FileId'] = upload['fileId'];
-    // Stable source identity survives portrait optimization and device caches.
-    result['${prefix}SourceHash'] = originalDigest;
+    own();
+    return {
+      'prefix': prefix, 'url': upload['fileUrl'],
+      'fileId': upload['fileId'], 'sourceHash': originalDigest,
+    };
+  }
+
+  const assetPrefixes = ['photo', 'logo', 'seal', 'principalSignature'];
+  for (var i = 0; i < assetPrefixes.length; i += 2) {
+    final assets = await Future.wait(
+      assetPrefixes.skip(i).take(2).map(prepareImage));
+    own();
+    for (final asset in assets) {
+      if (asset == null) continue;
+      final prefix = asset['prefix'] as String;
+      result['${prefix}Url'] = asset['url'];
+      result['${prefix}FileId'] = asset['fileId'];
+      result['${prefix}SourceHash'] = asset['sourceHash'];
+    }
   }
   for (final key in result.keys.toList()) {
     final value = result[key];
