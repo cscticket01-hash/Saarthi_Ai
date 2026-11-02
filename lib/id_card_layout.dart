@@ -250,7 +250,11 @@ class IdCardLayout {
     double focusX = .5,
     double focusY = .35,
     int maxPrintEdge = 480,
+    int jpegQuality = 88,
   }) {
+    if (jpegQuality < 78 || jpegQuality > 95) {
+      throw const FormatException('Unsafe PDF JPEG quality requested.');
+    }
     final normalized = prepareImage(bytes, aspect: aspect, cover: cover,
       focusX: focusX, focusY: focusY);
     final decoded = img.decodePng(normalized);
@@ -272,7 +276,7 @@ class IdCardLayout {
       }
     }
     return Uint8List.fromList(img.encodeJpg(
-      frame.convert(numChannels: 3), quality: 88));
+      frame.convert(numChannels: 3), quality: jpegQuality));
   }
 
   static pw.Widget image(
@@ -281,6 +285,7 @@ class IdCardLayout {
     double focusX = .5,
     double focusY = .35,
     int printDpi = 300,
+    int jpegQuality = 88,
   }) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
@@ -306,6 +311,7 @@ class IdCardLayout {
             focusX: focusX,
             focusY: focusY,
             maxPrintEdge: printPixels,
+            jpegQuality: jpegQuality,
           );
           return pw.ClipRect(
             child: pw.Image(pw.MemoryImage(prepared), fit: pw.BoxFit.contain),
