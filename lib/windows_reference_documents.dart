@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -154,14 +155,26 @@ Future<Uint8List> renderWindowsReferenceDocument({
   if (!windowsReferenceDocumentNames.containsKey(kind))
     throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
-  // Optimize the embedded assets only; original school images remain intact.
-  final embeddedPhoto = SchoolPdfMedia.portrait(photo);
-  final embeddedLogo = SchoolPdfMedia.branding(logo);
-  final embeddedSeal = SchoolPdfMedia.branding(seal);
-  final printSignature = SchoolPdfMedia.branding(await _signatureInk(
-    signature,
-    white: false,
-  ));
+  // Compression can be expensive on an older school PC. Offload it to
+  // isolates in bounded pairs; preserve exact PDF bytes and the immutable
+  // source images. The existing sync/outbox owner is still serial.
+  Future<Uint8List?> portraitForPrint(Uint8List? bytes) =>
+      bytes == null ? Future<Uint8List?>.value(null)
+          : compute(SchoolPdfMedia.portrait, bytes);
+  Future<Uint8List?> brandingForPrint(Uint8List? bytes) =>
+      bytes == null ? Future<Uint8List?>.value(null)
+          : compute(SchoolPdfMedia.branding, bytes);
+  final visualPair = await Future.wait<Uint8List?>([
+    portraitForPrint(photo), brandingForPrint(logo),
+  ]);
+  final signatureInk = await _signatureInk(signature, white: false);
+  final brandingPair = await Future.wait<Uint8List?>([
+    brandingForPrint(seal), brandingForPrint(signatureInk),
+  ]);
+  final embeddedPhoto = visualPair[0];
+  final embeddedLogo = visualPair[1];
+  final embeddedSeal = brandingPair[0];
+  final printSignature = brandingPair[1];
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
