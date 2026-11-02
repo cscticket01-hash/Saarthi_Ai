@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'school_media_budgets.dart';
 import 'windows_local_firestore.dart';
 import 'windows_receipt_print_dialog.dart';
 
@@ -62,7 +63,7 @@ class WindowsExpenseReceiptPreview {
         pw.SizedBox(height: 28),
         pw.Text('This receipt reflects a saved school expense record.'),
       ]));
-    return pdf.save();
+    return SchoolMediaBudgets.enforcePdf('expenseReceipt', await pdf.save());
   }
 
   static Future<void> open(BuildContext context, Map<String, dynamic> expense) {
