@@ -13,6 +13,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'school_media_budgets.dart';
+import 'school_pdf_media.dart';
 import 'id_card_manifest.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
@@ -149,12 +150,21 @@ class IdCardEngine {
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
   }) async {
+    // Embed school-owned source backgrounds at their actual CR80 print size.
+    // This is bitmap-only optimization; the original image assets, vector
+    // QR, Indic text shaping and layout geometry remain unchanged.
+    final optimizedBackgrounds = <String, Uint8List>{
+      for (final entry in backgrounds.entries)
+        entry.key: SchoolPdfMedia.cardBackground(
+          entry.value, widthMm: template.printWidth,
+          heightMm: template.printHeight),
+    };
     final prepared = await prepare(
       template,
       data,
       images: images,
       qr: qr,
-      backgrounds: backgrounds,
+      backgrounds: optimizedBackgrounds,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
