@@ -17,6 +17,7 @@ async function verificationClockWorker(t){
   'async fetch(request){',
   'if(new URL(request.url).pathname==="/__verified_clock_test"){',
   'const b=await request.json();const sql=this.ctx.storage.sql;',
+  'if(b.lane==="inspect"){const r=sql.exec("SELECT length(payload) AS bytes FROM edge_ops WHERE id=?",b.identity).toArray()[0];return Response.json({retained:!!r&&r.bytes>0});}',
   'const expired=Date.now()-24*60*60*1000-1000;',
   'if(b.lane==="live")sql.exec("UPDATE live_backup SET verified_at=? WHERE operation_id=? AND state=\\x27verified\\x27",expired,b.identity);',
   'else sql.exec("UPDATE edge_ops SET verified_at=?,purge_due=? WHERE id=? AND state=\\x27completed\\x27",expired,Date.now()-500,b.identity);',
@@ -28,6 +29,13 @@ async function verificationClockWorker(t){
  await writeFile(file,base+'\n'+wrapper);
  t.after(()=>unlink(file).catch(()=>{}));
  return file.pathname;
+}
+async function stagedPayloadRetained(mf,identity){
+ const namespace=await mf.getDurableObjectNamespace('LANES');
+ const stub=namespace.get(namespace.idFromName(school+'/records'));
+ const response=await stub.fetch('https://clock.invalid/__verified_clock_test',{method:'POST',body:JSON.stringify({lane:'inspect',identity})});
+ assert.equal(response.status,200);
+ return (await response.json()).retained;
 }
 async function backdateVerified(mf,lane,identity){
  const namespace=await mf.getDurableObjectNamespace('LANES');
@@ -148,10 +156,10 @@ test('24h expiry removes verified delivery payload but never pending school reco
  assert.equal((await delivery.drain(school,'records',read)).processed,1);
  await backdateVerified(mf,'records',first.delivery.id);
  assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,1);
- assert.equal((await edge.rpc(school,'records',{command:'status',id:first.delivery.id})).payload,'');
+ assert.equal(await stagedPayloadRetained(mf,first.delivery.id),false);
  const waiting=await edge.rpc(school,'records',{command:'status',id:second.delivery.id});
  assert.equal(waiting.state,'pending');
- assert.ok(waiting.payload.length>0);
+ assert.equal(await stagedPayloadRetained(mf,second.delivery.id),true);
  assert.equal((await delivery.status(school,'records',first.delivery.id,read)).driveState,'verified');
 });
 
