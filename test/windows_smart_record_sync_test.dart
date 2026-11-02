@@ -12,6 +12,12 @@ import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_backend_bridge.dart';
 
 void main(){
+ test('retained Cloudflare delivery remains pending with its precise diagnostic', () {
+   final diagnostic=documentFailureDiagnostic(CentralCloudException(503,'school_cloud',
+     'Retained',diagnosticCode:'EDGE_DELIVERY_PENDING'),'recordRequestAndAck');
+   expect(diagnostic['failureCode'],'EDGE_DELIVERY_PENDING');
+   expect(diagnostic['failureHttpStatus'],503);
+ });
  TestWidgetsFlutterBinding.ensureInitialized();
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';final db=FirebaseFirestore.instance;
  Future<QueryDocumentSnapshot<Map<String,dynamic>>> pending()async=>(await db.collection('_windows_firebase_outbox').get()).docs.single;

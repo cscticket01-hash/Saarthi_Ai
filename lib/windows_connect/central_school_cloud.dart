@@ -1,6 +1,7 @@
 import 'package:crypto/crypto.dart' as edge_crypto;
 import 'managed_resumable_upload.dart';
 import '../school_timestamp.dart' show Timestamp;
+import '../edge_delivery_retry.dart';
 
 import 'dart:convert';
 import 'dart:async';
@@ -509,6 +510,13 @@ class CentralSchoolCloud {
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
+      final retry = edgeDeliveryRetry(result['deliveryStatus'], DateTime.now());
+      if (retry != null) {
+        throw CentralCloudException(503, 'school_cloud',
+            'Cloudflare retained the request; Google storage delivery will retry. '
+            '[${retry.code}]', diagnosticCode: retry.code,
+            retryAfterMs: retry.retryAfterMs);
+      }
       if(DateTime.now().isAfter(deadline))throw CentralCloudException(503,'school_cloud',
           'Cloudflare retained the request; Google Drive verification is pending.',diagnosticCode:'EDGE_DELIVERY_PENDING');
       // Long-poll the authenticated owner; never resend a new business operation.

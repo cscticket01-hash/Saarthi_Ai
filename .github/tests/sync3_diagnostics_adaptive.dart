@@ -1,6 +1,7 @@
 // Pure policy checks: no Flutter bootstrap, network or package downloads.
 import '../../lib/sync_recovery_policy.dart';
 import '../../lib/sync_pending_diagnostics.dart';
+import '../../lib/edge_delivery_retry.dart';
 
 void check(bool value, String label) {
   if (!value) throw StateError(label);
@@ -9,6 +10,19 @@ void check(bool value, String label) {
 void main() {
   final now = DateTime(2026, 10, 29, 12);
   final retry = now.add(const Duration(minutes: 2));
+  final staged = {'state': 'retry', 'failureCode': 'SCRIPT_OPERATION_FAILED',
+    'retryAtMillis': retry.millisecondsSinceEpoch};
+  check(edgeDeliveryRetry(staged, now)?.code == 'SCRIPT_OPERATION_FAILED',
+      'Retained delivery lost its Script failure');
+  check(edgeDeliveryRetry(staged, now)?.retryAfterMs == 120000,
+      'Provider retry deadline shortened');
+  for (final state in ['pending', 'delivering', 'completed', 'needsAttention']) {
+    check(edgeDeliveryRetry({...staged, 'state': state}, now) == null,
+        'Non-retry state was reclassified');
+  }
+  check(edgeDeliveryRetry(staged, retry) == null, 'Due delivery blocked from polling');
+  check(edgeDeliveryRetry({...staged, 'failureCode': 'PRIVATE_SECRET'}, now)?.code ==
+      'EDGE_DELIVERY_PENDING', 'Unknown server detail leaked');
   final row = <String, dynamic>{
     'syncState': 'retry',
     'failureCategory': 'networkPath',
