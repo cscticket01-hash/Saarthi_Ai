@@ -52,6 +52,14 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
   const record=result.record;if(!record)return true;
   if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
   if(!request)return true;
+  // Script may fulfil a second delete by returning the existing tombstone.
+  // Its original operation ID must stay immutable. Accept only the exact
+  // deleted revision the caller already named, never a live/newer occupant.
+  if(request.collection==='students_directory'&&request.operation==='delete'&&
+    record._syncDeleted===true&&record._syncRevision===result.recordRevision&&
+    typeof request.expectedRecordRevision==='string'&&request.expectedRecordRevision.length>0&&
+    request.expectedRecordRevision===result.recordRevision&&
+    (record.id===undefined||record.id===request.id))return true;
   // Sheet lifecycle ACKs return saved.data, which may omit the wrapper ID.
   // The original immutable operation ID supplies that binding; a present ID
   // must still match. Never weaken foreign-school/operation/revision checks.
