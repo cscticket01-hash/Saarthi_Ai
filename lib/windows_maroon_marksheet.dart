@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'school_media_budgets.dart';
 import 'id_card_layout.dart';
 
 /// The only newly generated report layout. Retained PDFs are never rewritten.
@@ -108,5 +109,5 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
     ];
     pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,build:(_)=>pw.Stack(children:layers)));
   }
-  return pdf.save();
+  return SchoolMediaBudgets.enforcePdf('reportCard', await pdf.save());
 }
