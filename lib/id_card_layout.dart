@@ -239,6 +239,37 @@ class IdCardLayout {
     return Uint8List.fromList(img.encodePng(image));
   }
 
+  /// PDF-only asset pipeline. Preserve the original PNG-returning layout
+  /// helper for preview geometry and visual regression. Embedded JPEG avoids
+  /// expanding photographic ID portraits into huge lossless PDF streams.
+  /// 480px is at least 300dpi for the physical photo area on a CR80 ID.
+  static Uint8List preparePdfImage(
+    Uint8List bytes, {
+    required double aspect,
+    bool cover = false,
+    double focusX = .5,
+    double focusY = .35,
+  }) {
+    final normalized = prepareImage(bytes, aspect: aspect, cover: cover,
+      focusX: focusX, focusY: focusY);
+    final decoded = img.decodePng(normalized);
+    if (decoded == null) throw const FormatException('Invalid normalized ID photo.');
+    const longestPrintEdge = 480;
+    final frame = math.max(decoded.width, decoded.height) > longestPrintEdge
+        ? img.copyResize(decoded,
+            width: decoded.width >= decoded.height ? longestPrintEdge : null,
+            height: decoded.height > decoded.width ? longestPrintEdge : null,
+            interpolation: img.Interpolation.average)
+        : decoded;
+    for (final p in frame) {
+      if (p.a < 255) {
+        return Uint8List.fromList(img.encodePng(frame, level: 9));
+      }
+    }
+    return Uint8List.fromList(img.encodeJpg(
+      frame.convert(numChannels: 3), quality: 88));
+  }
+
   static pw.Widget image(
     Uint8List bytes, {
     bool cover = false,
@@ -256,7 +287,7 @@ class IdCardLayout {
             throw const FormatException(
                 'ID image region has invalid dimensions.');
           }
-          final prepared = prepareImage(
+          final prepared = preparePdfImage(
             bytes,
             aspect: bounds.maxWidth / bounds.maxHeight,
             cover: cover,
