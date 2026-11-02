@@ -138,7 +138,25 @@ Future<Uint8List?> _signatureInk(Uint8List? bytes, {bool white = false}) async {
   }
 }
 
+// Public document API cannot accept cached/unauthenticated compressed images.
+// Only the private recursive renderer can reuse its own validated media.
 Future<Uint8List> renderWindowsReferenceDocument({
+  required String kind,
+  required int template,
+  required Map<String, dynamic> data,
+  String qr = '',
+  Uint8List? photo,
+  Uint8List? logo,
+  Uint8List? signature,
+  Uint8List? seal,
+  int printPass = 0,
+}) => _renderWindowsReferenceDocument(
+  kind: kind, template: template, data: data, qr: qr,
+  photo: photo, logo: logo, signature: signature, seal: seal,
+  printPass: printPass,
+);
+
+Future<Uint8List> _renderWindowsReferenceDocument({
   required String kind,
   required int template,
   required Map<String, dynamic> data,
@@ -1101,7 +1119,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
     // Only the print-bitmap DPI changes; vector QR, text, dimensions and
     // school media source bytes stay identical. Fail safely if all print
     // variants still exceed the strict PDF budget.
-    return renderWindowsReferenceDocument(
+    return _renderWindowsReferenceDocument(
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
       printPass: printPass + 1,
