@@ -37,7 +37,7 @@ test('actual signed GS handoff verifies rollback including tombstone and resumes
  const saved=f.gs.call({action:'managed_records',collection,operation:'read',syncProtocol:2});
  assert.equal(saved.records.retained.title,'retained');assert.equal(saved.records.deleted._syncDeleted,true);
  assert.ok(saved.records.retained._syncRevision&&!saved.records.retained._syncRevision.startsWith('live-'));
- const stats=await f.live.command(A,{command:'stats'});assert.ok(Object.values(stats.payloadCopies).every(n=>n===0));
+ const stats=await f.live.command(A,{command:'stats'});assert.deepEqual(stats.payloadCopies,{records:0,events:0,backups:0,operations:0});
  const replay=await f.live.replay(A,{command:'changes',after:0},f.read);
  assert.equal(replay.events.length,3);
  for(const event of replay.events){assert.equal(event.record,null);assert.equal(event.retired,true);assert.equal(event.source,'drive');assert.equal(event.recordAuthority,'school-drive');}
