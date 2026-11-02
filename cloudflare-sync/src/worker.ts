@@ -147,8 +147,18 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    const raw=JSON.stringify({action:'managed/live/drain',schoolId:school}),time=String(Date.now());
    try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});await response.body?.cancel();}catch{}
+   // Reuse the Durable Object alarm for age-based cleanup. Never delete
+   // unverified/retrying backups even if their original upload is >24h old.
+   let cleanupDue:number|null=null;
+   try{
+    const sweep=liveCommand(this.ctx.storage,school,{command:'expireVerified'}) as {expired:number;nextCleanupAt:number|null};
+    cleanupDue=sweep.nextCleanupAt;
+    if(sweep.expired>=200)cleanupDue=Date.now()+1000;
+   }catch{cleanupDue=Date.now()+60_000;} // Keep payloads, retry safe sweep.
    const rows=this.ctx.storage.sql.exec<{due:number}>("SELECT min(b.due) AS due FROM live_backup b WHERE b.state IN ('pending','retry','processing') AND NOT EXISTS(SELECT 1 FROM live_backup earlier WHERE earlier.collection=b.collection AND earlier.id=b.id AND earlier.seq<b.seq AND earlier.state!='verified')").toArray();
-   if(rows[0]?.due!=null)await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,rows[0].due));return;
+   const pendingDue=rows[0]?.due??null;
+   const due=pendingDue===null?cleanupDue:cleanupDue===null?pendingDue:Math.min(pendingDue,cleanupDue);
+   if(due!==null)await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,due));return;
   }
   if(lane!=='delivery'){await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;}
   const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes WHERE due < 9007199254740991 ORDER BY due,name LIMIT 1').toArray()[0];
