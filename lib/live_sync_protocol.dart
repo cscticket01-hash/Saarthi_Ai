@@ -93,3 +93,51 @@ class LiveSyncReplay {
     }
   }
 }
+
+/// Negotiate live delivery without changing the legacy Drive protocol version.
+/// The broker alone decides whether this school/collection has been migrated.
+Map<String, dynamic> negotiateLiveSync(Map<String, dynamic> body) => {
+  ...body,
+  if ({'managed/session', 'managed/records', 'managed/records/batch',
+        'managed/changes'}.contains(body['action'])) 'liveProtocol': 1,
+};
+
+/// A live commitment may retire a record outbox, but is never proof of a Sheet
+/// write. Require the canonical record even when an idempotent receipt was
+/// cleaned after backup; only the broker can hydrate its retained revision.
+bool verifyLiveRecordReceipt(Map<String, dynamic> receipt, {
+  required String school, required String collection, required String id,
+  required String operationId, bool deleting = false,
+}) {
+  final revision = receipt['recordRevision'];
+  final marked = receipt.containsKey('liveProtocol') ||
+      receipt.containsKey('cloudState') || receipt.containsKey('backupState') ||
+      revision is String && revision.startsWith('live-');
+  if (!marked) return false;
+  final record = receipt['record'];
+  final seeded = receipt['backupState'] == 'verified' &&
+      receipt['source'] == 'drive' && receipt['driveRevision'] == revision;
+  final retainedOriginal = receipt['unchanged'] == true ||
+      receipt['duplicate'] == true && receipt['resolution'] == 'cloudRetained';
+  if (receipt['success'] != true || receipt['schoolId'] != school ||
+      receipt['syncProtocol'] != 2 || receipt['liveProtocol'] != 1 ||
+      receipt['cloudState'] != 'committed' ||
+      !{'pending', 'verified'}.contains(receipt['backupState']) ||
+      !liveSyncCollections.contains(collection) ||
+      revision is! String || revision.isEmpty ||
+      !revision.startsWith('live-') && !seeded ||
+      receipt['operationId'] != operationId ||
+      record is! Map || record['schoolId'] != school ||
+      record['_syncRevision'] != revision ||
+      (record['_syncDeleted'] == true) != deleting ||
+      record['id'] != null && record['id'] != id ||
+      !retainedOriginal && record['_syncOperationId'] != operationId) {
+    throw StateError('Live commitment did not verify; pending operation retained.');
+  }
+  return true;
+}
+
+/// A projected live revision cannot be submitted as a verified GS repair row.
+bool isDriveRecoveryRevision(Object? revision) => revision is String &&
+    revision.isNotEmpty && !revision.startsWith('live-') &&
+    !revision.startsWith('cf-');

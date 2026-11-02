@@ -156,3 +156,32 @@ broker instance before beginning the grace period; an older deployment cannot
 participate in this admission protocol. This is a safety gate, not completed
 business-screen routing or an automatic rollback implementation. Live schools
 remain disabled in production pending those integrations.
+
+### Business gateway and verified rollback integration
+
+The existing admin record API negotiates live protocol 1 for activated
+collections. Full/point reads, changed-record delta checkpoints and mixed batches
+route through the same four-collection authority, retaining explicit
+`cloudState` and `backupState`. Unnegotiated older clients fail closed. Collection
+heads are independent so a notice does not invalidate the expense checkpoint.
+Windows retains its existing outbox owner, checks canonical live receipts,
+forwards only an exact durable baseline, and never uses temporary revisions as
+verified Sheet-repair evidence. Android school notices use the live source only
+after normal signed person-session authorization; other person projections keep
+their existing lifecycle owner. Internal authenticated legacy delivery bypasses
+the user migration fence so already accepted work can actually drain.
+
+Rollback closes durable live admission before checking every current record and
+tombstone against signed Drive point reads. The Worker seals only an unchanged
+metadata fingerprint/head with zero unverified backup jobs and zero resident
+record payloads. Both Worker sealing and the broker transition are retryable
+after a crash. A failed or uncertain proof leaves the collection frozen and
+preserves all data. Old live-version outboxes after rollback require verified
+reconciliation; their revisions are never silently rewritten.
+
+Admission remains limited to independent administrative records. Student
+cascades, financial operations, attendance and file lifecycle owners cannot be
+replaced by generic record CAS. See `live-sync-lifecycle-review.md` for the
+contracts and tests. Production flags remain off. Physical-device, large-load
+latency, scalable history compaction and full lifecycle admission remain release
+gates; local tests are not evidence of production rollout.

@@ -53,3 +53,45 @@ test('public broker cannot commit before activation or seed while legacy deliver
  assert.deepEqual(commands,[{lane:'records',command:'stats'},{lane:'notices',command:'stats'}]);
  assert.equal(f.sent.length,0);
 });
+const activeGate=()=>{
+ const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ f.docs.set('school_live_migrations/'+A,{collections:{[write.collection]:{state:'active'}},inflight:{},liveInflight:{}});
+ return {...f,gate};
+};
+const rollbackProof=context=>({success:true,liveProtocol:1,schoolId:context.schoolId,collection:context.collection,rollbackToken:context.rollbackToken,state:'legacy',driveVerified:true,pending:0,needsAttention:0,cursor:12,fingerprint:'a'.repeat(64)});
+test('rollback fences live admission before waiting for current writes and requires sealed Drive proof',async()=>{
+ const f=activeGate();let finish,started;
+ const ready=new Promise(r=>started=r),pending=f.gate.live(A,write.collection,()=>{started();return new Promise(r=>finish=r);});
+ await ready;let verified=0;
+ const verify=async context=>{verified++;return rollbackProof(context);};
+ await assert.rejects(f.gate.rollback(A,write.collection,verify),e=>e.code==='LIVE_WRITES_IN_FLIGHT');
+ await assert.rejects(f.gate.live(A,write.collection,async()=>{}),e=>e.code==='LIVE_MIGRATION_NOT_ACTIVE');
+ await assert.rejects(f.gate.legacy(A,write,async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ await assert.rejects(f.gate.prepare(A,write.collection,async()=>true,async()=>({state:'active'})),e=>e.code==='LIVE_MIGRATION_REVIEW_REQUIRED');
+ assert.equal(verified,0);finish('committed');assert.equal(await pending,'committed');
+ assert.equal((await f.gate.rollback(A,write.collection,verify)).state,'legacy');assert.equal(verified,1);
+ assert.equal(await f.gate.legacy(A,write,async()=>42),42);
+ assert.equal((await f.gate.rollback(A,write.collection,async()=>{throw Error('must not verify twice');})).cursor,12);
+ await assert.rejects(f.gate.prepare(A,write.collection,async()=>true,async()=>({state:'active'})),e=>e.code==='LIVE_MIGRATION_REVIEW_REQUIRED');
+});
+test('rollback retains frozen state on backup, content, scope, seal or epoch verification failure',async()=>{
+ for(const alter of [p=>({...p,pending:1}),p=>({...p,needsAttention:1}),p=>({...p,schoolId:B}),p=>({...p,collection:'school_calendar'}),p=>({...p,fingerprint:'unverified'}),p=>({...p,driveVerified:false}),p=>({...p,rollbackToken:'other'}),p=>({...p,state:'active'}),p=>({...p,cursor:-1})]){
+  const f=activeGate();
+  await assert.rejects(f.gate.rollback(A,write.collection,async context=>alter(rollbackProof(context))),e=>e.code==='LIVE_ROLLBACK_UNVERIFIED');
+  assert.equal(f.docs.get('school_live_migrations/'+A).collections[write.collection].state,'rolling_back');
+  await assert.rejects(f.gate.legacy(A,write,async()=>{}),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ }
+ const f=activeGate();await assert.rejects(f.gate.rollback(A,write.collection,async()=>{throw Error('seal failed');}));
+ assert.equal(f.docs.get('school_live_migrations/'+A).collections[write.collection].state,'rolling_back');
+ await assert.rejects(f.gate.rollback(A,write.collection),e=>e.code==='LIVE_ROLLBACK_VERIFIER_REQUIRED');
+});
+test('uncertain live write survives restart and blocks rollback without deleting any state',async()=>{
+ const f=activeGate();await assert.rejects(f.gate.live(A,write.collection,async()=>{throw Error('Cloudflare response lost');}));
+ const gate=createLiveMigration({db:f.db,drainGraceMs:0});let verified=0;
+ await assert.rejects(gate.rollback(A,write.collection,async context=>{verified++;return rollbackProof(context);}),e=>e.code==='LIVE_WRITES_IN_FLIGHT');
+ assert.equal(verified,0);assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).liveInflight).length,1);
+});
+
+test('mobile lifecycle remains available while admitted admin collections are active',async()=>{
+ const f=activeGate();assert.equal(await f.gate.legacy(A,{action:'managed_mobile',operation:'session'},async()=>42),42);
+});

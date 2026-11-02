@@ -85,7 +85,30 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    await finish({verified:false,review,retryAt:now()+Math.max(5000,Math.min(86400000,Number(error.retryAfterMs)||0))});return {processed:0};
   }
  }
- return {enabled,command,prepare,drain,read,commit,replay};
+ async function rollback(school,collection,readDrive,rollbackToken){
+  if(!COLLECTIONS.has(collection))refuse(412,'LIVE_COLLECTION_NOT_ADMITTED');
+  const head=await command(school,{command:'head'});
+  const rows=[];let after='';
+  do{
+   const page=await command(school,{command:'rollbackSnapshot',collection,at:head.cursor,after});
+   if(!Array.isArray(page.records))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
+   for(const entry of page.records){
+    // A still-resident payload has not completed verified Drive handoff.
+    if(entry.source!=='drive'||entry.record!==null)refuse(409,'LIVE_BACKUP_PENDING');
+    const reply=await readDrive({action:'managed_records',operation:'read',collection,id:entry.id,syncProtocol:2});
+    const record=reply?.records?.[entry.id];
+    if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true||!record||record.schoolId!==school||record._syncRevision!==entry.driveRevision||payloadHash(record)!==entry.payloadHash)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+    rows.push({id:entry.id,recordRevision:entry.recordRevision,driveRevision:entry.driveRevision,payloadHash:entry.payloadHash});
+   }
+   if(rows.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
+   if(page.next!==null&&(typeof page.next!=='string'||page.next<=after))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
+   after=page.next;
+  }while(after!==null);
+  const fingerprint=createHash('sha256').update(canonical(rows)).digest('hex');
+  const result=await command(school,{command:'rollbackSeal',collection,cursor:head.cursor,fingerprint});
+  return {success:true,...result,rollbackToken};
+ }
+ return {enabled,command,prepare,drain,read,commit,replay,rollback};
 }
 function liveGrant({schoolId,uid,key,endpoint,now=Date.now()}){
  const value=Buffer.from(JSON.stringify({version:1,schoolId,uid,expiresAt:now+60000})).toString('base64url');

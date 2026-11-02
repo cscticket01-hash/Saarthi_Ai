@@ -130,13 +130,27 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   }
   const cursor=events.length?Number(events[events.length-1].sequence):Number(b.after);return {liveProtocol:1,schoolId:school,events,cursor,head:head(),more:cursor<head()};
  }
- if(command==='snapshot'){
-  collection();demand(state()?.state==='active','Verified baseline required',412);demand((b.after===undefined||typeof b.after==='string')&&Number.isSafeInteger(b.at)&&b.at===head(),'Snapshot changed; restart snapshot',409);
+ if(command==='snapshot'||command==='rollbackSnapshot'){
+  collection();demand(state()?.state==='active'||command==='rollbackSnapshot'&&state()?.state==='legacy','Verified baseline required',412);demand((b.after===undefined||typeof b.after==='string')&&Number.isSafeInteger(b.at)&&b.at===head(),'Snapshot changed; restart snapshot',409);
   const records:Json[]=[];let bytes=0;
   for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:r.body?JSON.parse(r.body):null,...(!r.body?{source:'drive',driveRevision:r.drive_revision,recordRevision:r.revision,payloadHash:r.payload_hash}:{})});}
   return {liveProtocol:1,schoolId:school,cursor:b.at,records,next:records.length?records[records.length-1].id:null};
  }
- if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string}>('SELECT collection,state FROM live_collections').toArray()};
+ if(command==='rollbackSeal'){
+  collection();return storage.transactionSync(()=>{
+   demand(Number.isSafeInteger(b.cursor)&&b.cursor===head(),'Rollback snapshot changed',409);
+   demand(typeof b.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(b.fingerprint),'Invalid rollback proof');
+   const current=state();demand(current&&['active','legacy'].includes(current.state),'Rollback state unavailable',409);
+   demand(sql.exec<{n:number}>("SELECT count(*) AS n FROM live_backup WHERE collection=? AND state!='verified'",col).toArray()[0].n===0,'Drive backup still pending',409);
+   const rows=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? ORDER BY id',col).toArray();
+   demand(rows.every(r=>r.body===''&&r.drive_revision.length>0),'Temporary data still pending',409);
+   const fingerprint=hash(rows.map(r=>({id:r.id,recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash})));
+   demand(fingerprint===b.fingerprint,'Rollback verification differs',409);
+   sql.exec("UPDATE live_collections SET state='legacy' WHERE collection=?",col);
+   return {liveProtocol:1,schoolId:school,collection:col,state:'legacy',cursor:head(),fingerprint,driveVerified:true,pending:0,needsAttention:0};
+  });
+ }
+ if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string;cursor:number}>('SELECT c.collection,c.state,coalesce(max(e.seq),0) AS cursor FROM live_collections c LEFT JOIN live_events e ON e.collection=c.collection GROUP BY c.collection,c.state').toArray()};
  if(command==='received'){
   demand(typeof b.device==='string'&&/^[a-f0-9]{64}$/.test(b.device)&&Number.isSafeInteger(b.cursor)&&Number(b.cursor)>=0&&Number(b.cursor)<=head(),'Invalid device receipt');
   sql.exec('INSERT INTO live_device_receipts VALUES(?,?,?) ON CONFLICT(device) DO UPDATE SET cursor=max(cursor,excluded.cursor),observed_at=excluded.observed_at',b.device,Number(b.cursor),now);return {received:true};

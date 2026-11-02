@@ -2,6 +2,7 @@ import 'package:crypto/crypto.dart' as edge_crypto;
 import 'managed_resumable_upload.dart';
 import '../school_timestamp.dart' show Timestamp;
 import '../edge_delivery_retry.dart';
+import '../live_sync_protocol.dart';
 
 import 'dart:convert';
 import 'dart:async';
@@ -377,6 +378,10 @@ class CentralSchoolCloud {
         'OPERATION_ID_CONFLICT': 'Sync operation ID conflict. Original operation retained; review before retrying.',
         'SCHOOL_STORAGE_NOT_CONNECTED': 'School storage is not connected. Ask the developer to verify the existing school storage binding.',
         'SCRIPT_MIGRATION_PENDING': 'School data organization is in progress. Pending changes are retained.',
+        'LIVE_LEGACY_WRITE_FENCED': 'School sync migration is in progress. Saved changes are retained.',
+        'LIVE_MIGRATION_NOT_ACTIVE': 'Live delivery is not active for this collection. Saved changes are retained.',
+        'LIVE_MIGRATION_ADMISSION_BUSY': 'School sync is busy. Saved changes are retained for retry.',
+        'LIVE_PROTOCOL_REQUIRED': 'This school requires the current sync app. Saved changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
         'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
       };
@@ -490,7 +495,7 @@ class CentralSchoolCloud {
         || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String;
     final origin = expectedSchoolId != null ? await saved() : null;
     var result=await send('POST', Uri.parse(endpoint), token: token,
-        body: {...body, if(staged) 'edgeDeliveryVersion': 1});
+        body: {...negotiateLiveSync(body), if(staged) 'edgeDeliveryVersion': 1});
     final deadline=DateTime.now().add(const Duration(seconds: 90));
     Map<String, dynamic>? acceptedTicket;
     while(result['edgeDeliveryVersion']==1 && result['delivery'] is Map) {

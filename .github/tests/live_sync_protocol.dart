@@ -15,6 +15,15 @@ class Store implements LiveSyncStore {
 }
 Future<void> main()async{
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+ check(negotiateLiveSync({'action':'managed/records','operationId':'same'})['liveProtocol']==1);
+ check(!isDriveRecoveryRevision('live-pending')&&!isDriveRecoveryRevision('cf-pending'));
+ check(isDriveRecoveryRevision('gs-verified'));
+ final ack=<String,dynamic>{'success':true,'schoolId':school,'syncProtocol':2,'liveProtocol':1,
+  'cloudState':'committed','backupState':'pending','operationId':'operation-original',
+  'recordRevision':'live-original','record':{'schoolId':school,'_syncRevision':'live-original','_syncOperationId':'operation-original'}};
+ check(verifyLiveRecordReceipt(ack,school:school,collection:'school_expenses',id:'one',operationId:'operation-original'));
+ var badAck=false;try{verifyLiveRecordReceipt({...ack,'record':null},school:school,collection:'school_expenses',id:'one',operationId:'operation-original');}catch(_){badAck=true;}
+ check(badAck);
  check(LiveSyncPage.parse(page(school),school,0).events.length==1);
  for(final variant in ['foreign','gap','future','false-more','bad-revision']){
   final data=page(school);

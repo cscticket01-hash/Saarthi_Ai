@@ -176,6 +176,24 @@ void main() {
       cloud.close();
     }
   });
+  test('record transport negotiates live delivery without changing saved operation identity', () async {
+    final requests=<Map<String,dynamic>>[];
+    final cloud=CentralSchoolCloud(endpoint:'https://central.example/school-cloud',
+      client:MockClient((request) async {
+        requests.add(Map<String,dynamic>.from(jsonDecode(request.body) as Map));
+        return http.Response(jsonEncode({'success':true,'schoolId':school}),200);
+      }));
+    final body=<String,dynamic>{'action':'managed/records','schoolId':school,
+      'operation':'write','syncProtocol':2,'operationId':'original-operation-0001',
+      'expectedRecordRevision':'gs-original','data':{'schoolId':school,'amount':10}};
+    await cloud.api(body);
+    expect(requests.single['liveProtocol'],1);
+    expect(requests.single['operationId'],body['operationId']);
+    expect(requests.single['expectedRecordRevision'],'gs-original');
+    expect(requests.single['syncProtocol'],2);
+    expect(body.containsKey('liveProtocol'),isFalse);
+    cloud.close();
+  });
   test('safe coded storage failures remain distinct from revision conflicts', () async {
     final cloud = CentralSchoolCloud(endpoint: 'https://central.example/school-cloud',
       client: MockClient((_) async => http.Response(jsonEncode({

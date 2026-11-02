@@ -138,6 +138,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  const edgeEnabled=school=>cloudflareSync?.enabled(school)===true;
  const liveSync=require('./live-sync').createLiveSync({edge:cloudflareSync,schools:liveSyncSchools,now});
  const liveMigration=require('./live-sync-migration').createLiveMigration({db,now});
+ const liveGateway=require('./live-sync-gateway').createLiveGateway({liveSync,migration:liveMigration});
  const allEdge=school=>cloudflareAllDataEnabled===true&&edgeEnabled(school);
  const edgeDelivery=cloudflareSync?createCloudflareDelivery({edge:cloudflareSync,now,recordParallelism:edgeRecordParallelism}):null;
  const edgeQueue=(school,lane)=>createAttendanceQueue({store:cloudflareSync.attendanceStore(school,lane),now,deliver:deliverAttendance,retryAtForSchool:id=>googlePressure.retryAt(googleQuotaScopes[id]||id,'SCRIPT_QUOTA_EXCEEDED')});
@@ -242,6 +243,15 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
+  if(liveSync.enabled(m.schoolId)&&body.action==='managed_records'&&require('./live-sync').COLLECTIONS.has(body.collection)){
+   const state=await liveMigration.state(m.schoolId,body.collection);
+   if(state==='active'){
+    const result=await liveGateway.records(m.schoolId,body,record=>signedRequest(m,record));
+    if(body.operation!=='read'){invalidate(m.schoolId);await changeHint(m.schoolId,body.collection,body.id);}
+    return result;
+   }
+   if(state==='rolling_back')fail(503,'Verified rollback is pending; saved changes are retained','LIVE_ROLLBACK_PENDING');
+  }
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
  async function signedLegacy(m,body){
@@ -339,7 +349,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    if(b.lane==='notices')result=await cloudflareSync.drainNotices(b.schoolId,body=>signedRequest(m,body));
    else result=await edgeDelivery.drain(b.schoolId,b.lane,async body=>{
     const tickets=body.action==='managed_records_batch'?await Promise.all(body.operations.map(op=>syncDelivery.prepare(m.schoolId,op))):[];
-    const ack=await signed(m,body);
+    const ack=await signedLegacy(m,body);
     if(body.action==='managed_records_batch'&&Array.isArray(ack.acknowledgements)){
      for(const receipt of ack.acknowledgements)if(receipt.success&&typeof receipt.recordRevision==='string'){
       const index=body.operations.findIndex(op=>op.operationId===receipt.operationId);if(index<0)continue;
@@ -552,12 +562,16 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result,...(!cardReaderEnforced&&edgeEnabled(b.schoolId)?{cloudflareLane:cloudflareSync.grant(permit)}:{}),...cardContext};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
+  const liveNotices=liveSync.enabled(b.schoolId)&&await liveMigration.state(b.schoolId,'school_notices')==='active';
   let result=edgeEnabled(b.schoolId)&&b.request.action==='mobile_notice'
    ?await signed(m,{...body,request:{...b.request,action:'mobile_session_verify'}})
    :b.request.action==='mobile_dashboard'&&b.request.afterSignal!==true
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
   if(edgeEnabled(b.schoolId)&&['mobile_dashboard','mobile_notice'].includes(b.request.action)){
-   const state=await cloudflareSync.notices(b.schoolId,()=>noticeBaseline(b.schoolId));
+   const state=liveNotices?await (async()=>{
+    const view=await liveGateway.records(b.schoolId,{operation:'read',collection:'school_notices',syncProtocol:2,liveProtocol:1},record=>signedRequest(m,record));
+    return {records:view.records,revision:view.collectionRevision};
+   })():await cloudflareSync.notices(b.schoolId,()=>noticeBaseline(b.schoolId));
    if(b.request.action==='mobile_notice'){const record=state.records[b.request.noticeId];if(!record||record._syncDeleted)fail(404,'School notice unavailable');result={...result,notice:record};}
    else {
     const rows=Object.entries(state.records).filter(([,r])=>!r._syncDeleted).map(([id,r])=>({...r,id,_noticeRevision:r._syncRevision})).sort((a,b)=>Number(b.timestamp||b.createdAt||0)-Number(a.timestamp||a.createdAt||0)).slice(0,100);
@@ -625,6 +639,10 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    };
    return {success:true,...await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)))};
   }
+  if(operation==='rollback'){
+   if(b.confirmVerifiedRollback!==true)fail(400,'Explicit verified rollback request required');
+   return {success:true,...await liveMigration.rollback(m.schoolId,b.collection,proof=>liveSync.rollback(m.schoolId,b.collection,body=>signedRequest(m,body),proof.rollbackToken))};
+  }
   if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
   const allowed=new Set(['commit','read','head','changes','snapshot','received','stats']);
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
@@ -632,9 +650,8 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor','createIntent','cachedBaseline'].filter(k=>b[k]!==undefined).map(k=>[k,['data','cachedBaseline'].includes(k)?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
   const drive=record=>signedRequest(m,record);
-  if(operation==='commit')await liveMigration.assertActive(m.schoolId,body.collection);
   const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
-    operation==='commit'?await liveSync.commit(m.schoolId,body,drive):
+    operation==='commit'?await liveMigration.live(m.schoolId,body.collection,()=>liveSync.commit(m.schoolId,body,drive)):
     ['changes','snapshot'].includes(operation)?await liveSync.replay(m.schoolId,body,drive):await liveSync.command(m.schoolId,body);
   return {success:true,schoolId:m.schoolId,...result};
  }
@@ -765,12 +782,34 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    }
   }
   const body={action:'managed_delta',collections,knownRevisions:known,...(recordCheckpoints!==undefined?{knownRecordRevisions:recordCheckpoints}:{}),...(b.headOnly===true?{headOnly:true}:{})};
+  const liveCollections=[];
+  if(liveSync.enabled(m.schoolId))for(const collection of collections){
+   if(!require('./live-sync').COLLECTIONS.has(collection))continue;
+   const state=await liveMigration.state(m.schoolId,collection);
+   if(state==='rolling_back')fail(503,'Verified rollback pending; checkpoint retained','LIVE_ROLLBACK_PENDING');
+   if(state==='active')liveCollections.push(collection);
+  }
+  if(liveCollections.length&&b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   // A commit on another broker cannot invalidate this process's five-second
   // view cache. Verified delta apply must read current authoritative records.
-  const cfNotices=edgeEnabled(m.schoolId)&&collections.includes('school_notices');
-  const driveBody=cfNotices?{...body,collections:collections.filter(c=>c!=='school_notices'),knownRevisions:Object.fromEntries(Object.entries(known).filter(([k])=>k!=='school_notices')),...(recordCheckpoints?{knownRecordRevisions:Object.fromEntries(Object.entries(recordCheckpoints).filter(([k])=>k!=='school_notices'))}:{})}:body;
+  const cfNotices=edgeEnabled(m.schoolId)&&collections.includes('school_notices')&&!liveCollections.includes('school_notices');
+  const excluded=new Set([...liveCollections,...(cfNotices?['school_notices']:[])]);
+  const driveBody=excluded.size?{...body,collections:collections.filter(c=>!excluded.has(c)),knownRevisions:Object.fromEntries(Object.entries(known).filter(([k])=>!excluded.has(k))),...(recordCheckpoints?{knownRecordRevisions:Object.fromEntries(Object.entries(recordCheckpoints).filter(([k])=>!excluded.has(k)))}:{})}:body;
   const result=driveBody.collections.length?(b.headOnly===true?await readView(m.schoolId,driveBody,()=>signed(m,driveBody)):await signed(m,driveBody)):{success:true,schoolId:m.schoolId,syncProtocol:2,...(b.headOnly===true?{headOnly:true,revisions:{}}:{changes:{}})};
   if(cfNotices){const state=await cloudflareSync.notices(m.schoolId,()=>noticeBaseline(m.schoolId));if(b.headOnly===true)result.revisions={...result.revisions,school_notices:state.revision};else {const checkpoint=recordCheckpoints?.school_notices;const unchanged=known.school_notices===state.revision;const records=unchanged?{}:checkpoint?Object.fromEntries(Object.entries(state.records).filter(([id,r])=>checkpoint[id]!==r._syncRevision)):state.records;result.changes={...result.changes,school_notices:{syncProtocol:2,collectionRevision:state.revision,records,unchanged,...(checkpoint?{partialRecords:true}:{})}};}}
+  if(liveCollections.length){
+   const head=await liveSync.command(m.schoolId,{command:'head'});
+   for(const collection of liveCollections){
+    const cursor=head.collections?.find(item=>item.collection===collection&&item.state==='active')?.cursor;
+    if(!Number.isSafeInteger(cursor)||cursor<0)fail(503,'Live collection head unverified','LIVE_HEAD_UNVERIFIED');
+    const revision='live:'+collection+':'+cursor;
+    if(b.headOnly===true){result.revisions={...result.revisions,[collection]:revision};continue;}
+    const group=await liveGateway.records(m.schoolId,{operation:'read',collection,syncProtocol:2,liveProtocol:1,knownRevision:known[collection]},record=>signedRequest(m,record));
+    const checkpoint=recordCheckpoints?.[collection];
+    if(checkpoint){group.records=Object.fromEntries(Object.entries(group.records).filter(([id,row])=>checkpoint[id]!==row._syncRevision));group.partialRecords=true;}
+    result.changes={...result.changes,[collection]:group};
+   }
+  }
 
   if(b.headOnly===true){
    if(result.headOnly!==true||result.syncProtocol!==2||!result.revisions||typeof result.revisions!=='object'||Array.isArray(result.revisions)||Object.keys(result.revisions).length!==collections.length||collections.some(col=>typeof result.revisions[col]!=='string'||!result.revisions[col]||result.revisions[col].length>1000))fail(502,'Invalid school change heads');
@@ -880,9 +919,22 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    if(!op||!COLLECTIONS.has(op.collection)||['students_directory','teachers_directory','documents','backups'].includes(op.collection)||
      op.operation!=='write'||op.syncProtocol!==2||typeof op.id!=='string'||!/^[^/]{1,200}$/.test(op.id)||['.','..','__proto__','prototype','constructor'].includes(op.id)||
      !/^[A-Za-z0-9_-]{16,100}$/.test(op.operationId||'')||typeof op.expectedRecordRevision!=='string'||op.expectedRecordRevision.length>100||(seen.has(op.collection+'/'+op.id)||operationIds.has(op.operationId)))fail(400,'Invalid batch operation');
-   seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,
+   seen.add(op.collection+'/'+op.id);operationIds.add(op.operationId);return {action:'managed_records',operation:'write',collection:op.collection,id:op.id,...(b.liveProtocol===1?{liveProtocol:1,createIntent:op.createIntent===true}:{}),
     syncProtocol:2,operationId:op.operationId,expectedRecordRevision:op.expectedRecordRevision,data:{...clean(op.data),schoolId:m.schoolId}};
   });
+  if(liveSync.enabled(m.schoolId)){
+   const states=await Promise.all(operations.map(op=>liveMigration.state(m.schoolId,op.collection)));
+   if(states.some(state=>state==='active'||state==='rolling_back')){
+    if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
+    if(states.some(state=>state==='rolling_back'||state==='preparing'))fail(503,'Sync migration pending; saved changes retained','LIVE_MIGRATION_PENDING');
+    const acknowledgements=[];
+    for(const op of operations){
+     try{acknowledgements.push({...await signed(m,op),operationId:op.operationId,success:true});}
+     catch(error){acknowledgements.push({operationId:op.operationId,success:false,code:error.code==='RECORD_REVISION_CONFLICT'?'SCRIPT_RECORD_REVISION_CONFLICT':error.code||'SCRIPT_OPERATION_FAILED'});}
+    }
+    return {success:true,schoolId:m.schoolId,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements};
+   }
+  }
   if(!(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1)&&edgeEnabled(m.schoolId)&&operations.some(op=>op.collection==='school_notices')){const acknowledgements=[];for(const op of operations){try{const ack=await signed(m,op);acknowledgements.push({...ack,operationId:op.operationId,success:true});}catch(error){acknowledgements.push({operationId:op.operationId,success:false,code:error.code==='RECORD_REVISION_CONFLICT'?'SCRIPT_RECORD_REVISION_CONFLICT':'SCRIPT_OPERATION_FAILED'});}}return {success:true,schoolId:m.schoolId,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements};}
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1&&operations.some(op=>op.collection==='school_notices'))fail(400,'Notice batches use their existing dedicated lane','EDGE_BATCH_NOTICE_MIX');
   const tickets=[];for(const op of operations)tickets.push(await deliveryBudget(syncDelivery.prepare(m.schoolId,op)));
@@ -905,6 +957,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(b.syncProtocol===2&&b.operation!=='read'&&(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100))fail(400,'Invalid sync operation');
   if(b.deletedStudentGeneration!==undefined&&(b.collection!=='students_directory'||b.operation!=='delete'||typeof b.deletedStudentGeneration!=='string'||!b.deletedStudentGeneration||b.deletedStudentGeneration.length>200))fail(400,'Invalid student deletion generation');
   const acknowledged=await signed(m,{action:'managed_records',operation:b.operation,collection:b.collection,
+    ...(b.liveProtocol===1?{liveProtocol:1,createIntent:b.createIntent===true,...(b.cachedBaseline?{cachedBaseline:clean(b.cachedBaseline)}:{})}:{}),
     ...(b.syncProtocol===2?{syncProtocol:2,...(b.operation==='read'?{knownRevision:typeof b.knownRevision==='string'?b.knownRevision:''}:{operationId:b.operationId,expectedRecordRevision:b.expectedRecordRevision})}:{}),...(b.id?{id:b.id}:{}),...(data?{data}:{}),...(b.deletedStudentGeneration!==undefined?{deletedStudentGeneration:b.deletedStudentGeneration}:{}),...(b.expectedRevision!==undefined?{expectedRevision:b.expectedRevision}:{}),...(Number.isFinite(b.expectedUploadedAt)?{expectedUploadedAt:b.expectedUploadedAt}:{})});
   if(b.operation!=='read')invalidate(m.schoolId);
   // Only verified durable Script ACK permits a hint. FCM is optional and never
