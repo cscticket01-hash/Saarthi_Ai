@@ -2,6 +2,11 @@
 /// Drive receipts: cloud commitment cannot acknowledge a Drive backup queue.
 const liveSyncCollections = {
   'school_expenses', 'school_calendar', 'school_notices', 'school_settings',
+  'students_directory', 'teachers_directory', 'fee_settings', 'fee_ledger',
+  'fee_payments', 'teacher_salary', 'attendance_records', 'attendance_logs',
+  'teacher_attendance', 'teacher_schedules', 'exams', 'exam_results',
+  'exam_center_results', 'documents', 'student_scan_index', 'scanner_devices',
+  'school_config',
 };
 
 class LiveSyncPage {

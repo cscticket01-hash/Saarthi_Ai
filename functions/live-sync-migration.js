@@ -3,6 +3,7 @@ const {randomUUID}=require('node:crypto');
 const {COLLECTIONS}=require('./live-sync');
 const {bindOperation}=require('./live-sync-reconciliation');
 const {canonical}=require('./live-sync-canonical');
+const NATIVE_LIFECYCLE_COLLECTIONS=new Set(['students_directory','teachers_directory','documents','student_scan_index','fee_settings','fee_ledger','fee_payments','teacher_salary','attendance_records','attendance_logs','teacher_attendance','teacher_schedules','exams','exam_results','exam_center_results']);
 const refuse=code=>{throw Object.assign(Error('Sync migration is pending; saved changes are retained.'),{status:503,code,publicMessage:true});};
 // Durable admission markers intentionally do not expire. A process crash can
 // leave an uncertain Google request running; a timeout is not proof of failure.
@@ -32,6 +33,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   return result;
  }
  async function prepare(school,collection,drained,seed){
+  if(NATIVE_LIFECYCLE_COLLECTIONS.has(collection))refuse('LIVE_DEPENDENCY_GROUP_REQUIRED');
   if(!COLLECTIONS.has(collection))refuse('LIVE_COLLECTION_NOT_ADMITTED');
   const r=ref(school);
   const active=await db.runTransaction(async tx=>{
@@ -65,6 +67,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   const r=ref(school);let token=randomUUID();
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{};
+   if(state.nativeCohort?.state==='preparing'&&state.nativeCohort.collections.includes(collection))refuse('LIVE_DEPENDENCY_PREPARING');
    if(state.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
    const liveInflight={...state.liveInflight};
    const operationBinding=request?bindOperation(school,'live',request):null;
@@ -86,6 +89,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   const r=ref(school);
   const migration=await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{},current=state.collections?.[collection];
+   if(state.nativeCohort?.collections?.includes(collection))refuse('LIVE_DEPENDENCY_ROLLBACK_REQUIRES_COHORT');
    if(current?.state==='legacy'&&current.rollbackProof)return current;
    if(!current||!['active','rolling_back'].includes(current.state))refuse('LIVE_MIGRATION_NOT_ACTIVE');
    const next=current.state==='rolling_back'?current:{...current,state:'rolling_back',rollbackToken:randomUUID(),rollbackStartedAt:now()};
@@ -111,8 +115,43 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   });
   return {liveProtocol:1,schoolId:school,collection,state:'legacy',...rollbackProof};
  }
+ async function prepareGroup(school,collections,drained,seed){
+  if(!Array.isArray(collections)||collections.length<1||collections.length>22||new Set(collections).size!==collections.length||collections.some(collection=>!COLLECTIONS.has(collection)))refuse('LIVE_DEPENDENCY_GROUP_INVALID');
+  const ordered=[...collections].sort(),r=ref(school);
+  const active=await db.runTransaction(async tx=>{
+   const current=(await tx.get(r)).data()||{},group=current.nativeCohort;
+   if(group&&canonical(group.collections)!==canonical(ordered))refuse('LIVE_DEPENDENCY_GROUP_CHANGED');
+   if(group?.state==='active')return true;
+   const states={...current.collections};
+   for(const collection of ordered){
+    const prior=states[collection];if(prior&&!['legacy','preparing','active'].includes(prior.state)||prior?.rollbackProof)refuse('LIVE_MIGRATION_REVIEW_REQUIRED');
+    if(prior?.state!=='active')states[collection]={state:'preparing',startedAt:prior?.startedAt??now()};
+   }
+   tx.set(r,{...current,collections:states,nativeCohort:{state:'preparing',collections:ordered,startedAt:group?.startedAt??now()}});return false;
+  });
+  if(active)return {liveProtocol:1,schoolId:school,state:'active',collections:ordered};
+  const current=(await r.get()).data();
+  if(now()-current.nativeCohort.startedAt<drainGraceMs)refuse('LIVE_LEGACY_DRAIN_GRACE');
+  const relevant=item=>item.collection==='*'||ordered.includes(item.collection);
+  if(Object.values(current.inflight||{}).some(relevant))refuse('LIVE_LEGACY_WRITES_IN_FLIGHT');
+  if(Object.values(current.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');
+  if(!await drained())refuse('LIVE_LEGACY_DELIVERY_PENDING');
+  for(const collection of ordered){const result=await seed(collection);if(result.state!=='active')refuse('LIVE_BASELINE_UNVERIFIED');}
+  await db.runTransaction(async tx=>{
+   const latest=(await tx.get(r)).data()||{},group=latest.nativeCohort;
+   if(group?.state!=='preparing'||canonical(group.collections)!==canonical(ordered))refuse('LIVE_MIGRATION_STATE_CHANGED');
+   if(Object.values(latest.inflight||{}).some(relevant)||Object.values(latest.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');
+   const states={...latest.collections};for(const collection of ordered)states[collection]={state:'active',activatedAt:now()};
+   tx.set(r,{...latest,collections:states,nativeCohort:{...group,state:'active',activatedAt:now()}});
+  });
+  return {liveProtocol:1,schoolId:school,state:'active',collections:ordered};
+ }
+ async function assertCohortAdmission(school,collection){
+  const value=(await ref(school).get()).data()?.nativeCohort;
+  if(value?.state==='preparing'&&(!collection||value.collections.includes(collection)))refuse('LIVE_DEPENDENCY_PREPARING');
+ }
  async function state(school,collection){return (await ref(school).get()).data()?.collections?.[collection]?.state||'legacy';}
  async function rolledBack(school,collection){const value=(await ref(school).get()).data()?.collections?.[collection];return value?.state==='legacy'&&!!value.rollbackProof;}
- return {legacy,prepare,assertActive,live,rollback,state,rolledBack};
+ return {legacy,prepare,prepareGroup,assertCohortAdmission,assertActive,live,rollback,state,rolledBack};
 }
-module.exports={createLiveMigration};
+module.exports={createLiveMigration,NATIVE_LIFECYCLE_COLLECTIONS};

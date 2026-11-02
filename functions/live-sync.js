@@ -1,7 +1,7 @@
 'use strict';
 const {createHash,createHmac}=require('node:crypto');
 const {canonical}=require('./live-sync-canonical');
-const COLLECTIONS=new Set(['school_expenses','school_calendar','school_notices','school_settings']);
+const COLLECTIONS=new Set(['school_expenses','school_calendar','school_notices','school_settings','students_directory','teachers_directory','fee_settings','fee_ledger','fee_payments','teacher_salary','attendance_records','attendance_logs','teacher_attendance','teacher_schedules','exams','exam_results','exam_center_results','documents','student_scan_index','scanner_devices','school_config']);
 const payloadHash=record=>createHash('sha256').update(canonical({deleted:record._syncDeleted===true,data:Object.fromEntries(Object.entries(record).filter(([key])=>!key.startsWith('_sync')))})).digest('hex');
 const refuse=(status,code)=>{throw Object.assign(Error('Live sync admission requires verified school state.'),{status,code,publicMessage:true});};
 function createLiveSync({edge,schools=[],now=Date.now}){
@@ -51,7 +51,7 @@ function createLiveSync({edge,schools=[],now=Date.now}){
  async function prepare(school,collection,read){
   if(!COLLECTIONS.has(collection))refuse(412,'LIVE_COLLECTION_NOT_ADMITTED');
   const source=await read({action:'managed_records',operation:'read',collection,syncProtocol:2});
-  if(source.success!==true||source.schoolId!==school||source.syncProtocol!==2||!source.records||typeof source.records!=='object'||Array.isArray(source.records)||typeof source.collectionRevision!=='string'||source.missingRecords?.length)refuse(502,'LIVE_BASELINE_UNVERIFIED');
+  if(source.success!==true||source.schoolId!==school||source.syncProtocol!==2||!source.records||typeof source.records!=='object'||Array.isArray(source.records)||typeof source.collectionRevision!=='string'||source.missingRecords?.length||source.partialRecords===true||source.partial===true||source.pointRead===true||source.unchanged===true)refuse(502,'LIVE_BASELINE_UNVERIFIED');
   const entries=Object.entries(source.records).filter(([id])=>collection!=='school_settings'||id!=='staff_payroll_directory');if(entries.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
   const fingerprint=createHash('sha256').update(canonical(Object.fromEntries(entries))).digest('hex');
   const started=await command(school,{command:'seedBegin',collection,count:entries.length,fingerprint,sourceRevision:source.collectionRevision,replaceSeeding:true});

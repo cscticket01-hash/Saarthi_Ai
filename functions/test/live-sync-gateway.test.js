@@ -17,7 +17,7 @@ function fixture(overrides={}){
 test('gateway negotiates before any read or mutation and limits admission to reviewed collections',async()=>{
  const f=fixture();
  await assert.rejects(f.gateway.records(school,{...request,liveProtocol:undefined}),e=>e.code==='LIVE_PROTOCOL_REQUIRED');
- await assert.rejects(f.gateway.records(school,{...request,collection:'students_directory'}),e=>e.code==='LIVE_COLLECTION_NOT_ADMITTED');
+ await assert.rejects(f.gateway.records(school,{...request,collection:'backups'}),e=>e.code==='LIVE_COLLECTION_NOT_ADMITTED');
  await assert.rejects(f.gateway.records(school,{...request,operation:'recover'}),e=>e.code==='LIVE_OPERATION_NOT_ADMITTED');
  assert.deepEqual(f.calls,[]);
 });

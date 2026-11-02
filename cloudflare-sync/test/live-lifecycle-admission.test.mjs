@@ -14,7 +14,7 @@ async function rpc(body){
 // An authenticated broker request must not accidentally opt them into generic
 // per-record CAS by changing an allowlist on only one side of the protocol.
 test('unsupported lifecycle collections remain closed even to signed broker commands',async()=>{
- for(const collection of ['students_directory','teachers_directory','teacher_salary','teacher_schedules','fee_settings','fee_ledger','fee_payments','attendance_logs','teacher_attendance','attendance_records','student_scan_index','scanner_devices','documents','backups','school_config','exam_results','exams','exam_center_results']){
+ for(const collection of ['backups','mobile_sessions','mobile_users','mobile_complaints','staff_payroll_directory']){
   for(const command of [
    {command:'seedBegin',fingerprint:'a'.repeat(64),count:0,sourceRevision:'drive-source'},
    {command:'read',id:'one'},

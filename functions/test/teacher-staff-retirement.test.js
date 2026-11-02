@@ -61,7 +61,7 @@ test('staff active false retires access identity without removing payroll histor
  assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[]},retired.recordRevision).success,false);
  assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[{...row,employeeId:'E2'}]},retired.recordRevision).success,false);
  assert.equal(write(s,'school_settings','staff_payroll_directory',{staff:[{...row,active:false},{id:'staff:2',employeeId:'e1',role:'Guard'}]},retired.recordRevision).success,false);
- const health=s.call({action:'managed_health'});assert.equal(health.teacherRetirementVersion,1);assert.equal(health.staffRetirementVersion,1);assert.equal(health.scriptBundleVersion,'2026-11-02.1');
+ const health=s.call({action:'managed_health'});assert.equal(health.teacherRetirementVersion,1);assert.equal(health.staffRetirementVersion,1);assert.equal(health.scriptBundleVersion,'2026-11-02.2');
 });
 test('active teacher dependents require exact explicit person generation and never borrow another teacher generation',()=>{
  const s=storage({lifecycle:true,bundle:true}),a=teacher(s);assert.equal(a.success,true);

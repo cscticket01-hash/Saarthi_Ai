@@ -617,6 +617,8 @@ function VS_managedRecordUnlocked(b,readContext) {
   if(!existing&&retained){const h=retained.head;existing={id:b.id,schoolId:school,data:{schoolId:school,_syncRevision:h.revision,_syncOperationId:h.operationId,_syncRequestHash:h.requestHash,...(h.deleted?{_syncDeleted:true,_syncDeletedOwner:h.generation,_syncRetiredStudentGenerations:h.retiredGenerations||[]}:{})}};
     if(!h.deleted)throw new Error('Verified local Sheet recovery required before editing');}
   const wireHash=VS_layoutHash(VS_syncRequestShape(b));
+  if(b.deleteEverywhereVersion===1)return VS_deleteEverywhere(b,store,existing,wireHash);
+  if(existing&&existing.data._syncErasePlan&&!existing.data._syncErasePlan.complete&&b.operation==='write')throw new Error('Delete everywhere cleanup pending');
   // Only an identical authenticated full snapshot can repair a lost-ACK head.
   const provenFullReplay=existing&&b.operation==='write'&&!(b.data&&b.data._syncFieldPatch)&&
     existing.data._syncOperationId===b.operationId&&existing.data._syncRequestHash===wireHash&&
@@ -913,6 +915,10 @@ function VS_managedDiagnostic(error) {
     'JSON head missing; operator review required':'SCRIPT_JSON_HEAD_MISSING',
     'JSON category exceeds safe limit':'SCRIPT_JSON_CAPACITY_REVIEW',
     'New student parent must sync first':'SCRIPT_STUDENT_PARENT_PENDING',
+    'Delete everywhere cleanup pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
+    'Delete everywhere Drive file verification pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
+    'Delete everywhere Drive file deletion pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
+    'Delete everywhere archive readback pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
     'Verified local Sheet recovery required before editing':'SCRIPT_SHEET_RECOVERY_REQUIRED',
     'Recovery revision or content mismatch':'SCRIPT_RECOVERY_MISMATCH',
     'Sync state identity mismatch':'SCRIPT_SYNC_STATE_IDENTITY',
@@ -1025,9 +1031,9 @@ function VS_managedHandle(e) {
           if(part.sheet.getRange(1,1,1,1).getValues()[0][0]!=='Record Key')throw new Error('School tab identity requires review');
         });sheetsVerified=true;}
       }
-      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
+      result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.1',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.2',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -1699,6 +1705,9 @@ function VS_collectRetirementReferences(value,references,depth,budget){
   if(!value||typeof value!=='object')return;
   for(const key of Object.keys(value)){
     if(--budget.remaining<0){references.retirementScanComplete=false;return;}
+    // Field-revision maps use file-field names for revision UUIDs, not Drive IDs.
+    // Cleanup plans are receipts too; neither may become a file ownership claim.
+    if(key.indexOf('_sync')===0&&['_syncDeletedFileId','_syncRecycleFileId'].indexOf(key)<0)continue;
     const item=value[key];if((key==='fileId'||/FileId$/.test(key))&&typeof item==='string')references.add(item);
     else if(typeof item==='string')VS_referencedDriveFileIds(item).forEach(id=>references.add(id));
     else VS_collectRetirementReferences(item,references,depth+1,budget);
@@ -2032,4 +2041,197 @@ function VS_managedIntegrityAudit(b) {
     });
     result.nextRow=end<last?end+1:null;result.coverage='bounded_verified_heads';return result;
   } finally {lock.releaseLock();}
+}
+
+/** Explicit app deletion policy. Metadata-only durable plan; user payloads are
+ * removed from canonical records before external cleanup. No fake Drive ACK is
+ * emitted while any exact owned file/archive cleanup is pending. */
+function VS_deleteEverywhere(b,store,existing,wireHash){
+  const school=store.school;
+  if(b.operation!=='delete'||b.syncProtocol!==2||!/^[-A-Za-z0-9_]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string')throw new Error('Invalid sync operation');
+  if(existing&&(existing.schoolId!==school||existing.id!==b.id))throw new Error('Foreign school record');
+  const old=existing&&existing.data;
+  const person=b.collection==='students_directory'?'student':b.collection==='teachers_directory'?'teacher':null;
+  const generation=old&&(person==='student'?old._syncDeletedOwner||VS_studentGeneration(old,b.id):person==='teacher'?VS_teacherGeneration(old,b.id):old.personId)||null;
+  const named=person==='student'?b.deletedStudentGeneration:person==='teacher'?b.deletedTeacherGeneration:undefined;
+  if(named!==undefined&&named!==generation)throw new Error('Record revision conflict');
+  if(old&&!old._syncDeleted&&(old._syncRevision||'')!==b.expectedRecordRevision&&!(named&&named===generation))throw new Error('Record revision conflict');
+  if(b.collection==='documents'&&old&&old.documentRevision&&b.expectedRevision!==old.documentRevision)throw new Error('Versioned document requires a matching revision');
+  if(old&&old._syncErasePlan){
+    if(old._syncOperationId!==b.operationId&&b.expectedRecordRevision!==old._syncRevision&&!(named&&named===generation))throw new Error('Record revision conflict');
+    return VS_resumeEverywhereDelete(store,b.id,old);
+  }
+  const revision=old&&old._syncDeleted?old._syncRevision:Utilities.getUuid();
+  const targets=[],files=new Set(),retainedShared=[];
+  function target(collection,id,row){
+    if(targets.some(t=>t.collection===collection&&t.id===id))return;
+    const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner)||(person?generation:null);
+    const value={collection:collection,id:id,sourceRevision:row&&row._syncRevision||'',revision:collection===b.collection&&id===b.id?revision:row&&row._syncDeleted?row._syncRevision:Utilities.getUuid()};
+    if(owner)value.generation=owner;
+    if(row&&row.teacherId)value.teacherId=row.teacherId;
+    targets.push(value);
+    if(row)VS_collectRetirementReferences(row,files,0,{remaining:20000});
+    if(files.retirementScanComplete===false)throw new Error('Delete everywhere file inventory requires review');
+  }
+  target(b.collection,b.id,old);
+  if(person&&old){
+    const aliases=[b.id].concat(Array.isArray(old.previousStudentIds)?old.previousStudentIds:[]);
+    const categories=person==='student'?['documents','attendance_records','attendance_logs','fee_ledger','fee_payments','exam_results','exam_center_results','student_scan_index','mobile_sessions','mobile_users','mobile_complaints']:['documents','teacher_schedules','teacher_salary','teacher_attendance','attendance_records','mobile_sessions','mobile_users','mobile_complaints'];
+    for(const collection of categories){
+      const childStore=VS_managedSheet(collection),records=VS_sheetRecords(childStore);
+      if(VS_missingRecordHeads(childStore,records).some(head=>!head.deleted))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records)){
+        const row=records[id],sameDeleted=row._syncDeleted&&row._syncDeletedOwner===generation;
+        const owns=person==='student'?VS_isStudentOwnedRecord(collection,row,id,generation,aliases):VS_isTeacherAccessRecord(collection,row,id,b.id,old);
+        if(sameDeleted||owns)target(collection,id,row);
+      }
+    }
+  }
+  if(b.collection==='exams')for(const collection of ['exam_results','exam_center_results']){
+    const records=VS_sheetRecords(VS_managedSheet(collection));for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
+  }
+  // Shared school assets remain owned by the surviving records; deleting one
+  // reference must not remove another pupil's ID card/photo or school seal.
+  const references=new Set();references.retirementScanComplete=true;
+  for(const collection of VS_LAYOUT_COLLECTIONS){
+    const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
+    if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+    for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+  }
+  if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
+  const owned=[];for(const fileId of files){if(references.has(fileId)){retainedShared.push(fileId);continue;}VS_managedFile(fileId);owned.push(fileId);}
+  const data={schoolId:school,_syncDeleted:true,_syncRevision:revision,_syncOperationId:b.operationId,_syncRequestHash:wireHash,_syncErasePlan:{version:1,targets:targets,files:owned,retainedShared:retainedShared,cursor:0,fileCursor:0,archivesComplete:false,complete:false}};
+  if(generation)data._syncDeletedOwner=generation;
+  if(person==='student')data._syncRetiredStudentGenerations=[...new Set([...(old&&old._syncRetiredStudentGenerations||[]),generation].filter(Boolean))];
+  if(person==='teacher')data._syncRetiredTeacherId=old&&(old.teacherId||old._syncRetiredTeacherId)||b.id;
+  if(b.collection==='documents'&&old)data.documentRevision=old.documentRevision||'';
+  if(JSON.stringify(data).length>450000)throw new Error('Delete everywhere plan exceeds safe limit');
+  PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+b.collection,Utilities.getUuid());
+  VS_sheetPut(store,{id:b.id,schoolId:school,data:data});
+  return VS_resumeEverywhereDelete(store,b.id,data);
+}
+function VS_resumeEverywhereDelete(store,id,data){
+  const plan=data._syncErasePlan;
+  function save(){VS_sheetPut(store,{id:id,schoolId:store.school,data:data});}
+  let work=0;
+  while(plan.cursor<plan.targets.length){
+    const target=plan.targets[plan.cursor],view=VS_managedSheet(target.collection),current=VS_sheetItem(view,target.id);
+    if(current){const row=current.data,owner=row.mobileStableId||row.personId||row._syncDeletedOwner;
+      if(target.generation&&owner&&owner!==target.generation)throw new Error('Record revision conflict');
+      if(!row._syncDeleted&&row._syncRevision!==target.sourceRevision)throw new Error('Record revision conflict');
+      if(!(target.collection===store.collection&&target.id===id)){
+        const tombstone={schoolId:store.school,_syncDeleted:true,_syncRevision:target.revision,_syncOperationId:VS_layoutHash([data._syncOperationId,target.collection,target.id])};
+        if(target.generation)tombstone._syncDeletedOwner=target.generation;
+        if(target.teacherId)tombstone._syncRetiredTeacherId=target.teacherId;
+        VS_sheetPut(view,{id:target.id,schoolId:store.school,data:tombstone});PropertiesService.getScriptProperties().setProperty('VS_RECORD_REV_'+target.collection,Utilities.getUuid());
+      }
+    }
+    plan.cursor++;save();if(++work>=10&&plan.cursor<plan.targets.length)throw new Error('Delete everywhere cleanup pending');
+  }
+  while(plan.fileCursor<plan.files.length){
+    VS_permanentlyEraseOwnedFile(plan.files[plan.fileCursor]);plan.fileCursor++;save();
+    if(++work>=10&&plan.fileCursor<plan.files.length)throw new Error('Delete everywhere cleanup pending');
+  }
+  if(!plan.archivesComplete){plan.archivesComplete=VS_eraseExactRecordArchives(plan.targets,plan,save);save();if(!plan.archivesComplete)throw new Error('Delete everywhere cleanup pending');}
+  plan.complete=true;save();
+  return {syncProtocol:2,recordRevision:data._syncRevision,record:Object.assign({id:id},data),deleteEverywhereVersion:1,driveDeletionComplete:true,deletionTargets:plan.targets,deletedFileIds:plan.files,retainedSharedFileIds:plan.retainedShared};
+}
+// The caller has persisted this exact file ID only after validating school-root
+// ancestry. 404 on retry is proof that the previously owned ID is gone; 401/403
+// are never interpreted as deletion. No folder IDs enter this function.
+function VS_permanentlyEraseOwnedFile(fileId){
+  if(!/^[A-Za-z0-9_-]{1,200}$/.test(fileId||''))throw new Error('Invalid school file ID');
+  const url='https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(fileId),headers={Authorization:'Bearer '+ScriptApp.getOAuthToken()};
+  const probe=UrlFetchApp.fetch(url+'?fields=id,mimeType&supportsAllDrives=true',{method:'get',headers:headers,muteHttpExceptions:true}),status=probe.getResponseCode();
+  if(status===404)return;
+  if(status!==200)throw new Error('Delete everywhere Drive file verification pending');
+  const info=JSON.parse(probe.getContentText());if(info.id!==fileId||info.mimeType==='application/vnd.google-apps.folder')throw new Error('Foreign school file');
+  VS_managedFile(fileId);
+  const response=UrlFetchApp.fetch(url+'?supportsAllDrives=true',{method:'delete',headers:headers,muteHttpExceptions:true});
+  if(![200,204,404].includes(response.getResponseCode()))throw new Error('Delete everywhere Drive file deletion pending');
+  const verified=UrlFetchApp.fetch(url+'?fields=id&supportsAllDrives=true',{method:'get',headers:headers,muteHttpExceptions:true});
+  if(verified.getResponseCode()!==404)throw new Error('Delete everywhere Drive file deletion pending');
+}
+function VS_eraseArchiveInventory(){
+  const pending=[VS_managedRoot()],seen={},jobs=[];let visited=0;
+  while(pending.length){const folder=pending.shift();if(seen[folder.getId()])continue;seen[folder.getId()]=true;
+    if(++visited>250)throw new Error('Delete everywhere archive inventory requires bounded review');
+    const files=folder.getFiles();while(files.hasNext()){if(jobs.length>=2000)throw new Error('Delete everywhere archive inventory requires bounded review');jobs.push(files.next().getId());}
+    const children=folder.getFolders();while(children.hasNext()){if(pending.length+visited>=250)throw new Error('Delete everywhere archive inventory requires bounded review');pending.push(children.next());}
+  }
+  return [...new Set(jobs)].sort();
+}
+function VS_eraseArchiveGeneration(target,row){
+  const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner);
+  if(!target.generation)return true;
+  if(owner)return owner===target.generation;
+  // Legacy snapshots without generation proof must not be assigned to the
+  // next pupil who happens to reuse the same Class/Roll slot.
+  return target.sourceRevision&&row&&row._syncRevision===target.sourceRevision?true:null;
+}
+function VS_eraseExactRecordArchives(targets,plan,onProgress){
+  if(!plan.archiveIds){plan.archiveIds=VS_eraseArchiveInventory();plan.archiveCursor=0;onProgress();}
+  let count=0;
+  while(plan.archiveCursor<plan.archiveIds.length&&count<5){
+    const fileId=plan.archiveIds[plan.archiveCursor];let file;
+    try{file=VS_managedFile(fileId);}catch(error){
+      const response=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(fileId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
+      if(response.getResponseCode()!==404)throw error;
+    }
+    if(file)VS_eraseOneRecordArchive(file,targets,plan.files);
+    plan.archiveCursor++;count++;onProgress();
+  }
+  return plan.archiveCursor===plan.archiveIds.length;
+}
+function VS_eraseOneRecordArchive(file,targets,deletedFiles){
+  const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),marker=String(file.getDescription()||'');
+  if(file.getMimeType()==='application/vnd.google-apps.spreadsheet'){
+    if(marker!=='VIDYA_SHEET_BACKUP:'+school)return;
+    const book=SpreadsheetApp.openById(file.getId());
+    for(const target of targets){const sheet=book.getSheetByName(target.collection);if(!sheet)continue;const view={school:school,collection:target.collection,sheet:sheet},item=VS_sheetItem(view,target.id);if(!item||item.data._syncDeleted)continue;const matches=VS_eraseArchiveGeneration(target,item.data);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)continue;
+      const values=[Utilities.base64EncodeWebSafe(target.id),school,target.revision,'YES','',...Array(28).fill('')];const tombstone={id:target.id,schoolId:school,data:{schoolId:school,_syncDeleted:true,_syncRevision:target.revision}};values[6]=JSON.stringify(JSON.stringify(tombstone));sheet.getRange(item.row,1,1,33).setValues([values]);SpreadsheetApp.flush();
+      const check=VS_sheetItem(view,target.id);if(!check||!check.data._syncDeleted||check.data.name)throw new Error('Delete everywhere archive readback pending');
+    }
+    return;
+  }
+  if(file.getMimeType()!=='application/json')return;
+  const known=/^VIDYA_(?:RECORD_JSON|RECYCLE|RECORD_BACKUP|LAYOUT_BACKUP|JSON|REDACTED_BACKUP):/.test(marker);
+  const legacyBackup=!marker&&/^School_Backup_/.test(file.getName());
+  const audit=!marker&&/^Audit_[A-Za-z0-9_-]+\.json$/.test(file.getName());
+  let legacyCollection=null;const parents=file.getParents();while(parents.hasNext()){const name=parents.next().getName();if(name.indexOf('records_')===0&&VS_LAYOUT_COLLECTIONS.indexOf(name.slice(8))>=0)legacyCollection=name.slice(8);}
+  if(!known&&!legacyBackup&&!legacyCollection&&!audit)return;
+  const blob=file.getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('Delete everywhere archive exceeds safe limit');
+  const raw=blob.getDataAsString(),value=JSON.parse(raw);if(value.schoolId!==school)throw new Error('Foreign school archive');
+  if(audit){
+    const original=file.getName().slice(6,-5);if(deletedFiles.indexOf(original)<0)return;
+    if(!/^[A-Za-z0-9_-]{1,200}$/.test(value.backupId||'')||!/^[a-f0-9]{64}$/.test(value.hash||''))throw new Error('Delete everywhere archive identity mismatch');
+    let copy;try{copy=VS_managedFile(value.backupId);}catch(error){const missing=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(value.backupId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});if(missing.getResponseCode()!==404)throw error;}
+    if(copy&&(copy.getDescription()!=='VIDYA_BINARY_BACKUP:'+school+':'+value.hash||VS_layoutBytesHash(copy.getBlob().getBytes())!==value.hash))throw new Error('Delete everywhere archive identity mismatch');
+    VS_permanentlyEraseOwnedFile(value.backupId);VS_permanentlyEraseOwnedFile(file.getId());return;
+  }
+  if(legacyBackup&&(value.schemaVersion!==3||!value.records||typeof value.records!=='object'))throw new Error('Delete everywhere archive identity mismatch');
+  if(known){const parts=marker.split(':'),hash=marker.indexOf('VIDYA_RECORD_BACKUP:')===0?VS_layoutHash(raw):VS_layoutHash(value);if(parts[1]!==school||parts[parts.length-1]!==hash)throw new Error('Delete everywhere archive identity mismatch');}
+  const singleCollection=value.collection||legacyCollection,single=targets.find(t=>t.collection===singleCollection&&t.id===value.id);
+  if(single){const matches=VS_eraseArchiveGeneration(single,value.data);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)return;VS_permanentlyEraseOwnedFile(file.getId());return;}
+  let changed=false;
+  for(const target of targets){
+    const rows=value.collection===target.collection?value.records:!value.collection&&value.records?value.records[target.collection]:null;
+    if(!rows||!Object.prototype.hasOwnProperty.call(rows,target.id))continue;
+    const row=rows[target.id];if(!row||row.schoolId!==school)throw new Error('Foreign school archive record');
+    const matches=VS_eraseArchiveGeneration(target,row);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)continue;
+    const minimal={schoolId:school,_syncDeleted:true,_syncRevision:target.revision,...(target.generation?{_syncDeletedOwner:target.generation}:{})};
+    if(VS_layoutHash(row)===VS_layoutHash(minimal))continue;rows[target.id]=minimal;changed=true;
+  }
+  if(value.previousHead&&targets.some(target=>target.collection===value.collection)){delete value.previousHead;changed=true;}
+  if(!changed)return;
+  // These are archival pointers, never an automatic recovery source. Drop the
+  // obsolete link on a privacy redaction rather than leave a stale content hash.
+  if(value.previousHead)delete value.previousHead;
+  const text=JSON.stringify(value),hash=marker.indexOf('VIDYA_RECORD_BACKUP:')===0?VS_layoutHash(text):VS_layoutHash(value);
+  file.setContent(text);if(VS_layoutHash(JSON.parse(file.getBlob().getDataAsString()))!==VS_layoutHash(value))throw new Error('Delete everywhere archive readback pending');
+  const prefix=known?marker.split(':').slice(0,marker.indexOf('VIDYA_JSON:')===0?3:2).join(':'):'VIDYA_REDACTED_BACKUP:'+school;file.setDescription(prefix+':'+hash);
+  const props=PropertiesService.getScriptProperties(),all=props.getProperties();
+  for(const key of Object.keys(all)){if(!/^VS_(?:JSON_HEAD_|LAYOUT_)/.test(key))continue;let state;try{state=JSON.parse(all[key]);}catch(_){continue;}
+    let touched=false;function update(item,depth){if(!item||typeof item!=='object'||depth>12)return;if((item.fileId===file.getId()||item.id===file.getId())&&typeof item.hash==='string'){item.hash=hash;touched=true;}for(const child of Object.values(item))if(child&&typeof child==='object')update(child,depth+1);}update(state,0);if(touched)props.setProperty(key,JSON.stringify(state));
+  }
 }

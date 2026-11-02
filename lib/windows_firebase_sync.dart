@@ -1,3 +1,4 @@
+import 'windows_drive_delivery_queue.dart';
 import 'windows_record_change_policy.dart';
 import 'live_sync_protocol.dart';
 import 'windows_shared_repair_knowledge.dart';
@@ -382,6 +383,7 @@ class WindowsFirebaseRemote {
       'collection': collection,
       'id': id,
       'syncProtocol': 2,
+      if (item['operation'] == 'delete') 'deleteEverywhereVersion': 1,
       'operationId': item['operationId'],
       'expectedRecordRevision': item['baseCloudRevision'] ?? '',
       if (item['createIntent'] == true) 'createIntent': true,
@@ -420,6 +422,14 @@ class WindowsFirebaseRemote {
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
+    if (liveCommit) await WindowsDriveDeliveryQueue.retain(school, collection, id,
+        item['operationId'].toString(), result, deleting: item['operation'] == 'delete');
+    if (item['operation'] == 'delete' && !liveCommit &&
+        (result['deleteEverywhereVersion'] != 1 ||
+         result['driveDeletionComplete'] != true ||
+         result['firebaseDeletionComplete'] != true)) {
+      throw StateError('Cloud deletion is not verified. Pending operation retained.');
+    }
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
         result['recordRevision'] is! String)

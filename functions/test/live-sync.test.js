@@ -19,9 +19,9 @@ test('new live authority is closed by default and normal school authorization is
 test('migration refuses changed baseline and never marks incomplete data active',async()=>{
  const commands=[];let reads=0;
  const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async(s,l,b)=>{commands.push(b.command);return {state:'seeding'};}}});
- await assert.rejects(live.prepare(A,'school_expenses',async()=>({success:true,schoolId:A,syncProtocol:2,records:{},collectionRevision:++reads===1?'before':'after',unchanged:true})),e=>e.code==='LIVE_BASELINE_CHANGED');
+ await assert.rejects(live.prepare(A,'school_expenses',async()=>({success:true,schoolId:A,syncProtocol:2,records:{},collectionRevision:++reads===1?'before':'after',...(reads>1?{unchanged:true}:{})})),e=>e.code==='LIVE_BASELINE_CHANGED');
  assert.deepEqual(commands,['seedBegin']);
- await assert.rejects(live.prepare(A,'students_directory',async()=>{}),e=>e.status===412);
+ await assert.rejects(live.prepare(A,'backups',async()=>{}),e=>e.status===412);
 });
 test('foreign baseline is rejected before any cloud authority writes',async()=>{
  let writes=0;const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async()=>{writes++;}}});

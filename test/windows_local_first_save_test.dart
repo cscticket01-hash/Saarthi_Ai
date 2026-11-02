@@ -234,9 +234,13 @@ void main() {
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   });
   test('managed images go to own Drive before text records; foreign uploads fail', () async {
-    final data={'schoolId':school,'schoolName':'Saved','logoUrl':'data:image/png;base64,YWJj'};
+    final png=img.encodePng(img.Image(width:16,height:16));
+    final data={'schoolId':school,'schoolName':'Saved','logoUrl':'data:image/png;base64,${base64Encode(png)}'};
     final safe=await prepareManagedRecord(data,school,(action,body) async {
-      expect(action,'managed/file/upload');expect(body['base64'],'YWJj');
+      expect(action,'managed/file/upload');
+      final uploaded=base64Decode(body['base64'] as String);
+      expect(img.decodeImage(uploaded),isNotNull);
+      expect(uploaded.length,lessThanOrEqualTo(30*1024));
       return {'success':true,'schoolId':school,'fileId':'own-logo','fileUrl':'https://drive.google.com/file/d/own-logo/view'};
     });
     expect(safe['logoFileId'],'own-logo');expect(jsonEncode(safe),isNot(contains('base64')));

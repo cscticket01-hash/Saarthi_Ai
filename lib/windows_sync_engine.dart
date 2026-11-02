@@ -1,3 +1,4 @@
+import 'windows_drive_delivery_queue.dart';
 import 'windows_live_sync_runtime.dart';
 import 'live_sync_protocol.dart';
 import 'windows_sync_evidence.dart';
@@ -67,6 +68,37 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Map<String, dynamic>? _transferStatus;
   DateTime? _transferReadAfter;
   bool _transferReadBusy = false;
+  Timer? _driveDeliveryTimer;
+  Future<void> _refreshDriveDeliveries() async {
+    if (!_initialized || isPaused || _resetPaused || !ManagedSchoolSession.enabled ||
+        !validSchoolId(_activeSchoolSyncId)) return;
+    final school = _activeSchoolSyncId, profile = FirebaseFirestore.instance.activeProfileId;
+    try {
+      await WindowsDriveDeliveryQueue.poll(school,
+        canAdmit: () => _initialized && !isPaused && !_resetPaused &&
+            FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school,
+        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body));
+      if (FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school) {
+        _transferReadAfter = null;
+      }
+    } catch (_) { /* Receipt work stays durable; no record queue is cleared. */ }
+  }
+  Future<Map<String, dynamic>> _withDriveHistory(Map<String, dynamic> status, String profile) async {
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    if (school is! String || !validSchoolId(school)) return status;
+    final history = await WindowsDriveDeliveryQueue.history(school);
+    if (FirebaseFirestore.instance.activeProfileId != profile) return status;
+    final combined = {for (final row in history) row['id']: row};
+    if (_liveRuntime != null && !isPaused && !_resetPaused) {
+      try {
+        final response = await ManagedSchoolSession.callForSchool(school, 'managed/live/backupHistory', {'liveProtocol':1});
+        if (FirebaseFirestore.instance.activeProfileId != profile) return status;
+        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) combined[row['id']] = row;
+      } catch (_) { /* The durable local receipt list survives a provider outage. */ }
+    }
+    final rows = combined.values.toList()..sort((a,b)=>(b['acceptedAt'] as num? ?? 0).compareTo(a['acceptedAt'] as num? ?? 0));
+    return {...status, 'driveSaveHistory': rows.take(25).toList(), 'driveHistoryLocal': true};
+  }
   Future<Map<String, dynamic>?> refreshTransferStatus() async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     if (_transferProfile != origin) {
@@ -83,14 +115,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     try {
       final value = await ManagedSchoolSession.call('managed/cloudflare/status', {});
       if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
-      _transferStatus = value;
+      _transferStatus = await _withDriveHistory(value, origin);
     } catch (error) {
       if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
       final recovery = windowsSyncRecovery(error);
       if (recovery.kind == SyncFailureKind.quota) {
         _transferReadAfter = DateTime.now().add(recovery.delay(1));
       }
-      _transferStatus = {...?_transferStatus, 'unavailable': true};
+      _transferStatus = await _withDriveHistory({...?_transferStatus, 'unavailable': true}, origin);
     } finally {
       _transferReadBusy = false;
     }
@@ -1243,6 +1275,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
     if (_resetPaused) return;
 
+    _driveDeliveryTimer?.cancel();
+    _driveDeliveryTimer=Timer.periodic(const Duration(seconds:15), (_) => unawaited(_refreshDriveDeliveries()));
+    unawaited(_refreshDriveDeliveries());
     _historyExpiryTimer?.cancel();
     _historyExpiryTimer=Timer.periodic(const Duration(minutes:1),(_)=>_pruneRepairHistory());
     _schedule.start(reconciliationInterval);
@@ -1472,6 +1507,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _schedule.stop();
     _changeTimer?.cancel();
     _historyExpiryTimer?.cancel();
+    _driveDeliveryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
@@ -2294,6 +2330,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _admitBatch();
           _setCheckingCloud(false);
           await _measure('recordUploadStage', () => _pushManagedOutbox());
+          unawaited(_refreshDriveDeliveries());
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
               !isRecordSyncConflict(e))
@@ -4278,6 +4315,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _schedule.stop();
     _changeTimer?.cancel();
     _historyExpiryTimer?.cancel();
+    _driveDeliveryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
