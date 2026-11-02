@@ -77,6 +77,21 @@ jobs:
         env:
           APPDATA: ${{ runner.temp }}/live-five-pc-convergence
         run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name 'five independent SQLite devices converge without joining their queues' test/windows_multi_pc_sync_test.dart
+  synthetic-sqlite-load:
+    name: Synthetic 1k/5k student queues and verified Script VM ACK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Exercise existing 1000/5000 student upload, readback and delta test
+        env:
+          APPDATA: ${{ runner.temp }}/live-synthetic-student-load
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 15m --tags load --plain-name 'queued students -> real Script VM -> independent SQLite PC, measured' test/windows_multi_pc_sync_test.dart
   worker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
