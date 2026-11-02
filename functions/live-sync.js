@@ -100,8 +100,9 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    const page=await command(school,{command:'rollbackSnapshot',collection,at:head.cursor,after});
    if(!Array.isArray(page.records))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
    for(const entry of page.records){
-    // A still-resident payload has not completed verified Drive handoff.
-    if(entry.source!=='drive'||entry.record!==null)refuse(409,'LIVE_BACKUP_PENDING');
+    // A 24h resident cache may already have exact verified Drive proof.
+    // Rollback needs signed Drive readback, never a cache or merely an ACK.
+    if(!entry.driveRevision||!entry.payloadHash)refuse(409,'LIVE_BACKUP_PENDING');
     const reply=await readDrive({action:'managed_records',operation:'read',collection,id:entry.id,syncProtocol:2});
     const record=reply?.records?.[entry.id];
     if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true||!record||record.schoolId!==school||record._syncRevision!==entry.driveRevision||payloadHash(record)!==entry.payloadHash)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
