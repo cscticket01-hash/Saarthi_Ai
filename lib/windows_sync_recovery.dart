@@ -153,6 +153,21 @@ bool networkRecoveryCandidate(Map item) =>
     {'retry','needsAttention'}.contains(item['syncState']) &&
     {'networkPath','timeout'}.contains(item['failureCategory']);
 
+/// Re-open only after a verified reconnect, and at most once per school
+/// within the cooldown. This is not permission to bypass quota or row CAS.
+bool verifiedReconnectRecoveryDue({
+  required String activeSchool,
+  required String? failedSchool,
+  required DateTime now,
+  DateTime? lastRecoveredAt,
+  String? lastRecoveredSchool,
+  Duration cooldown = const Duration(minutes: 2),
+}) {
+  if (activeSchool.isEmpty || activeSchool != failedSchool) return false;
+  if (lastRecoveredAt == null || lastRecoveredSchool != activeSchool) return true;
+  return !now.isBefore(lastRecoveredAt.add(cooldown));
+}
+
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
   if (error is FieldDeltaUnavailable) return const SyncRecoveryDecision(
     SyncFailureKind.server,retry:true,independentRecords:true);
