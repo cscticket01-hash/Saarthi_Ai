@@ -59,10 +59,10 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   }).catch(error=>{if(readViews.get(key)===entry)evictRead(key);throw error;});
   return structuredClone(await entry.promise);
  }
- async function cachedRead(cache,id,read){
+ async function cachedRead(cache,id,read,ttl=30000){
   const old=cache.get(id);if(old&&old.until>now())return old.promise;
   if(cache.size>=5000)cache.delete(cache.keys().next().value);
-  const promise=read();const value={promise,until:now()+30000};cache.set(id,value);
+  const promise=read();const value={promise,until:now()+ttl};cache.set(id,value);
   try{return await promise;}catch(e){if(cache.get(id)===value)cache.delete(id);throw e;}
  }
  async function mobileState(id){return cachedRead(mobileStates,id,async()=>{
@@ -285,11 +285,16 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
     }
    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
    if(['managed_upload_resumable','managed_upload'].includes(body.action)){
-    const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
-    // Older protocol-2 Scripts can still support only verified full uploads.
-    // Do not accept bytes into a delivery lane they cannot drain.
-    if(capability.storageReady===true&&capability.uploadResumableVersion===1)
+    // The *entire* resumable session must use the same durable Cloudflare
+    // lane. An old Script-only begin followed by an edge part splits offset
+    // ownership and leaves orphaned media; fail closed for opted-in edge
+    // sessions unless the current school Script has proven upload support.
+    const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}),300000);
+    if(capability.storageReady===true&&capability.uploadResumableVersion===1&&capability.schoolId===m.schoolId)
      return body.action==='managed_upload_resumable'?edgeDelivery.file(m.schoolId,body):edgeDelivery.wholeFile(m.schoolId,body);
+    if(body.action==='managed_upload_resumable')fail(503,'Cloudflare file staging requires a verified school Script provider','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+    // A non-resumable legacy file may still be sent directly to the owner's
+    // Script; never hand a staged part to a different durable upload owner.
    }
   }
 
@@ -302,7 +307,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   try{const result=await signedRequest(m,body);
    if(body.action==='managed_health'){
     if(uploadCapabilities.size>=5000)uploadCapabilities.delete(uploadCapabilities.keys().next().value);
-    uploadCapabilities.set(m.schoolId,{promise:Promise.resolve(result),until:now()+30000});
+    uploadCapabilities.set(m.schoolId,{promise:Promise.resolve(result),until:now()+300000});
    }
    if(['managed_records','managed_delta','managed_mobile'].includes(body.action)){
     const ack=body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision.length>0;
