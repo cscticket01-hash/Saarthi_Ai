@@ -185,3 +185,11 @@ replaced by generic record CAS. See `live-sync-lifecycle-review.md` for the
 contracts and tests. Production flags remain off. Physical-device, large-load
 latency, scalable history compaction and full lifecycle admission remain release
 gates; local tests are not evidence of production rollout.
+
+Rollback routes notices directly to verified school Drive rather than reviving
+an obsolete legacy notice cache. Global live replay emits strict, payload-free
+Drive retirement invalidations for sealed collections, allowing other active
+collections to keep advancing. Receivers durably retain that retirement marker
+with the cursor, without inventing a business record or upload acknowledgement.
+Mobile person operations do not consume migration admission markers because
+they cannot mutate any admitted administrative collection.

@@ -303,7 +303,9 @@ class FirebaseFirestore {
         collection:'_windows_live_incoming',documentId:'${page.schoolId}-${event['sequence']}',
         data:{'schoolId':page.schoolId,'sequence':event['sequence'],
           'collection':event['collection'],'id':event['id'],
-          'record':jsonDecode(jsonEncode(event['record'])),'state':'retained'}),
+          'record':jsonDecode(jsonEncode(event['record'])),'state':'retained',
+          if(event['retired']==true)...{'retired':true,'source':'drive',
+            'recordAuthority':'school-drive'}}),
       _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
         documentId:page.schoolId,data:{'schoolId':page.schoolId,'cursor':page.cursor}),
     ];

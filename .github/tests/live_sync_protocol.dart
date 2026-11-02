@@ -25,6 +25,20 @@ Future<void> main()async{
  var badAck=false;try{verifyLiveRecordReceipt({...ack,'record':null},school:school,collection:'school_expenses',id:'one',operationId:'operation-original');}catch(_){badAck=true;}
  check(badAck);
  check(LiveSyncPage.parse(page(school),school,0).events.length==1);
+ final retired=page(school);
+ retired['events']=[{'sequence':1,'collection':'school_expenses','id':'one',
+  'retired':true,'source':'drive','recordAuthority':'school-drive','record':null}];
+ check(LiveSyncPage.parse(retired,school,0).events.single['retired']==true);
+ for(final field in ['retired','source','recordAuthority','record']) {
+  final invalid={...retired,'events':[{...retired['events'][0]}..remove(field)]};
+  var rejected=false;try{LiveSyncPage.parse(invalid,school,0);}catch(_){rejected=true;}
+  check(rejected);
+ }
+ final invented={...retired,'events':[{...retired['events'][0],
+  'record':{'schoolId':school,'_syncRevision':'live-fabricated'}}]};
+ var inventedRejected=false;try{LiveSyncPage.parse(invented,school,0);}catch(_){inventedRejected=true;}
+ check(inventedRejected);
+
  for(final variant in ['foreign','gap','future','false-more','bad-revision']){
   final data=page(school);
   if(variant=='foreign')data['schoolId']='other';

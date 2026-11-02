@@ -28,10 +28,17 @@ function createLiveSync({edge,schools=[],now=Date.now}){
  }
  async function replay(school,body,readDrive){
   const result=await command(school,body),cache=new Map();
+  const authority=body.command==='changes'?await command(school,{command:'head'}):null;
   const rows=body.command==='changes'?result.events:result.records;
   if(!Array.isArray(rows))refuse(502,'LIVE_REPLAY_UNVERIFIED');
   for(const entry of rows){
    const collection=body.command==='changes'?entry.collection:body.collection,key=collection+'/'+entry.id;
+   if(authority?.collections?.find(item=>item.collection===collection)?.state==='legacy'){
+    // Verified rollback retired this event's live owner. Retain a durable
+    // invalidation so receivers reconcile through the normal Drive gateway;
+    // never hydrate an obsolete live revision or stall other collections.
+    entry.record=null;entry.retired=true;entry.source='drive';entry.recordAuthority='school-drive';continue;
+   }
    // Superseded events are current-state hints. Fetch one current version per
    // key, never ask Drive for a historical row that has since been overwritten.
    if(!cache.has(key))cache.set(key,await read(school,collection,entry.id,readDrive));

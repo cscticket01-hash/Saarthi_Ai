@@ -26,11 +26,25 @@ class LiveSyncPage {
           entry['id'] is! String || (entry['id'] as String).isEmpty ||
           (entry['id'] as String).length > 200 ||
           (entry['id'] as String).contains('/') ||
-          {'.', '..', '__proto__', 'prototype', 'constructor'}.contains(entry['id']) ||
+          {'.', '..', '__proto__', 'prototype', 'constructor'}.contains(entry['id'])) {
+        throw StateError('Live replay identity or sequence differs; cursor retained.');
+      }
+      if (entry['retired'] == true) {
+        // A verified rollback retires this delivery authority. This event only
+        // invalidates the affected key for its Drive owner; it is no record ACK.
+        const allowed = {'sequence', 'collection', 'id', 'retired', 'source',
+          'recordAuthority', 'record'};
+        if (entry['source'] != 'drive' ||
+            entry['recordAuthority'] != 'school-drive' ||
+            !entry.containsKey('record') || entry['record'] != null ||
+            entry.keys.any((key) => !allowed.contains(key))) {
+          throw StateError('Retired live authority did not verify; cursor retained.');
+        }
+      } else if (entry.containsKey('retired') ||
           entry['record'] is! Map || entry['record']['schoolId'] != school ||
           entry['record']['_syncRevision'] is! String ||
           !(entry['record']['_syncRevision'] as String).startsWith('live-')) {
-        throw StateError('Live replay identity or sequence differs; cursor retained.');
+        throw StateError('Live replay record differs; cursor retained.');
       }
       events.add(Map<String, dynamic>.from(entry));
       expected++;

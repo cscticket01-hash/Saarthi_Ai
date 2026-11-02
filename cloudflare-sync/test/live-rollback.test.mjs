@@ -38,6 +38,14 @@ test('actual signed GS handoff verifies rollback including tombstone and resumes
  assert.equal(saved.records.retained.title,'retained');assert.equal(saved.records.deleted._syncDeleted,true);
  assert.ok(saved.records.retained._syncRevision&&!saved.records.retained._syncRevision.startsWith('live-'));
  const stats=await f.live.command(A,{command:'stats'});assert.ok(Object.values(stats.payloadCopies).every(n=>n===0));
+ const replay=await f.live.replay(A,{command:'changes',after:0},f.read);
+ assert.equal(replay.events.length,3);
+ for(const event of replay.events){assert.equal(event.record,null);assert.equal(event.retired,true);assert.equal(event.source,'drive');assert.equal(event.recordAuthority,'school-drive');}
+ await f.live.prepare(A,'school_settings',f.read);
+ await f.live.commit(A,{collection:'school_settings',id:'still-live',operation:'write',operationId:'rollback-other-collection-0001',expectedRevision:'',data:{schoolId:A,title:'other collection still replays'}},f.read);
+ const continued=await f.live.replay(A,{command:'changes',after:0},f.read);
+ assert.equal(continued.events.at(-1).record.title,'other collection still replays');
+ assert.equal(continued.cursor,4);
 });
 test('rollback never accepts pending backups, fake fingerprint or newer conflicting Drive revision',async t=>{
  const collection='school_expenses',f=await setup(t,collection);await f.commit('expense');

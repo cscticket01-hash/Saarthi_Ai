@@ -26,6 +26,32 @@ void main(){
   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   expect((await db.collection('school_expenses').get()).docs,isEmpty);
  });
+ test('retired authority retains a Drive invalidation without fabricating business truth',()async{
+  final store=WindowsLiveSyncStore(db);
+  final events=<Map<String,dynamic>>[{'sequence':1,'collection':'school_expenses',
+    'id':'one','retired':true,'source':'drive','recordAuthority':'school-drive','record':null}];
+  await store.retainPage(LiveSyncPage(school,0,1,1,events));
+  expect(await store.cursor(school),1);
+  final incoming=(await db.collection('_windows_live_incoming').get()).docs.single.data();
+  expect(incoming['retired'],isTrue);
+  expect(incoming['source'],'drive');
+  expect(incoming['recordAuthority'],'school-drive');
+  expect(incoming.containsKey('record'),isTrue);
+  expect(incoming['record'],isNull);
+  expect((await db.collection('school_expenses').get()).docs,isEmpty);
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+ });
+ test('incomplete retired proof or retired record payload cannot advance a checkpoint',()async{
+  final store=WindowsLiveSyncStore(db);
+  for(final record in [<String,dynamic>{'schoolId':school,'_syncRevision':'live-fake'},null]) {
+   final event=<String,dynamic>{'sequence':1,'collection':'school_expenses','id':'one',
+     'retired':true,'source':'drive','record':record};
+   if(record!=null)event['recordAuthority']='school-drive';
+   await expectLater(store.retainPage(LiveSyncPage(school,0,1,1,[event])),throwsStateError);
+  }
+  expect(await store.cursor(school),0);
+  expect((await db.collection('_windows_live_incoming').get()).docs,isEmpty);
+ });
  test('two replay owners cannot overwrite a newer durable checkpoint',()async{
   final store=WindowsLiveSyncStore(db);await store.retainPage(page(0,1));
   await expectLater(store.retainPage(page(0,1)),throwsStateError);

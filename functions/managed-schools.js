@@ -255,6 +255,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
  async function signedLegacy(m,body){
+  const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1){
    if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return edgeDelivery.record(m.schoolId,body);
    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body);
@@ -267,8 +268,8 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    }
   }
 
-  if(edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.operation!=='read'&&(body.syncProtocol!==2||!['write','delete'].includes(body.operation)))fail(409,'Cloudflare notice writes require versioned sync','SYNC_PROTOCOL_REQUIRED');
-  if(edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.syncProtocol===2&&['read','write','delete'].includes(body.operation)){
+  if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.operation!=='read'&&(body.syncProtocol!==2||!['write','delete'].includes(body.operation)))fail(409,'Cloudflare notice writes require versioned sync','SYNC_PROTOCOL_REQUIRED');
+  if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.syncProtocol===2&&['read','write','delete'].includes(body.operation)){
    if(body.operation!=='read'){const ack=await cloudflareSync.writeNotice(m.schoolId,body,()=>noticeBaseline(m.schoolId));invalidate(m.schoolId);await changeHint(m.schoolId,'school_notices',body.id);return ack;}
    const state=await cloudflareSync.notices(m.schoolId,()=>noticeBaseline(m.schoolId));const records=body.id?{...(state.records[body.id]?{[body.id]:state.records[body.id]}:{})}:state.records;return {success:true,schoolId:m.schoolId,syncProtocol:2,collectionRevision:state.revision,records:body.knownRevision===state.revision?{}:records,...(body.id?{pointRead:true}:{}),...(body.knownRevision===state.revision?{unchanged:true}:{}),cloudflareAccepted:true};
   }
@@ -563,6 +564,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
   const liveNotices=liveSync.enabled(b.schoolId)&&await liveMigration.state(b.schoolId,'school_notices')==='active';
+  const driveNotices=liveSync.enabled(b.schoolId)&&await liveMigration.rolledBack(b.schoolId,'school_notices');
   let result=edgeEnabled(b.schoolId)&&b.request.action==='mobile_notice'
    ?await signed(m,{...body,request:{...b.request,action:'mobile_session_verify'}})
    :b.request.action==='mobile_dashboard'&&b.request.afterSignal!==true
@@ -570,6 +572,10 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(edgeEnabled(b.schoolId)&&['mobile_dashboard','mobile_notice'].includes(b.request.action)){
    const state=liveNotices?await (async()=>{
     const view=await liveGateway.records(b.schoolId,{operation:'read',collection:'school_notices',syncProtocol:2,liveProtocol:1},record=>signedRequest(m,record));
+    return {records:view.records,revision:view.collectionRevision};
+   })():driveNotices?await (async()=>{
+    const view=await signedRequest(m,{action:'managed_records',operation:'read',collection:'school_notices',syncProtocol:2});
+    if(view.syncProtocol!==2||!view.records||typeof view.collectionRevision!=='string')fail(503,'School notices verification pending','LIVE_ROLLBACK_UNVERIFIED');
     return {records:view.records,revision:view.collectionRevision};
    })():await cloudflareSync.notices(b.schoolId,()=>noticeBaseline(b.schoolId));
    if(b.request.action==='mobile_notice'){const record=state.records[b.request.noticeId];if(!record||record._syncDeleted)fail(404,'School notice unavailable');result={...result,notice:record};}
@@ -792,7 +798,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(liveCollections.length&&b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   // A commit on another broker cannot invalidate this process's five-second
   // view cache. Verified delta apply must read current authoritative records.
-  const cfNotices=edgeEnabled(m.schoolId)&&collections.includes('school_notices')&&!liveCollections.includes('school_notices');
+  const cfNotices=edgeEnabled(m.schoolId)&&collections.includes('school_notices')&&!liveCollections.includes('school_notices')&&!(liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices'));
   const excluded=new Set([...liveCollections,...(cfNotices?['school_notices']:[])]);
   const driveBody=excluded.size?{...body,collections:collections.filter(c=>!excluded.has(c)),knownRevisions:Object.fromEntries(Object.entries(known).filter(([k])=>!excluded.has(k))),...(recordCheckpoints?{knownRecordRevisions:Object.fromEntries(Object.entries(recordCheckpoints).filter(([k])=>!excluded.has(k)))}:{})}:body;
   const result=driveBody.collections.length?(b.headOnly===true?await readView(m.schoolId,driveBody,()=>signed(m,driveBody)):await signed(m,driveBody)):{success:true,schoolId:m.schoolId,syncProtocol:2,...(b.headOnly===true?{headOnly:true,revisions:{}}:{changes:{}})};
@@ -924,7 +930,8 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   });
   if(liveSync.enabled(m.schoolId)){
    const states=await Promise.all(operations.map(op=>liveMigration.state(m.schoolId,op.collection)));
-   if(states.some(state=>state==='active'||state==='rolling_back')){
+   const rolledBackNotices=operations.some(op=>op.collection==='school_notices')&&await liveMigration.rolledBack(m.schoolId,'school_notices');
+   if(rolledBackNotices||states.some(state=>state==='active'||state==='rolling_back')){
     if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
     if(states.some(state=>state==='rolling_back'||state==='preparing'))fail(503,'Sync migration pending; saved changes retained','LIVE_MIGRATION_PENDING');
     const acknowledgements=[];

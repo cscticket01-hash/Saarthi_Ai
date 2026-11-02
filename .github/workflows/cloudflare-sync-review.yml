@@ -81,7 +81,9 @@ jobs:
       - run: dart --disable-dart-dev .github/tests/sync3_diagnostics_adaptive.dart
       - run: dart --disable-dart-dev .github/tests/live_sync_protocol.dart
       - run: flutter pub get
-      - run: flutter test --concurrency=1 test/windows_live_sync_store_test.dart test/live_sync_receipt_test.dart test/windows_sheet_recovery_test.dart
+      - env:
+          APPDATA: ${{ runner.temp }}/live-protocol-recovery
+        run: flutter test --concurrency=1 test/windows_live_sync_store_test.dart test/live_sync_receipt_test.dart test/windows_sheet_recovery_test.dart
       - name: Verify existing offline duplicate self-repair on independent SQLite devices
         env:
           APPDATA: ${{ runner.temp }}/live-duplicate-recovery

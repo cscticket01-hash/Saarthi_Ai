@@ -55,3 +55,47 @@ test('rollback state blocks business reads and delta rather than serving stale D
  await assert.rejects(f.call({action:'managed/changes',collections:['school_expenses'],liveProtocol:1}),e=>e.code==='LIVE_ROLLBACK_PENDING');
  assert.equal(f.google.length,0);assert.equal(f.commands.length,0);
 });
+test('rolled-back notices use verified Drive for admin, delta and authorized mobile reads instead of stale legacy cache',async()=>{
+ const google=[],latest={schoolId:A,title:'latest Drive notice',_syncRevision:'drive-after-rollback',_syncOperationId:'drive-notice-operation-0001'};
+ let denySession=false;
+ const stale=()=>{throw Error('Stale Cloudflare notice lane must not be read after rollback');};
+ const edge={enabled:()=>true,notices:stale,writeNotice:stale,rpc:stale};
+ const f=fixture(async(_,opt)=>{
+  const body=JSON.parse(JSON.parse(opt.body).payload);google.push(body);
+  let result;
+  if(body.action==='managed_mobile'){
+   assert.equal(body.request.action,'mobile_session_verify');
+   result=denySession?{success:false,message:'School login required'}:{success:true,personId:'verified-student',role:'student'};
+  }else if(body.action==='managed_delta')result={changes:{school_notices:{syncProtocol:2,collectionRevision:'drive-notice-head',records:{notice:latest}}}};
+  else {assert.equal(body.action,'managed_records');assert.equal(body.collection,'school_notices');result={collectionRevision:'drive-notice-head',records:{notice:latest}};}
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,syncProtocol:2,...result})};
+ },{cloudflareSync:edge,liveSyncSchools:[A]});
+ f.docs.set('school_live_migrations/'+A,{collections:{school_notices:{state:'legacy',rollbackProof:{driveVerified:true,cursor:2,fingerprint:'a'.repeat(64)}}}});
+ const admin=await f.call({...read,collection:'school_notices'});assert.equal(admin.records.notice.title,latest.title);
+ const delta=await f.call({action:'managed/changes',collections:['school_notices'],liveProtocol:1});assert.equal(delta.changes.school_notices.records.notice._syncRevision,latest._syncRevision);
+ google.length=0;
+ const mobile=await f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_notice',noticeId:'notice',sessionToken:'existing'}});
+ assert.equal(mobile.notice.title,latest.title);assert.deepEqual(google.map(b=>b.action==='managed_mobile'?b.request.action:b.action),['mobile_session_verify','managed_records']);
+ denySession=true;google.length=0;
+ await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_notice',noticeId:'notice',sessionToken:'denied'}}),e=>e.status===403);
+ assert.deepEqual(google.map(b=>b.request?.action||b.action),['mobile_session_verify']);
+});
+test('active notice authority remains accessible to mobile only after signed session verification',async()=>{
+ const calls=[],notice={schoolId:A,title:'instant live notice',_syncRevision:'live-mobile-notice',_syncOperationId:'live-mobile-operation-0001'};
+ let denied=false;
+ const edge={enabled:()=>true,notices:()=>{throw Error('Legacy notice cache is stale');},rpc:async(s,l,b)=>{
+  assert.equal(l,'live');calls.push(b.command);
+  if(b.command==='head')return {schoolId:A,liveProtocol:1,cursor:1,collections:[{collection:'school_notices',state:'active',cursor:1}]};
+  if(b.command==='snapshot')return {schoolId:A,liveProtocol:1,cursor:1,records:b.after?[]:[{id:'notice',record:notice}],next:b.after?null:'notice'};
+  if(b.command==='read')return {schoolId:A,liveProtocol:1,cursor:1,record:notice,recordRevision:notice._syncRevision};
+  throw Error(b.command);
+ }};
+ const f=fixture(async(_,opt)=>{
+  const body=JSON.parse(JSON.parse(opt.body).payload);assert.equal(body.action,'managed_mobile');assert.equal(body.request.action,'mobile_session_verify');calls.push('session_verify');
+  return {ok:true,status:200,text:async()=>JSON.stringify(denied?{success:false,schoolId:A,message:'School login required'}:{success:true,schoolId:A,personId:'verified-student',role:'student'})};
+ },{cloudflareSync:edge,liveSyncSchools:[A]});
+ f.docs.set('school_live_migrations/'+A,{collections:{school_notices:{state:'active',activatedAt:time}}});
+ const request={action:'managed/mobile',schoolId:A,request:{action:'mobile_notice',noticeId:'notice',sessionToken:'existing'}};
+ const result=await f.call(request);assert.equal(result.notice.title,notice.title);assert.equal(calls[0],'session_verify');assert(calls.includes('snapshot'));
+ denied=true;calls.length=0;await assert.rejects(f.call(request),e=>e.status===403);assert.deepEqual(calls,['session_verify']);
+});

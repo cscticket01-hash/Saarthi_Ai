@@ -7,6 +7,10 @@ const refuse=code=>{throw Object.assign(Error('Sync migration is pending; saved 
 function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
  const ref=school=>db.doc('school_live_migrations/'+school);
  async function legacy(school,body,run){
+  // Mobile operations have their own person/session/attendance/complaint
+  // owners and cannot mutate any admitted live collection. Public invalid
+  // sessions must not consume permanent admin migration admission markers.
+  if(body.action==='managed_mobile')return run();
   const read=body.action==='managed_records'&&body.operation==='read'||['managed_health','managed_summary','managed_delta'].includes(body.action);
   if(read)return run();
   const token=randomUUID(),r=ref(school),collection=body.action==='managed_records'?body.collection:body.action==='managed_mobile'?'__mobile_lifecycle':null;
@@ -101,6 +105,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   return {liveProtocol:1,schoolId:school,collection,state:'legacy',...rollbackProof};
  }
  async function state(school,collection){return (await ref(school).get()).data()?.collections?.[collection]?.state||'legacy';}
- return {legacy,prepare,assertActive,live,rollback,state};
+ async function rolledBack(school,collection){const value=(await ref(school).get()).data()?.collections?.[collection];return value?.state==='legacy'&&!!value.rollbackProof;}
+ return {legacy,prepare,assertActive,live,rollback,state,rolledBack};
 }
 module.exports={createLiveMigration};
