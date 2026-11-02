@@ -28,14 +28,14 @@ void main() {
         throw http.ClientException('Connection closed before full header was received');
       },'managed/records',{'operation':'write','collection':'school_config'}),
       throwsA(isA<http.ClientException>()));
-    expect(count,1,'unknown writes must never be replayed by startup');
+    expect(count,1,reason:'unknown writes must never be replayed by startup');
     count=0;
     await expectLater(WindowsSchoolProfileRestore.readWithTransportRecovery(
       (action,body)async{
         count++;
         throw StateError('HTTP 503 school storage unavailable');
       },'managed/profile',{'operation':'read'}),throwsStateError);
-    expect(count,1,'server errors need safe diagnostics, not synthetic success');
+    expect(count,1,reason:'server errors need safe diagnostics, not synthetic success');
   });
   test('pre-marker account recovers same environment without fabricated registration', () async {
     for (final storage in [false, true]) {
