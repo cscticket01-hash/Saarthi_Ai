@@ -7585,7 +7585,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.3',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -8739,19 +8739,32 @@ function VS_eraseArchiveGeneration(target,row){
 }
 function VS_eraseExactRecordArchives(targets,plan,onProgress){
   if(!plan.archiveIds){plan.archiveIds=VS_eraseArchiveInventory();plan.archiveCursor=0;onProgress();}
-  let count=0;
+  let count=0,inspected=0;
+  const root=VS_managedRoot().getId(),ownedFolders={};
+  function owns(folder){const id=folder.getId();if(id===root)return true;if(Object.prototype.hasOwnProperty.call(ownedFolders,id))return ownedFolders[id];ownedFolders[id]=false;const parents=folder.getParents();while(parents.hasNext())if(owns(parents.next())){ownedFolders[id]=true;return true;}return false;}
   // Archive removal/redaction is idempotent. Persist the cursor once per
   // bounded batch, including on failure, rather than rewriting the parent
   // Sheet/head for every unrelated file inspected.
   const started=Date.now();
-  try{while(plan.archiveCursor<plan.archiveIds.length&&count<5&&Date.now()-started<25000){
+  try{while(plan.archiveCursor<plan.archiveIds.length&&count<5&&inspected<100&&Date.now()-started<25000){
     const fileId=plan.archiveIds[plan.archiveCursor];let file;
-    try{file=VS_managedFile(fileId);}catch(error){
+    try{
+      file=DriveApp.getFileById(fileId);
+      // Plans created by older versions contain ordinary media too. Skip it
+      // without spending an archive slot or doing ancestry reads. No skipped
+      // file is read, modified or deleted.
+      const mime=file.getMimeType();
+      if(mime!=='application/json'&&mime!=='application/vnd.google-apps.spreadsheet')file=null;
+      if(file){const parents=file.getParents(),folders=[];while(parents.hasNext())folders.push(parents.next());
+        if(!VS_isRecordArchive(file,'')&&!folders.some(folder=>VS_isRecordArchive(file,folder.getName())))file=null;
+        else if(!folders.some(owns))throw new Error('Foreign school file');
+      }
+    }catch(error){
       const response=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(fileId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
       if(response.getResponseCode()!==404)throw error;
     }
-    if(file)VS_eraseOneRecordArchive(file,targets,plan.files);
-    plan.archiveCursor++;count++;
+    if(file){VS_eraseOneRecordArchive(file,targets,plan.files);count++;}
+    plan.archiveCursor++;inspected++;
   }}finally{onProgress();}
   return plan.archiveCursor===plan.archiveIds.length;
 }

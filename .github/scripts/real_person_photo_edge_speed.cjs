@@ -181,8 +181,12 @@ async function main(){
    try{const old=await call('managed/file/read',{fileId});entry.photoDeleteVerified=false;entry.photoStillReadableBytes=Buffer.from(old.value.base64||'','base64').length;}
    catch(e){entry.photoDeleteVerified=entry.photoDeleteOwnerVerified===true;entry.photoDeleteNote=entry.photoDeleteVerified?'Photo not readable after delete':'Photo removal not proven';}
   }
+  console.log('REAL_PERSON_PHOTO_ROLE '+JSON.stringify({role:entry.role,addDriveVerified:entry.addDriveVerified,photoDriveVerified:entry.photoDriveVerified,deleteDriveVerified:entry.deleteDriveVerified,photoDeleteVerified:entry.photoDeleteVerified}));
   if(entry.addFailure||entry.cleanupError)break;
  }
+ const finishHealth=await request(ENDPOINT+'/healthz'),finishStorage=await call('managed/storage/check',{});
+ report.finishRuntimeCommit=finishHealth.value.runtimeCommit;report.finishScriptBundleVersion=finishStorage.value.scriptBundleVersion;
+ check(report.finishRuntimeCommit===report.runtimeCommit&&report.finishScriptBundleVersion===report.scriptBundleVersion,'TEST deployment changed during measurement; cleanup evidence retained, timings not certified');
  report.photoBytesVerified=report.roles.length===3&&report.roles.every(r=>r.photoDriveVerified);
  report.allPhotosDeleted=report.roles.length===3&&report.roles.every(r=>r.photoDeleteVerified);
  report.status=report.roles.length===3&&report.roles.every(r=>r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified&&r.photoDeleteVerified)?'PASS':'INCOMPLETE';

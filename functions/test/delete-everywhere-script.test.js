@@ -57,11 +57,19 @@ test('archive inventory omits ordinary media but retains every supported archive
 });
 test('archive cursor persists once per batch and remains resumable on failure',()=>{
  const s=storage({lifecycle:true});rest(s);const files=[];
- for(let n=0;n<5;n++)files.push(s.roots[A].createFile('unrelated'+n,'bytes','image/png').id);
+ for(let n=0;n<5;n++)files.push(s.roots[A].createFile('School_Backup_'+n,JSON.stringify({schoolId:A,schemaVersion:3,records:{}}),'application/json').id);
  const plan={archiveIds:files,archiveCursor:0,files:[]};let saves=0;
  assert.equal(s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),true);assert.equal(saves,1);assert.equal(plan.archiveCursor,5);
  plan.archiveCursor=0;saves=0;let calls=0;
  s.context.VS_eraseOneRecordArchive=()=>{if(++calls===3)throw Error('synthetic failure');};
  assert.throws(()=>s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),/synthetic failure/);
  assert.equal(plan.archiveCursor,2);assert.equal(saves,1);
+});
+
+test('old unfiltered deletion plans skip ordinary media without consuming archive batch slots',()=>{
+ const s=storage({lifecycle:true});rest(s);const ids=[];
+ for(let n=0;n<70;n++)ids.push(s.roots[A].createFile('photo'+n,'private bytes','image/png').id);
+ const plan={archiveIds:ids,archiveCursor:0,files:[]};let saves=0;
+ assert.equal(s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),true);assert.equal(plan.archiveCursor,70);assert.equal(saves,1);
+ assert(ids.every(id=>s.all.has(id)));
 });
