@@ -60,3 +60,39 @@ test('deletion proof keeps tombstone intent and optional wakeup failure does not
  const pending={success:true,schoolId:school,edgeDeliveryVersion:1,driveState:'pending',delivery:{lane:'records',id:deliveryId(school,r)}};
  const adapter=createLiveDomainDelivery({edgeDelivery:{record:async()=>pending},emitHint:async()=>{throw Error('hint down');}});assert.equal(await adapter.submit(school,r),pending);
 });
+
+test('retired explicit student generation cannot stage fee, attendance, or exam proposals after offline reconnect',async()=>{
+ const generation='p-'+'b'.repeat(32),studentId='Class 1_Roll_1';
+ for(const collection of ['fee_payments','fee_ledger','attendance_records','attendance_logs','exam_results','exam_center_results']){
+  const r={...request(collection),data:{...request(collection).data,personId:generation,studentDocId:studentId}};
+  let checked=0,staged=0;
+  const adapter=createLiveDomainDelivery({
+   assertStudentDependency:async(s,id,g)=>{checked++;assert.equal(s,school);assert.equal(id,studentId);assert.equal(g,generation);throw Object.assign(Error('Parent generation retired'),{code:'PERSON_GENERATION_RETIRED',status:409});},
+   edgeDelivery:{record:async()=>{staged++;throw Error('stale student child must not enter edge queue');}},
+  });
+  await assert.rejects(adapter.submit(school,r),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
+  assert.equal(checked,1,collection);assert.equal(staged,0,collection);
+ }
+});
+
+test('generation fence admits only validated current student writes and never blocks their explicit cleanup',async()=>{
+ const generation='p-'+'c'.repeat(32),studentId='Class 1_Roll_5';
+ const r={...request('fee_payments'),data:{...request().data,personId:generation,studentId}};
+ let checks=0,staged=0;
+ const pending=body=>({success:true,schoolId:school,driveState:'pending',edgeDeliveryVersion:1,delivery:{lane:'records',id:deliveryId(school,body)}});
+ const adapter=createLiveDomainDelivery({
+  assertStudentDependency:async(s,id,g)=>{checks++;assert.equal(id,studentId);assert.equal(g,generation);},
+  edgeDelivery:{record:async(s,body)=>{staged++;return pending(body);}},
+ });
+ assert.equal((await adapter.submit(school,r)).driveState,'pending');
+ assert.equal(checks,1);assert.equal(staged,1);
+ const deletion={...r,operation:'delete',operationId:'student-child-delete-0001'};delete deletion.data;
+ assert.equal((await adapter.submit(school,deletion)).driveState,'pending');
+ assert.equal(checks,1,'tombstone cleanup must remain available after parent retirement');
+ assert.equal(staged,2);
+ const noVerifier=createLiveDomainDelivery({edgeDelivery:{record:async()=>{throw Error('Must not enqueue without a verified parent');}}});
+ await assert.rejects(noVerifier.submit(school,r),e=>e.code==='DOMAIN_STUDENT_DEPENDENCY_UNVERIFIED');
+ const teacher={...r,collection:'teacher_salary',data:{...r.data,role:'teacher'}};
+ const existing=createLiveDomainDelivery({edgeDelivery:{record:async(s,body)=>pending(body)}});
+ assert.equal((await existing.submit(school,teacher)).driveState,'pending','teacher salary retains independent GS owner');
+});
