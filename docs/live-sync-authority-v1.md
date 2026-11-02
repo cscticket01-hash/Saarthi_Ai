@@ -26,11 +26,7 @@ Receipts distinguish `cloudState: committed` from `backupState: pending`.
 Neither is a legacy protocol-2 Drive ACK. Live and Drive revisions have separate
 storage columns; verified backups cannot overwrite a newer live revision.
 
-Cloudflare holds temporary payloads. On verified Drive completion, the same
-transaction clears that version's backup body, replay body and record-bearing
-operation receipts. The current record body is cleared only when it still has
-that exact live revision. Hashes, revision references, operation fingerprints,
-cursor events and deletion evidence remain as small recovery metadata. Verified
+Cloudflare holds temporary payloads for **24 hours after a verified Drive/Sheets ACK**. The existing school-isolated Durable Object alarm automatically removes the exact backed-up record/event/operation payload copies when the 24-hour deadline passes. A missing, failed, retried, or unverified Google ACK **never** starts the deletion clock, even if the pending request exceeds 24 hours. The current record body is cleared only for the exact matching verified live revision; newer unverified edits cannot be erased. Operation IDs, hashes, revisions, replay cursors, and deletion metadata remain for safe deduplication. A separately authorized rollback may release an already hash-verified Drive copy early after signed full-baseline verification; this is not ordinary TTL cleanup. Verified
 seed payloads are also discarded after the initial baseline is sealed.
 
 Point reads of cleaned records use a signed GS point read and verify school,
@@ -229,3 +225,7 @@ Deployment is a separate acceptance gate: new source code does not update a
 school's existing Apps Script /exec deployment. Real remote latency/capacity,
 physical 1/2/5-device acceptance and activating production flags are not proven
 by local tests. Tentative domain proposals are not instant authoritative commits.
+
+### 24-hour verified cache lifecycle
+
+For all-data record spools and resumable file chunks, a completed proof-backed Drive handoff starts a 24-hour temporary payload retention clock. The existing Durable Object alarm schedules the expiry; retries, partial uploads and blocked items are never time-deleted. Older completed entries already purged remain purged (no recreated bytes). Legacy school notices and attendance have separate person/privacy owners and retain their verified sanitization controls; these are not converted into unrestricted raw PII caches by this change. Cloudflare metadata persists after payload deletion for safe exact-operation replay. Live authority stays Draft/OFF for production until school Apps Script and device acceptance pass.
