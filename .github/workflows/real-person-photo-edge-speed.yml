@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sync3-verified-test-school-mutations
+  group: isolated-person-photo-speed-one-school
   cancel-in-progress: false
 jobs:
   real-test-person-photo:
