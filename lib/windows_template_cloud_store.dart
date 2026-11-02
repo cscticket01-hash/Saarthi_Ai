@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
+
+import 'document_processing_engine.dart';
 
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -199,7 +202,13 @@ class WindowsTemplateCloudStore {
     if(draft.png.length>20*1024*1024){
       throw StateError('Template image is too large for verified Drive upload.');
     }
-    final contentHash=sha256.convert(draft.png).toString();
+    // Use the existing Compression Engine in an isolate. Template artwork
+    // is lossless-only: no raster text, QR, signature, or print pixels change.
+    final artwork=await compute(DocumentProcessingEngine.templateArtworkUpload,
+      {'bytes':draft.png});
+    ensureSchool();
+    final uploadPng=artwork['optimized'] as Uint8List;
+    final contentHash=sha256.convert(uploadPng).toString();
     final templateId=_idFor(draft,contentHash);
     final settings=await _settings();
     ensureSchool();
@@ -250,7 +259,7 @@ class WindowsTemplateCloudStore {
         uploaded=await cloud.upload(
           'school_template_${draft.kind.name}_$contentHash.png',
           'image/png',
-          'data:image/png;base64,${base64Encode(draft.png)}',
+          'data:image/png;base64,${base64Encode(uploadPng)}',
           uploadKey:uploadKey,
         );
       }finally{cloud.close();}
