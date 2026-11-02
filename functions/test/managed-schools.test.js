@@ -513,33 +513,30 @@ test('revoked school-admin cannot list or mutate recycle snapshots',async()=>{
  assert.equal(f.sent.length,0);
 });
 
-test('verified school licence stays bound until expiry; only developer renewal reactivates all PCs', async()=>{
+test('expired paid school renews the SAME licence on every PC, never issuing a replacement key',async()=>{
  const f=fixture();
  const first=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');
  const active=await f.call({action:'managed/licence/activate',key:first.key});
  assert.equal(active.activated,true);assert.equal(active.allowed,true);
  const repeated=await f.call({action:'managed/licence/activate',key:first.key});
- assert.equal(repeated.expiresAt,active.expiresAt,'re-entering a key cannot extend validity');
- await assert.rejects(f.call({action:'managed/licence/activate',key:'VS-NOT-ISSUED'}),e=>e.status===403);
- assert.equal((await f.call({action:'managed/session'},'A-new-pc')).activated,true);
- const oldHash=f.docs.get('school_entitlements/'+A).licenseHash;
+ assert.equal(repeated.expiresAt,active.expiresAt);
+ const initialHash=f.docs.get('school_entitlements/'+A).licenseHash;
  f.docs.get('school_entitlements/'+A).expiresAt=time-1;
- f.docs.get('platform_license_status/'+oldHash).expiresAt=time-1;
- const expired=await f.call({action:'managed/session'});
- assert.equal(expired.status,'expired');assert.equal(expired.allowed,false);
- await assert.rejects(f.call({action:'managed/licence/activate',key:first.key}),e=>e.status===403);
- await assert.rejects(f.call({action:'developer/managed/licence',schoolId:A,days:60,paid:true}),e=>e.status===403);
- const renewal=await f.call({action:'developer/managed/licence',schoolId:A,days:60,paid:true},'developer');
- assert.notEqual(renewal.key,first.key);
- assert.equal((await f.call({action:'managed/session'})).activated,false);
- await assert.rejects(f.call({action:'managed/licence/activate',key:first.key}),e=>e.status===403);
- await assert.rejects(f.call({action:'managed/licence/activate',key:renewal.key},'B'),e=>e.status===403);
- const renewed=await f.call({action:'managed/licence/activate',key:renewal.key});
- assert.equal(renewed.allowed,true);assert.equal(renewed.activated,true);assert(renewed.expiresAt>active.expiresAt);
- const anotherPc=await f.call({action:'managed/session'},'A-new-pc');
- assert.equal(anotherPc.activated,true);assert.equal(anotherPc.expiresAt,renewed.expiresAt);
+ f.docs.get('platform_license_status/'+initialHash).expiresAt=time-1;
+ f.docs.get('platform_licenses/'+initialHash).expiresAt=time-1;
+ assert.equal((await f.call({action:'managed/session'})).allowed,false);
+ await assert.rejects(f.call({action:'developer/managed/licence',schoolId:A,days:60,paid:true},'developer'),
+   e=>e.status===409&&e.code==='LICENCE_RENEW_EXISTING');
+ const result=await f.call({action:'developer/managed/licence/renew',schoolId:A,days:60,paid:true,
+  renewalId:'f'.repeat(32)},'developer');
+ assert.equal(result.sameKey,true);assert.equal(result.activated,true);
+ assert.equal(result.licenseId,initialHash);
+ assert.equal(f.docs.get('school_entitlements/'+A).licenseHash,initialHash);
+ assert.equal((await f.call({action:'managed/session'})).allowed,true);
+ assert.equal((await f.call({action:'managed/session'},'A-new-pc')).activated,true);
+ assert.equal(f.docs.get('platform_license_status/'+initialHash).revoked,false);
+ assert.equal((await f.call({action:'managed/licence/activate',key:first.key})).expiresAt,result.expiresAt);
 });
-
 
 test('developer renews the same activated licence after expiry without changing school, Drive, queues or key',async()=>{
  const f=fixture(),first=await f.call({action:'developer/managed/licence',schoolId:A,days:30,paid:true},'developer');
