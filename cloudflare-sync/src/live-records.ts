@@ -11,6 +11,7 @@ const hash=(v:unknown)=>createHash('sha256').update(canonical(v)).digest('hex');
 const business=(v:Json)=>Object.fromEntries(Object.entries(v).filter(([k])=>!k.startsWith('_sync')));
 const payloadHash=(v:Json)=>hash({deleted:v._syncDeleted===true,data:business(v)});
 const byteLength=(v:string)=>new TextEncoder().encode(v).byteLength;
+export const cloudflareVerifiedRetentionMs=24*60*60*1000;
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&!v.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(v);
 const opId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(v);
 function clean(v:unknown,depth=0):void{
@@ -32,6 +33,7 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_operations(operation_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
+ if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_device_receipts(device TEXT PRIMARY KEY,cursor INTEGER NOT NULL,observed_at INTEGER NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_collection_cursors(collection TEXT PRIMARY KEY,cursor INTEGER NOT NULL)');
  storage.sql.exec('INSERT OR IGNORE INTO live_collection_cursors SELECT collection,max(seq) FROM live_events GROUP BY collection');
@@ -172,13 +174,37 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   const saved=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_operations WHERE operation_id=?',String(b.operationId)).toArray()[0];
   return {liveProtocol:1,schoolId:school,operationId:b.operationId,found:!!saved,...(saved?{fingerprint:saved.fingerprint,receipt:JSON.parse(saved.receipt)}:{})};
  }
+ // Durable Object alarm performs age-based cleanup only after the EXACT backup
+ // is verified. All retries/reviews remain intact past the 24-hour threshold.
+ if(command==='expireVerified')return storage.transactionSync(()=>{
+  const stale=sql.exec<{seq:number;collection:string;id:string;operation_id:string;drive_revision:string;receipt:string}>(
+   "SELECT b.seq,b.collection,b.id,b.operation_id,b.drive_revision,e.receipt FROM live_backup b JOIN live_events e ON e.seq=b.seq WHERE b.state='verified' AND b.verified_at>0 AND b.verified_at<=? AND b.body!='' ORDER BY b.seq LIMIT 200",
+   now-cloudflareVerifiedRetentionMs).toArray();
+  for(const job of stale){
+   const rec=JSON.parse(job.receipt) as Json;
+   demand(typeof job.drive_revision==='string'&&job.drive_revision.length>0&&rec.recordRevision&&rec.operationId===job.operation_id,'Unverified retention receipt',409);
+   const original=sql.exec<{body:string}>('SELECT body FROM live_backup WHERE seq=?',job.seq).toArray()[0]?.body;
+   demand(!!original&&payloadHash(JSON.parse(original))===rec.payloadHash,'Backup payload changed; retain',409);
+   sql.exec("UPDATE live_events SET body='' WHERE seq=? AND operation_id=?",job.seq,job.operation_id);
+   sql.exec("UPDATE live_backup SET body='' WHERE seq=? AND state='verified' AND verified_at>0",job.seq);
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE operation_id=? AND json_extract(receipt,'$.recordRevision')=?",job.operation_id,rec.recordRevision);
+   sql.exec("UPDATE live_records SET body='' WHERE collection=? AND id=? AND revision=? AND drive_revision=?",
+     job.collection,job.id,rec.recordRevision,job.drive_revision);
+  }
+  const next=sql.exec<{due:number}>(
+   "SELECT min(verified_at+?) AS due FROM live_backup WHERE state='verified' AND verified_at>0 AND body!=''",
+   cloudflareVerifiedRetentionMs).toArray()[0]?.due;
+  return {expired:stale.length,nextCleanupAt:next??null};
+ });
+ if(command==='retention')return {retentionHours:24,
+  ...sql.exec<{nextCleanupAt:number}>("SELECT min(verified_at+?) AS nextCleanupAt FROM live_backup WHERE state='verified' AND verified_at>0 AND body!=''",cloudflareVerifiedRetentionMs).toArray()[0]};
  if(command==='compact')return storage.transactionSync(()=>{
   demand(Number.isSafeInteger(b.before)&&Number(b.before)>=0&&Number(b.before)<=head(),'Invalid retention boundary');
   const floor=sql.exec<{floor:number}>('SELECT floor FROM live_retention WHERE id=1').toArray()[0].floor;
   // Only a contiguous prefix whose exact snapshots reached Drive is eligible.
   const rows=sql.exec<{seq:number;state:string}>("SELECT e.seq,b.state FROM live_events e LEFT JOIN live_backup b ON b.seq=e.seq WHERE e.seq>? AND e.seq<=? ORDER BY e.seq LIMIT 1000",floor,Number(b.before)).toArray();
   let next=floor;for(const row of rows){if(row.state!=='verified')break;next=row.seq;}
-  if(next>floor){sql.exec('DELETE FROM live_events WHERE seq<=?',next);sql.exec("DELETE FROM live_backup WHERE seq<=? AND state='verified'",next);sql.exec('UPDATE live_retention SET floor=? WHERE id=1',next);}
+  if(next>floor){sql.exec('DELETE FROM live_events WHERE seq<=? AND body=\'\'',next);sql.exec("DELETE FROM live_backup WHERE seq<=? AND state='verified' AND body=''",next);sql.exec('UPDATE live_retention SET floor=? WHERE id=1',next);}
   return {liveProtocol:1,schoolId:school,cursor:head(),floor:next,snapshotRequiredBefore:next};
  });
  if(command==='received'){
@@ -198,16 +224,16 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   if(!job||job.state!=='processing'||job.claim!==b.claim||job.claim_until<=now)return {accepted:false};
   if(b.verified===true){
    demand(typeof b.driveRevision==='string'&&b.driveRevision.length>0&&b.driveRevision.length<=100&&!b.driveRevision.startsWith('live-')&&!b.driveRevision.startsWith('cf-'),'Unverified backup revision');
-   sql.exec("UPDATE live_backup SET state='verified',drive_revision=?,claim='',claim_until=0,due=? WHERE seq=?",b.driveRevision,Number.MAX_SAFE_INTEGER,job.seq);
+   sql.exec("UPDATE live_backup SET state='verified',drive_revision=?,claim='',claim_until=0,due=?,verified_at=? WHERE seq=?",b.driveRevision,Number.MAX_SAFE_INTEGER,now,job.seq);
    sql.exec('UPDATE live_records SET drive_revision=? WHERE collection=? AND id=?',b.driveRevision,job.collection,job.id);
    const event=sql.exec<{receipt:string}>('SELECT receipt FROM live_events WHERE seq=?',job.seq).toArray()[0];
    const receipt=JSON.parse(event.receipt) as Json;
-   const reference={...receipt,record:null,backupState:'verified',source:'drive',driveRevision:b.driveRevision,payloadHash:payloadHash(JSON.parse(job.body)),reconcileRequired:true};
-   sql.exec("UPDATE live_events SET body='',receipt=? WHERE seq=?",JSON.stringify(reference),job.seq);
-   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.backupState','verified','$.source','drive','$.driveRevision',?,'$.payloadHash',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),String(receipt.recordRevision));
-   sql.exec("UPDATE live_backup SET body='' WHERE seq=?",job.seq);
-   // Old backup completion must never remove an unbacked newer local version.
-   sql.exec("UPDATE live_records SET body='' WHERE collection=? AND id=? AND revision=?",job.collection,job.id,String(receipt.recordRevision));
+   const reference={...receipt,backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,payloadHash:payloadHash(JSON.parse(job.body)),reconcileRequired:true,retainedUntil:now+cloudflareVerifiedRetentionMs};
+   sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(reference),job.seq);
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.reconcileRequired',json('true')) WHERE operation_id=?",String(b.driveRevision),String(reference.payloadHash),now+cloudflareVerifiedRetentionMs,job.operation_id);
+   // Retain this exact version's temporary payload for 24 hours following
+   // verified Drive ACK. The alarm purges only the verified snapshot later;
+   // an unverified newer revision or dependent record is never discarded.
   }else{
    demand(Number.isSafeInteger(b.retryAt)&&Number(b.retryAt)>now&&Number(b.retryAt)<=now+86400000,'Invalid backup retry');
    sql.exec("UPDATE live_backup SET state=?,due=?,claim='',claim_until=0 WHERE seq=?",b.review===true?'review':'retry',b.review===true?Number.MAX_SAFE_INTEGER:Number(b.retryAt),job.seq);
