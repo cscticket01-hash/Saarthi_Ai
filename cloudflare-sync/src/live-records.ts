@@ -151,7 +151,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  if(command==='snapshot'||command==='rollbackSnapshot'){
   collection();demand(state()?.state==='active'||command==='rollbackSnapshot'&&state()?.state==='legacy','Verified baseline required',412);demand((b.after===undefined||typeof b.after==='string')&&Number.isSafeInteger(b.at)&&b.at===head(),'Snapshot changed; restart snapshot',409);
   const records:Json[]=[];let bytes=0;
-  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:r.body?JSON.parse(r.body):null,...(!r.body?{source:'drive',driveRevision:r.drive_revision,recordRevision:r.revision,payloadHash:r.payload_hash}:{})});}
+  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:r.body?JSON.parse(r.body):null,source:r.body?'cloudflare':'drive',driveRevision:r.drive_revision,recordRevision:r.revision,payloadHash:r.payload_hash});}
   return {liveProtocol:1,schoolId:school,cursor:b.at,records,next:records.length?records[records.length-1].id:null};
  }
  if(command==='rollbackSeal'){
@@ -161,9 +161,17 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const current=state();demand(current&&['active','legacy'].includes(current.state),'Rollback state unavailable',409);
    demand(sql.exec<{n:number}>("SELECT count(*) AS n FROM live_backup WHERE collection=? AND state!='verified'",col).toArray()[0].n===0,'Drive backup still pending',409);
    const rows=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? ORDER BY id',col).toArray();
-   demand(rows.every(r=>r.body===''&&r.drive_revision.length>0),'Temporary data still pending',409);
+   // An explicit signed rollback may retire a verified 24h cache early,
+   // but only after the broker read and hashed the exact Drive state.
+   demand(rows.every(r=>r.drive_revision.length>0),'Drive storage not verified',409);
    const fingerprint=hash(rows.map(r=>({id:r.id,recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash})));
    demand(fingerprint===b.fingerprint,'Rollback verification differs',409);
+   // Rollback is an explicit authority retirement, not TTL garbage collection.
+   // Clear only this verified collection in the same transaction as sealing.
+   sql.exec("UPDATE live_events SET body='',receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE collection=?",col);
+   sql.exec("UPDATE live_backup SET body='' WHERE collection=? AND state='verified'",col);
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE json_extract(receipt,'$.recordRevision') IN (SELECT revision FROM live_records WHERE collection=?) AND json_extract(receipt,'$.backupState')='verified'",col);
+   sql.exec("UPDATE live_records SET body='' WHERE collection=? AND drive_revision!=''",col);
    sql.exec("UPDATE live_collections SET state='legacy' WHERE collection=?",col);
    return {liveProtocol:1,schoolId:school,collection:col,state:'legacy',cursor:head(),fingerprint,driveVerified:true,pending:0,needsAttention:0};
   });
