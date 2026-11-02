@@ -42,7 +42,14 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function record(school,request,readDrive){
   const identity=request.action==='managed_records_batch'?request.operations.map(op=>[op.collection,op.id,op.operationId]):[request.collection,request.id,request.operationId];
   const id=digest(JSON.stringify([school,request.action,identity]));
-  await edge.rpc(school,'records',{command:'enqueue',id,request});return status(school,'records',id,readDrive);
+  const durable=await edge.rpc(school,'records',{command:'enqueue',id,request});
+  // The school-bound Durable Object's committed enqueue receipt is already a
+  // sufficient Cloudflare ACK. Do not waste a second network hop polling it.
+  // Completed replays, retries, unexpected receipts and legacy Workers still
+  // go through the signed status/Drive-proof verification owner.
+  if(durable?.id===id&&durable.state==='pending'&&durable.response==null)
+   return pending(school,'records',id);
+  return status(school,'records',id,readDrive);
  }
  function fileIdentity(school,uploadKey){const id=digest(JSON.stringify([school,uploadKey]));return {id,lane:'file-'+id};}
  async function file(school,request){
