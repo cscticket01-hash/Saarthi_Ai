@@ -8,7 +8,9 @@ on:
       - 'lib/windows_template_cloud_store.dart'
       - 'lib/windows_document_templates.dart'
       - 'lib/id_card_engine.dart'
+      - 'lib/id_card_layout.dart'
       - 'lib/school_document_renderer.dart'
+      - 'lib/windows_reference_documents.dart'
       - 'test/template_artwork_compression_test.dart'
       - 'test/school_media_budgets_test.dart'
       - 'test/windows_local_first_save_test.dart'
@@ -143,7 +145,7 @@ jobs:
       - run: flutter pub get
       - env:
           APPDATA: ${{ runner.temp }}/live-protocol-recovery
-        run: flutter test --concurrency=1 test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart
+        run: flutter test --concurrency=1 test/pdf_media_dedup_test.dart test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart
       - name: Verify existing offline duplicate self-repair on independent SQLite devices
         env:
           APPDATA: ${{ runner.temp }}/live-duplicate-recovery
