@@ -548,7 +548,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
    const old=await db.doc('school_storage_private/'+id).get();const staged={url,secret,ready:true};
    const timestamp=now(),nonce=randomBytes(24).toString('hex'),payload=JSON.stringify({action:'managed_health'}),signature=createHmac('sha256',b.secret).update(id+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');
    let r=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:id,timestamp,nonce,payload,signature}),signal:AbortSignal.timeout(30000)});if([301,302,303].includes(r.status)){const u=new URL(r.headers.get('location'));if(u.protocol!=='https:'||u.hostname!=='script.googleusercontent.com'||u.username||u.password)fail(502,'Unexpected script redirect');r=await fetchImpl(u.href,{redirect:'error',signal:AbortSignal.timeout(30000)});}if(!r.ok)fail(502,'School script is unavailable');const result=await r.json();if(result.schoolId!==id||result.success!==true||result.storageReady!==true)fail(409,'Script is not prepared for this school');if(old.exists&&old.data().url!==url&&b.replace!==true)fail(409,'Existing storage retained. Explicit replacement required');
-   await db.doc('school_storage_private/'+id).set(staged);await db.doc('platform_schools/'+id).set({storageReady:true,storageCheckedAt:now()},{merge:true});
+   await db.doc('school_storage_private/'+id).set(staged);await db.doc('platform_schools/'+id).set({storageReady:true,storageCheckedAt:now()},{merge:true});uploadCapabilities.delete(id);
   }else fail(400,'Unknown developer operation');
   await db.collection('platform_audit').add({action,schoolId:id,actor:admin.uid,at:now()});invalidate(id);return {success:true};
  }
