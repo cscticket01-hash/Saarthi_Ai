@@ -563,13 +563,15 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    return {success:true,schoolId:b.schoolId,projectId:b.schoolId,syncProtocol:2,...result,...(!cardReaderEnforced&&edgeEnabled(b.schoolId)?{cloudflareLane:cloudflareSync.grant(permit)}:{}),...cardContext};
   }
   const body={action:'managed_mobile',request:b.request,lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}};
-  const liveNotices=liveSync.enabled(b.schoolId)&&await liveMigration.state(b.schoolId,'school_notices')==='active';
+  const noticeMigrationState=liveSync.enabled(b.schoolId)?await liveMigration.state(b.schoolId,'school_notices'):'legacy';
+  const liveNotices=noticeMigrationState==='active';
   const driveNotices=liveSync.enabled(b.schoolId)&&await liveMigration.rolledBack(b.schoolId,'school_notices');
   let result=edgeEnabled(b.schoolId)&&b.request.action==='mobile_notice'
    ?await signed(m,{...body,request:{...b.request,action:'mobile_session_verify'}})
    :b.request.action==='mobile_dashboard'&&b.request.afterSignal!==true
    ?await readView(m.schoolId,body,()=>signed(m,body),true):await signed(m,body);
   if(edgeEnabled(b.schoolId)&&['mobile_dashboard','mobile_notice'].includes(b.request.action)){
+   if(noticeMigrationState==='rolling_back')fail(503,'Verified rollback pending; notices retained','LIVE_ROLLBACK_PENDING');
    const state=liveNotices?await (async()=>{
     const view=await liveGateway.records(b.schoolId,{operation:'read',collection:'school_notices',syncProtocol:2,liveProtocol:1},record=>signedRequest(m,record));
     return {records:view.records,revision:view.collectionRevision};

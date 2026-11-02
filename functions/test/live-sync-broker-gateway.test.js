@@ -98,4 +98,7 @@ test('active notice authority remains accessible to mobile only after signed ses
  const request={action:'managed/mobile',schoolId:A,request:{action:'mobile_notice',noticeId:'notice',sessionToken:'existing'}};
  const result=await f.call(request);assert.equal(result.notice.title,notice.title);assert.equal(calls[0],'session_verify');assert(calls.includes('snapshot'));
  denied=true;calls.length=0;await assert.rejects(f.call(request),e=>e.status===403);assert.deepEqual(calls,['session_verify']);
+ denied=false;calls.length=0;
+ f.docs.set('school_live_migrations/'+A,{collections:{school_notices:{state:'rolling_back'}}});
+ await assert.rejects(f.call(request),e=>e.code==='LIVE_ROLLBACK_PENDING');assert.deepEqual(calls,['session_verify']);
 });
