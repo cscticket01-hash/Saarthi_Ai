@@ -23,3 +23,7 @@ If the existing root is missing, belongs to another school, or the project is a 
 ## Current acceptance boundary
 
 Automated tests validate preparation guards, school isolation, signed URL pairing, licence checks and backup ownership. Real owner consent/deployment, native Windows Save As/lock operation and real Drive backup/restore require live acceptance. Repository review builds are not live releases. Do not deploy or release without explicit approval.
+
+## Verified release downloads (2026-11-02)
+
+The current tested Windows application release is **v2.1.223** and Android APK is **v1.0.669**. The developer website's `/downloads/windows.exe` and `/downloads/android.apk` redirects must point to these exact published GitHub assets. Updating either installer does **not** update any existing school's deployed Apps Script `/exec` version or prove that a local student pending operation has received a Drive/Sheets ACK. Preserve the school-local database and outbox; verify the exact receipt before clearing an operation. The experimental Cloudflare live-authority PR #206 remains OFF pending school-owner deployment verification and real-device acceptance.
