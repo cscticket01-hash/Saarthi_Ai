@@ -1,3 +1,4 @@
+import 'school_media_budgets.dart';
 import 'windows_maroon_marksheet.dart';
 import 'id_card_engine.dart';
 import 'id_card_layout.dart';
@@ -1056,5 +1057,5 @@ Future<Uint8List> renderWindowsReferenceDocument({
       page(612, 792, layers);
     }
   }
-  return pdf.save();
+  return SchoolMediaBudgets.enforcePdf(kind, await pdf.save());
 }
