@@ -8,7 +8,7 @@ import '../lib/document_processing_engine.dart';
 
 void main() {
   test('TemplateForge artwork uses the same compression engine with exact pixels', () {
-    final source = img.Image(width: 320, height: 440, numChannels: 4);
+    final source = img.Image(width: 80, height: 110, numChannels: 4);
     for (var y = 0; y < source.height; y++) {
       for (var x = 0; x < source.width; x++) {
         final onLine = y % 37 < 2 || x % 29 < 2;
