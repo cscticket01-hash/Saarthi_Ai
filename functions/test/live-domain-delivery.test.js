@@ -63,7 +63,7 @@ test('deletion proof keeps tombstone intent and optional wakeup failure does not
 
 test('retired explicit student generation cannot stage fee, attendance, or exam proposals after offline reconnect',async()=>{
  const generation='p-'+'b'.repeat(32),studentId='Class 1_Roll_1';
- for(const collection of ['fee_payments','fee_ledger','attendance_records','attendance_logs','exam_results','exam_center_results']){
+ for(const collection of ['fee_payments','fee_ledger','attendance_records','attendance_logs','exam_results','exam_center_results','documents','student_scan_index']){
   const r={...request(collection),data:{...request(collection).data,personId:generation,studentDocId:studentId}};
   let checked=0,staged=0;
   const adapter=createLiveDomainDelivery({
@@ -95,4 +95,42 @@ test('generation fence admits only validated current student writes and never bl
  const teacher={...r,collection:'teacher_salary',data:{...r.data,role:'teacher'}};
  const existing=createLiveDomainDelivery({edgeDelivery:{record:async(s,body)=>pending(body)}});
  assert.equal((await existing.submit(school,teacher)).driveState,'pending','teacher salary retains independent GS owner');
+});
+
+test('actual signed student deletion fence rejects stale document admission but retains tombstone cleanups',async()=>{
+ const {fixture}=require('./helpers/managed-school-broker');
+ const {storage}=require('./helpers/managed-storage');
+ const f=fixture(),gs=storage({lifecycle:true,bundle:true});
+ const lifecycle=require('../live-person-lifecycle').createLivePersonLifecycle({db:f.db,rpc:async(s,body)=>{
+  assert.equal(s,school);return gs.call(body);
+ }});
+ const generation='p-'+'d'.repeat(32),id='Class 1_Roll_9';
+ const registration={action:'managed_records',collection:'students_directory',operation:'write',id,
+  syncProtocol:2,operationId:'real-parent-create-0000001',expectedRecordRevision:'',
+  data:{schoolId:school,name:'Temporary test pupil',class:'Class 1',rollNo:'9',mobileStableId:generation}};
+ const first=await lifecycle.execute(school,registration);
+ let staged=0;
+ const makeRequest=(collection,operationId)=>({action:'managed_records',collection,id:'owned-'+collection,
+  operation:'write',syncProtocol:2,operationId,expectedRecordRevision:'',
+  data:{schoolId:school,studentDocId:id,personId:generation,name:'Stale child'}});
+ const create=(r)=>({success:true,schoolId:school,driveState:'pending',edgeDeliveryVersion:1,
+  delivery:{lane:'records',id:deliveryId(school,r)}});
+ const delivery=createLiveDomainDelivery({assertStudentDependency:lifecycle.assertDependency,
+  edgeDelivery:{record:async(s,r)=>{staged++;return create(r);}}});
+ const before=makeRequest('documents','document-before-delete-0001');
+ assert.equal((await delivery.submit(school,before)).driveState,'pending');
+ const deletion={action:'managed_records',collection:'students_directory',operation:'delete',id,
+  syncProtocol:2,operationId:'real-parent-delete-0000001',expectedRecordRevision:first.recordRevision,
+  deletedStudentGeneration:generation};
+ const deleted=await lifecycle.execute(school,deletion);
+ assert.equal(deleted.record._syncDeleted,true);
+ for(const collection of ['documents','student_scan_index','fee_payments']){
+  const stale=makeRequest(collection,'child-after-delete-'+collection+'-0001');
+  await assert.rejects(delivery.submit(school,stale),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
+ }
+ assert.equal(staged,1,'stale child must not enter cloud queue');
+ const cleanup={...makeRequest('documents','document-cleanup-after-delete'),operation:'delete'};
+ delete cleanup.data;
+ assert.equal((await delivery.submit(school,cleanup)).driveState,'pending');
+ assert.equal(staged,2,'deletion cleanup still allowed');
 });
