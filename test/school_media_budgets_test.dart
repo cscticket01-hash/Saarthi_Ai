@@ -109,6 +109,17 @@ void main() {
     expect(img.decodeJpg(face), isNotNull);
     expect(img.decodeJpg(face)!.height, lessThanOrEqualTo(480));
 
+    final smallerJpeg = IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
+      aspect: .8, cover: true, jpegQuality: 80,
+    );
+    expect(smallerJpeg.length, lessThanOrEqualTo(face.length));
+    expect(img.decodeJpg(smallerJpeg), isNotNull);
+    expect(() => IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
+      aspect: .8, cover: true, jpegQuality: 77,
+    ), throwsFormatException);
+
     final stamp = img.Image(width: 200, height: 200, numChannels: 4);
     img.fill(stamp, color: img.ColorRgba8(0, 0, 0, 0));
     for (var p = 20; p < 180; p++) {
