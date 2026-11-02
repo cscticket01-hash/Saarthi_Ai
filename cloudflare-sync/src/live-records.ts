@@ -170,7 +170,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    // Clear only this verified collection in the same transaction as sealing.
    sql.exec("UPDATE live_events SET body='',receipt=json_set(receipt,'$.record',null,'$.source','drive') WHERE collection=?",col);
    sql.exec("UPDATE live_backup SET body='' WHERE collection=? AND state='verified'",col);
-   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive','$.backupState','verified') WHERE json_extract(receipt,'$.recordRevision') IN (SELECT revision FROM live_records WHERE collection=?)",col);
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.source','drive','$.backupState','verified') WHERE json_extract(receipt,'$.recordRevision') IN (SELECT json_extract(receipt,'$.recordRevision') FROM live_events WHERE collection=?)",col);
    sql.exec("UPDATE live_records SET body='' WHERE collection=? AND drive_revision!=''",col);
    sql.exec("UPDATE live_collections SET state='legacy' WHERE collection=?",col);
    return {liveProtocol:1,schoolId:school,collection:col,state:'legacy',cursor:head(),fingerprint,driveVerified:true,pending:0,needsAttention:0};
