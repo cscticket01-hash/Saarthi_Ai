@@ -1,14 +1,12 @@
 name: REAL TEST Sync V2 Google Script and Drive latency
+# Initial TEST-only 3-run benchmark passed 2026-11-02; keep reproducible
+# workflow for manual rechecks, but do not compete with current photo benchmark.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/scripts/real_test_sync_speed.cjs'
-      - '.github/workflows/real-test-sync-speed.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: sync3-verified-test-school-mutations
+  group: archival-real-test-speed-manual
   cancel-in-progress: false
 jobs:
   isolated-real-cloud-benchmark:
