@@ -39,3 +39,31 @@ jobs:
         with:
           name: sync3-isolated-read-only-readiness
           path: build/cloud-prerequisites/report.json
+
+  observe-deployed-test-cloud:
+    # Diagnostic only: observe the real currently deployed TEST broker without
+    # claiming it matches the reviewed PR commit or Script contract.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'
+    name: Read-only current TEST licence and Drive diagnostic (not release acceptance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Observe existing TEST identity, entitlement and signed provider readiness
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_cloud_readiness.cjs
+      - name: Mark this as observation only, not new-code acceptance
+        if: always()
+        run: |
+          node -e "const fs=require('node:fs');const p='build/cloud-prerequisites/report.json';const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{};console.log(JSON.stringify({mode:'OBSERVATION_ONLY',status:r.status||'UNAVAILABLE',runtimeCommit:r.runtimeCommit||null,entitlement:r.entitlement||null,script:r.deployedScriptEvidence||null,blocker:r.blocker||null}));"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-deployed-test-observation
+          path: build/cloud-prerequisites/report.json
+          retention-days: 7
