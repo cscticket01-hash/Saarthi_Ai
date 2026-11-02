@@ -11,6 +11,81 @@ class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
   static const photoTarget = 80 * 1024;
   static const portraitTarget = 40 * 1024;
+  static const brandingTarget = 30 * 1024;
+
+  /// Optimize school logo, seal and signature for a strict 30 KB upload.
+  /// Unlike the document-scanner pathway, transparent ink is never flattened
+  /// onto white JPEG. This protects transparent signatures and round seals.
+  /// No generated output is accepted unless the exact encoded bytes fit.
+  static Map<String, dynamic> brandingUpload(Map<String, dynamic> input) {
+    final source = input['bytes'] as Uint8List;
+    SchoolImageInput.validate(source);
+    final decoder = img.findDecoderForData(source);
+    final info = decoder?.startDecode(source);
+    if (info == null || info.width <= 0 || info.height <= 0 ||
+        info.width * info.height > 20000000 || decoder!.numFrames() != 1) {
+      throw const FormatException('Branding image is invalid or exceeds 20 megapixels.');
+    }
+    final decoded = decoder!.decodeFrame(0);
+    if (decoded == null) {
+      throw const FormatException('Cannot decode school branding image.');
+    }
+    final oriented = img.bakeOrientation(decoded).convert(numChannels: 4);
+    oriented.exif = img.ExifData();
+    oriented.textData = null;
+    oriented.iccProfile = null;
+    var hasTransparency = false;
+    for (final pixel in oriented) {
+      if (pixel.a < 255) {
+        hasTransparency = true;
+        break;
+      }
+    }
+    final longest = math.max(oriented.width, oriented.height);
+    final steps = <int>[
+      longest,
+      for (final edge in [1024, 768, 640, 512, 448, 384, 320, 256])
+        if (longest > edge) edge,
+    ].toSet().toList();
+    for (final edge in steps) {
+      final frame = edge == longest ? oriented : img.copyResize(
+        oriented,
+        width: oriented.width >= oriented.height ? edge : null,
+        height: oriented.height > oriented.width ? edge : null,
+        interpolation: img.Interpolation.average,
+      );
+      final png = Uint8List.fromList(img.encodePng(frame, level: 9));
+      if (png.length <= brandingTarget) {
+        return {
+          'optimized': png, 'mimeType': 'image/png', 'targetMet': true,
+          'actualBytes': png.length, 'originalBytes': source.length,
+          'targetBytes': brandingTarget, 'width': frame.width,
+          'height': frame.height, 'transparencyPreserved': hasTransparency,
+          'quality': 'lossless PNG at selected resolution',
+        };
+      }
+      if (!hasTransparency) {
+        final rgb = frame.convert(numChannels: 3);
+        for (final quality in [92, 86, 80]) {
+          final jpeg = Uint8List.fromList(img.encodeJpg(rgb, quality: quality));
+          if (jpeg.length <= brandingTarget) {
+            return {
+              'optimized': jpeg, 'mimeType': 'image/jpeg', 'targetMet': true,
+              'actualBytes': jpeg.length, 'originalBytes': source.length,
+              'targetBytes': brandingTarget, 'width': frame.width,
+              'height': frame.height, 'transparencyPreserved': true,
+              'quality': quality,
+            };
+          }
+        }
+      }
+    }
+    throw const FormatException(
+      'School logo, seal or signature cannot fit 30 KB without losing '
+      'important detail or transparency. Original retained; use a clearer asset.',
+    );
+  }
+
   /// Upload contract for profile photos. Never silently send an oversized
   /// fallback, or lower the quality floor merely to claim the budget passed.
   static Map<String, dynamic> portraitUpload(Map<String, dynamic> input) {
