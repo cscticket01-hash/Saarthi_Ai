@@ -31,6 +31,14 @@ async function request(url,body,token){
  let value;try{value=await response.json();}catch{value={};}
  return {status:response.status,value,ms:round(now()-t)};
 }
+function priorFixtureDeleteBody(row){
+ const id='CFSPEED_STUDENT_41496978963_0_b10f4c',file='10tja6gbObZ18mgxQy-jZDTgQ90YYgbCj';
+ check(row?.schoolId===SCHOOL&&row._syncDeleted===true&&row._syncErasePlan?.files?.includes(file)&&/^[A-Za-z0-9_-]{16,100}$/.test(row._syncOperationId||'')&&typeof row._syncDeletedOwner==='string','Prior synthetic fixture identity is not proven');
+ const target=row._syncErasePlan.targets?.find(t=>t.collection==='students_directory'&&t.id===id);
+ check(typeof target?.sourceRevision==='string'&&target.sourceRevision,'Prior synthetic original CAS baseline is missing');
+ return {edgeDeliveryVersion:1,collection:'students_directory',operation:'delete',id,syncProtocol:2,
+  operationId:row._syncOperationId,expectedRecordRevision:target.sourceRevision,deleteEverywhereVersion:1,deletedStudentGeneration:row._syncDeletedOwner};
+}
 async function main(){
  check(process.env.VS_PERSON_PHOTO_TEST===SCHOOL,'No TEST-only opt-in');
  check(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD,'Missing TEST login secrets');
@@ -85,9 +93,7 @@ async function main(){
  const priorId='CFSPEED_STUDENT_41496978963_0_b10f4c',priorFile='10tja6gbObZ18mgxQy-jZDTgQ90YYgbCj';
  const prior=await recordsRead('students_directory',priorId),priorRow=prior.value.records?.[priorId];
  if(priorRow){
-  check(priorRow.schoolId===SCHOOL&&priorRow._syncDeleted===true&&priorRow._syncErasePlan?.files?.includes(priorFile)&&typeof priorRow._syncOperationId==='string'&&typeof priorRow._syncDeletedOwner==='string','Prior synthetic fixture identity is not proven');
-  const cleanup=await call('managed/records',{edgeDeliveryVersion:1,collection:'students_directory',operation:'delete',id:priorId,syncProtocol:2,
-   operationId:priorRow._syncOperationId,expectedRecordRevision:priorRow._syncRevision,deleteEverywhereVersion:1,deletedStudentGeneration:priorRow._syncDeletedOwner});
+  const cleanup=await call('managed/records',priorFixtureDeleteBody(priorRow));
   const receipt=await settle(cleanup,'prior synthetic fixture cleanup');
   check(receipt.verified.driveDeletionComplete===true&&receipt.verified.firebaseDeletionComplete===true&&receipt.verified.deletedFileIds?.includes(priorFile),'Prior synthetic fixture deletion not verified');
   report.priorFixtureCleanup={recordId:priorId,driveDeletionComplete:true,firebaseDeletionComplete:true};
@@ -182,5 +188,6 @@ async function main(){
  report.status=report.roles.length===3&&report.roles.every(r=>r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified&&r.photoDeleteVerified)?'PASS':'INCOMPLETE';
  report.perRoleComplete=report.roles.map(r=>({role:r.role,complete:r.addDriveVerified&&r.deleteDriveVerified&&r.photoDriveVerified&&r.photoDeleteVerified}));
 }
-main().catch(e=>{report.status='FAILED_PREREQUISITE';report.error=String(e.message).slice(0,250);})
+module.exports={priorFixtureDeleteBody};
+if(require.main===module)main().catch(e=>{report.status='FAILED_PREREQUISITE';report.error=String(e.message).slice(0,250);})
 .finally(()=>{fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync(OUT,JSON.stringify(report,null,2));console.log('REAL_PERSON_PHOTO_EDGE_SPEED '+JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;});
