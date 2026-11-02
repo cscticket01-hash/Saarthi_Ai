@@ -406,9 +406,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
 
   String? _networkUnavailableSchool;
+  String? _lastNetworkResumeSchool;
+  DateTime? _lastNetworkResumeAt;
   bool _resumingNetwork = false;
   Future<void> _resumeNetworkPending() async {
-    if (_networkUnavailableSchool != _activeSchoolSyncId ||
+    if (!verifiedReconnectRecoveryDue(
+          activeSchool: _activeSchoolSyncId,
+          failedSchool: _networkUnavailableSchool,
+          now: DateTime.now(),
+          lastRecoveredAt: _lastNetworkResumeAt,
+          lastRecoveredSchool: _lastNetworkResumeSchool,
+        ) ||
         _resumingNetwork ||
         !automaticScheduleExpected ||
         _syncing ||
@@ -449,12 +457,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_activeProfileId != profile || db.activeProfileId != profile) return;
       _networkUnavailableSchool = null;
       if (count == 0) return;
+      _lastNetworkResumeAt = DateTime.now();
+      _lastNetworkResumeSchool = school;
       _nextRetry = null;
       _failures = 0;
       if (recoveryDecision?.kind == SyncFailureKind.networkPath ||
-          recoveryDecision?.kind == SyncFailureKind.timeout ||
-          recoveryDecision?.kind == SyncFailureKind.unknown)
+          recoveryDecision?.kind == SyncFailureKind.timeout) {
         recoveryDecision = null;
+        lastError = null; // Verified reconnect cleared the transport error, not the outbox.
+      }
       await refreshDetails();
       scheduleSoon(localMutation: true);
     } catch (error) {
@@ -2636,6 +2647,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_activeProfileId != syncOrigin) return;
       lastError = e.toString();
       recoveryDecision = windowsSyncRecovery(e);
+      if (recoveryDecision!.kind == SyncFailureKind.networkPath ||
+          recoveryDecision!.kind == SyncFailureKind.timeout) {
+        // Normal record-upload failures must arm the same recovery owner as
+        // change-feed failures. A verified later connection may reopen the
+        // original CAS operation, without touching quota or other schools.
+        _networkUnavailableSchool = _activeSchoolSyncId;
+      }
       _failures++;
       final learnedFloor=WindowsSharedRepairKnowledge.value('retry_floor',_activeSchoolSyncId,
         category:recoveryDecision!.kind.name);

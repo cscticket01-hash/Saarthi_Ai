@@ -30,6 +30,27 @@ class _StreamClient extends http.BaseClient {
   void close() { closes++; }
 }
 void main() {
+  test('retained delivery retry preserves Script reason and deadline without 90-second polling', () async {
+    var calls = 0;
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+      client: MockClient((_) async {
+        calls++;
+        return http.Response(jsonEncode({
+          'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+          'driveState': 'pending',
+          'delivery': {'lane': 'records', 'id': List.filled(64, 'a').join()},
+          'deliveryStatus': {'state': 'retry', 'failureCode': 'SCRIPT_OPERATION_FAILED',
+            'retryAtMillis': DateTime.now().add(const Duration(minutes: 5)).millisecondsSinceEpoch},
+        }), 200);
+      }));
+    await expectLater(cloud.api({'action': 'managed/records', 'schoolId': school,
+      'syncProtocol': 2, 'operation': 'write', 'operationId': 'original-operation-id'}),
+      throwsA(isA<CentralCloudException>()
+        .having((e) => e.diagnosticCode, 'original Script reason', 'SCRIPT_OPERATION_FAILED')
+        .having((e) => e.retryAfterMs, 'provider retry floor', greaterThan(240000))));
+    expect(calls, 1);
+    cloud.close();
+  });
   test('Cloudflare acceptance polls one immutable ticket until real Drive ACK', () async {
     final calls = <Map<String, dynamic>>[];
     final id = List.filled(64, 'a').join();

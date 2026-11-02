@@ -978,8 +978,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: Text(
-                          '${raw['documentId'] ?? raw['id'] ?? ''}',
-                          maxLines: 1,
+                          "${raw['documentId'] ?? raw['id'] ?? ''}${pendingQueueBrief(raw, now: DateTime.now())}",
+                          maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                         ),
                         trailing: (raw['syncState'] ?? raw['state']) == 'conflict'

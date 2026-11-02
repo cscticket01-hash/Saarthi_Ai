@@ -12,6 +12,12 @@ import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_backend_bridge.dart';
 
 void main(){
+ test('retained Cloudflare delivery remains pending with its precise diagnostic', () {
+   final diagnostic=documentFailureDiagnostic(CentralCloudException(503,'school_cloud',
+     'Retained',diagnosticCode:'EDGE_DELIVERY_PENDING'),'recordRequestAndAck');
+   expect(diagnostic['failureCode'],'EDGE_DELIVERY_PENDING');
+   expect(diagnostic['failureHttpStatus'],503);
+ });
  TestWidgetsFlutterBinding.ensureInitialized();
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';final db=FirebaseFirestore.instance;
  Future<QueryDocumentSnapshot<Map<String,dynamic>>> pending()async=>(await db.collection('_windows_firebase_outbox').get()).docs.single;
@@ -124,6 +130,26 @@ void main(){
   for(final category in ['quota','authorization','unknown','validation','conflict']) {
    expect(networkRecoveryCandidate({'syncState':'needsAttention','failureCategory':category}),false);
   }
+ });
+ test('verified reconnect recovery is per-school and bounded, without quota bypass',(){
+   final now=DateTime.utc(2026,11,2,2,15);
+   bool due({String? failed=school,String? previousSchool,
+     DateTime? previous})=>verifiedReconnectRecoveryDue(
+       activeSchool:school,failedSchool:failed,now:now,
+       lastRecoveredAt:previous,lastRecoveredSchool:previousSchool);
+   expect(due(),true);
+   expect(due(failed:'other'),false);
+   expect(due(previous:now.subtract(const Duration(seconds:30)),
+     previousSchool:school),false);
+   expect(due(previous:now.subtract(const Duration(minutes:2)),
+     previousSchool:school),true);
+   expect(due(previous:now.subtract(const Duration(seconds:30)),
+     previousSchool:'other'),true);
+   for(final category in ['quota','authorization','configuration','conflict']){
+     expect(networkRecoveryCandidate({
+       'syncState':'retry','failureCategory':category
+     }),false);
+   }
  });
  test('idle discovery waits one hour; fresh local work and reconnect work still enter immediately',(){
   final time=DateTime.utc(2026,1,1),watch=WindowsCloudChangeWatch();watch.succeeded(time);

@@ -210,6 +210,10 @@ Map<String, Map<String, dynamic>> windowsSyncLanes(
 
 String documentFailureExplanation(Map row) {
   const messages = {
+    'EDGE_DELIVERY_PENDING': 'Cloudflare retained this request; Google Sheets/Drive confirmation is pending.',
+    'SCRIPT_TYPE_ERROR': 'School Script encountered a type error; owner diagnostics are required.',
+    'SCRIPT_PARSE_ERROR': 'School Script encountered a parse error; owner diagnostics are required.',
+    'SCRIPT_MIGRATION_PENDING': 'School storage organization is pending; the original request is retained.',
     'FIELD_DELTA_UNAVAILABLE':'Field-only sync support or a verified baseline is required. The saved edit is retained.',
     'RECORD_LOCAL_STORAGE_IO': 'Local database or credential access failed. The original request is retained for bounded retry.',
     'ACK_UNVERIFIED':
