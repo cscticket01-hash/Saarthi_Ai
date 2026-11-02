@@ -61,7 +61,9 @@ async function hydrateDomainReceipt(school,result,readDrive){
 function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assertStudentDependency}){
  async function submit(school,request,readDrive){
   validate(school,request);
-  // Exact student-owned document and scan-index writes obey the same retired\n  // generation fence as fee and attendance writes. Shared/teacher records do not.\n  if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
+  // Exact student-owned document and scan-index writes obey the same retired
+  // generation fence as fee and attendance writes. Shared/teacher records do not.
+  if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
       request.data?.role!=='teacher'&&request.data?.ownerRole!=='teacher'){
    const data=request.data,generation=data?.personId;
    const studentId=data?.studentDocId||data?.studentDocumentId||data?.studentId;
