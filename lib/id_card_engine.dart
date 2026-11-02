@@ -149,6 +149,7 @@ class IdCardEngine {
     Map<String, Uint8List> images = const {},
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
+    bool useCompactVectorFont = false,
   }) async {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
@@ -165,6 +166,7 @@ class IdCardEngine {
       images: images,
       qr: qr,
       backgrounds: optimizedBackgrounds,
+      font: useCompactVectorFont ? pw.Font.helvetica() : null,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
@@ -191,7 +193,25 @@ class IdCardEngine {
         ),
       ),
     );
-    return SchoolMediaBudgets.enforcePdf('idCard', await pdf.save());
+    final output = await pdf.save();
+    if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
+      // Original catalog font wins when it fits. Only ASCII-only oversized
+      // cards retry with a non-embedded vector font; no QR/text rasterization,
+      // geometry shift or loss of Indic glyphs.
+      final asciiText = data.values.whereType<String>().every(
+        (value) => value.runes.every((code) =>
+            code == 9 || code == 10 || code == 13 ||
+            (code >= 32 && code <= 126)));
+      final asciiLabels = template.regions
+          .where((r) => r.kind == 'text')
+          .every((r) => r.label.runes.every((code) =>
+              code >= 32 && code <= 126));
+      if (asciiText && asciiLabels) {
+        return _render(template, data, images: images, qr: qr,
+            backgrounds: backgrounds, useCompactVectorFont: true);
+      }
+    }
+    return SchoolMediaBudgets.enforcePdf('idCard', output);
   }
 }
 
