@@ -264,7 +264,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: label(placeholder, size: 11, color: PdfColors.grey600))
           : pw.ClipRect(
               child: kind == 'teacherId'
-                  ? IdCardLayout.image(bytes, cover: cover)
+                  ? IdCardLayout.image(bytes, cover: cover, printDpi: cover ? 300 : 250)
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
