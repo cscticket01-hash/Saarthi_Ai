@@ -1,4 +1,5 @@
 import 'school_media_budgets.dart';
+import 'school_pdf_media.dart';
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -40,6 +41,9 @@ Future<Uint8List> renderSchoolDocument(
   final i = template.clamp(0, 3);
   final teacher = kind == 'teacherId';
   final id = teacher || kind == 'studentId';
+  // Embed normalized print assets; do not touch source photos, QR or artwork.
+  final embeddedPhoto = SchoolPdfMedia.portrait(photo);
+  final embeddedLogo = SchoolPdfMedia.branding(logo);
   final pdf = pw.Document();
   final colors = teacher
       ? [
@@ -67,8 +71,8 @@ Future<Uint8List> renderSchoolDocument(
           border: isDefault ? pw.Border.all(color: accent) : null),
       padding: pw.EdgeInsets.all(id && i >= 2 ? 6 : 10),
       child: pw.Row(children: [
-        if (logo != null) ...[
-          pw.Image(pw.MemoryImage(logo), width: 24, height: 24),
+        if (embeddedLogo != null) ...[
+          pw.Image(pw.MemoryImage(embeddedLogo!), width: 24, height: 24),
           pw.SizedBox(width: 8)
         ],
         pw.Expanded(
@@ -109,8 +113,8 @@ Future<Uint8List> renderSchoolDocument(
         decoration: pw.BoxDecoration(
             color: PdfColors.grey200,
             border: pw.Border.all(color: accent, width: .5)),
-        child: photo != null
-            ? pw.Image(pw.MemoryImage(photo), fit: pw.BoxFit.cover)
+        child: embeddedPhoto != null
+            ? pw.Image(pw.MemoryImage(embeddedPhoto!), fit: pw.BoxFit.cover)
             : pw.Center(
                 child: pw.Text(teacher ? 'STAFF' : 'PHOTO',
                     style: const pw.TextStyle(
