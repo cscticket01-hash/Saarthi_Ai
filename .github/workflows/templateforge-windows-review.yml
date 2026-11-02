@@ -89,7 +89,7 @@ jobs:
       - name: Run TemplateForge and document regression tests
         shell: powershell
         run: |
-          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_office_converter_test.dart test/windows_template_private_corpus_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart test/windows_template_print_acceptance_test.dart test/windows_receipt_print_dialog_test.dart
+          flutter test --concurrency=1 test/windows_template_import_engine_test.dart test/windows_template_office_converter_test.dart test/windows_template_private_corpus_test.dart test/windows_template_cloud_store_test.dart test/windows_reference_documents_test.dart test/windows_student_id_cards_test.dart test/windows_template_print_acceptance_test.dart test/windows_receipt_print_dialog_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'TemplateForge regression tests failed.' }
 
       - name: Attach real A4 printer calibration PDF for physical acceptance
