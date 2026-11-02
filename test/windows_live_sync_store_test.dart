@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/live_sync_protocol.dart';
 import '../lib/windows_live_sync_store.dart';
 import '../lib/windows_local_firestore.dart';
@@ -9,6 +10,7 @@ void main(){
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
  final db=FirebaseFirestore.instance;
  setUp(()async{
+  FlutterSecureStorage.setMockInitialValues({});
   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
   await db.switchProfile('live-${DateTime.now().microsecondsSinceEpoch}',
     identity:{'schoolId':school,'schoolSyncId':school});

@@ -8,6 +8,7 @@ type Job={seq:number;collection:string;id:string;operation_id:string;operation:s
 // financial-ledger, attendance and document lifecycles retain their old owners.
 export const liveCollections=new Set(['school_expenses','school_calendar','school_notices','school_settings']);
 const hash=(v:unknown)=>createHash('sha256').update(canonical(v)).digest('hex');
+const byteLength=(v:string)=>new TextEncoder().encode(v).byteLength;
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&!v.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(v);
 const opId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(v);
 function clean(v:unknown,depth=0):void{
@@ -64,7 +65,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  if(command==='commit'){
   collection();demand(state()?.state==='active','Verified baseline required',412);
   demand(validId(b.id)&&opId(b.operationId)&&['write','delete','patch'].includes(String(b.operation))&&typeof b.expectedRevision==='string'&&b.expectedRevision.length<=100,'Invalid live operation');
-  clean(b.data);demand(JSON.stringify(b).length<=256000,'Live record too large',413);
+  clean(b.data);demand(byteLength(JSON.stringify(b))<=256000,'Live record too large',413);
   const fingerprint=hash({collection:col,id:b.id,operation:b.operation,operationId:b.operationId,expectedRevision:b.expectedRevision,data:b.data??null});
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_operations WHERE operation_id=?',String(b.operationId)).toArray()[0];
@@ -105,14 +106,14 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(Number.isSafeInteger(b.after)&&Number(b.after)>=0&&Number(b.after)<=head(),'Invalid cursor; snapshot required',409);
   const events:Json[]=[];let bytes=0;
   for(const r of sql.exec<{seq:number;collection:string;id:string;body:string}>('SELECT seq,collection,id,body FROM live_events WHERE seq>? ORDER BY seq LIMIT 100',Number(b.after))){
-   if(bytes+r.body.length>300000&&events.length)break;bytes+=r.body.length;events.push({sequence:r.seq,collection:r.collection,id:r.id,record:JSON.parse(r.body)});
+   const size=byteLength(r.body);if(bytes+size>300000&&events.length)break;bytes+=size;events.push({sequence:r.seq,collection:r.collection,id:r.id,record:JSON.parse(r.body)});
   }
   const cursor=events.length?Number(events[events.length-1].sequence):Number(b.after);return {liveProtocol:1,schoolId:school,events,cursor,head:head(),more:cursor<head()};
  }
  if(command==='snapshot'){
   collection();demand(state()?.state==='active','Verified baseline required',412);demand((b.after===undefined||typeof b.after==='string')&&Number.isSafeInteger(b.at)&&b.at===head(),'Snapshot changed; restart snapshot',409);
   const records:Json[]=[];let bytes=0;
-  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){if(bytes+r.body.length>300000&&records.length)break;bytes+=r.body.length;records.push({id:r.id,record:JSON.parse(r.body)});}
+  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:JSON.parse(r.body)});}
   return {liveProtocol:1,schoolId:school,cursor:b.at,records,next:records.length?records[records.length-1].id:null};
  }
  if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string}>('SELECT collection,state FROM live_collections').toArray()};

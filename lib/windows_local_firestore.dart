@@ -301,7 +301,9 @@ class FirebaseFirestore {
     final operations=[
       for(final event in page.events)_WriteOperation._(type:_WriteType.set,
         collection:'_windows_live_incoming',documentId:'${page.schoolId}-${event['sequence']}',
-        data:{'schoolId':page.schoolId,...event,'state':'retained'}),
+        data:{'schoolId':page.schoolId,'sequence':event['sequence'],
+          'collection':event['collection'],'id':event['id'],
+          'record':jsonDecode(jsonEncode(event['record'])),'state':'retained'}),
       _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
         documentId:page.schoolId,data:{'schoolId':page.schoolId,'cursor':page.cursor}),
     ];
