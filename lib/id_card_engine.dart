@@ -229,6 +229,10 @@ class PreparedIdCard {
   final IdCardManifest template;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds, shapedText;
+  // Reuse identical JPEG/PNG objects across both sides of one generated ID.
+  // The same school logo appears on front and back; duplicate PDF objects
+  // increase byte size but add no print fidelity.
+  final Map<String, pw.MemoryImage> _printImageCache = {};
   final String qr;
   final pw.Font font;
   pw.Widget buildSide(String name) => pw.SizedBox(
@@ -262,6 +266,7 @@ class PreparedIdCard {
                                 cover: r.fit == 'cover',
                                 focusX: r.focusX,
                                 focusY: r.focusY,
+                                imageCache: _printImageCache,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty
