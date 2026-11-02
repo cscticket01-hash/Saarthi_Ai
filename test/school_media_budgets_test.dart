@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 
 import '../lib/document_processing_engine.dart';
 import '../lib/school_media_budgets.dart';
+import '../lib/school_pdf_media.dart';
 import '../lib/id_card_layout.dart';
 
 void main() {
@@ -70,6 +71,26 @@ void main() {
     final strokeY = (decoded.height * 225 / 500).floor().clamp(0, decoded.height - 1);
     expect(decoded.getPixel(strokeX, strokeY).a.toInt(), greaterThan(0));
     expect(decoded.getPixel(0, decoded.height - 1).a.toInt(), 0);
+  });
+
+  test('printed ID background is smaller without changing original source or dimensions', () {
+    final bitmap = img.Image(width: 600, height: 900, numChannels: 4);
+    for (var y = 0; y < bitmap.height; y++) {
+      for (var x = 0; x < bitmap.width; x++) {
+        bitmap.setPixelRgba(x, y, (x * 3 + y) % 255,
+          (y * 7) % 255, (x + y * 5) % 255, 255);
+      }
+    }
+    final source = Uint8List.fromList(img.encodePng(bitmap));
+    final originalCopy = Uint8List.fromList(source);
+    final compact = SchoolPdfMedia.cardBackground(
+      source, widthMm: 54, heightMm: 85.6);
+    expect(compact.length, lessThan(source.length));
+    expect(source, originalCopy);
+    final decoded = img.decodeImage(compact)!;
+    expect(decoded.width, lessThanOrEqualTo(600));
+    expect(decoded.height, lessThanOrEqualTo(900));
+    expect(compact.sublist(0, 2), [0xff, 0xd8]);
   });
 
   test('ID PDF portrait photo is print-resolution JPEG, with transparent ink as PNG', () {
