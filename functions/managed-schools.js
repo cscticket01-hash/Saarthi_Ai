@@ -621,9 +621,13 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   const allowed=new Set(['commit','read','head','changes','snapshot','received','stats']);
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
   // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
-  const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor'].filter(k=>b[k]!==undefined).map(k=>[k,k==='data'?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
+  const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor','createIntent','cachedBaseline'].filter(k=>b[k]!==undefined).map(k=>[k,['data','cachedBaseline'].includes(k)?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
-  return {success:true,schoolId:m.schoolId,...await liveSync.command(m.schoolId,body)};
+  const drive=record=>signedRequest(m,record);
+  const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
+    operation==='commit'?await liveSync.commit(m.schoolId,body,drive):
+    ['changes','snapshot'].includes(operation)?await liveSync.replay(m.schoolId,body,drive):await liveSync.command(m.schoolId,body);
+  return {success:true,schoolId:m.schoolId,...result};
  }
  // Lightweight enrollment metadata is independent of the PC and school Drive.
  // Media and operational records remain in the school's own storage.

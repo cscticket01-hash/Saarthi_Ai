@@ -76,6 +76,10 @@ jobs:
       - run: dart --disable-dart-dev .github/tests/live_sync_protocol.dart
       - run: flutter pub get
       - run: flutter test --concurrency=1 test/windows_live_sync_store_test.dart
+      - name: Verify existing offline duplicate self-repair on independent SQLite devices
+        env:
+          APPDATA: ${{ runner.temp }}/live-duplicate-recovery
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'offline identical entry adopts cloud original' test/windows_multi_pc_sync_test.dart
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart lib/windows_person_card_sync.dart lib/windows_school_identity.dart
       - env:
           APPDATA: ${{ runner.temp }}/cloudflare-apps

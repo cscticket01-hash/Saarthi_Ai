@@ -26,10 +26,45 @@ Receipts distinguish `cloudState: committed` from `backupState: pending`.
 Neither is a legacy protocol-2 Drive ACK. Live and Drive revisions have separate
 storage columns; verified backups cannot overwrite a newer live revision.
 
+Cloudflare holds temporary payloads. On verified Drive completion, the same
+transaction clears that version's backup body, replay body and record-bearing
+operation receipts. The current record body is cleared only when it still has
+that exact live revision. Hashes, revision references, operation fingerprints,
+cursor events and deletion evidence remain as small recovery metadata. Verified
+seed payloads are also discarded after the initial baseline is sealed.
+
+Point reads of cleaned records use a signed GS point read and verify school,
+exact Drive revision and a business-content/deletion hash before projecting the
+unchanged live revision. Later edits use that verified baseline inside record
+CAS without leaving a permanent Cloudflare cache. A missing, changed or foreign
+Drive record fails closed. No Drive row is overwritten by recovery.
+An already-connected device can provide its cached baseline for an edit: the
+server checks school, exact current live revision and the full content/deletion
+hash before using it. This avoids a slow redundant GS read without trusting
+client assertions or keeping the payload permanently on Cloudflare. A stale or
+changed cached value falls back to verified Drive readback.
+
+Replay events are current-state hints: the broker resolves each affected record
+to its newest version, including from Drive after cleanup. It does not attempt
+to retrieve obsolete historical row payloads that GS has since overwritten.
+This prevents an old replay event from resurrecting an earlier value. Cursor
+order and the client's durable retention contract remain unchanged.
+
+An explicit offline create for an existing same-school/key is reconciled only
+when its complete business content and deletion state match. The saved cloud
+version wins, the original operation identity is retained, and no new event or
+backup is produced. Different content remains a conflict. The existing Windows
+verified duplicate repair, including linked-child protections, is reused and
+covered by an independent-SQLite-device CI regression; it is not replaced by a
+name/phone similarity heuristic.
+
 Backup leases fence stale workers. A successor for the same record waits for
 its predecessor; an independent record can progress. A failed/ambiguous GS ACK
 retains the job. A review failure blocks only that record's dependent backups.
 The exact original backup operation ID is retained across retries/restarts.
+Cleanup additionally verifies the returned or freshly point-read GS record's
+school, revision, operation identity, deletion state and complete business hash.
+A successful HTTP response or revision string alone cannot release payloads.
 
 The WebSocket endpoint uses short-lived, school-admin grants issued after
 normal broker authorization. The grant goes in a WebSocket subprotocol rather
@@ -56,7 +91,7 @@ Authenticated school-admin API, all with `liveProtocol: 1`:
 | Action | Purpose |
 | --- | --- |
 | `managed/live/prepare` | Read signed GS baseline, seed bounded immutable pages, recheck the source head, then seal |
-| `managed/live/commit` | Atomic live write/delete/patch with operation ID and expected revision |
+| `managed/live/commit` | Atomic live write/delete/patch; optional verified cached baseline and explicit offline create intent |
 | `managed/live/read` | Own-school point read |
 | `managed/live/head` | Current sequence and collection admission states |
 | `managed/live/changes` | Replay after a saved cursor |
@@ -80,6 +115,8 @@ finish backup jobs or nominate their own successful backup revision.
    student readers need person-scoped projections, not the school-admin feed.
 3. Add durable migration abort/resume and verified rollback reconciliation.
    Switching back to GS while backups lag would lose visible live edits.
+   Payload cleanup/read fallback is implemented, but automatic cutover of the
+   existing business-screen/apply owners still requires this migration fence.
 4. Add lifecycle-aware validation and projection for students/teachers, financial
    ledgers and documents, including same-slot generation replacement and media.
 5. Add bounded replay compaction, pinned snapshots that tolerate busy writers,

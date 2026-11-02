@@ -2,12 +2,14 @@ import {createHash,randomUUID} from 'node:crypto';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
 type Json=Record<string,unknown>;
-type Row={collection:string;id:string;body:string;revision:string;drive_revision:string};
+type Row={collection:string;id:string;body:string;revision:string;drive_revision:string;payload_hash:string};
 type Job={seq:number;collection:string;id:string;operation_id:string;operation:string;body:string;state:string;due:number;claim:string;claim_until:number;drive_revision:string|null};
 // Rollout intentionally starts with independent administrative records. Person,
 // financial-ledger, attendance and document lifecycles retain their old owners.
 export const liveCollections=new Set(['school_expenses','school_calendar','school_notices','school_settings']);
 const hash=(v:unknown)=>createHash('sha256').update(canonical(v)).digest('hex');
+const business=(v:Json)=>Object.fromEntries(Object.entries(v).filter(([k])=>!k.startsWith('_sync')));
+const payloadHash=(v:Json)=>hash({deleted:v._syncDeleted===true,data:business(v)});
 const byteLength=(v:string)=>new TextEncoder().encode(v).byteLength;
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&!v.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(v);
 const opId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(v);
@@ -22,6 +24,10 @@ function clean(v:unknown,depth=0):void{
 export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_collections(collection TEXT PRIMARY KEY,state TEXT NOT NULL,fingerprint TEXT NOT NULL,expected_count INTEGER NOT NULL,source_revision TEXT NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_records(collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,revision TEXT NOT NULL,drive_revision TEXT NOT NULL,PRIMARY KEY(collection,id))');
+ if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_records)').toArray().some(c=>c.name==='payload_hash')){
+  storage.sql.exec("ALTER TABLE live_records ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''");
+  for(const row of storage.sql.exec<Row>("SELECT * FROM live_records WHERE body!=''").toArray())storage.sql.exec('UPDATE live_records SET payload_hash=? WHERE collection=? AND id=?',payloadHash(JSON.parse(row.body)),row.collection,row.id);
+ }
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,operation_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_operations(operation_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
@@ -47,7 +53,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(validId(entry.id)&&entry.data&&typeof entry.data==='object'&&!Array.isArray(entry.data),'Invalid seed row');
    const data=entry.data as Json;clean(data);demand(data.schoolId===school&&typeof data._syncRevision==='string'&&data._syncRevision.length>0&&!/^(live-|cf-)/.test(data._syncRevision),'Unverified source row');
    const body=canonical(data),old=row(entry.id);demand(!old||old.body===body,'Seed replay differs',409);
-   if(!old)sql.exec('INSERT INTO live_records VALUES(?,?,?,?,?)',col,entry.id,body,data._syncRevision,data._syncRevision);
+   if(!old)sql.exec('INSERT INTO live_records(collection,id,body,revision,drive_revision,payload_hash) VALUES(?,?,?,?,?,?)',col,entry.id,body,data._syncRevision,data._syncRevision,payloadHash(data));
   }demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_records WHERE collection=?',col).toArray()[0].n<=s.expected_count,'Seed count exceeded',409);});return {state:'seeding'};
  }
  if(command==='seedSeal'){
@@ -55,23 +61,37 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const s=state();demand(s&&s.fingerprint===b.fingerprint,'Seed identity mismatch',409);if(s.state==='active')return {state:'active'};
    const records:Record<string,Json>={};for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? ORDER BY id',col))records[r.id]=JSON.parse(r.body);
    demand(Object.keys(records).length===s.expected_count&&hash(records)===s.fingerprint,'Incomplete or changed seed',409);
-   sql.exec("UPDATE live_collections SET state='active' WHERE collection=?",col);return {state:'active'};
+   sql.exec("UPDATE live_collections SET state='active' WHERE collection=?",col);
+   sql.exec("UPDATE live_records SET body='' WHERE collection=?",col);return {state:'active'};
   });
  }
  if(command==='read'){
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
-  const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r?JSON.parse(r.body):null,cursor:head()};
+  const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
  if(command==='commit'){
   collection();demand(state()?.state==='active','Verified baseline required',412);
   demand(validId(b.id)&&opId(b.operationId)&&['write','delete','patch'].includes(String(b.operation))&&typeof b.expectedRevision==='string'&&b.expectedRevision.length<=100,'Invalid live operation');
   clean(b.data);demand(byteLength(JSON.stringify(b))<=256000,'Live record too large',413);
-  const fingerprint=hash({collection:col,id:b.id,operation:b.operation,operationId:b.operationId,expectedRevision:b.expectedRevision,data:b.data??null});
+  demand(b.createIntent===undefined||typeof b.createIntent==='boolean','Invalid create intent');
+  const fingerprint=hash({collection:col,id:b.id,operation:b.operation,operationId:b.operationId,expectedRevision:b.expectedRevision,data:b.data??null,...(b.createIntent===true?{createIntent:true}:{})});
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_operations WHERE operation_id=?',String(b.operationId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Sync operation ID conflict',409);return JSON.parse(prior.receipt) as Json;}
-   const current=row(String(b.id));demand((current?.revision||'')===b.expectedRevision,'Record revision conflict',409);
-   const old:Json=current?JSON.parse(current.body):{};let data:Json;
+   const current=row(String(b.id));
+   // A purged baseline is supplied only by the broker's signed point read.
+   // Verify it inside the same CAS transaction without caching it permanently.
+   const baseline=b.baseline as Json|undefined;
+   if(current&&!current.body)demand(baseline&&baseline.schoolId===school&&baseline._syncRevision===current.drive_revision&&payloadHash(baseline)===current.payload_hash,'Verified Drive baseline required',428);
+   const old:Json=current?(current.body?JSON.parse(current.body):{...baseline,_syncRevision:current.revision}):{};let data:Json;
+   if(current&&b.createIntent===true&&b.operation==='write'&&b.expectedRevision===''){
+    demand(b.data&&typeof b.data==='object'&&!Array.isArray(b.data)&&(b.data as Json).schoolId===school&&old._syncDeleted!==true&&payloadHash(b.data as Json)===current.payload_hash,'Offline create differs; retain both versions for review',409);
+    const backup=sql.exec<{state:string}>('SELECT state FROM live_backup WHERE collection=? AND id=? ORDER BY seq DESC LIMIT 1',col,String(b.id)).toArray()[0];
+    const backedUp=!backup||backup.state==='verified';
+    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:backedUp?null:old,duplicate:true,resolution:'cloudRetained',reconcileRequired:true,...(backedUp?{source:'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash}:{})};
+    sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));return receipt;
+   }
+   demand((current?.revision||'')===b.expectedRevision,'Record revision conflict',409);
    if(b.operation==='delete')data={schoolId:school,_syncDeleted:true};
    else {
     demand(b.data&&typeof b.data==='object'&&!Array.isArray(b.data)&&(b.data as Json).schoolId===school,'Foreign record',403);
@@ -84,10 +104,10 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     }else data={...b.data as Json};
     demand(!Object.keys(b.data as Json).some(k=>k.startsWith('_sync')),'Client cannot set sync metadata');
    }
-   const business=(v:Json)=>Object.fromEntries(Object.entries(v).filter(([k])=>!k.startsWith('_sync')));
    if(current&&(b.operation==='delete'&&old._syncDeleted===true||b.operation!=='delete'&&old._syncDeleted!==true&&canonical(business(old))===canonical(business(data)))){
     const backup=sql.exec<{state:string}>('SELECT state FROM live_backup WHERE collection=? AND id=? ORDER BY seq DESC LIMIT 1',col,String(b.id)).toArray()[0];
-    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:!backup||backup.state==='verified'?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:old,unchanged:true};
+    const backedUp=!backup||backup.state==='verified';
+    const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:backedUp?null:old,unchanged:true,...(backedUp?{source:'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash,reconcileRequired:true}:{})};
     sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));return receipt;
    }
    demand(head()<1000000,'Live history capacity reached; retain local work',503);
@@ -97,7 +117,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const seq=head(),receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:'pending',recordRevision:revision,operationId:b.operationId,cursor:seq,record:data};
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(receipt),seq);
    sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));
-   sql.exec('INSERT INTO live_records VALUES(?,?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body,revision=excluded.revision',col,String(b.id),body,revision,current?.drive_revision||'');
+   sql.exec('INSERT INTO live_records(collection,id,body,revision,drive_revision,payload_hash) VALUES(?,?,?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body,revision=excluded.revision,payload_hash=excluded.payload_hash',col,String(b.id),body,revision,current?.drive_revision||'',payloadHash(data));
    sql.exec("INSERT INTO live_backup(seq,collection,id,operation_id,operation,body,state,due) VALUES(?,?,?,?,?,?,'pending',?)",seq,col,String(b.id),String(b.operationId),b.operation==='delete'?'delete':'write',body,now);
    return receipt;
   });
@@ -106,14 +126,14 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(Number.isSafeInteger(b.after)&&Number(b.after)>=0&&Number(b.after)<=head(),'Invalid cursor; snapshot required',409);
   const events:Json[]=[];let bytes=0;
   for(const r of sql.exec<{seq:number;collection:string;id:string;body:string}>('SELECT seq,collection,id,body FROM live_events WHERE seq>? ORDER BY seq LIMIT 100',Number(b.after))){
-   const size=byteLength(r.body);if(bytes+size>300000&&events.length)break;bytes+=size;events.push({sequence:r.seq,collection:r.collection,id:r.id,record:JSON.parse(r.body)});
+   const size=byteLength(r.body);if(bytes+size>300000&&events.length)break;bytes+=size;events.push({sequence:r.seq,collection:r.collection,id:r.id,...(r.body?{record:JSON.parse(r.body)}:{source:'drive',record:null})});
   }
   const cursor=events.length?Number(events[events.length-1].sequence):Number(b.after);return {liveProtocol:1,schoolId:school,events,cursor,head:head(),more:cursor<head()};
  }
  if(command==='snapshot'){
   collection();demand(state()?.state==='active','Verified baseline required',412);demand((b.after===undefined||typeof b.after==='string')&&Number.isSafeInteger(b.at)&&b.at===head(),'Snapshot changed; restart snapshot',409);
   const records:Json[]=[];let bytes=0;
-  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:JSON.parse(r.body)});}
+  for(const r of sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id>? ORDER BY id LIMIT 100',col,String(b.after||''))){const size=byteLength(r.body);if(bytes+size>300000&&records.length)break;bytes+=size;records.push({id:r.id,record:r.body?JSON.parse(r.body):null,...(!r.body?{source:'drive',driveRevision:r.drive_revision,recordRevision:r.revision,payloadHash:r.payload_hash}:{})});}
   return {liveProtocol:1,schoolId:school,cursor:b.at,records,next:records.length?records[records.length-1].id:null};
  }
  if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string}>('SELECT collection,state FROM live_collections').toArray()};
@@ -136,11 +156,19 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(typeof b.driveRevision==='string'&&b.driveRevision.length>0&&b.driveRevision.length<=100&&!b.driveRevision.startsWith('live-')&&!b.driveRevision.startsWith('cf-'),'Unverified backup revision');
    sql.exec("UPDATE live_backup SET state='verified',drive_revision=?,claim='',claim_until=0,due=? WHERE seq=?",b.driveRevision,Number.MAX_SAFE_INTEGER,job.seq);
    sql.exec('UPDATE live_records SET drive_revision=? WHERE collection=? AND id=?',b.driveRevision,job.collection,job.id);
+   const event=sql.exec<{receipt:string}>('SELECT receipt FROM live_events WHERE seq=?',job.seq).toArray()[0];
+   const receipt=JSON.parse(event.receipt) as Json;
+   const reference={...receipt,record:null,backupState:'verified',source:'drive',driveRevision:b.driveRevision,payloadHash:payloadHash(JSON.parse(job.body)),reconcileRequired:true};
+   sql.exec("UPDATE live_events SET body='',receipt=? WHERE seq=?",JSON.stringify(reference),job.seq);
+   sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',null,'$.backupState','verified','$.source','drive','$.driveRevision',?,'$.payloadHash',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),String(receipt.recordRevision));
+   sql.exec("UPDATE live_backup SET body='' WHERE seq=?",job.seq);
+   // Old backup completion must never remove an unbacked newer local version.
+   sql.exec("UPDATE live_records SET body='' WHERE collection=? AND id=? AND revision=?",job.collection,job.id,String(receipt.recordRevision));
   }else{
    demand(Number.isSafeInteger(b.retryAt)&&Number(b.retryAt)>now&&Number(b.retryAt)<=now+86400000,'Invalid backup retry');
    sql.exec("UPDATE live_backup SET state=?,due=?,claim='',claim_until=0 WHERE seq=?",b.review===true?'review':'retry',b.review===true?Number.MAX_SAFE_INTEGER:Number(b.retryAt),job.seq);
   }return {accepted:true};
  });
- if(command==='stats')return {liveProtocol:1,schoolId:school,cursor:head(),backups:sql.exec<{state:string;count:number;due:number}>('SELECT state,count(*) AS count,min(due) AS due FROM live_backup GROUP BY state').toArray()};
+ if(command==='stats')return {liveProtocol:1,schoolId:school,cursor:head(),backups:sql.exec<{state:string;count:number;due:number}>('SELECT state,count(*) AS count,min(due) AS due FROM live_backup GROUP BY state').toArray(),payloadCopies:sql.exec<{records:number;events:number;backups:number;operations:number}>("SELECT (SELECT count(*) FROM live_records WHERE body!='') AS records,(SELECT count(*) FROM live_events WHERE body!='') AS events,(SELECT count(*) FROM live_backup WHERE body!='') AS backups,(SELECT count(*) FROM live_operations WHERE json_type(receipt,'$.record')='object') AS operations").toArray()[0]};
  throw Object.assign(Error('Unknown live command'),{status:400});
 }

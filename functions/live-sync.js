@@ -2,10 +2,45 @@
 const {createHash,createHmac}=require('node:crypto');
 const {canonical}=require('./live-sync-canonical');
 const COLLECTIONS=new Set(['school_expenses','school_calendar','school_notices','school_settings']);
+const payloadHash=record=>createHash('sha256').update(canonical({deleted:record._syncDeleted===true,data:Object.fromEntries(Object.entries(record).filter(([key])=>!key.startsWith('_sync')))})).digest('hex');
 const refuse=(status,code)=>{throw Object.assign(Error('Live sync admission requires verified school state.'),{status,code,publicMessage:true});};
 function createLiveSync({edge,schools=[],now=Date.now}){
  const enabled=school=>schools.includes(school)&&edge?.enabled(school)===true;
  async function command(school,body){if(!enabled(school))refuse(412,'LIVE_SYNC_DISABLED');return edge.rpc(school,'live',body);}
+ async function resolve(school,collection,id,readDrive,cachedBaseline){
+  const result=await command(school,{command:'read',collection,id});
+  if(result.source!=='drive')return {result,baseline:null};
+  // A device may already hold the exact committed version. Verify its full
+  // content against retained metadata; never trust a name, timestamp or flag.
+  if(cachedBaseline&&cachedBaseline.schoolId===school&&cachedBaseline._syncRevision===result.recordRevision&&payloadHash(cachedBaseline)===result.payloadHash){
+   return {result:{...result,record:cachedBaseline},baseline:{...cachedBaseline,_syncRevision:result.driveRevision}};
+  }
+  const reply=await readDrive({action:'managed_records',operation:'read',collection,id,syncProtocol:2});
+  const record=reply?.records?.[id];
+  if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true||!record||record.schoolId!==school||record._syncRevision!==result.driveRevision||payloadHash(record)!==result.payloadHash)refuse(503,'LIVE_DRIVE_READ_UNVERIFIED');
+  return {result:{...result,record:{...record,_syncRevision:result.recordRevision}},baseline:record};
+ }
+ async function read(school,collection,id,readDrive){return (await resolve(school,collection,id,readDrive)).result;}
+ async function commit(school,body,readDrive){
+  const {cachedBaseline,...wire}=body;
+  const {baseline}=await resolve(school,body.collection,body.id,readDrive,cachedBaseline);
+  return command(school,{...wire,command:'commit',...(baseline?{baseline}:{})});
+ }
+ async function replay(school,body,readDrive){
+  const result=await command(school,body),cache=new Map();
+  const rows=body.command==='changes'?result.events:result.records;
+  if(!Array.isArray(rows))refuse(502,'LIVE_REPLAY_UNVERIFIED');
+  for(const entry of rows){
+   const collection=body.command==='changes'?entry.collection:body.collection,key=collection+'/'+entry.id;
+   // Superseded events are current-state hints. Fetch one current version per
+   // key, never ask Drive for a historical row that has since been overwritten.
+   if(!cache.has(key))cache.set(key,await read(school,collection,entry.id,readDrive));
+   const current=cache.get(key);if(!current.record)refuse(503,'LIVE_DRIVE_READ_UNVERIFIED');
+   entry.record=current.record;entry.coalesced=true;
+  }
+  if(body.command==='snapshot'&&(await command(school,{command:'head'})).cursor!==body.at)refuse(409,'LIVE_SNAPSHOT_CHANGED');
+  return result;
+ }
  async function prepare(school,collection,read){
   if(!COLLECTIONS.has(collection))refuse(412,'LIVE_COLLECTION_NOT_ADMITTED');
   const source=await read({action:'managed_records',operation:'read',collection,syncProtocol:2});
@@ -34,13 +69,23 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    const record=ack?.record;
    if(ack?.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision||/^(live-|cf-)/.test(ack.recordRevision)||
       record&&(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==ack.recordRevision||record.id!==undefined&&record.id!==job.request.id||record._syncOperationId!==undefined&&record._syncOperationId!==job.request.operationId))refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
+   let proof=record;
+   if(!proof){
+    const readback=await deliver({action:'managed_records',operation:'read',collection:job.request.collection,id:job.request.id,syncProtocol:2});
+    if(readback?.success!==true||readback.schoolId!==school||readback.syncProtocol!==2||readback.pointRead!==true)refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
+    proof=readback.records?.[job.request.id];
+   }
+   if(!proof||proof.schoolId!==school||proof._syncRevision!==ack.recordRevision||proof._syncOperationId!==job.request.operationId)refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
+   const expected=job.request.operation==='delete'?{schoolId:school,_syncDeleted:true}:job.request.data;
+   const savedRecord={...proof};if(!Object.hasOwn(expected,'id')&&savedRecord.id===job.request.id)delete savedRecord.id;
+   if(payloadHash(savedRecord)!==payloadHash(expected))refuse(502,'LIVE_BACKUP_CONTENT_UNVERIFIED');
    const saved=await finish({verified:true,driveRevision:ack.recordRevision});return {processed:saved.accepted?1:0};
   }catch(error){
    const review=[400,401,403,409,422].includes(error.status);
    await finish({verified:false,review,retryAt:now()+Math.max(5000,Math.min(86400000,Number(error.retryAfterMs)||0))});return {processed:0};
   }
  }
- return {enabled,command,prepare,drain};
+ return {enabled,command,prepare,drain,read,commit,replay};
 }
 function liveGrant({schoolId,uid,key,endpoint,now=Date.now()}){
  const value=Buffer.from(JSON.stringify({version:1,schoolId,uid,expiresAt:now+60000})).toString('base64url');

@@ -29,14 +29,16 @@ test('foreign baseline is rejected before any cloud authority writes',async()=>{
  assert.equal(writes,0);
 });
 test('backup identity is verified and a fake cloud revision never becomes Drive verified',async()=>{
- const finished=[];const request={collection:'school_expenses',id:'one',operation:'write',operationId:'original-operation-0001'};
+ const finished=[];const request={collection:'school_expenses',id:'one',operation:'write',operationId:'original-operation-0001',data:{schoolId:A,title:'Saved'}};
  const live=createLiveSync({schools:[A],now:()=>100000,edge:{enabled:()=>true,rpc:async(s,l,b)=>b.command==='backupClaim'?{job:{seq:1,claim:'owner',request}}:(finished.push(b),{accepted:true})}});
  for(const ack of [{success:true,schoolId:B,syncProtocol:2,recordRevision:'drive'},
   {success:true,schoolId:A,syncProtocol:2,recordRevision:'live-fake'},
   {success:true,schoolId:A,syncProtocol:2,recordRevision:'drive',record:{schoolId:A,id:'foreign',_syncOperationId:request.operationId}}]){
   assert.equal((await live.drain(A,async()=>ack)).processed,0);assert.equal(finished.at(-1).verified,false);
  }
- assert.equal((await live.drain(A,async()=>({success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',record:{schoolId:A,id:'one',_syncOperationId:request.operationId,_syncRevision:'drive-verified'}}))).processed,1);
+ assert.equal((await live.drain(A,async()=>({success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',record:{schoolId:A,id:'one',title:'Wrong content',_syncOperationId:request.operationId,_syncRevision:'drive-verified'}}))).processed,0);
+ assert.equal(finished.at(-1).verified,false);
+ assert.equal((await live.drain(A,async()=>({success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',record:{schoolId:A,id:'one',title:'Saved',_syncOperationId:request.operationId,_syncRevision:'drive-verified'}}))).processed,1);
  assert.equal(finished.at(-1).verified,true);
 });
 test('stream grants have distinct signing domain, short expiry and no token in the URL',()=>{
