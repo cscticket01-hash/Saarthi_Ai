@@ -11,6 +11,51 @@ import 'document_processing_engine.dart';
 class SchoolPdfMedia {
   SchoolPdfMedia._();
 
+  /// Reduce a finished ID PDF's decorative front/back bitmap without
+  /// modifying the original template, source assets, vector fields or QR.
+  /// Card backgrounds are composited over white by the existing renderer;
+  /// flattening PNG transparency against the same white is visually exact.
+  /// Never upscale artwork. Keep a 300dpi physical-page ceiling and JPEG
+  /// quality >= 90 for color printed CR80 cards.
+  static Uint8List cardBackground(
+    Uint8List source, {
+    required double widthMm,
+    required double heightMm,
+  }) {
+    final decoded = img.decodeImage(source);
+    if (decoded == null || widthMm <= 0 || heightMm <= 0 ||
+        widthMm > 500 || heightMm > 500 ||
+        decoded.width <= 0 || decoded.height <= 0 ||
+        decoded.width * decoded.height > 20000000) {
+      throw const FormatException('Invalid physical ID card background.');
+    }
+    final rotated = img.bakeOrientation(decoded);
+    final maxWidth = (widthMm * 300 / 25.4).ceil();
+    final maxHeight = (heightMm * 300 / 25.4).ceil();
+    final scale = math.min(1.0, math.min(
+      maxWidth / rotated.width, maxHeight / rotated.height));
+    final frame = scale < 1
+        ? img.copyResize(rotated,
+            width: math.max(1, (rotated.width * scale).round()),
+            height: math.max(1, (rotated.height * scale).round()),
+            interpolation: img.Interpolation.average)
+        : rotated;
+    final rgb = frame.convert(numChannels: 4);
+    // The ID page underneath is already solid white.
+    for (final p in rgb) {
+      final alpha = p.a / 255;
+      p.r = p.r * alpha + 255 * (1 - alpha);
+      p.g = p.g * alpha + 255 * (1 - alpha);
+      p.b = p.b * alpha + 255 * (1 - alpha);
+      p.a = 255;
+    }
+    final jpeg = Uint8List.fromList(img.encodeJpg(
+      rgb.convert(numChannels: 3), quality: 92));
+    // A lossless source that is already smaller stays pixel-identical.
+    // JPEG only replaces the bitmap when it actually reduces the PDF.
+    return jpeg.length < source.length ? jpeg : source;
+  }
+
   static Uint8List? portrait(Uint8List? original) {
     if (original == null) return null;
     final outcome = DocumentProcessingEngine.portraitUpload({'bytes': original});
