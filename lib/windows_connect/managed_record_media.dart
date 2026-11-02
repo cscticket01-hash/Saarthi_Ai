@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../document_processing_engine.dart';
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import '../windows_school_image_cache.dart';
 import '../windows_local_firestore.dart';
@@ -65,6 +66,15 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
       own();
       bytes = processed['optimized'];
       mime = processed['mimeType'];
+    } else {
+      // Logo / principal signature / seal share the existing isolate engine,
+      // but preserve transparent ink and obey their independent 30 KB ceiling.
+      final processed = await compute(DocumentProcessingEngine.brandingUpload, {
+        'bytes': bytes,
+      });
+      own();
+      bytes = processed['optimized'] as Uint8List;
+      mime = processed['mimeType'] as String;
     }
     final digest = sha256.convert(bytes).toString();
     final upload = await call('managed/file/upload', {
