@@ -43,7 +43,7 @@ Future<Uint8List> renderSchoolDocument(
   final id = teacher || kind == 'studentId';
   // Embed normalized print assets; do not touch source photos, QR or artwork.
   final embeddedPhoto = SchoolPdfMedia.portrait(photo);
-  final embeddedLogo = SchoolPdfMedia.branding(logo);
+  final embeddedLogo = SchoolPdfMedia.branding(logo, maxPrintEdge: 128);
   final pdf = pw.Document();
   final colors = teacher
       ? [
