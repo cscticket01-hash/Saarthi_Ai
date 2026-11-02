@@ -180,9 +180,11 @@ Future<Uint8List> _renderWindowsReferenceDocument({
   Future<Uint8List?> portraitForPrint(Uint8List? bytes) =>
       bytes == null ? Future<Uint8List?>.value(null)
           : compute(SchoolPdfMedia.portrait, bytes);
-  Future<Uint8List?> brandingForPrint(Uint8List? bytes) =>
-      bytes == null ? Future<Uint8List?>.value(null)
-          : compute(SchoolPdfMedia.branding, bytes);
+  Future<Uint8List?> brandingForPrint(
+    Uint8List? bytes, int maxPrintEdge,
+  ) => bytes == null ? Future<Uint8List?>.value(null)
+      : compute(SchoolPdfMedia.brandingSized,
+          {'bytes': bytes, 'maxPrintEdge': maxPrintEdge});
   late final Uint8List? embeddedPhoto, embeddedLogo, embeddedSeal, printSignature;
   if (preparedMedia != null) {
     // A size retry reuses the exact verified source of the previous pass.
@@ -194,11 +196,12 @@ Future<Uint8List> _renderWindowsReferenceDocument({
     printSignature = preparedMedia.signature;
   } else {
     final visualPair = await Future.wait<Uint8List?>([
-      portraitForPrint(photo), brandingForPrint(logo),
+      portraitForPrint(photo), brandingForPrint(logo, kind == 'receipt' ? 120 : 256),
     ]);
     final signatureInk = await _signatureInk(signature, white: false);
     final brandingPair = await Future.wait<Uint8List?>([
-      brandingForPrint(seal), brandingForPrint(signatureInk),
+      brandingForPrint(seal, kind == 'receipt' ? 144 : 256),
+      brandingForPrint(signatureInk, kind == 'receipt' ? 192 : 256),
     ]);
     embeddedPhoto = visualPair[0];
     embeddedLogo = visualPair[1];
