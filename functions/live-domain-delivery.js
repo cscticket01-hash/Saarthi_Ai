@@ -9,6 +9,11 @@ const DOMAINS=Object.freeze({
 });
 const GC_COLLECTIONS=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 const canGcRecord=request=>request?.action==='managed_records'&&GC_COLLECTIONS.has(request.collection);
+// A queued legacy child with an explicit stable student generation must not
+// appear as an accepted proposal after the parent was retired on another PC.
+// This pre-admission check supplements (never replaces) signed GS CAS and
+// generation checks at final delivery time, including the deletion race.
+const STUDENT_DEPENDENT=new Set(['fee_ledger','fee_payments','attendance_records','attendance_logs','exam_results','exam_center_results']);
 const domainFor=collection=>Object.entries(DOMAINS).find(([,collections])=>collections.has(collection))?.[0]||null;
 const refuse=(status,code)=>{throw Object.assign(Error('Domain delivery needs verification; saved work is retained.'),{status,code,publicMessage:true});};
 const validId=id=>typeof id==='string'&&id.length>0&&id.length<=200&&!id.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(id);
@@ -53,9 +58,18 @@ async function hydrateDomainReceipt(school,result,readDrive){
  if(domainPayloadHash(record)!==source.payloadHash)refuse(502,'DOMAIN_CANONICAL_UNVERIFIED');
  return {...result,record};
 }
-function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{}}){
+function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assertStudentDependency}){
  async function submit(school,request,readDrive){
   validate(school,request);
+  if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
+      request.data?.role!=='teacher'&&request.data?.ownerRole!=='teacher'){
+   const data=request.data,generation=data?.personId;
+   const studentId=data?.studentDocId||data?.studentDocumentId||data?.studentId;
+   if(typeof generation==='string'&&/^p-[a-f0-9]{32,64}$/.test(generation)&&validId(studentId)){
+    if(typeof assertStudentDependency!=='function')refuse(503,'DOMAIN_STUDENT_DEPENDENCY_UNVERIFIED');
+    await assertStudentDependency(school,studentId,generation);
+   }
+  }
   // Keep the existing immutable delivery identity, scheduler barriers, exact
   // CAS and real GS result owner. No second financial/attendance writer exists.
   const receipt=await edgeDelivery.record(school,request,readDrive);
