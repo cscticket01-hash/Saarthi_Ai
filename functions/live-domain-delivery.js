@@ -13,7 +13,7 @@ const canGcRecord=request=>request?.action==='managed_records'&&GC_COLLECTIONS.h
 // appear as an accepted proposal after the parent was retired on another PC.
 // This pre-admission check supplements (never replaces) signed GS CAS and
 // generation checks at final delivery time, including the deletion race.
-const STUDENT_DEPENDENT=new Set(['fee_ledger','fee_payments','attendance_records','attendance_logs','exam_results','exam_center_results']);
+const STUDENT_DEPENDENT=new Set(['fee_ledger','fee_payments','attendance_records','attendance_logs','exam_results','exam_center_results','documents','student_scan_index']);
 const domainFor=collection=>Object.entries(DOMAINS).find(([,collections])=>collections.has(collection))?.[0]||null;
 const refuse=(status,code)=>{throw Object.assign(Error('Domain delivery needs verification; saved work is retained.'),{status,code,publicMessage:true});};
 const validId=id=>typeof id==='string'&&id.length>0&&id.length<=200&&!id.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(id);
@@ -61,7 +61,7 @@ async function hydrateDomainReceipt(school,result,readDrive){
 function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assertStudentDependency}){
  async function submit(school,request,readDrive){
   validate(school,request);
-  if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
+  // Exact student-owned document and scan-index writes obey the same retired\n  // generation fence as fee and attendance writes. Shared/teacher records do not.\n  if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
       request.data?.role!=='teacher'&&request.data?.ownerRole!=='teacher'){
    const data=request.data,generation=data?.personId;
    const studentId=data?.studentDocId||data?.studentDocumentId||data?.studentId;
