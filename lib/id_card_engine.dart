@@ -96,6 +96,7 @@ class IdCardEngine {
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
     pw.Font? font,
+    int printMediaStage = 0,
   }) async {
     data = normalizedInput(template,data);
     qr = compactQr(qr);
@@ -135,6 +136,7 @@ class IdCardEngine {
       Map.unmodifiable(backgrounds),
       Map.unmodifiable(shapedText),
       font ?? await loadFont(),
+      printMediaStage,
     );
   }
 
@@ -150,6 +152,7 @@ class IdCardEngine {
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
     bool useCompactVectorFont = false,
+    bool compactBitmapAssets = false,
   }) async {
     // Embed school-owned source backgrounds at their actual CR80 print size.
     // This is bitmap-only optimization; the original image assets, vector
@@ -158,7 +161,8 @@ class IdCardEngine {
       for (final entry in backgrounds.entries)
         entry.key: SchoolPdfMedia.cardBackground(
           entry.value, widthMm: template.printWidth,
-          heightMm: template.printHeight),
+          heightMm: template.printHeight,
+          jpegQuality: compactBitmapAssets ? 88 : 92),
     };
     final prepared = await prepare(
       template,
@@ -167,6 +171,7 @@ class IdCardEngine {
       qr: qr,
       backgrounds: optimizedBackgrounds,
       font: useCompactVectorFont ? pw.Font.helvetica() : null,
+      printMediaStage: compactBitmapAssets ? 1 : 0,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
@@ -211,6 +216,15 @@ class IdCardEngine {
             backgrounds: backgrounds, useCompactVectorFont: true);
       }
     }
+    if (!compactBitmapAssets && output.length > SchoolMediaBudgets.idCard) {
+      // Second safe pass: 280 DPI and JPEG quality 84 only on small embedded
+      // photo/branding bitmaps; all QR and text remain vector and the source
+      // bytes are untouched. Unicode retains the original embedded font.
+      return _render(template, data, images: images, qr: qr,
+          backgrounds: backgrounds,
+          useCompactVectorFont: useCompactVectorFont,
+          compactBitmapAssets: true);
+    }
     return SchoolMediaBudgets.enforcePdf('idCard', output);
   }
 }
@@ -225,6 +239,7 @@ class PreparedIdCard {
     this.backgrounds,
     this.shapedText,
     this.font,
+    this.printMediaStage,
   );
   final IdCardManifest template;
   final Map<String, dynamic> data;
@@ -235,6 +250,7 @@ class PreparedIdCard {
   final Map<String, pw.MemoryImage> _printImageCache = {};
   final String qr;
   final pw.Font font;
+  final int printMediaStage;
   pw.Widget buildSide(String name) => pw.SizedBox(
     width: template.width,
     height: template.height,
@@ -267,6 +283,8 @@ class PreparedIdCard {
                                 focusX: r.focusX,
                                 focusY: r.focusY,
                                 imageCache: _printImageCache,
+                                printDpi: printMediaStage == 0 ? 300 : 280,
+                                jpegQuality: printMediaStage == 0 ? 88 : 84,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty
