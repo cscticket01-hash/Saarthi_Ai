@@ -69,7 +69,7 @@ test('feature-gated small portrait uses one atomic Durable Object RPC without fo
  const f=setup({native:true});
  const {createCloudflareDelivery}=require('../cloudflare-delivery');
  const body={action:'managed_upload',uploadKey:'atomic-photo-owner-00001',name:'portrait.jpg',mime:'image/jpeg',base64:Buffer.from('small-image').toString('base64')};
- const upload=createCloudflareDelivery({edge:{rpc:f.edge?.rpc||async(_school,_lane,b)=>{
+ const upload=createCloudflareDelivery({edge:{rpc:async(_school,_lane,b)=>{
   assert.equal(b.command,'putSmall');const bytes=Buffer.from(b.base64,'base64');
   return {id:b.id,state:'pending',manifest:{...b.manifest,received:bytes.length}};
  }},atomicSmallFilesEnabled:true});
