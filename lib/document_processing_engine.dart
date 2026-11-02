@@ -13,6 +13,58 @@ class DocumentProcessingEngine {
   static const portraitTarget = 40 * 1024;
   static const brandingTarget = 30 * 1024;
 
+  /// Losslessly optimize the normalized PNG artwork used by TemplateForge.
+  /// Unlike portrait/photo compression, print backgrounds must retain every
+  /// pixel, including fine text, stamps and transparent edges. This runs in
+  /// an isolate before the existing verified school-Drive publication.
+  /// A larger, non-identical or color-profiled re-encode keeps source bytes.
+  static Map<String, dynamic> templateArtworkUpload(Map<String, dynamic> input) {
+    final source = input['bytes'] as Uint8List;
+    if (source.isEmpty || source.length > 20 * 1024 * 1024) {
+      throw const FormatException('Template artwork exceeds the 20 MiB safe upload limit.');
+    }
+    final decoder = img.PngDecoder();
+    final info = decoder.startDecode(source);
+    if (info == null || info.width <= 0 || info.height <= 0 ||
+        info.width * info.height > 20000000 || decoder.numFrames() != 1) {
+      throw const FormatException('Template artwork must be a valid single-frame PNG.');
+    }
+    final original = decoder.decodeFrame(0);
+    if (original == null) {
+      throw const FormatException('Template artwork cannot be decoded.');
+    }
+    Uint8List result = source;
+    // Re-encoding an ICC-profiled design could change its printed colours.
+    if (original.iccProfile == null) {
+      final candidate = Uint8List.fromList(img.encodePng(original, level: 9));
+      if (candidate.length < source.length) {
+        final verified = img.decodePng(candidate);
+        if (verified != null && verified.width == original.width &&
+            verified.height == original.height) {
+          var identicalPixels = true;
+          for (var y = 0; y < original.height && identicalPixels; y++) {
+            for (var x = 0; x < original.width; x++) {
+              final before = original.getPixel(x, y);
+              final after = verified.getPixel(x, y);
+              if (before.r != after.r || before.g != after.g ||
+                  before.b != after.b || before.a != after.a) {
+                identicalPixels = false;
+                break;
+              }
+            }
+          }
+          if (identicalPixels) result = candidate;
+        }
+      }
+    }
+    return {
+      'optimized': result, 'mimeType': 'image/png',
+      'originalBytes': source.length, 'actualBytes': result.length,
+      'lossless': true, 'pixelsVerified': true,
+      'reusedSource': identical(result, source),
+    };
+  }
+
   /// Optimize school logo, seal and signature for a strict 30 KB upload.
   /// Unlike the document-scanner pathway, transparent ink is never flattened
   /// onto white JPEG. This protects transparent signatures and round seals.
