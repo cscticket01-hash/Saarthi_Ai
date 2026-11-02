@@ -7,7 +7,7 @@ const require=createRequire(import.meta.url),{createLiveSync}=require('../../fun
 const {protect}=require('../../functions/managed-schools'),{attendancePayloadFinishValues,attendanceReceiptOwns}=require('../../functions/attendance-payload-receipt');
 const {createCloudflareDelivery}=require('../../functions/cloudflare-delivery');
 const school='vs-'+'a'.repeat(32),key='isolated-live-retention-key-000001';
-test('verified prefix compaction preserves monotonic global/collection heads, immutable receipts and Drive recovery',async t=>{
+test('verified 24h cache preserves replay until expiry',async t=>{
  const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)}),live=createLiveSync({edge,schools:[school]}),gs=storage({lifecycle:true,bundle:true}),read=async b=>gs.call(b);
  const collection='school_expenses';await live.prepare(school,collection,read);
@@ -15,15 +15,15 @@ test('verified prefix compaction preserves monotonic global/collection heads, im
  const first=await live.commit(school,request,read);
  assert.equal((await live.command(school,{command:'compact',before:1})).floor,0);
  assert.equal((await live.drain(school,read)).processed,1);
- assert.equal((await live.command(school,{command:'compact',before:1})).floor,1);
+ assert.equal((await live.command(school,{command:'compact',before:1})).floor,0);
  const head=await live.command(school,{command:'head'});assert.equal(head.cursor,1);assert.equal(head.collections[0].cursor,1);
- await assert.rejects(live.replay(school,{command:'changes',after:0},read),e=>e.code==='LIVE_SNAPSHOT_REQUIRED');
+ assert.equal((await live.replay(school,{command:'changes',after:0},read)).events.length,1);
  const snapshot=await live.replay(school,{command:'snapshot',collection,at:1,after:''},read);assert.equal(snapshot.records[0].record.amount,1);
  const retry=await live.commit(school,request,read);assert.equal(retry.recordRevision,first.recordRevision);
  const second=await live.commit(school,{...request,id:'two',operationId:'retention-second-operation'},read);assert.equal(second.cursor,2);
  const changes=await live.replay(school,{command:'changes',after:1},read);assert.equal(changes.events[0].sequence,2);
  const proof=await live.command(school,{command:'operationReceipt',operationId:request.operationId});assert.equal(proof.found,true);assert.equal(proof.receipt.recordRevision,first.recordRevision);
- assert.equal((await live.command(school,{command:'compact',before:2})).floor,1);
+ assert.equal((await live.command(school,{command:'compact',before:2})).floor,0);
  const noticeRequest={action:'managed_records',collection:'school_notices',id:'old-notice',operation:'write',syncProtocol:2,operationId:'legacy-notice-retention-0001',expectedRecordRevision:'',data:{schoolId:school,title:'permanent Drive notice'}};
  await edge.writeNotice(school,noticeRequest,()=>read({action:'managed_records',collection:'school_notices',operation:'read',syncProtocol:2}));
  await assert.rejects(edge.rpc(school,'notices',{command:'retireNoticeCache'}));
