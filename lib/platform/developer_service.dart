@@ -491,7 +491,7 @@ class DeveloperService {
       if(old['lastRenewalId']==requestId)
         return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
           'sameKey':true,'unchanged':true,'renewed':true,
-          'expiresAt':(old['expiresAt'] as Timestamp).millisecondsSinceEpoch};
+          'expiresAt':old['expiresAt'] is Timestamp?(old['expiresAt'] as Timestamp).millisecondsSinceEpoch:(old['expiresAt'] as num).toInt()};
       final previous=old['expiresAt'] is Timestamp
           ?(old['expiresAt'] as Timestamp).millisecondsSinceEpoch
           :old['expiresAt'] is num?(old['expiresAt'] as num).toInt():0;
