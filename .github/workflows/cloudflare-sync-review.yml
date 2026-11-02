@@ -54,6 +54,29 @@ concurrency:
   group: cloudflare-sync-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
+  five-pc-sqlite:
+    name: Independent 1/2/5-PC SQLite convergence (synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-queues
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'independent SQLite PCs retain offline queues and merge disjoint same-row edits' test/windows_multi_pc_sync_test.dart
+      - name: Enforce five-device delta without reupload
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-expense
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'school expense delta reaches five separate SQLite PCs without duplicate uploads' test/windows_multi_pc_sync_test.dart
+      - name: Enforce five-device durable convergence
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-convergence
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name 'five independent SQLite devices converge without joining their queues' test/windows_multi_pc_sync_test.dart
   worker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
