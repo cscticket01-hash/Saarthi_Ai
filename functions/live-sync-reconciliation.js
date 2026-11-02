@@ -3,7 +3,7 @@ const {createHash}=require('node:crypto');
 const {canonical}=require('./live-sync-canonical');
 const SCHOOL=/^vs-[a-f0-9]{32}$/,HASH=/^[a-f0-9]{64}$/;
 const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
-const validId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!value.includes('/')&&value!=='.'&&value!=='..';
+const validId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!value.includes('/')&&value!=='.'&&value!=='..'&&!['__proto__','prototype','constructor'].includes(value);
 const validOperation=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(value);
 const syncMetadata=new Set(['_syncRevision','_syncOperationId','_syncRequestHash','_syncDeleted','_syncDeletedFileId','_syncFileCleanupComplete','_syncFieldRevisions']);
 // Match VS_syncRequestShape in the signed Apps Script bundle exactly. The hash
@@ -24,7 +24,7 @@ function validBinding(binding,school,lane,collection){
 }
 function liveProofMatches(proof,binding){
  const receipt=proof?.receipt;
- return proof?.liveProtocol===1&&proof.schoolId===binding.schoolId&&proof.operationId===binding.operationId&&proof.found===true&&proof.fingerprint===binding.requestHash&&receipt?.liveProtocol===1&&receipt.schoolId===binding.schoolId&&receipt.operationId===binding.operationId&&receipt.cloudState==='committed'&&typeof receipt.recordRevision==='string'&&receipt.recordRevision.length>0&&Number.isSafeInteger(receipt.cursor)&&receipt.cursor>=0;
+ return proof?.liveProtocol===1&&proof.schoolId===binding.schoolId&&proof.operationId===binding.operationId&&proof.found===true&&proof.fingerprint===binding.requestHash&&receipt?.liveProtocol===1&&receipt.schoolId===binding.schoolId&&receipt.operationId===binding.operationId&&receipt.cloudState==='committed'&&['pending','verified'].includes(receipt.backupState)&&typeof receipt.recordRevision==='string'&&receipt.recordRevision.startsWith('live-')&&receipt.recordRevision.length>5&&Number.isSafeInteger(receipt.cursor)&&receipt.cursor>=0;
 }
 function driveProofMatches(proof,binding){
  const record=proof?.records?.[binding.id];
