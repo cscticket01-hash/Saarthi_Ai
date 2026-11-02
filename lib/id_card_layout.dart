@@ -280,6 +280,7 @@ class IdCardLayout {
     bool cover = false,
     double focusX = .5,
     double focusY = .35,
+    int printDpi = 300,
   }) =>
       pw.LayoutBuilder(
         builder: (_, bounds) {
@@ -292,8 +293,12 @@ class IdCardLayout {
             throw const FormatException(
                 'ID image region has invalid dimensions.');
           }
+          if (printDpi < 220 || printDpi > 600) {
+            throw const FormatException('Unsupported ID artwork print DPI.');
+          }
           final printPixels = (math.max(bounds.maxWidth, bounds.maxHeight) *
-                  2.1).ceil().clamp(96, 480).toInt();
+                  2.1 * printDpi / 300).ceil()
+              .clamp(printDpi < 300 ? 72 : 96, 480).toInt();
           final prepared = preparePdfImage(
             bytes,
             aspect: bounds.maxWidth / bounds.maxHeight,
