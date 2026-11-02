@@ -59,8 +59,8 @@ async function hydrateDomainReceipt(school,result,readDrive){
  return {...result,record};
 }
 function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assertStudentDependency}){
- async function submit(school,request,readDrive){
-  validate(school,request);
+ async function assertChildGeneration(school,request){
+  if(!SCHOOL.test(school))refuse(403,'DOMAIN_SCHOOL_MISMATCH');
   // Exact student-owned document and scan-index writes obey the same retired
   // generation fence as fee and attendance writes. Shared/teacher records do not.
   if(request.operation==='write'&&STUDENT_DEPENDENT.has(request.collection)&&
@@ -72,6 +72,10 @@ function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assert
     await assertStudentDependency(school,studentId,generation);
    }
   }
+ }
+ async function submit(school,request,readDrive){
+  validate(school,request);
+  await assertChildGeneration(school,request);
   // Keep the existing immutable delivery identity, scheduler barriers, exact
   // CAS and real GS result owner. No second financial/attendance writer exists.
   const receipt=await edgeDelivery.record(school,request,readDrive);
@@ -116,6 +120,6 @@ function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assert
   if((record._syncDeleted===true)!==(request.operation==='delete'))refuse(502,'DOMAIN_CANONICAL_UNVERIFIED');
   return {...identity,disposition:'verified',authoritative:true,driveState:'verified',recordRevision:receipt.recordRevision,record};
  }
- return {handles:request=>request?.action==='managed_records'&&domainFor(request.collection)!==null,submit,projection};
+ return {handles:request=>request?.action==='managed_records'&&domainFor(request.collection)!==null,submit,projection,assertChildGeneration};
 }
 module.exports={createLiveDomainDelivery,domainFor,deliveryId,domainPayloadHash,scrubDomainReceipt,hydrateDomainReceipt,canGcRecord};
