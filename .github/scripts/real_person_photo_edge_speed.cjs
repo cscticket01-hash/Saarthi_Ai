@@ -92,16 +92,29 @@ async function main(){
    // Image first, to respect the real client order: upload file, then attach Drive id.
    const uploadKey='cf_photo_speed_'+suffix,meta={edgeDeliveryVersion:1,uploadKey,name:uploadKey+'.png',mime:'image/png',sha256:photoHash,sizeBytes:photo.length};
    const begin=await call('managed/file/upload/resumable',{...meta,operation:'begin'});
-   check(begin.value.cloudflareAccepted===true&&begin.value.driveState==='receiving','Photo begin not acknowledged by Cloudflare');
-   check(begin.value.offset===0,'Unexpected existing photo staging');
+   const photoEdge=begin.value.cloudflareAccepted===true;
+   entry.photoRoute=photoEdge?'cloudflare-first':'direct-script-fallback';
+   entry.photoBeginMs=begin.ms;
+   entry.photoBeginEvidence={cloudflareAccepted:photoEdge,driveState:begin.value.driveState||null,uploadResumableVersion:begin.value.uploadResumableVersion||null};
+   check(begin.value.offset===0&&begin.value.committed===false,'Unexpected existing photo staging');
    const part=await call('managed/file/upload/resumable',{...meta,operation:'part',offset:0,base64:photo.toString('base64'),chunkSha256:photoHash});
-   const result=await settle(part,role+' photo');
-   entry.appToCloudflarePhotoMs=round(begin.ms+part.ms);
-   entry.cloudflareToDrivePhotoMs=result.cloudToDriveMs;
-   entry.photoDeliveryMillis=result.ownerWorkerDeliveryMillis??null;
-   check(result.verified.committed===true&&result.verified.sha256===photoHash&&
-     /^[A-Za-z0-9_-]{1,200}$/.test(result.verified.fileId||''),'Photo Drive file ACK invalid');
-   fileId=result.verified.fileId;
+   let verified;
+   if(photoEdge){
+    const result=await settle(part,role+' photo');
+    entry.appToCloudflarePhotoMs=round(begin.ms+part.ms);
+    entry.cloudflareToDrivePhotoMs=result.cloudToDriveMs;
+    entry.photoDeliveryMillis=result.ownerWorkerDeliveryMillis??null;
+    verified=result.verified;
+   }else{
+    // Existing TEST script may lack spool-photo capability. Never pretend that
+    // this direct Drive upload measured Cloudflare.
+    entry.directPhotoUploadMs=round(begin.ms+part.ms);
+    check(part.value.cloudflareAccepted!==true,'Photo routing changed during upload');
+    verified=part.value;
+   }
+   check(verified.committed===true&&verified.sha256===photoHash&&
+     /^[A-Za-z0-9_-]{1,200}$/.test(verified.fileId||''),'Photo Drive file ACK invalid');
+   fileId=verified.fileId;
    const readPhoto=await call('managed/file/read',{fileId});
    check(readPhoto.value.mime==='image/png'&&hash(Buffer.from(readPhoto.value.base64||'','base64'))===photoHash,'Uploaded photo permanent Drive hash mismatch');
    entry.photoDriveVerified=true;
