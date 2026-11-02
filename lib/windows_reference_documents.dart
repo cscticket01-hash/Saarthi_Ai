@@ -147,10 +147,10 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? logo,
   Uint8List? signature,
   Uint8List? seal,
-  int _printPass = 0,
-  ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? _preparedMedia,
+  int printPass = 0,
+  ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? preparedMedia,
 }) async {
-  if (_printPass < 0 || _printPass > 4) {
+  if (printPass < 0 || printPass > 4) {
     throw const FormatException('Invalid ID print optimization stage.');
   }
   if (!windowsReferenceDocumentNames.containsKey(kind))
@@ -166,14 +166,14 @@ Future<Uint8List> renderWindowsReferenceDocument({
       bytes == null ? Future<Uint8List?>.value(null)
           : compute(SchoolPdfMedia.branding, bytes);
   late final Uint8List? embeddedPhoto, embeddedLogo, embeddedSeal, printSignature;
-  if (_preparedMedia != null) {
+  if (preparedMedia != null) {
     // A size retry reuses the exact verified source of the previous pass.
     // Re-compressing unchanged media on every print-DPI attempt wastes CPU,
     // memory and time on low-end school PCs.
-    embeddedPhoto = _preparedMedia.photo;
-    embeddedLogo = _preparedMedia.logo;
-    embeddedSeal = _preparedMedia.seal;
-    printSignature = _preparedMedia.signature;
+    embeddedPhoto = preparedMedia.photo;
+    embeddedLogo = preparedMedia.logo;
+    embeddedSeal = preparedMedia.seal;
+    printSignature = preparedMedia.signature;
   } else {
     final visualPair = await Future.wait<Uint8List?>([
       portraitForPrint(photo), brandingForPrint(logo),
@@ -295,8 +295,8 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: kind == 'teacherId'
                   ? IdCardLayout.image(bytes, cover: cover,
                        printDpi: cover
-                           ? [300, 280, 260, 240, 220][_printPass]
-                           : [250, 220, 220, 220, 220][_printPass])
+                           ? [300, 280, 260, 240, 220][printPass]
+                           : [250, 220, 220, 220, 220][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
@@ -1097,15 +1097,15 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final output = await pdf.save();
   if (kind == 'teacherId' &&
       output.length > SchoolMediaBudgets.idCard &&
-      _printPass < 4) {
+      printPass < 4) {
     // Only the print-bitmap DPI changes; vector QR, text, dimensions and
     // school media source bytes stay identical. Fail safely if all print
     // variants still exceed the strict PDF budget.
     return renderWindowsReferenceDocument(
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
-      _printPass: _printPass + 1,
-      _preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
+      printPass: printPass + 1,
+      preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
           seal: embeddedSeal, signature: printSignature),
     );
   }
