@@ -5,7 +5,7 @@ const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
 const terminal=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
-function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
+function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,atomicSmallFilesEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
  const gcEnabled=school=>typeof payloadGcEnabled==='function'?payloadGcEnabled(school)===true:payloadGcEnabled===true;
  const identity=request=>({action:request.action,collection:request.collection,id:request.id,operation:request.operation,syncProtocol:2,operationId:request.operationId,expectedRecordRevision:request.expectedRecordRevision});
  async function hydrate(school,result,readDrive){
@@ -62,7 +62,17 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
   if(typeof request.base64!=='string'||! /^[A-Za-z0-9+/]*={0,2}$/.test(request.base64))fail(400,'INVALID_EDGE_FILE');
   const bytes=Buffer.from(request.base64,'base64');if(bytes.toString('base64')!==request.base64||!bytes.length||bytes.length>20*1024*1024)fail(400,'INVALID_EDGE_FILE');
   const m={uploadKey:request.uploadKey,sha256:digest(bytes),sizeBytes:bytes.length,name:request.name,mime:request.mime};
-  const {id,lane}=fileIdentity(school,m.uploadKey);const row=await edge.rpc(school,lane,{command:'begin',id,manifest:m});
+  const {id,lane}=fileIdentity(school,m.uploadKey);
+  if(atomicSmallFilesEnabled&&bytes.length<=256*1024){
+   // One verified durable Cloudflare put, then an immediate pending ACK.
+   // The broker delivery owner alone can later produce a real Drive file ID.
+   const row=await edge.rpc(school,lane,{command:'putSmall',id,manifest:m,base64:bytes.toString('base64')});
+   if(row.id!==id||row.manifest?.sha256!==m.sha256||row.manifest?.received!==m.sizeBytes)fail(502,'EDGE_SMALL_FILE_ACK_UNVERIFIED');
+   if(row.state==='completed'||row.state==='needsAttention')return status(school,lane,id);
+   if(!['pending','retry','processing'].includes(row.state))fail(502,'EDGE_SMALL_FILE_ACK_UNVERIFIED');
+   return pending(school,lane,id);
+  }
+  const row=await edge.rpc(school,lane,{command:'begin',id,manifest:m});
   if(row.state==='completed')return status(school,lane,id);
   for(let offset=row.manifest.received;offset<bytes.length;offset+=512*1024){const chunk=bytes.subarray(offset,offset+512*1024);await edge.rpc(school,lane,{command:'part',id,offset,base64:chunk.toString('base64'),chunkSha256:digest(chunk)});}
   return status(school,lane,id);
