@@ -30,7 +30,7 @@ Future<void> main()async{
   'retired':true,'source':'drive','recordAuthority':'school-drive','record':null}];
  check(LiveSyncPage.parse(retired,school,0).events.single['retired']==true);
  for(final field in ['retired','source','recordAuthority','record']) {
-  final invalid={...retired,'events':[{...retired['events'][0]}..remove(field)]};
+  final invalid={...retired,'events':[Map<String,dynamic>.from(retired['events'][0])..remove(field)]};
   var rejected=false;try{LiveSyncPage.parse(invalid,school,0);}catch(_){rejected=true;}
   check(rejected);
  }
