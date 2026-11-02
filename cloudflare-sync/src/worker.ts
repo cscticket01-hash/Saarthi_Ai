@@ -1,4 +1,4 @@
-import {initSpool,spoolCommand,spoolLane} from './spool';
+import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
 import {mobileRequest} from './mobile';
 import {initLive,liveCommand} from './live-records';
 import {liveSocketGrant,LiveSocketGrant} from './live-socket';
@@ -28,6 +28,10 @@ export class SyncLane extends DurableObject<Env>{
    initLive(this.ctx.storage);
    if(b.command==='commit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b);
+   if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
+    const head=liveCommand(this.ctx.storage,school,{command:'head'});
+    if(Number(head.cursor)>10000)liveCommand(this.ctx.storage,school,{command:'compact',before:Number(head.cursor)-10000});
+   }
    if(b.command==='commit')for(const socket of this.ctx.getWebSockets()){
     const grant=socket.deserializeAttachment() as LiveSocketGrant;
     try{if(grant.schoolId!==school||grant.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');else socket.send(JSON.stringify({liveProtocol:1,schoolId:school,cursor:result.cursor}));}catch{}
@@ -36,6 +40,14 @@ export class SyncLane extends DurableObject<Env>{
   }
   if(spoolLane(lane))return spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
   const action=String(b.command||''),id=String(b.id||'');
+  if(action==='retireNoticeCache'){
+   demand(lane==='notices'&&(this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'Isolated live notice owner required',412);
+   const owner=await this.env.LANES.getByName(school+'/live').command(school,'live',{command:'head'}) as {collections:{collection:string;state:string}[]};
+   demand(owner.collections.some(row=>row.collection==='school_notices'&&row.state==='active'),'Verified live notice baseline required',409);
+   demand(this.ctx.storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM jobs WHERE state!='completed'").toArray()[0].n===0,'Legacy notice delivery pending',409);
+   this.ctx.storage.transactionSync(()=>{this.ctx.storage.sql.exec('DELETE FROM records');this.ctx.storage.sql.exec("UPDATE jobs SET payload='' WHERE state='completed'");this.setMeta('retired','drive');});
+   return {retired:true};
+  }
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
   if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
@@ -54,7 +66,19 @@ export class SyncLane extends DurableObject<Env>{
   if(action==='finish'){
    const row=this.job(id);if(!row||row.claim!==b.claim||!row.claim)return false;
    const values=b.values as Json;demand(values&&['completed','retry','needsAttention'].includes(String(values.state))&&Number.isSafeInteger(values.nextAttemptAt));
-   this.ctx.storage.sql.exec('UPDATE jobs SET state=?,due=?,claim=\'\',claim_until=0,response=? WHERE id=?',String(values.state),Number(values.nextAttemptAt),JSON.stringify(values),id);
+   let clearedPayload:string|undefined;
+   if(values.attendancePayloadPurged===true){
+    const original=JSON.parse(row.payload) as Json,receipt=values.attendanceOwnerReceipt as Json;
+    demand(lane.startsWith('attendance-')&&values.state==='completed'&&receipt?.version===1&&receipt.driveVerified===true&&receipt.schoolId===school&&receipt.operationId===id&&receipt.day===original.day&&receipt.mode===original.mode&&['student','teacher'].includes(String(receipt.role))&&typeof receipt.documentId==='string'&&receipt.documentId.length>0&&receipt.documentId.length<=200&&!receipt.documentId.includes('/')&&operationPattern.test(String(receipt.requestHash))&&operationPattern.test(String(receipt.payloadHash)),'Verified attendance owner required');
+    demand(Object.keys(receipt).every(key=>['version','schoolId','operationId','role','documentId','day','mode','requestHash','payloadHash','driveVerified'].includes(key)),'Unexpected attendance receipt payload');
+    demand(await digest(canonical(original.payload))===receipt.payloadHash,'Attendance payload proof mismatch',409);
+    demand(this.job(id)?.claim===b.claim&&row.claim_until>Date.now(),'Attendance claim changed',409);
+    clearedPayload=JSON.stringify({schoolId:school,operationId:id,day:original.day,mode:original.mode,payload:null,createdAt:original.createdAt});
+   }
+   this.ctx.storage.transactionSync(()=>{
+    this.ctx.storage.sql.exec('UPDATE jobs SET state=?,due=?,claim=\'\',claim_until=0,response=? WHERE id=?',String(values.state),Number(values.nextAttemptAt),JSON.stringify(values),id);
+    if(clearedPayload!==undefined)this.ctx.storage.sql.exec('UPDATE jobs SET payload=? WHERE id=?',clearedPayload,id);
+   });
    if(values.state==='retry')await this.wake(Number(values.nextAttemptAt));return true;
   }
   if(action==='create'){
@@ -63,6 +87,7 @@ export class SyncLane extends DurableObject<Env>{
    this.ctx.storage.sql.exec('INSERT INTO jobs(id,kind,payload,state,due,created) VALUES(?,\'attendance\',?,\'pending\',?,?)',id,JSON.stringify(row),Date.now(),Number(row.createdAt));await this.wake(Date.now()+250);return true;
   }
   demand(lane==='notices');
+  demand(!this.meta('retired')||!['seed','snapshot','write'].includes(action),'Legacy notice cache retired; use verified school owner',412);
   if(action==='seed'){
    if(this.meta('initialized'))return {seeded:false};const records=b.records as Record<string,Json>;demand(records&&typeof records==='object'&&Object.keys(records).length<=10000);
    this.ctx.storage.transactionSync(()=>{for(const [key,value]of Object.entries(records)){demand(key.length>0&&key.length<=200&&!key.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(key)&&value.schoolId===school);this.ctx.storage.sql.exec('INSERT INTO records(id,body) VALUES(?,?)',key,JSON.stringify(value));}this.setMeta('revision',String(b.revision||'legacy'));this.setMeta('initialized','1');});return {seeded:true};

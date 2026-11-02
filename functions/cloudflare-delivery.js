@@ -1,27 +1,48 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
+const {canGcRecord,scrubDomainReceipt,hydrateDomainReceipt}=require('./live-domain-delivery');
 const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
 const terminal=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
-function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnostics=entry=>console.info(JSON.stringify(entry))}){
+function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
+ const gcEnabled=school=>typeof payloadGcEnabled==='function'?payloadGcEnabled(school)===true:payloadGcEnabled===true;
+ const identity=request=>({action:request.action,collection:request.collection,id:request.id,operation:request.operation,syncProtocol:2,operationId:request.operationId,expectedRecordRevision:request.expectedRecordRevision});
+ async function hydrate(school,result,readDrive){
+  if(result.recordSource)return hydrateDomainReceipt(school,result,readDrive);
+  if(Array.isArray(result.acknowledgements)){
+   const acknowledgements=[];
+   for(const ack of result.acknowledgements)acknowledgements.push(ack.recordSource?await hydrateDomainReceipt(school,ack,readDrive):ack);
+   return {...result,acknowledgements};
+  }
+  return result;
+ }
+ async function scrub(school,result,request,deliver){
+  let proof=result;
+  if(!proof.record){
+   const readback=await deliver({action:'managed_records',operation:'read',collection:request.collection,id:request.id,syncProtocol:2});
+   if(readback?.success!==true||readback.schoolId!==school||readback.syncProtocol!==2||readback.pointRead!==true||!readback.records?.[request.id])fail(502,'DOMAIN_CANONICAL_UNVERIFIED');
+   proof={...result,record:readback.records[request.id]};
+  }
+  return scrubDomainReceipt(school,proof,request);
+ }
  const pending=(school,lane,id)=>({success:true,schoolId:school,edgeDeliveryVersion:1,cloudflareAccepted:true,driveState:'pending',delivery:{lane,id}});
- async function status(school,lane,id){
+ async function status(school,lane,id,readDrive){
   if(!(lane==='records'||FILE.test(lane))||!/^[a-f0-9]{64}$/.test(id)||FILE.test(lane)&&lane!=='file-'+id)fail(400,'INVALID_EDGE_RECEIPT');
   const row=await edge.rpc(school,lane,{command:'status',id});
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
-  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...row.response.result,cloudflareAccepted:true,driveState:'verified',...measured};
+  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...await hydrate(school,row.response.result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
    ...(/^[A-Z_]{1,80}$/.test(row.response?.failureCode||'')?{failureCode:row.response.failureCode}:{})}};
  }
- async function record(school,request){
+ async function record(school,request,readDrive){
   const identity=request.action==='managed_records_batch'?request.operations.map(op=>[op.collection,op.id,op.operationId]):[request.collection,request.id,request.operationId];
   const id=digest(JSON.stringify([school,request.action,identity]));
-  await edge.rpc(school,'records',{command:'enqueue',id,request});return status(school,'records',id);
+  await edge.rpc(school,'records',{command:'enqueue',id,request});return status(school,'records',id,readDrive);
  }
  function fileIdentity(school,uploadKey){const id=digest(JSON.stringify([school,uploadKey]));return {id,lane:'file-'+id};}
  async function file(school,request){
@@ -105,7 +126,21 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
     result={...progress,fileUrl:'https://drive.google.com/file/d/'+progress.fileId+'/view'};
    }
    phase='commit';
-   const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now()});return {processed:stored===true?1:0};
+   let cleanup={};
+   if(lane==='records'&&gcEnabled(school)){
+    if(original.action==='managed_records_batch'){
+     // Keep a failed/review batch intact. Never clear half of its request or
+     // hide only selected partial receipts behind a purged payload marker.
+     if(original.operations.every(canGcRecord)&&result.acknowledgements.every(ack=>ack.success===true)){
+      const acknowledgements=[];
+      for(const op of original.operations){const ack=result.acknowledgements.find(item=>item.operationId===op.operationId);acknowledgements.push(await scrub(school,{...ack,success:true,schoolId:school,syncProtocol:2},op,deliver));}
+      result={...result,acknowledgements};cleanup={payloadPurged:true,identity:{action:'managed_records_batch',operations:original.operations.map(identity)}};
+     }
+    }else if(canGcRecord(original)){
+     result=await scrub(school,result,original,deliver);cleanup={payloadPurged:true,identity:identity(original)};
+    }
+   }
+   const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
    const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);

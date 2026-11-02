@@ -20,7 +20,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
-  if(!r.ok||result.success!==true||result.schoolId!==school){const message=result.message;throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{status:r.status===409?409:503,code:message==='Record revision conflict'?'RECORD_REVISION_CONFLICT':message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE',publicMessage:true});}
+  if(!r.ok||result.success!==true||result.schoolId!==school){const message=result.message;throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{status:r.status===409?409:503,code:message==='Replay history compacted; snapshot required'?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT':message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE',publicMessage:true});}
   return result.value;
  }
  const lane=id=>'attendance-'+id.slice(0,2);

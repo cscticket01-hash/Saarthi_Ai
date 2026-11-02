@@ -140,8 +140,14 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  const liveMigration=require('./live-sync-migration').createLiveMigration({db,now});
  const liveGateway=require('./live-sync-gateway').createLiveGateway({liveSync,migration:liveMigration});
  const allEdge=school=>cloudflareAllDataEnabled===true&&edgeEnabled(school);
- const edgeDelivery=cloudflareSync?createCloudflareDelivery({edge:cloudflareSync,now,recordParallelism:edgeRecordParallelism}):null;
- const edgeQueue=(school,lane)=>createAttendanceQueue({store:cloudflareSync.attendanceStore(school,lane),now,deliver:deliverAttendance,retryAtForSchool:id=>googlePressure.retryAt(googleQuotaScopes[id]||id,'SCRIPT_QUOTA_EXCEEDED')});
+ const edgeDelivery=cloudflareSync?createCloudflareDelivery({edge:cloudflareSync,now,recordParallelism:edgeRecordParallelism,payloadGcEnabled:school=>liveSync.enabled(school)}):null;
+ const personLifecycle=require('./live-person-lifecycle').createLivePersonLifecycle({db,rpc:(schoolId,body)=>signedRequest({schoolId},body)});
+ const domainDelivery=cloudflareSync?require('./live-domain-delivery').createLiveDomainDelivery({edge:cloudflareSync,edgeDelivery:{record:(school,body)=>edgeDelivery.record(school,body,record=>signedRequest({schoolId:school},record)),status:(school,lane,id)=>edgeDelivery.status(school,lane,id,record=>signedRequest({schoolId:school},record))},emitHint:(school,hint)=>changeHint(school,hint.collection,hint.id)}):null;
+ const edgeQueue=(school,lane)=>createAttendanceQueue({store:cloudflareSync.attendanceStore(school,lane),now,deliver:deliverAttendance,retryAtForSchool:id=>googlePressure.retryAt(googleQuotaScopes[id]||id,'SCRIPT_QUOTA_EXCEEDED'),completionReceipt:({school:schoolId,item,ack,values})=>{
+  if(!liveSync.enabled(schoolId))return values;
+  const request=item.payloadTransport==='cloudflare-v1'?cloudflareSync.decryptAttendance(item.payload):JSON.parse(unprotect(item.payload,encryptionKey));
+  return require('./attendance-payload-receipt').attendancePayloadFinishValues({schoolId,operationId:item.operationId,row:item,request,verifiedAck:{...ack,schoolId},values});
+ }});
  const attendanceRow=async(school,id)=>{if(edgeEnabled(school)){const value=await cloudflareSync.attendanceStore(school).get(id);if(value)return {exists:true,data:()=>value};}return db.doc(attendanceCollection+'/'+id).get();};
  const noticeBaseline=school=>signedRequest({schoolId:school},{action:'managed_records',collection:'school_notices',operation:'read',syncProtocol:2});
  const pushDevices=new Map();
@@ -243,6 +249,10 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
  }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
+  if(liveSync.enabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_settings'&&body.id==='staff_payroll_directory'){
+   if(body.operation==='read')return signedRequest(m,body);
+   const result=await personLifecycle.execute(m.schoolId,body);invalidate(m.schoolId);await changeHint(m.schoolId,'school_settings',body.id);return result;
+  }
   if(liveSync.enabled(m.schoolId)&&body.action==='managed_records'&&require('./live-sync').COLLECTIONS.has(body.collection)){
    const state=await liveMigration.state(m.schoolId,body.collection);
    if(state==='active'){
@@ -254,11 +264,20 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   }
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
+ async function reconcileAdmission(m,limit=1){
+  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body)}).reconcile(m.schoolId,{limit});
+ }
  async function signedLegacy(m,body){
   const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');
+  if(liveSync.enabled(m.schoolId)&&personLifecycle.handled(body)){
+   const result=await personLifecycle.execute(m.schoolId,body);invalidate(m.schoolId);await changeHint(m.schoolId,body.collection,body.id);
+   if(body.collection==='students_directory'&&body.operation==='delete')await changeHint(m.schoolId,[...COLLECTIONS].filter(collection=>collection!=='backups'&&collection!=='students_directory'));
+   if(body.collection==='teachers_directory'&&(body.operation==='delete'||body.data?.active===false||body.data?._syncFieldPatch?.set?.active===false))await changeHint(m.schoolId,['documents','teacher_schedules']);
+   return result;
+  }
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1){
-   if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return edgeDelivery.record(m.schoolId,body);
-   if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body);
+   if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return liveSync.enabled(m.schoolId)&&domainDelivery.handles(body)?domainDelivery.submit(m.schoolId,body):edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
+   if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
    if(['managed_upload_resumable','managed_upload'].includes(body.action)){
     const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
     // Older protocol-2 Scripts can still support only verified full uploads.
@@ -546,7 +565,8 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    const operations=rows.map((row,index)=>{
     if(!row.exists)return {operationId:ids[index],state:'unknown'};
     const value=row.data();if(value.schoolId!==b.schoolId)fail(403,'Another school is not accessible');
-    const payload=value.payloadTransport==='cloudflare-v1'?cloudflareSync.decryptAttendance(value.payload):JSON.parse(unprotect(value.payload,encryptionKey));
+    const payload=value.attendancePayloadPurged===true?(require('./attendance-payload-receipt').attendanceReceiptOwns({schoolId:b.schoolId,operationId:ids[index],row:value,permit})?{personId:permit.documentId,role:permit.role}:null):value.payloadTransport==='cloudflare-v1'?cloudflareSync.decryptAttendance(value.payload):JSON.parse(unprotect(value.payload,encryptionKey));
+    if(!payload)fail(403,'Another person attendance is not accessible');
     if(payload.personId!==permit.documentId||payload.role!==permit.role)fail(403,'Another person attendance is not accessible');
     return {operationId:ids[index],state:value.state,createdAt:value.createdAt,
       ...(value.state==='completed'?{completedAt:value.completedAt}:{})};
@@ -639,16 +659,21 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='reconcile')return reconcileAdmission(m,25);
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
+   await reconcileAdmission(m);
    const drained=async()=>{
     const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
     return stats.every(s=>s.pending===0&&s.needsAttention===0);
    };
-   return {success:true,...await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)))};
+   const prepared=await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)));
+   if(b.collection==='school_notices')await cloudflareSync.rpc(m.schoolId,'notices',{command:'retireNoticeCache'});
+   return {success:true,...prepared};
   }
   if(operation==='rollback'){
    if(b.confirmVerifiedRollback!==true)fail(400,'Explicit verified rollback request required');
+   await reconcileAdmission(m);
    return {success:true,...await liveMigration.rollback(m.schoolId,b.collection,proof=>liveSync.rollback(m.schoolId,b.collection,body=>signedRequest(m,body),proof.rollbackToken))};
   }
   if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
@@ -659,7 +684,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
   const drive=record=>signedRequest(m,record);
   const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
-    operation==='commit'?await liveMigration.live(m.schoolId,body.collection,()=>liveSync.commit(m.schoolId,body,drive)):
+    operation==='commit'?await liveMigration.live(m.schoolId,body.collection,()=>liveSync.commit(m.schoolId,body,drive),body):
     ['changes','snapshot'].includes(operation)?await liveSync.replay(m.schoolId,body,drive):await liveSync.command(m.schoolId,body);
   return {success:true,schoolId:m.schoolId,...result};
  }
@@ -761,11 +786,18 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
   if(!edgeEnabled(m.schoolId))fail(503,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
   const until=Date.now()+Math.min(20000,Math.max(0,Number(b.waitMillis)||0));
   let result;
-  do {result=await edgeDelivery.status(m.schoolId,b.lane,b.id);if(!result.delivery||Date.now()>=until)break;await new Promise(resolve=>setTimeout(resolve,1000));}while(true);
+  do {result=await edgeDelivery.status(m.schoolId,b.lane,b.id,record=>signedRequest(m,record));if(!result.delivery||Date.now()>=until)break;await new Promise(resolve=>setTimeout(resolve,1000));}while(true);
   return result;
  }
+ if(action==='managed/domain/projection'){
+  if(!liveSync.enabled(m.schoolId))fail(412,'Domain projection is not enabled','LIVE_SYNC_DISABLED');
+  return domainDelivery.projection(m.schoolId,{lane:b.lane,id:b.id},record=>signedRequest(m,record));
+ }
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
- if(action==='managed/storage/check')return {...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ if(action==='managed/storage/check'){
+  const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
@@ -810,7 +842,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    for(const collection of liveCollections){
     const cursor=head.collections?.find(item=>item.collection===collection&&item.state==='active')?.cursor;
     if(!Number.isSafeInteger(cursor)||cursor<0)fail(503,'Live collection head unverified','LIVE_HEAD_UNVERIFIED');
-    const revision='live:'+collection+':'+cursor;
+    const revision=(await liveGateway.head(m.schoolId,collection,record=>signedRequest(m,record),head)).collectionRevision;
     if(b.headOnly===true){result.revisions={...result.revisions,[collection]:revision};continue;}
     const group=await liveGateway.records(m.schoolId,{operation:'read',collection,syncProtocol:2,liveProtocol:1,knownRevision:known[collection]},record=>signedRequest(m,record));
     const checkpoint=recordCheckpoints?.[collection];

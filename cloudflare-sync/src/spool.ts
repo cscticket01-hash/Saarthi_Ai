@@ -19,6 +19,7 @@ export function initSpool(storage:DurableObjectStorage){
 // Unknown/legacy, person, document and financial dependencies stay barriers.
 // Only these independent record types may overtake a retry of another key.
 const independent=new Set(['school_expenses','attendance_records','attendance_logs','teacher_attendance']);
+const recordIdentity=(request:Json):Json=>request.action==='managed_records_batch'?{action:request.action,operations:(request.operations as Json[]).map(recordIdentity)}:Object.fromEntries(['action','collection','id','operation','syncProtocol','operationId','expectedRecordRevision'].filter(key=>request[key]!==undefined).map(key=>[key,request[key]]));
 function resources(request:Json):string {
  const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
  if(ops.some(op=>!independent.has(String(op.collection))))return '*';
@@ -89,6 +90,11 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  demand(operationPattern.test(id),'Invalid receipt ID');const row=get(id);demand(row,'Delivery receipt unavailable',404);
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
+ if(action==='projection'){
+  demand(lane==='records','Record projection unavailable',400);
+  const saved=row.response?JSON.parse(row.response):{};
+  return {id:row.id,state:row.state,due:row.due,authoritative:false,...(['pending','retry','processing'].includes(row.state)?{request:JSON.parse(row.payload)}:{identity:saved.identity||(row.payload?recordIdentity(JSON.parse(row.payload)):null)})};
+ }
  if(action==='part'){
   demand(lane==='file-'+id&&Number.isSafeInteger(b.offset)&&Number(b.offset)>=0&&typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=699052&&/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)&&typeof b.chunkSha256==='string'&&operationPattern.test(b.chunkSha256));
   const bytes=new Uint8Array(Buffer.from(b.base64,'base64'));demand(bytes.length>0&&bytes.length<=512*1024&&Buffer.from(bytes).toString('base64')===b.base64);const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');demand(hash===b.chunkSha256,'Chunk hash mismatch',409);
@@ -131,8 +137,21 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!ack.recordRevision.startsWith('cf-')),'Unverified operation receipt');seen.add(ack.operationId);}
    }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!result.recordRevision.startsWith('cf-'),'Unverified record receipt');
   }
+  if(values.payloadPurged===true){
+   demand(lane==='records'&&values.state==='completed','Only verified record delivery may purge payloads');
+   const original=JSON.parse(row.payload) as Json,result=values.result as Json;
+   demand(canonical(values.identity)===canonical(recordIdentity(original)),'Payload cleanup identity mismatch');
+   const requests=original.action==='managed_records_batch'?original.operations as Json[]:[original];
+   const receipts=original.action==='managed_records_batch'?result.acknowledgements as Json[]:[result];
+   demand(receipts.length===requests.length&&receipts.every((receipt,index)=>{
+    const request=requests[index],source=receipt.recordSource as Json;
+    return receipt.success===true&&receipt.record===null&&source?.version===1&&source.collection===request.collection&&source.id===request.id&&source.operationId===request.operationId&&source.recordRevision===receipt.recordRevision&&typeof source.payloadHash==='string'&&operationPattern.test(source.payloadHash);
+   }),'Verified canonical source metadata required');
+  }
   storage.transactionSync(()=>{
-   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(values),id);
+   const stored=values.payloadPurged===true?{...values,partial:{}}:values;
+   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(stored),id);
+   if(values.payloadPurged===true)storage.sql.exec("UPDATE edge_ops SET payload='' WHERE id=?",id);
    // Bytes are pruned only after the broker verified a committed Drive receipt.
    if(lane.startsWith('file-')&&values.state==='completed')storage.sql.exec("UPDATE edge_chunks SET body=x''");
   });

@@ -10,9 +10,11 @@ The broker (`functions/live-sync.js`, `COLLECTIONS`) and Worker
 (`cloudflare-sync/src/live-records.ts`, `liveCollections`) currently admit only
 `school_expenses`, `school_calendar`, `school_notices`, and `school_settings`.
 Student, teacher, financial-ledger, attendance, examination, binary-document and
-recovery collections retain their existing owners. Other staff use
-`teachers_directory` (`lib/windows_other_staff.dart`); there is no separate
-`staff_directory` live collection to add.
+recovery collections retain their existing owners. Other staff are embedded in `school_settings/staff_payroll_directory.staff`
+(`lib/windows_other_staff.dart`). Its teachers query checks employee-ID collisions;
+it is not the staff storage owner. That reserved record remains GS-owned and is
+excluded from generic live seeding/commits. Settings reads merge its verified
+point read and include its content in the composite collection head.
 
 The new `cloudflare-sync/test/live-lifecycle-admission.test.mjs` sends correctly
 HMAC-signed requests for 18 unsupported collections. Each seed, read, commit and

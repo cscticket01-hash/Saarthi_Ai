@@ -193,3 +193,39 @@ collections to keep advancing. Receivers durably retain that retirement marker
 with the cursor, without inventing a business record or upload acknowledgement.
 Mobile person operations do not consume migration admission markers because
 they cannot mutate any admitted administrative collection.
+
+### Durable runtime, domain handoff and lifecycle additions
+
+The Windows replay runtime now runs inside the existing serial sync owner. It
+uses existing authenticated, pending-aware business reads/applies, closes on
+pause/profile changes, and retains blocked pages without a hot loop. Verified
+prefix compaction preserves monotonic global/collection cursors and immutable
+operation receipts. An expired replay cursor receives LIVE_SNAPSHOT_REQUIRED;
+only a verified stable snapshot can replace that local checkpoint atomically.
+
+Uncertain request markers now bind immutable operation hashes. Positive Worker
+receipts or exact signed GS operation/request hashes can reconcile them. Same
+operation retries reuse their marker instead of filling the admission limit.
+No timeout or missing receipt is treated as proof of failure.
+
+The canary person coordinator journals hashes and retirement manifests, fences
+parent generations and verifies student/teacher cascades against signed GS.
+Bundle2026-11-02.1 adds generation-bound teacher retirement, access revocation,
+shared-file protection and staff inactive retirement while preserving salary
+and attendance history. New destructive operations require advertised deployed
+GS capabilities. Embedded staff payroll retains a separate GS owner; settings
+snapshots merge it with a composite head rather than making it a generic row.
+
+Financial, attendance and exam staged intentions have an explicit tentative
+projection; they cannot become canonical totals, business rows or fake Drive
+ACKs. Canonical domain results remain signed-GS verified. Opt-in records-spool
+cleanup removes original requests and canonical response bodies only after full
+content/patch/delete proof, retaining exact source hashes for Drive hydration.
+Attendance cleanup retains only a scoped ownership receipt, and retired legacy
+notice caches are erased only after a verified live baseline with no pending
+legacy jobs. File bytes retain their existing verified-Drive cleanup owner.
+
+Deployment is a separate acceptance gate: new source code does not update a
+school's existing Apps Script /exec deployment. Real remote latency/capacity,
+physical 1/2/5-device acceptance and activating production flags are not proven
+by local tests. Tentative domain proposals are not instant authoritative commits.

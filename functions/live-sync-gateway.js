@@ -1,4 +1,6 @@
 'use strict';
+const {createHash}=require('node:crypto');
+const {canonical}=require('./live-sync-canonical');
 const {COLLECTIONS}=require('./live-sync');
 const refuse=(status,code)=>{throw Object.assign(Error('Live sync verification is pending; saved changes are retained.'),{status,code,publicMessage:true});};
 const revision=(collection,cursor)=>'live:'+collection+':'+cursor;
@@ -7,6 +9,19 @@ function createLiveGateway({liveSync,migration,maxRecords=100000,maxBytes=20*102
  const envelope=school=>({success:true,schoolId:school,syncProtocol:2,liveProtocol:1,recordAuthority:'cloudflare-live'});
  function verifyRecord(school,id,record){
   if(!validId(id)||!record||typeof record!=='object'||Array.isArray(record)||record.schoolId!==school||record.id!==undefined&&record.id!==id||typeof record._syncRevision!=='string'||!record._syncRevision||record._syncRevision.length>100)refuse(502,'LIVE_GATEWAY_RECORD_UNVERIFIED');
+ }
+ async function reserved(school,collection,readDrive){
+  if(collection!=='school_settings')return {suffix:'',records:{}};
+  const reply=await readDrive({action:'managed_records',collection,operation:'read',id:'staff_payroll_directory',syncProtocol:2});
+  if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true)refuse(503,'LIVE_RESERVED_RECORD_UNVERIFIED');
+  const record=reply.records?.staff_payroll_directory;
+  if(record){verifyRecord(school,'staff_payroll_directory',record);if(/^(live-|cf-)/.test(record._syncRevision))refuse(503,'LIVE_RESERVED_RECORD_UNVERIFIED');}
+  return {suffix:':'+createHash('sha256').update(canonical(record||null)).digest('hex'),records:record?{staff_payroll_directory:record}:{}};
+ }
+ async function head(school,collection,readDrive,current){
+  const value=current||await liveSync.command(school,{command:'head'}),item=value.collections?.find(row=>row.collection===collection&&row.state==='active');
+  if(value.schoolId!==school||value.liveProtocol!==1||!Number.isSafeInteger(value.cursor)||!item||!Number.isSafeInteger(item.cursor))refuse(503,'LIVE_GATEWAY_HEAD_UNVERIFIED');
+  const extra=await reserved(school,collection,readDrive);return {value,extra,collectionRevision:revision(collection,item.cursor)+extra.suffix};
  }
  async function records(school,body,readDrive){
   if(body.liveProtocol!==1||body.syncProtocol!==2)refuse(412,'LIVE_PROTOCOL_REQUIRED');
@@ -25,7 +40,7 @@ function createLiveGateway({liveSync,migration,maxRecords=100000,maxBytes=20*102
    if(head.schoolId!==school||head.liveProtocol!==1||!Number.isSafeInteger(head.cursor)||head.cursor<0)refuse(502,'LIVE_GATEWAY_HEAD_UNVERIFIED');
    const collectionHead=head.collections?.find(item=>item.collection===body.collection);
    if(!collectionHead||!Number.isSafeInteger(collectionHead.cursor)||collectionHead.cursor<0)refuse(502,'LIVE_GATEWAY_HEAD_UNVERIFIED');
-   const collectionRevision=revision(body.collection,collectionHead.cursor);
+   const extra=await reserved(school,body.collection,readDrive),collectionRevision=revision(body.collection,collectionHead.cursor)+extra.suffix;
    if(body.knownRevision===collectionRevision)return {...envelope(school),collectionRevision,records:{},unchanged:true};
    const found=Object.create(null);let after='',count=0,bytes=0;
    // Every page is pinned to one head, and hydration rechecks that head. Never
@@ -45,6 +60,9 @@ function createLiveGateway({liveSync,migration,maxRecords=100000,maxBytes=20*102
     if(page.next===null){
      const verified=await liveSync.command(school,{command:'head'});
      if(verified.schoolId!==school||verified.liveProtocol!==1||verified.cursor!==head.cursor)refuse(409,'LIVE_SNAPSHOT_CHANGED');
+     const finalReserved=await reserved(school,body.collection,readDrive);if(finalReserved.suffix!==extra.suffix)refuse(409,'LIVE_SNAPSHOT_CHANGED');
+     if(count+Object.keys(extra.records).length>maxRecords||bytes+Buffer.byteLength(JSON.stringify(extra.records))>maxBytes)refuse(413,'LIVE_GATEWAY_SNAPSHOT_TOO_LARGE');
+     Object.assign(found,extra.records);
      return {...envelope(school),collectionRevision,records:found};
     }
     after=last;
@@ -56,8 +74,9 @@ function createLiveGateway({liveSync,migration,maxRecords=100000,maxBytes=20*102
   if(typeof migration?.live!=='function')refuse(503,'LIVE_MIGRATION_NOT_ACTIVE');
   const patch=body.data?._syncFieldPatch;
   if(patch&&(body.operation!=='write'||patch.version!==1||!patch.set||typeof patch.set!=='object'||Array.isArray(patch.set)||!Array.isArray(patch.remove)||!patch.before||typeof patch.before!=='object'||Object.keys(body.data).some(k=>!['schoolId','_syncFieldPatch'].includes(k))||[...Object.keys(patch.set),...patch.remove].some(k=>['studentId','personId','mobileStableId','teacherId'].includes(k))))refuse(400,'LIVE_PATCH_INVALID');
+  const request={command:'commit',collection:body.collection,id:body.id,operation:patch?'patch':body.operation,operationId:body.operationId,expectedRevision:body.expectedRecordRevision,...(body.operation==='write'?{data:patch?{schoolId:school,set:patch.set,remove:patch.remove}:body.data}:{}),...(body.createIntent!==undefined?{createIntent:body.createIntent}:{}),...(body.cachedBaseline?{cachedBaseline:body.cachedBaseline}:{})};
   return migration.live(school,body.collection,async()=>{
-   const result=await liveSync.commit(school,{command:'commit',collection:body.collection,id:body.id,operation:patch?'patch':body.operation,operationId:body.operationId,expectedRevision:body.expectedRecordRevision,...(body.operation==='write'?{data:patch?{schoolId:school,set:patch.set,remove:patch.remove}:body.data}:{}),...(body.createIntent!==undefined?{createIntent:body.createIntent}:{}),...(body.cachedBaseline?{cachedBaseline:body.cachedBaseline}:{})},readDrive);
+   const result=await liveSync.commit(school,request,readDrive);
    if(result.liveProtocol!==1||result.schoolId!==school||result.cloudState!=='committed'||!['pending','verified'].includes(result.backupState)||result.operationId!==body.operationId||typeof result.recordRevision!=='string'||!result.recordRevision)refuse(502,'LIVE_GATEWAY_ACK_UNVERIFIED');
    let record=result.record;
    if(!record){
@@ -70,8 +89,8 @@ function createLiveGateway({liveSync,migration,maxRecords=100000,maxBytes=20*102
    // This acknowledges Cloudflare authority only. backupState remains pending
    // until the independent Drive delivery owner verifies the exact content.
    return {...result,...envelope(school),record};
-  });
+  },request);
  }
- return {records};
+ return {records,head};
 }
 module.exports={createLiveGateway};

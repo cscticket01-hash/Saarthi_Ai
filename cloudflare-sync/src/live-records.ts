@@ -33,12 +33,16 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_device_receipts(device TEXT PRIMARY KEY,cursor INTEGER NOT NULL,observed_at INTEGER NOT NULL)');
+ storage.sql.exec('CREATE TABLE IF NOT EXISTS live_collection_cursors(collection TEXT PRIMARY KEY,cursor INTEGER NOT NULL)');
+ storage.sql.exec('INSERT OR IGNORE INTO live_collection_cursors SELECT collection,max(seq) FROM live_events GROUP BY collection');
+ storage.sql.exec('CREATE TABLE IF NOT EXISTS live_retention(id INTEGER PRIMARY KEY,floor INTEGER NOT NULL)');
+ storage.sql.exec('INSERT OR IGNORE INTO live_retention VALUES(1,0)');
 }
 export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now()):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
- const head=()=>sql.exec<{n:number}>('SELECT coalesce(max(seq),0) AS n FROM live_events').toArray()[0].n;
+ const head=()=>sql.exec<{n:number}>("SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='live_events'),0) AS n").toArray()[0].n;
  const state=()=>sql.exec<{state:string;fingerprint:string;expected_count:number;source_revision:string}>('SELECT * FROM live_collections WHERE collection=?',col).toArray()[0];
  const row=(id:string)=>sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',col,id).toArray()[0];
  if(command==='seedBegin'){
@@ -54,6 +58,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const data=entry.data as Json;clean(data);demand(data.schoolId===school&&typeof data._syncRevision==='string'&&data._syncRevision.length>0&&!/^(live-|cf-)/.test(data._syncRevision),'Unverified source row');
    const body=canonical(data),old=row(entry.id);demand(!old||old.body===body,'Seed replay differs',409);
    if(!old)sql.exec('INSERT INTO live_records(collection,id,body,revision,drive_revision,payload_hash) VALUES(?,?,?,?,?,?)',col,entry.id,body,data._syncRevision,data._syncRevision,payloadHash(data));
+   demand(col!=='school_settings'||entry.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   }demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_records WHERE collection=?',col).toArray()[0].n<=s.expected_count,'Seed count exceeded',409);});return {state:'seeding'};
  }
  if(command==='seedSeal'){
@@ -66,10 +71,12 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   });
  }
  if(command==='read'){
+  demand(col!=='school_settings'||b.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
  if(command==='commit'){
+  demand(col!=='school_settings'||b.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   collection();demand(state()?.state==='active','Verified baseline required',412);
   demand(validId(b.id)&&opId(b.operationId)&&['write','delete','patch'].includes(String(b.operation))&&typeof b.expectedRevision==='string'&&b.expectedRevision.length<=100,'Invalid live operation');
   clean(b.data);demand(byteLength(JSON.stringify(b))<=256000,'Live record too large',413);
@@ -110,11 +117,12 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:backedUp?'verified':'pending',recordRevision:current.revision,operationId:b.operationId,cursor:head(),record:backedUp?null:old,unchanged:true,...(backedUp?{source:'drive',driveRevision:current.drive_revision,payloadHash:current.payload_hash,reconcileRequired:true}:{})};
     sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));return receipt;
    }
-   demand(head()<1000000,'Live history capacity reached; retain local work',503);
+   demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_events').toArray()[0].n<1000000,'Live history capacity reached; retain local work',503);
    const revision='live-'+randomUUID();data={...business(data),...(b.operation==='delete'?{_syncDeleted:true}:{}),schoolId:school,_syncRevision:revision,_syncOperationId:b.operationId};
    const body=canonical(data);
    sql.exec('INSERT INTO live_events(collection,id,body,operation_id,fingerprint,receipt) VALUES(?,?,?,?,?,?)',col,String(b.id),body,String(b.operationId),fingerprint,'');
    const seq=head(),receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:'pending',recordRevision:revision,operationId:b.operationId,cursor:seq,record:data};
+   sql.exec('INSERT INTO live_collection_cursors VALUES(?,?) ON CONFLICT(collection) DO UPDATE SET cursor=excluded.cursor',col,seq);
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(receipt),seq);
    sql.exec('INSERT INTO live_operations VALUES(?,?,?)',String(b.operationId),fingerprint,JSON.stringify(receipt));
    sql.exec('INSERT INTO live_records(collection,id,body,revision,drive_revision,payload_hash) VALUES(?,?,?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body,revision=excluded.revision,payload_hash=excluded.payload_hash',col,String(b.id),body,revision,current?.drive_revision||'',payloadHash(data));
@@ -124,6 +132,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  }
  if(command==='changes'){
   demand(Number.isSafeInteger(b.after)&&Number(b.after)>=0&&Number(b.after)<=head(),'Invalid cursor; snapshot required',409);
+  demand(Number(b.after)>=sql.exec<{floor:number}>('SELECT floor FROM live_retention WHERE id=1').toArray()[0].floor,'Replay history compacted; snapshot required',409);
   const events:Json[]=[];let bytes=0;
   for(const r of sql.exec<{seq:number;collection:string;id:string;body:string}>('SELECT seq,collection,id,body FROM live_events WHERE seq>? ORDER BY seq LIMIT 100',Number(b.after))){
    const size=byteLength(r.body);if(bytes+size>300000&&events.length)break;bytes+=size;events.push({sequence:r.seq,collection:r.collection,id:r.id,...(r.body?{record:JSON.parse(r.body)}:{source:'drive',record:null})});
@@ -150,7 +159,21 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    return {liveProtocol:1,schoolId:school,collection:col,state:'legacy',cursor:head(),fingerprint,driveVerified:true,pending:0,needsAttention:0};
   });
  }
- if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string;cursor:number}>('SELECT c.collection,c.state,coalesce(max(e.seq),0) AS cursor FROM live_collections c LEFT JOIN live_events e ON e.collection=c.collection GROUP BY c.collection,c.state').toArray()};
+ if(command==='head')return {liveProtocol:1,schoolId:school,cursor:head(),collections:sql.exec<{collection:string;state:string;cursor:number}>('SELECT c.collection,c.state,coalesce(e.cursor,0) AS cursor FROM live_collections c LEFT JOIN live_collection_cursors e ON e.collection=c.collection').toArray()};
+ if(command==='operationReceipt'){
+  demand(opId(b.operationId),'Invalid operation identity');
+  const saved=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_operations WHERE operation_id=?',String(b.operationId)).toArray()[0];
+  return {liveProtocol:1,schoolId:school,operationId:b.operationId,found:!!saved,...(saved?{fingerprint:saved.fingerprint,receipt:JSON.parse(saved.receipt)}:{})};
+ }
+ if(command==='compact')return storage.transactionSync(()=>{
+  demand(Number.isSafeInteger(b.before)&&Number(b.before)>=0&&Number(b.before)<=head(),'Invalid retention boundary');
+  const floor=sql.exec<{floor:number}>('SELECT floor FROM live_retention WHERE id=1').toArray()[0].floor;
+  // Only a contiguous prefix whose exact snapshots reached Drive is eligible.
+  const rows=sql.exec<{seq:number;state:string}>("SELECT e.seq,b.state FROM live_events e LEFT JOIN live_backup b ON b.seq=e.seq WHERE e.seq>? AND e.seq<=? ORDER BY e.seq LIMIT 1000",floor,Number(b.before)).toArray();
+  let next=floor;for(const row of rows){if(row.state!=='verified')break;next=row.seq;}
+  if(next>floor){sql.exec('DELETE FROM live_events WHERE seq<=?',next);sql.exec("DELETE FROM live_backup WHERE seq<=? AND state='verified'",next);sql.exec('UPDATE live_retention SET floor=? WHERE id=1',next);}
+  return {liveProtocol:1,schoolId:school,cursor:head(),floor:next,snapshotRequiredBefore:next};
+ });
  if(command==='received'){
   demand(typeof b.device==='string'&&/^[a-f0-9]{64}$/.test(b.device)&&Number.isSafeInteger(b.cursor)&&Number(b.cursor)>=0&&Number(b.cursor)<=head(),'Invalid device receipt');
   sql.exec('INSERT INTO live_device_receipts VALUES(?,?,?) ON CONFLICT(device) DO UPDATE SET cursor=max(cursor,excluded.cursor),observed_at=excluded.observed_at',b.device,Number(b.cursor),now);return {received:true};

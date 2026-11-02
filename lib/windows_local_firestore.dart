@@ -313,6 +313,34 @@ class FirebaseFirestore {
       _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{page.schoolId:old}}));
   }
 
+  /// Recovery-only checkpoint replacement after the runtime verified a pinned
+  /// authoritative snapshot through the ordinary pending-aware business owner.
+  Future<void> replaceLiveSyncCheckpointAfterVerifiedSnapshot(
+      String school, int expectedCursor, int nextCursor) async {
+    final profile=activeProfileId;
+    if(activeProfileIdentity['schoolSyncId']!=school || expectedCursor<0 ||
+        nextCursor<expectedCursor)throw StateError('Live snapshot scope differs.');
+    final ref=collection('_windows_live_checkpoints').doc(school);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    final incoming=await collection('_windows_live_incoming').get();
+    if(activeProfileId!=profile || activeProfileIdentity['schoolSyncId']!=school ||
+        old!=null&&old['schoolId']!=school || (old?['cursor']??0)!=expectedCursor)throw StateError('Live snapshot checkpoint changed.');
+    final operations=<_WriteOperation>[];
+    for(final row in incoming.docs) {
+      final data=row.data(),sequence=data['sequence'];
+      if(data['schoolId']!=school || sequence is! int || sequence<1 ||
+          row.id!='$school-$sequence' || sequence>nextCursor)
+        throw StateError('Live snapshot incoming identity differs.');
+      operations.add(_WriteOperation._(type:_WriteType.delete,
+        collection:'_windows_live_incoming',documentId:row.id));
+    }
+    operations.add(_WriteOperation._(type:_WriteType.set,
+      collection:'_windows_live_checkpoints',documentId:school,
+      data:{'schoolId':school,'cursor':nextCursor,'snapshotVerified':true}));
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{school:old}}));
+  }
+
   /// Readback evidence only. A retained newer edit must never count as a download.
   Future<bool> syncedDocumentMatches(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? expected) async {
     ref.requireOriginProfile();

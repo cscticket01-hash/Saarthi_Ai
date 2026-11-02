@@ -1,6 +1,8 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
 const {COLLECTIONS}=require('./live-sync');
+const {bindOperation}=require('./live-sync-reconciliation');
+const {canonical}=require('./live-sync-canonical');
 const refuse=code=>{throw Object.assign(Error('Sync migration is pending; saved changes are retained.'),{status:503,code,publicMessage:true});};
 // Durable admission markers intentionally do not expire. A process crash can
 // leave an uncertain Google request running; a timeout is not proof of failure.
@@ -13,12 +15,15 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   if(body.action==='managed_mobile')return run();
   const read=body.action==='managed_records'&&body.operation==='read'||['managed_health','managed_summary','managed_delta'].includes(body.action);
   if(read)return run();
-  const token=randomUUID(),r=ref(school),collection=body.action==='managed_records'?body.collection:body.action==='managed_mobile'?'__mobile_lifecycle':null;
+  let token=randomUUID();const r=ref(school),collection=body.action==='managed_records'?body.collection:null;
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{},collections=state.collections||{};
    if(Object.entries(collections).some(([name,value])=>value.state!=='legacy'&&(!collection||collection===name)))refuse('LIVE_LEGACY_WRITE_FENCED');
-   const inflight={...state.inflight};if(Object.keys(inflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   inflight[token]={collection:collection||'*',startedAt:now()};tx.set(r,{...state,inflight});
+   const operationBinding=bindOperation(school,'legacy',body);
+   const inflight={...state.inflight};
+   if(operationBinding){const prior=Object.entries(inflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];return;}}
+   if(Object.keys(inflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
+   inflight[token]={collection:collection||'*',startedAt:now(),...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,inflight});
   });
   const result=await run();
   {
@@ -55,15 +60,17 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
  async function assertActive(school,collection){
   if((await ref(school).get()).data()?.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
  }
- async function live(school,collection,run){
+ async function live(school,collection,run,request){
   if(!COLLECTIONS.has(collection))refuse('LIVE_COLLECTION_NOT_ADMITTED');
-  const r=ref(school),token=randomUUID();
+  const r=ref(school);let token=randomUUID();
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{};
    if(state.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
    const liveInflight={...state.liveInflight};
+   const operationBinding=request?bindOperation(school,'live',request):null;
+   if(operationBinding){const prior=Object.entries(liveInflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];return;}}
    if(Object.keys(liveInflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   liveInflight[token]={collection,startedAt:now()};tx.set(r,{...state,liveInflight});
+   liveInflight[token]={collection,startedAt:now(),...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,liveInflight});
   });
   // An uncertain outcome retains its marker. Clearing it on a timeout could
   // allow rollback while a committed Cloudflare write is still being handled.

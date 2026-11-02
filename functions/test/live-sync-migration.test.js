@@ -95,3 +95,11 @@ test('uncertain live write survives restart and blocks rollback without deleting
 test('mobile lifecycle remains available while admitted admin collections are active',async()=>{
  const f=activeGate();assert.equal(await f.gate.legacy(A,{action:'managed_mobile',operation:'session'},async()=>42),42);
 });
+test('uncertain retries reuse immutable operation markers instead of exhausting admission',async()=>{
+ const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ const body={...write,syncProtocol:2,id:'one',operationId:'reused-durable-operation-001',expectedRecordRevision:'',data:{schoolId:A,amount:1}};
+ for(let i=0;i<110;i++)await assert.rejects(gate.legacy(A,body,async()=>{throw Error('uncertain');}));
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,1);
+ assert.equal(await gate.legacy(A,body,async()=>42),42);
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,0);
+});

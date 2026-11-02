@@ -381,6 +381,7 @@ class CentralSchoolCloud {
         'LIVE_LEGACY_WRITE_FENCED': 'School sync migration is in progress. Saved changes are retained.',
         'LIVE_MIGRATION_NOT_ACTIVE': 'Live delivery is not active for this collection. Saved changes are retained.',
         'LIVE_MIGRATION_ADMISSION_BUSY': 'School sync is busy. Saved changes are retained for retry.',
+        'LIVE_SNAPSHOT_REQUIRED': 'Retained live history requires a verified school snapshot. Saved changes are retained.',
         'LIVE_PROTOCOL_REQUIRED': 'This school requires the current sync app. Saved changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
         'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
