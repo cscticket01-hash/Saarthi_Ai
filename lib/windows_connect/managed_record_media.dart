@@ -57,7 +57,7 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
     var bytes = image.contentAsBytes(), mime = image.mimeType;
     final originalDigest = sha256.convert(bytes).toString();
     if (prefix == 'photo') {
-      final processed = await compute(DocumentProcessingEngine.process, {
+      final processed = await compute(DocumentProcessingEngine.portraitUpload, {
         'bytes': bytes,
         'kind': 'portrait',
         'targetBytes': DocumentProcessingEngine.portraitTarget,

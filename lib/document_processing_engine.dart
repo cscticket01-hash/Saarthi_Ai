@@ -11,6 +11,18 @@ class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
   static const photoTarget = 80 * 1024;
   static const portraitTarget = 40 * 1024;
+  /// Upload contract for profile photos. Never silently send an oversized
+  /// fallback, or lower the quality floor merely to claim the budget passed.
+  static Map<String, dynamic> portraitUpload(Map<String, dynamic> input) {
+    final result = process({...input, 'kind': 'portrait', 'targetBytes': portraitTarget});
+    final bytes = result['optimized'] as Uint8List;
+    if (result['targetMet'] != true || bytes.length > portraitTarget) {
+      throw const FormatException(
+        'Photo cannot fit 40 KB safely. Original retained; please choose a clearer portrait.',
+      );
+    }
+    return result;
+  }
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
@@ -206,6 +218,27 @@ class DocumentProcessingEngine {
           optimizedWidth=candidateImage.width;optimizedHeight=candidateImage.height;quality=78;
         }
         edge=nextEdge;
+      }
+      // Recover the highest JPEG quality that fits at the chosen dimensions.
+      // Adaptive sizing used q78 to find a safe resolution, not as a fixed
+      // quality setting for every face. Always encode from the source pixels.
+      if (optimized.length <= target && quality < 94) {
+        final candidateImage = optimizedWidth == image.width && optimizedHeight == image.height
+            ? image
+            : img.copyResize(image, width: optimizedWidth, height: optimizedHeight,
+                interpolation: img.Interpolation.average);
+        var low = quality + 1, high = 94;
+        while (low <= high) {
+          final q = (low + high) ~/ 2;
+          final candidate = Uint8List.fromList(img.encodeJpg(candidateImage, quality: q));
+          if (candidate.length <= target) {
+            optimized = candidate;
+            quality = q;
+            low = q + 1;
+          } else {
+            high = q - 1;
+          }
+        }
       }
     }
     // A recompression must not consume more than the safe existing source.

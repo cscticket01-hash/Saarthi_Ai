@@ -30,6 +30,9 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function status(school,lane,id,readDrive){
   if(!(lane==='records'||FILE.test(lane))||!/^[a-f0-9]{64}$/.test(id)||FILE.test(lane)&&lane!=='file-'+id)fail(400,'INVALID_EDGE_RECEIPT');
   const row=await edge.rpc(school,lane,{command:'status',id});
+  return statusFromRow(school,lane,id,row,readDrive);
+ }
+ async function statusFromRow(school,lane,id,row,readDrive){
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
   if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...await hydrate(school,row.response.result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
@@ -61,7 +64,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    for(let pos=0;pos<bytes.length;pos+=512*1024){const chunk=bytes.subarray(pos,pos+512*1024);await edge.rpc(school,lane,{command:'part',id,offset:request.offset+pos,base64:chunk.toString('base64'),chunkSha256:digest(chunk)});}
   }
   const current=request.operation==='part'||request.operation==='status'?await edge.rpc(school,lane,{command:'status',id}):row;
-  if(current.manifest.received===manifest.sizeBytes)return status(school,lane,id);
+  if(current.manifest.received===manifest.sizeBytes)return statusFromRow(school,lane,id,current);
   return {success:true,schoolId:school,uploadResumableVersion:1,uploadKey:manifest.uploadKey,sha256:manifest.sha256,sizeBytes:manifest.sizeBytes,offset:current.manifest.received,committed:false,cloudflareAccepted:true,driveState:'receiving'};
  }
  async function wholeFile(school,request){
