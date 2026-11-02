@@ -317,7 +317,8 @@ Future<Uint8List> _renderWindowsReferenceDocument({
                            ? [300, 280, 260, 240, 220][printPass]
                            : [250, 220, 220, 220, 220][printPass],
                        jpegQuality: cover
-                           ? [88, 86, 84, 81, 78][printPass] : 88)
+                           ? [88, 86, 84, 81, 78][printPass]
+                           : [88, 88, 88, 86, 84][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
