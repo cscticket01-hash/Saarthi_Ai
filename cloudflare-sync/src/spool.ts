@@ -1,7 +1,9 @@
 import {demand,digest,operationPattern} from './protocol';
 import {Buffer} from 'node:buffer';
 type Json=Record<string,unknown>;
-type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number};
+type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number;verified_at:number;purge_due:number};
+export const verifiedPayloadTtlMs=24*60*60*1000;
+export const verifiedPayloadExpired=(state:string,verifiedAt:number,purgeDue:number,now:number)=>state==='completed'&&verifiedAt>0&&purgeDue>=verifiedAt+verifiedPayloadTtlMs&&now>=purgeDue;
 export const spoolLane=(lane:string)=>lane==='records'||/^file-[a-f0-9]{64}$/.test(lane);
 const collections=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 export function canonical(value:unknown):string {
@@ -15,6 +17,8 @@ export function initSpool(storage:DurableObjectStorage){
  const columns=storage.sql.exec<{name:string}>('PRAGMA table_info(edge_ops)').toArray();
  if(!columns.some(c=>c.name==='resources'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN resources TEXT');
  if(!columns.some(c=>c.name==='created'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN created INTEGER NOT NULL DEFAULT 0');
+ if(!columns.some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
+ if(!columns.some(c=>c.name==='purge_due'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN purge_due INTEGER NOT NULL DEFAULT 0');
 }
 // Unknown/legacy, person, document and financial dependencies stay barriers.
 // Only these independent record types may overtake a retry of another key.
@@ -62,6 +66,31 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
 
  }
  const receipt=(row:Row)=>({id:row.id,state:row.state,due:row.due,response:row.response?JSON.parse(row.response):null});
+ if(action==='expireVerified'){
+  // This cleanup runs only from an authenticated existing school-lane alarm;
+  // a stale unverified request can stay queued past 24h without data loss.
+  return storage.transactionSync(()=>{
+   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
+   let cleared=0;
+   for(const row of eligible){
+    if(!verifiedPayloadExpired(row.state,row.verified_at,row.purge_due,Date.now()))continue;
+    if(lane.startsWith('file-')){
+     storage.sql.exec("UPDATE edge_chunks SET body=x''");
+     // Keep the immutable manifest/Drive identity for a safe idempotent retry.
+     storage.sql.exec("UPDATE edge_ops SET purge_due=0 WHERE id=? AND state='completed'",row.id);
+    }else{
+     storage.sql.exec("UPDATE edge_ops SET payload='',purge_due=0 WHERE id=? AND state='completed' AND verified_at=?",row.id,row.verified_at);
+    }
+    cleared++;
+   }
+   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+   return {expired:cleared,nextCleanupAt:next??null};
+  });
+ }
+ if(action==='retention'){
+  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+  return {retentionHours:24,nextCleanupAt:next??null};
+ }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
  if(action==='pending'){
@@ -150,12 +179,16 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   }
   storage.transactionSync(()=>{
    const stored=values.payloadPurged===true?{...values,partial:{}}:values;
-   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(stored),id);
-   if(values.payloadPurged===true)storage.sql.exec("UPDATE edge_ops SET payload='' WHERE id=?",id);
-   // Bytes are pruned only after the broker verified a committed Drive receipt.
-   if(lane.startsWith('file-')&&values.state==='completed')storage.sql.exec("UPDATE edge_chunks SET body=x''");
+   // An immutable Drive proof is required before the 24h retention timer
+   // starts. Retry/needsAttention never acquires an expiry deadline.
+   const verified=values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-'));
+   const verifiedAt=verified?Date.now():0,expiry=verified?verifiedAt+verifiedPayloadTtlMs:0;
+   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=?,verified_at=?,purge_due=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(stored),verifiedAt,expiry,id);
+   // Original byte/request payload remains until the existing alarm expires.
   });
-  if(values.state==='retry')await wake(Number(values.nextAttemptAt));return true;
+  if(values.state==='retry')await wake(Number(values.nextAttemptAt));
+  if(values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-')))await wake(Date.now()+verifiedPayloadTtlMs);
+  return true;
  }
  throw Object.assign(Error('Unknown delivery command'),{status:400});
 }
