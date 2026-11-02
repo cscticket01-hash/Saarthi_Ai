@@ -24,7 +24,7 @@ function png(){
 }
 const report={scope:'real TEST Sync V2 API only; real photo PNG; signed GS readback',schoolId:SCHOOL,
  liveNetworkMeasured:true,windowsAppMeasured:false,productionCertified:false,photoBytesVerified:false,roles:[],
- createdAt:new Date().toISOString()};
+ createdAt:new Date().toISOString(),sourceCommit:process.env.GITHUB_SHA||null,runId:process.env.GITHUB_RUN_ID||null,runAttempt:process.env.GITHUB_RUN_ATTEMPT||null};
 async function request(url,body,token){
  const t=now();
  const response=await fetch(url,{method:body?'POST':'GET',redirect:'error',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(120000)});
@@ -42,6 +42,7 @@ function priorFixtureDeleteBody(row){
 async function main(){
  check(process.env.VS_PERSON_PHOTO_TEST===SCHOOL,'No TEST-only opt-in');
  check(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD,'Missing TEST login secrets');
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME);
  const health=await request(ENDPOINT+'/healthz');
  check(health.status===200&&health.value.ready===true&&health.value.projectId==='saarthi-ai-df12b','TEST broker identity failed');
  report.runtimeCommit=health.value.runtimeCommit||'unknown';
