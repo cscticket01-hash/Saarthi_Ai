@@ -70,7 +70,7 @@ test('retired explicit student generation cannot stage fee, attendance, or exam 
    assertStudentDependency:async(s,id,g)=>{checked++;assert.equal(s,school);assert.equal(id,studentId);assert.equal(g,generation);throw Object.assign(Error('Parent generation retired'),{code:'PERSON_GENERATION_RETIRED',status:409});},
    edgeDelivery:{record:async()=>{staged++;throw Error('stale student child must not enter edge queue');}},
   });
-  await assert.rejects(adapter.submit(school,r),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
+  await assert.rejects(domainFor(collection)?adapter.submit(school,r):adapter.assertChildGeneration(school,r),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
   assert.equal(checked,1,collection);assert.equal(staged,0,collection);
  }
 });
@@ -115,10 +115,12 @@ test('actual signed student deletion fence rejects stale document admission but 
   data:{schoolId:school,studentDocId:id,personId:generation,name:'Stale child'}});
  const create=(r)=>({success:true,schoolId:school,driveState:'pending',edgeDeliveryVersion:1,
   delivery:{lane:'records',id:deliveryId(school,r)}});
- const delivery=createLiveDomainDelivery({assertStudentDependency:lifecycle.assertDependency,
-  edgeDelivery:{record:async(s,r)=>{staged++;return create(r);}}});
+ const queue={record:async(s,r)=>{staged++;return create(r);}};
+ const delivery=createLiveDomainDelivery({assertStudentDependency:lifecycle.assertDependency,edgeDelivery:queue});
+ const stage=async r=>domainFor(r.collection)?delivery.submit(school,r):
+   (await delivery.assertChildGeneration(school,r),queue.record(school,r));
  const before=makeRequest('documents','document-before-delete-0001');
- assert.equal((await delivery.submit(school,before)).driveState,'pending');
+ assert.equal((await stage(before)).driveState,'pending');
  const deletion={action:'managed_records',collection:'students_directory',operation:'delete',id,
   syncProtocol:2,operationId:'real-parent-delete-0000001',expectedRecordRevision:first.recordRevision,
   deletedStudentGeneration:generation};
@@ -126,11 +128,11 @@ test('actual signed student deletion fence rejects stale document admission but 
  assert.equal(deleted.record._syncDeleted,true);
  for(const collection of ['documents','student_scan_index','fee_payments']){
   const stale=makeRequest(collection,'child-after-delete-'+collection+'-0001');
-  await assert.rejects(delivery.submit(school,stale),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
+  await assert.rejects(stage(stale),e=>e.code==='PERSON_GENERATION_RETIRED',collection);
  }
  assert.equal(staged,1,'stale child must not enter cloud queue');
  const cleanup={...makeRequest('documents','document-cleanup-after-delete'),operation:'delete'};
  delete cleanup.data;
- assert.equal((await delivery.submit(school,cleanup)).driveState,'pending');
+ assert.equal((await stage(cleanup)).driveState,'pending');
  assert.equal(staged,2,'deletion cleanup still allowed');
 });
