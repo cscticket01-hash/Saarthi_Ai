@@ -111,6 +111,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
   const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
+ if(action==='putSmall'){
+  // Atomically stage a small photo and its SHA-256 proof in one Durable Object
+  // command. This is a Cloudflare ACK, never a verified Google Drive ACK.
+  demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');
+  const m=b.manifest as Json;
+  demand(typeof m.uploadKey==='string'&&/^[A-Za-z0-9_-]{1,150}$/.test(m.uploadKey)&&await digest(JSON.stringify([school,m.uploadKey]))===id&&typeof m.sha256==='string'&&operationPattern.test(m.sha256)&&Number.isSafeInteger(m.sizeBytes)&&Number(m.sizeBytes)>0&&Number(m.sizeBytes)<=256*1024&&typeof m.name==='string'&&m.name.length>0&&m.name.length<=200&&typeof m.mime==='string'&&/^[-\w.+]+\/[-\w.+]+$/.test(m.mime)&&!m.mime.startsWith('application/vnd.google-apps.'),'Invalid small file manifest');
+  demand(typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=349528&&/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64),'Invalid small file encoding');
+  const bytes=new Uint8Array(Buffer.from(b.base64 as string,'base64'));
+  demand(bytes.length===m.sizeBytes&&Buffer.from(bytes).toString('base64')===b.base64,'Small file byte length mismatch');
+  const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
+  demand(actual===m.sha256,'Small file hash mismatch',409);
+  const fingerprint=await digest(canonical(m)),old=get(id);
+  if(old){
+   demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);
+   demand(old.state!=='receiving','Resumable upload must keep its existing chunk owner',409);
+   if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));
+   return {...receipt(old),manifest:JSON.parse(old.payload)};
+  }
+  const at=Date.now(),manifest=JSON.stringify({...m,received:bytes.length,driveOffset:0});
+  storage.transactionSync(()=>{
+   storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,created) VALUES(?,?,?,'pending',?,?)",id,fingerprint,manifest,at,at);
+   storage.sql.exec('INSERT INTO edge_chunks(offset,size,sha256,body) VALUES(?,?,?,?)',0,bytes.length,actual,bytes.buffer);
+  });
+  await wake(at+250);
+  return {...receipt(get(id)),manifest:JSON.parse(get(id).payload)};
+ }
  if(action==='begin'){
   demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');const m=b.manifest as Json;
   demand(typeof m.uploadKey==='string'&&/^[A-Za-z0-9_-]{1,150}$/.test(m.uploadKey)&&await digest(JSON.stringify([school,m.uploadKey]))===id&&typeof m.sha256==='string'&&operationPattern.test(m.sha256)&&Number.isSafeInteger(m.sizeBytes)&&Number(m.sizeBytes)>0&&Number(m.sizeBytes)<=20*1024*1024&&typeof m.name==='string'&&m.name.length>0&&m.name.length<=200&&typeof m.mime==='string'&&/^[-\w.+]+\/[-\w.+]+$/.test(m.mime)&&!m.mime.startsWith('application/vnd.google-apps.'),'Invalid file manifest');
