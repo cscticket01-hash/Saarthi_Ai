@@ -489,18 +489,21 @@ function createManagedSchools({edgeRecordParallelism=1,repairKnowledgeOptions={}
    const amount=b.amount===undefined?0:Number(b.amount);
    if(!Number.isFinite(amount)||amount<0||amount>100000000)fail(400,'Invalid licence purchase amount');
    const t=now(),renewed=await db.runTransaction(async tx=>{
-    const entitlement=await tx.get(ref),e=entitlement.exists?entitlement.data():null;
-    if(!e||e.active!==true||e.blocked===true||data.deletedAt||data.loginDisabled===true||!data.managed)fail(403,'School is blocked or disabled');
+    const entitlement=await tx.get(ref),currentSchool=await tx.get(db.doc('platform_schools/'+id));
+    const e=entitlement.exists?entitlement.data():null,owner=currentSchool.exists?currentSchool.data():null;
+    if(!e||!owner||e.active!==true||e.blocked===true||owner.deletedAt||
+       owner.loginDisabled===true||owner.managed!==true||owner.blocked===true)
+      fail(403,'School is blocked or disabled');
     const licenceId=e.licenseHash;
-    if(!/^[a-f0-9]{64}$/.test(licenceId||'')||e.status==='trial'||data.activeLicenseHash!==licenceId)
+    if(!/^[a-f0-9]{64}$/.test(licenceId||'')||e.status==='trial'||(owner.activeLicenseHash||owner.licenseId)!==licenceId)
       fail(409,'No current existing licence to renew; generate the first key instead');
-    // A repeated network request must never extend the paid expiry twice.
-    if(e.lastRenewalId===b.renewalId)return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:e.expiresAt,activated:e.activated===true};
     const licenceRef=db.doc('platform_licenses/'+licenceId),statusRef=db.doc('platform_license_status/'+licenceId);
     const [licence,status]=await Promise.all([tx.get(licenceRef),tx.get(statusRef)]);
     const l=licence.exists?licence.data():null,s=status.exists?status.data():null;
     if(!l||!s||l.schoolId!==id||s.schoolId!==id||l.revoked!==false||s.revoked!==false)
       fail(409,'Existing licence was revoked or replaced; review the current school licence');
+    // An old retry cannot claim success after the licence has been revoked.
+    if(e.lastRenewalId===b.renewalId)return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:e.expiresAt,activated:e.activated===true};
     const prior=Number(l.expiresAt?.toMillis?.()??l.expiresAt);
     if(!Number.isSafeInteger(prior)||prior<=0)fail(409,'Invalid licence expiry; review before renewing');
     const expiry=Math.max(t,prior)+b.days*86400000;
