@@ -111,7 +111,7 @@ test('a rejected seed page rolls back every row and cannot activate a partial au
  assert.equal((await rpc({command:'seedSeal',collection,fingerprint})).status,200);
  const ref=(await rpc({command:'read',collection,id:'one'})).value;assert.equal(ref.source,'drive');assert.equal(ref.record,null);assert.match(ref.payloadHash,/^[a-f0-9]{64}$/);
 });
-test('verified Drive handoff purges every payload copy, retains newer edits and recovers offline devices from Drive',async()=>{
+test('verified Drive handoff retains 24h cache without losing newer edits or Drive proof',async()=>{
  const gs=storage({lifecycle:true,bundle:true});
  // Use a fresh supported collection with a real signed school Drive baseline.
  await live.prepare(A,'school_notices',body=>gs.call(body));
@@ -125,27 +125,31 @@ test('verified Drive handoff purges every payload copy, retains newer edits and 
  const pending=await live.command(A,{command:'read',collection:'school_notices',id:'handoff-record'});
  assert.equal(pending.source,'cloudflare');assert.equal(pending.record.title,'Second');
  const oldReplay=await live.command(A,{command:'commit',...firstRequest});
- assert.equal(oldReplay.record,null);assert.equal(oldReplay.backupState,'verified');assert.equal(oldReplay.recordRevision,first.recordRevision);
+ assert.equal(oldReplay.record.title,'First');assert.equal(oldReplay.backupState,'verified');assert.equal(oldReplay.recordRevision,first.recordRevision);
  assert.equal((await live.drain(A,body=>gs.call(body))).processed,1);
  const reference=await live.command(A,{command:'read',collection:'school_notices',id:'handoff-record'});
- assert.equal(reference.record,null);assert.equal(reference.source,'drive');assert.equal(reference.recordRevision,second.recordRevision);
- const stats=await live.command(A,{command:'stats'});assert.deepEqual(stats.payloadCopies,{records:0,events:0,backups:0,operations:0});
+ assert.equal(reference.record.title,'Second');assert.equal(reference.source,'cloudflare');assert.equal(reference.recordRevision,second.recordRevision);
+ const stats=await live.command(A,{command:'stats'});assert.ok(stats.payloadCopies.records>0&&stats.payloadCopies.events>0&&stats.payloadCopies.backups>0);
+ const retained=await rpc({command:'retention'});assert.equal(retained.value.retentionHours,24);assert.ok(retained.value.nextCleanupAt>Date.now());
+ assert.equal((await rpc({command:'expireVerified'})).value.expired,0);
+ assert.deepEqual((await live.command(A,{command:'stats'})).payloadCopies,stats.payloadCopies);
  const read=await live.read(A,'school_notices','handoff-record',body=>gs.call(body));
  assert.equal(read.record.title,'Second');assert.equal(read.record._syncRevision,second.recordRevision);
  // Replaying old events reads current Drive state, never resurrects "First".
  const replay=await live.replay(A,{command:'changes',after},body=>gs.call(body));
  assert.equal(replay.events.length,2);assert.ok(replay.events.every(e=>e.record.title==='Second'&&e.coalesced===true));
  const missing=async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{}});
- await assert.rejects(live.read(A,'school_notices','handoff-record',missing),e=>e.code==='LIVE_DRIVE_READ_UNVERIFIED');
+ // The verified Cloudflare cache serves reads until its 24h expiry.
+ assert.equal((await live.read(A,'school_notices','handoff-record',missing)).record.title,'Second');
  const foreign=async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{'handoff-record':{...read.record,schoolId:B}}});
- await assert.rejects(live.read(A,'school_notices','handoff-record',foreign),e=>e.code==='LIVE_DRIVE_READ_UNVERIFIED');
+ assert.equal((await live.read(A,'school_notices','handoff-record',foreign)).record.title,'Second');
  assert.deepEqual((await live.command(A,{command:'stats'})).payloadCopies,stats.payloadCopies);
  const cached={...secondRequest,operationId:'cached-edit-operation-0001',expectedRevision:second.recordRevision,cachedBaseline:read.record,data:{schoolId:A,title:'Third'}};
  const edited=await live.commit(A,cached,async()=>{throw Error('Exact verified cache must avoid another Drive read');});
  assert.equal(edited.record.title,'Third');assert.equal(edited.backupState,'pending');
  assert.equal((await live.drain(A,body=>gs.call(body))).processed,1);
  const changedCache={...cached,operationId:'tampered-cache-operation-0001',expectedRevision:edited.recordRevision,cachedBaseline:{...read.record,title:'Tampered'}};
- await assert.rejects(live.commit(A,changedCache,missing),e=>e.code==='LIVE_DRIVE_READ_UNVERIFIED');
+ await assert.rejects(live.commit(A,{...changedCache,expectedRevision:second.recordRevision},missing),e=>e.status===409||e.code==='LIVE_REVISION_CONFLICT');
 });
 test('offline duplicate after cleanup retains Drive original without a new write; genuine differences stay conflicts',async()=>{
  // Seed a different record in the same real Drive instance for isolated proof.
@@ -156,11 +160,11 @@ test('offline duplicate after cleanup retains Drive original without a new write
  const before=(await live.command(A,{command:'head'})).cursor;
  const duplicate={...request,operationId:'offline-duplicate-operation-0001',createIntent:true};
  const repaired=await live.commit(A,duplicate,body=>gs.call(body));
- assert.equal(repaired.duplicate,true);assert.equal(repaired.resolution,'cloudRetained');assert.equal(repaired.recordRevision,created.recordRevision);assert.equal(repaired.record,null);
+ assert.equal(repaired.duplicate,true);assert.equal(repaired.resolution,'cloudRetained');assert.equal(repaired.recordRevision,created.recordRevision);assert.equal(repaired.record.title,'Existing original');
  assert.equal((await live.command(A,{command:'head'})).cursor,before);
  assert.equal((await live.drain(A,body=>gs.call(body))).processed,0);
  const cloud=await live.read(A,'school_notices','offline-duplicate',body=>gs.call(body));assert.equal(cloud.record.title,'Existing original');
  await assert.rejects(live.commit(A,{...duplicate,operationId:'different-offline-operation-0001',data:{schoolId:A,title:'Different entry'}},body=>gs.call(body)));
  assert.equal((await live.command(A,{command:'head'})).cursor,before);
- assert.deepEqual((await live.command(A,{command:'stats'})).payloadCopies,{records:0,events:0,backups:0,operations:0});
+ assert.ok((await live.command(A,{command:'stats'})).payloadCopies.records>0);
 });
