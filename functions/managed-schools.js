@@ -276,7 +276,13 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,repair
    return result;
   }
   if(allEdge(m.schoolId)&&m.edgeDeliveryVersion===1){
-   if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation))return liveSync.enabled(m.schoolId)&&domainDelivery.handles(body)?domainDelivery.submit(m.schoolId,body):edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
+   if(body.action==='managed_records'&&body.collection!=='school_notices'&&['write','delete'].includes(body.operation)){
+     if(liveSync.enabled(m.schoolId)){
+      if(domainDelivery.handles(body))return domainDelivery.submit(m.schoolId,body);
+      if(['documents','student_scan_index'].includes(body.collection))await domainDelivery.assertChildGeneration(m.schoolId,body);
+     }
+     return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
+    }
    if(body.action==='managed_records_batch')return edgeDelivery.record(m.schoolId,body,record=>signedRequest(m,record));
    if(['managed_upload_resumable','managed_upload'].includes(body.action)){
     const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
