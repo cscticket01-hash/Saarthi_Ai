@@ -26,7 +26,7 @@ test('immutable live receipt clears uncertain marker without requiring or deleti
  assert.equal(result.cleared,1);assert.equal(f.docs.get('school_live_migrations/'+A).collections.school_calendar.state,'active');
 });
 test('missing, foreign, rebound or incomplete receipts never clear markers regardless of age',async()=>{
- for(const transform of [()=>({found:false}),p=>({...p,schoolId:B}),p=>({...p,fingerprint:'f'.repeat(64)}),p=>({...p,operationId:'other-operation-00001'}),p=>({...p,receipt:{...p.receipt,schoolId:B}}),p=>({...p,receipt:{...p.receipt,cloudState:'pending'}}),p=>({...p,receipt:{...p.receipt,cursor:undefined}})]){
+ for(const transform of [()=>({found:false}),p=>({...p,schoolId:B}),p=>({...p,fingerprint:'f'.repeat(64)}),p=>({...p,operationId:'other-operation-00001'}),p=>({...p,receipt:{...p.receipt,schoolId:B}}),p=>({...p,receipt:{...p.receipt,cloudState:'pending'}}),p=>({...p,receipt:{...p.receipt,cursor:undefined}}),p=>({...p,receipt:{...p.receipt,backupState:undefined}}),p=>({...p,receipt:{...p.receipt,backupState:'expired'}}),p=>({...p,receipt:{...p.receipt,recordRevision:'cf-unverified'}}),p=>({...p,receipt:{...p.receipt,recordRevision:'live-'}})]){
   const f=fixture(),value=marker('live');save(f,'liveInflight',value);
   const result=await createLiveReconciliation({db:f.db,now:()=>Number.MAX_SAFE_INTEGER,readLiveReceipt:async()=>transform(liveProof(value.operationBinding))}).reconcile(A);
   assert.equal(result.cleared,0);assert.equal(result.retained,1);assert.ok(f.docs.get('school_live_migrations/'+A).liveInflight.token);
@@ -52,6 +52,7 @@ test('changed marker and provider failure preserve work, bounded batches leave o
 });
 test('bindings store hashes only and ignore precisely the GS receipt metadata fields',()=>{
  assert.equal(bindOperation(A,'legacy',{...request,syncProtocol:1}),null);assert.equal(bindOperation(A,'live',{...liveRequest,operationId:'short'}),null);assert.equal(bindOperation(A,'legacy',{...request,action:'managed_recycle'}),null);
+ for(const id of ['__proto__','prototype','constructor','.','..'])assert.equal(bindOperation(A,'legacy',{...request,id}),null,'forbidden record identifier must not become a reconciliation proof');
  assert.ok(!JSON.stringify(marker('legacy')).includes('amount'));assert.equal(legacyRequestHash({...request,data:{...request.data,_syncRevision:'ignored'}}),legacyRequestHash(request));
 });
 
