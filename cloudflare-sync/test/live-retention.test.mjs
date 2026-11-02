@@ -1,12 +1,42 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import {writeFile,unlink} from 'node:fs/promises';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const require=createRequire(import.meta.url),{createLiveSync}=require('../../functions/live-sync'),{createCloudflareSync}=require('../../functions/cloudflare-sync'),{storage}=require('../../functions/test/helpers/managed-storage');
 const {protect}=require('../../functions/managed-schools'),{attendancePayloadFinishValues,attendanceReceiptOwns}=require('../../functions/attendance-payload-receipt');
 const {createCloudflareDelivery}=require('../../functions/cloudflare-delivery');
 const school='vs-'+'a'.repeat(32),key='isolated-live-retention-key-000001';
+
+async function verificationClockWorker(t){
+ const file=new URL('../dist/verification-clock-'+randomUUID()+'.mjs',import.meta.url);
+ const wrapper=[
+  'import runtime,{SyncLane as Parent} from "./worker.js";',
+  'export class SyncLane extends Parent {',
+  'async fetch(request){',
+  'if(new URL(request.url).pathname==="/__verified_clock_test"){',
+  'const b=await request.json();const sql=this.ctx.storage.sql;',
+  'const expired=Date.now()-24*60*60*1000-1000;',
+  'if(b.lane==="live")sql.exec("UPDATE live_backup SET verified_at=? WHERE operation_id=? AND state=\\x27verified\\x27",expired,b.identity);',
+  'else sql.exec("UPDATE edge_ops SET verified_at=?,purge_due=? WHERE id=? AND state=\\x27completed\\x27",expired,Date.now()-500,b.identity);',
+  'return new Response("ok");',
+  '}return super.fetch(request);',
+  '}',
+  '}',
+  'export default runtime;',
+ ].join('\n');
+ await writeFile(file,wrapper);
+ t.after(()=>unlink(file).catch(()=>{}));
+ return file.pathname;
+}
+async function backdateVerified(mf,lane,identity){
+ const namespace=await mf.getDurableObjectNamespace('LANES');
+ const stub=namespace.get(namespace.idFromName(school+'/'+lane));
+ const reply=await stub.fetch('https://clock.invalid/__verified_clock_test',{method:'POST',body:JSON.stringify({lane:lane==='live'?'live':'records',identity})});
+ assert.equal(reply.status,200);
+}
+
 test('verified 24h cache preserves replay until expiry',async t=>{
  const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)}),live=createLiveSync({edge,schools:[school]}),gs=storage({lifecycle:true,bundle:true}),read=async b=>gs.call(b);
@@ -71,7 +101,8 @@ test('verified 24h cache preserves replay until expiry',async t=>{
 });
 
 test('24h expiry clears only Drive-verified live snapshot, never a newer pending edit',async t=>{
- const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention-clock',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ const scriptPath=await verificationClockWorker(t);
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retention-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
  t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
  const live=createLiveSync({edge,schools:[school]});
@@ -81,11 +112,7 @@ test('24h expiry clears only Drive-verified live snapshot, never a newer pending
  const first=await live.commit(school,request,read);
  assert.equal((await live.drain(school,read)).processed,1);
  const newer=await live.commit(school,{...request,operationId:'24hour-clock-second-operation',expectedRevision:first.recordRevision,data:{schoolId:school,title:'Second'}},read);
- const namespace=await mf.getDurableObjectNamespace('LANES');
- const objectStorage=await mf.getDurableObjectStorage(namespace.idFromName(school+'/live'));
- const sql=objectStorage.sql;
- const past=Date.now()-24*60*60*1000-1000;
- sql.exec('UPDATE live_backup SET verified_at=? WHERE operation_id=?',past,request.operationId);
+ await backdateVerified(mf,'live',request.operationId);
  assert.equal((await live.command(school,{command:'expireVerified'})).expired,1);
  const pending=await live.command(school,{command:'read',collection:'school_expenses',id:request.id});
  assert.equal(pending.source,'cloudflare');
@@ -96,7 +123,7 @@ test('24h expiry clears only Drive-verified live snapshot, never a newer pending
  assert.equal((await live.command(school,{command:'stats'})).backups.some(b=>b.state==='pending'),true);
  assert.equal((await live.command(school,{command:'expireVerified'})).expired,0);
  assert.equal((await live.drain(school,read)).processed,1);
- sql.exec('UPDATE live_backup SET verified_at=? WHERE operation_id=?',past,'24hour-clock-second-operation');
+ await backdateVerified(mf,'live','24hour-clock-second-operation');
  assert.equal((await live.command(school,{command:'expireVerified'})).expired,1);
  const after=await live.command(school,{command:'read',collection:'school_expenses',id:request.id});
  assert.equal(after.source,'drive');
@@ -108,7 +135,8 @@ test('24h expiry clears only Drive-verified live snapshot, never a newer pending
  assert.deepEqual((await live.command(school,{command:'stats'})).payloadCopies,{records:0,events:0,backups:0,operations:0});
 });
 test('24h expiry removes verified delivery payload but never pending school records',async t=>{
- const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'spool-clock',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ const scriptPath=await verificationClockWorker(t);
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'spool-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
  t.after(()=>mf.dispose());
  const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
  const delivery=createCloudflareDelivery({edge,payloadGcEnabled:true});
@@ -119,11 +147,7 @@ test('24h expiry removes verified delivery payload but never pending school reco
  assert.equal(first.driveState,'pending');
  assert.equal(second.driveState,'pending');
  assert.equal((await delivery.drain(school,'records',read)).processed,1);
- const namespace=await mf.getDurableObjectNamespace('LANES');
- const objectStorage=await mf.getDurableObjectStorage(namespace.idFromName(school+'/records'));
- const sql=objectStorage.sql;
- const now=Date.now();
- sql.exec('UPDATE edge_ops SET verified_at=?,purge_due=? WHERE id=?',now-86401000,now-1000,first.delivery.id);
+ await backdateVerified(mf,'records',first.delivery.id);
  assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,1);
  assert.equal((await edge.rpc(school,'records',{command:'status',id:first.delivery.id})).payload,'');
  const waiting=await edge.rpc(school,'records',{command:'status',id:second.delivery.id});
