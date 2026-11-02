@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 
 import '../lib/document_processing_engine.dart';
 import '../lib/school_media_budgets.dart';
+import '../lib/id_card_layout.dart';
 
 void main() {
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
@@ -65,6 +66,34 @@ void main() {
     expect(decoded.getPixel(0, 0).a.toInt(), 0);
     expect(decoded.getPixel(decoded.width ~/ 2, decoded.height ~/ 2).a.toInt(),
       greaterThan(0));
+  });
+
+  test('ID PDF portrait photo is print-resolution JPEG, with transparent ink as PNG', () {
+    final portrait = img.Image(width: 1200, height: 1500);
+    for (var y = 0; y < portrait.height; y++) {
+      for (var x = 0; x < portrait.width; x++) {
+        portrait.setPixelRgb(x, y, (x + y * 3) % 256,
+          (x * 5 + y) % 256, (x + y * 7) % 256);
+      }
+    }
+    final face = IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
+      aspect: .8, cover: true,
+    );
+    expect(face.sublist(0, 2), [0xff, 0xd8]);
+    expect(img.decodeJpg(face), isNotNull);
+    expect(img.decodeJpg(face)!.height, lessThanOrEqualTo(480));
+
+    final stamp = img.Image(width: 200, height: 200, numChannels: 4);
+    img.fill(stamp, color: img.ColorRgba8(0, 0, 0, 0));
+    for (var p = 20; p < 180; p++) {
+      stamp.setPixelRgba(p, p, 10, 20, 100, 255);
+    }
+    final ink = IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodePng(stamp)), aspect: 1,
+    );
+    expect(ink.sublist(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(img.decodePng(ink)!.getPixel(0, 0).a.toInt(), 0);
   });
 
   test('unsafe 30 KB high-entropy transparent image fails rather than destroying ink', () {
