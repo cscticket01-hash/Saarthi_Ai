@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_admin_setup.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
@@ -10,6 +11,32 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const school = 'vs-11111111111111111111111111111111';
   const profile = {'schoolId':school,'schoolName':'School A','principalName':'Principal A'};
+  test('school restore retries a closed pre-header connection once, never a mutation',()async{
+    var count=0;
+    final access=await WindowsSchoolProfileRestore.readWithTransportRecovery(
+      (action,body)async{
+        count++;
+        if(count==1)throw http.ClientException('Connection closed before full header was received');
+        return {'success':true,'schoolId':school,'records':{}};
+      },'managed/records',{'operation':'read','collection':'school_config'});
+    expect(access['success'],true);
+    expect(count,2);
+    count=0;
+    await expectLater(WindowsSchoolProfileRestore.readWithTransportRecovery(
+      (action,body)async{
+        count++;
+        throw http.ClientException('Connection closed before full header was received');
+      },'managed/records',{'operation':'write','collection':'school_config'}),
+      throwsA(isA<http.ClientException>()));
+    expect(count,1,'unknown writes must never be replayed by startup');
+    count=0;
+    await expectLater(WindowsSchoolProfileRestore.readWithTransportRecovery(
+      (action,body)async{
+        count++;
+        throw StateError('HTTP 503 school storage unavailable');
+      },'managed/profile',{'operation':'read'}),throwsStateError);
+    expect(count,1,'server errors need safe diagnostics, not synthetic success');
+  });
   test('pre-marker account recovers same environment without fabricated registration', () async {
     for (final storage in [false, true]) {
       final actions = <String>[];
