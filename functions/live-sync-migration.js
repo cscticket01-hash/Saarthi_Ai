@@ -9,6 +9,20 @@ const refuse=code=>{throw Object.assign(Error('Sync migration is pending; saved 
 // leave an uncertain Google request running; a timeout is not proof of failure.
 function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
  const ref=school=>db.doc('school_live_migrations/'+school);
+ // A retry may share one immutable operation marker with another request.
+ // Keep the marker until ALL admitted attempts finish; a timed-out attempt
+ // must not let migration/rollback start while its peer is still executing.
+ async function settleAttempt(r,map,token,completed){
+  await db.runTransaction(async tx=>{
+   const state=(await tx.get(r)).data()||{},markers={...state[map]},marker=markers[token];
+   if(!marker)return;
+   const active=Number.isSafeInteger(marker.activeAttempts)?marker.activeAttempts:1;
+   const left=Math.max(0,active-1);
+   if(left===0&&(completed||marker.completedAttempt===true))delete markers[token];
+   else markers[token]={...marker,activeAttempts:left,...(completed?{completedAttempt:true}:{})};
+   tx.set(r,{...state,[map]:markers});
+  });
+ }
  async function legacy(school,body,run){
   // Mobile operations have their own person/session/attendance/complaint
   // owners and cannot mutate any admitted live collection. Public invalid
@@ -22,15 +36,13 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
    if(Object.entries(collections).some(([name,value])=>value.state!=='legacy'&&(!collection||collection===name)))refuse('LIVE_LEGACY_WRITE_FENCED');
    const operationBinding=bindOperation(school,'legacy',body);
    const inflight={...state.inflight};
-   if(operationBinding){const prior=Object.entries(inflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];return;}}
+   if(operationBinding){const prior=Object.entries(inflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];inflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,inflight});return;}}
    if(Object.keys(inflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   inflight[token]={collection:collection||'*',startedAt:now(),...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,inflight});
+   inflight[token]={collection:collection||'*',startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,inflight});
   });
-  const result=await run();
-  {
-   await db.runTransaction(async tx=>{const state=(await tx.get(r)).data()||{},inflight={...state.inflight};delete inflight[token];tx.set(r,{...state,inflight});});
-  }
-  return result;
+  let completed=false;
+  try{const result=await run();completed=true;return result;}
+  finally{await settleAttempt(r,'inflight',token,completed);}
  }
  async function prepare(school,collection,drained,seed){
   if(NATIVE_LIFECYCLE_COLLECTIONS.has(collection))refuse('LIVE_DEPENDENCY_GROUP_REQUIRED');
@@ -71,18 +83,15 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
    if(state.collections?.[collection]?.state!=='active')refuse('LIVE_MIGRATION_NOT_ACTIVE');
    const liveInflight={...state.liveInflight};
    const operationBinding=request?bindOperation(school,'live',request):null;
-   if(operationBinding){const prior=Object.entries(liveInflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];return;}}
+   if(operationBinding){const prior=Object.entries(liveInflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];liveInflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,liveInflight});return;}}
    if(Object.keys(liveInflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   liveInflight[token]={collection,startedAt:now(),...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,liveInflight});
+   liveInflight[token]={collection,startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,liveInflight});
   });
   // An uncertain outcome retains its marker. Clearing it on a timeout could
   // allow rollback while a committed Cloudflare write is still being handled.
-  const result=await run();
-  await db.runTransaction(async tx=>{
-   const state=(await tx.get(r)).data()||{},liveInflight={...state.liveInflight};
-   delete liveInflight[token];tx.set(r,{...state,liveInflight});
-  });
-  return result;
+  let completed=false;
+  try{const result=await run();completed=true;return result;}
+  finally{await settleAttempt(r,'liveInflight',token,completed);}
  }
  async function rollback(school,collection,verifyAndSeal){
   if(!COLLECTIONS.has(collection))refuse('LIVE_COLLECTION_NOT_ADMITTED');
