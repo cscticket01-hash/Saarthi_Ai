@@ -148,6 +148,7 @@ class _WindowsStudentImportState extends State<WindowsStudentImport> {
         throw StateError('Fresh authorized TEST school session required.');
       }
       final result=await WindowsTestSchoolLocalDemoSeed.create(
+        allowContinue:()=>mounted && !identityChanged,
         verifyActiveSchool: () async {
           await checkIdentity();
           return mounted && !identityChanged;
