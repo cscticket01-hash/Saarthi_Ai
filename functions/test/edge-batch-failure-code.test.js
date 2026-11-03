@@ -77,3 +77,49 @@ test('partial acknowledgement never replays the already-confirmed operation',asy
  assert.deepEqual(seen,[[operation.operationId,second.operationId],[second.operationId]]);
  assert.equal(row.state,'completed');
 });
+
+test('repeated Script timeouts grow bounded durable retry delays without dropping queued work',async()=>{
+ const {row,delivery}=fixture();
+ const observed=[];
+ for(let i=1;i<=9;i++){
+  // Worker would reclaim this row once its due time is reached.
+  row.state='pending';
+  row.response=row.response===null?null:JSON.stringify(row.response);
+  await delivery.drain(school,'records',async()=>({
+   success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,
+   acknowledgements:[{operationId:operation.operationId,success:false,code:'SCRIPT_TIMEOUT'}],
+  }));
+  assert.equal(row.state,'retry');
+  assert.equal(row.response.retryCount,Math.min(i,10));
+  assert.equal(row.response.partial[operation.operationId],undefined);
+  observed.push(row.response.nextAttemptAt-10000);
+ }
+ assert.deepEqual(observed,[5000,10000,20000,40000,80000,160000,300000,300000,300000]);
+ const receipt=await delivery.status(school,'records',row.id);
+ assert.equal(receipt.driveState,'pending');
+ assert.equal(receipt.deliveryStatus.failureCode,'SCRIPT_TIMEOUT');
+});
+test('provider retry-after longer than exponential delay is respected and remains resumable',async()=>{
+ const {row,delivery}=fixture();
+ await delivery.drain(school,'records',async()=>{
+  throw Object.assign(Error('no private request detail'),{
+   status:429,code:'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:900000,
+  });
+ });
+ assert.equal(row.state,'retry');
+ assert.equal(row.response.nextAttemptAt,910000);
+ assert.equal(row.response.retryCount,1);
+ assert.equal(row.response.failureCode,'SCRIPT_QUOTA_EXCEEDED');
+ assert.equal(row.payload.includes('synthetic-operation-0001'),true);
+});
+test('permission refusal stays needsAttention instead of endlessly retrying',async()=>{
+ const {row,delivery}=fixture();
+ await delivery.drain(school,'records',async()=>({
+  success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,
+  acknowledgements:[{operationId:operation.operationId,success:false,code:'SCRIPT_PERMISSION_DENIED'}],
+ }));
+ assert.equal(row.state,'completed');
+ assert.equal(row.response.result.acknowledgements[0].success,false);
+ assert.equal(row.response.result.acknowledgements[0].code,'SCRIPT_PERMISSION_DENIED');
+ assert.equal(row.response.cleanup?.payloadPurged,undefined);
+});
