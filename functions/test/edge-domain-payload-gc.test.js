@@ -47,8 +47,18 @@ test('all-success domain batch scrubs every proof together while a failed batch 
  for(const failed of [false,true]){
   const f=setup({action:'managed_records_batch',operations});
   await f.delivery.drain(A,'records',async body=>({success:true,schoolId:A,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements:body.operations.map((r,index)=>failed&&index===1?{success:false,operationId:r.operationId,code:'SCRIPT_RECORD_REVISION_CONFLICT'}:{success:true,operationId:r.operationId,recordRevision:'drive-'+index,record:{...r.data,_syncRevision:'drive-'+index,_syncOperationId:r.operationId}})}));
-  assert.equal(f.row.state,'completed');
-  if(failed){assert.notEqual(f.row.payload,'');assert.equal(f.row.response.payloadPurged,undefined);assert.equal(f.row.response.result.acknowledgements[0].record.amount,100);}
+  assert.equal(f.row.state,failed?'needsAttention':'completed');
+  if(failed){
+   // Refused batch must never become a green Drive ACK. Keep originals
+   // and confirmed partial receipts for the school operator to reconcile.
+   assert.notEqual(f.row.payload,'');
+   assert.equal(f.row.response.payloadPurged,undefined);
+   assert.equal(f.row.response.failureCode,'SCRIPT_RECORD_REVISION_CONFLICT');
+   assert.equal(f.row.response.partial[operations[0].operationId].record.amount,100);
+   assert.equal(f.row.response.partial[operations[1].operationId].success,false);
+   await assert.rejects(f.delivery.status(A,'records',f.row.id),e=>
+    e.status===409&&e.code==='SCRIPT_RECORD_REVISION_CONFLICT');
+  }
   else {assert.equal(f.row.payload,'');assert.equal(f.row.response.payloadPurged,true);assert(f.row.response.result.acknowledgements.every(ack=>ack.record===null&&ack.recordSource));}
  }
 });
