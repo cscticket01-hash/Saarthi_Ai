@@ -145,7 +145,7 @@ class _QrScannerState extends State<_QrScanner> {
   final _capture = QrAuthenticationEngine();
   final _scanner = MobileScannerController(
     formats: const [BarcodeFormat.qrCode],
-    autoZoom: true,
+    autoZoom: false, // Respect manual 1x/2x selection; avoid automatic jumps.
   );
   bool _torchOn = false, _choosingImage = false;
   double _zoom = 1;
@@ -190,7 +190,7 @@ class _QrScannerState extends State<_QrScanner> {
     } catch (_) {}
   }
   Future<void> _changeZoom() async {
-    final value = _zoom >= 3 ? 1.0 : _zoom + 0.5;
+    final value = _zoom == 1 ? 2.0 : 1.0;
     try {
       await _scanner.setZoomScale(value);
       if (mounted) setState(() => _zoom = value);
@@ -258,7 +258,7 @@ class _QrScannerState extends State<_QrScanner> {
                         label: const Text('Torch')),
                       TextButton.icon(onPressed: _changeZoom,
                         icon: const Icon(Icons.zoom_in),
-                        label: Text('${_zoom.toStringAsFixed(1)}×')),
+                        label: Text('${_zoom.toStringAsFixed(0)}×')),
                     ]),
                   ),
                 ),

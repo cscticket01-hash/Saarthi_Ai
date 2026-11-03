@@ -229,6 +229,25 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
                   const SizedBox(width:8),Expanded(child:Text(recentlyActive(row)?'Recently active':row['status']=='revoked'?'Revoked':'Activity unknown',style:TextStyle(fontFamily: 'Segoe UI', color:recentlyActive(row)?WindowsAppearance.foreground(const Color(0xff6ed6aa)):muted))),
                 ]);
                 Widget connectivity(Map<String,dynamic> row) {
+                  // A Wi-Fi/LAN adapter label is not a live connection.
+                  // An offline or stale-heartbeat PC must not display LAN.
+                  final online = recentlyActive(row);
+                  if (!online) {
+                    return Tooltip(
+                      message: !verified
+                          ? 'Cannot verify live device connectivity from a cached list'
+                          : 'No recent verified heartbeat; last network adapter is not current connectivity',
+                      child: Row(children: [
+                        Icon(Icons.wifi_off_rounded, size: 17, color: muted),
+                        const SizedBox(width: 6),
+                        Flexible(child: Text(
+                          verified ? 'Offline' : 'Not verified',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontFamily: 'Segoe UI', color: muted),
+                        )),
+                      ]),
+                    );
+                  }
                   final reported = row['connectionType'];
                   final localOnly = verified && row['deviceIdentity']==current &&
                       reported!='WiFi' && reported!='LAN' &&
@@ -265,7 +284,7 @@ class _WindowsDeviceManagementState extends State<WindowsDeviceManagement>
               }),
             ])),
           if(verified && !canRevoke)  Padding(padding:EdgeInsets.only(top:12),child:Text("Device enrollment is active. Revoke will be available after this school's device-access setup is completed.",style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
-           Padding(padding:EdgeInsets.only(top:14),child:Text('Activity is based on the last heartbeat. Connectivity is the last reported Wi-Fi/LAN adapter type, not verified internet access. Unreported devices show Unknown.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
+           Padding(padding:EdgeInsets.only(top:14),child:Text('Offline appears when a verified PC heartbeat is stale. Wi-Fi/LAN is only the most recently reported adapter on a recently active PC, not proof of internet connectivity.',style:TextStyle(fontFamily: 'Segoe UI', color:muted,fontSize:12))),
         ]),
       )),
     );

@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
+
+import 'document_processing_engine.dart';
 
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -35,9 +38,11 @@ class WindowsTemplateCloudStore {
     if(all is! Map)return const [];
     final raw=all[kind];
     if(raw is! Map)return const [];
-    if(raw['version']==1)return [Map<String,dynamic>.from(raw)];
-    final versions=raw.values.whereType<Map>()
+    final candidates=raw['version']==1 ? [raw] : raw.values.whereType<Map>();
+    final versions=candidates
       .map((v)=>Map<String,dynamic>.from(v)).toList();
+    versions.removeWhere((v)=>settings[deletionKey(kind,
+      (v['templateId']??v['sourceHash']).toString())]==true);
     final latest=(settings['templateAssetLatest'] is Map)
       ?(settings['templateAssetLatest'] as Map)[kind]?.toString():null;
     if(latest!=null){
@@ -50,6 +55,39 @@ class WindowsTemplateCloudStore {
       });
     }
     return versions;
+  }
+
+  // Top-level independent fields survive existing field-patch synchronization.
+  // Never remove manifests: a stale device must not resurrect a deleted design.
+  static String deletionKey(String kind,String id)=>'templateDeleted_${kind}_$id';
+
+  static Map<String,dynamic> deletionPatch(Map<String,dynamic> settings,
+      String kind,String id,String school) {
+    SchoolTemplateImportEngine.verifySchool(school);
+    final asset=importedAsset(settings,kind,templateId:id);
+    if(asset==null || asset['schoolId']!=school || asset['kind']!=kind ||
+        asset['approved']!=true) {
+      throw StateError('Only this school’s uploaded template can be deleted.');
+    }
+    return {deletionKey(kind,id):true,
+      if(settings[kind]=='imported:$id')kind:0};
+  }
+
+  static Future<void> deleteTemplate(String kind,String id) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final ref=db.collection('school_settings').doc('document_templates');
+    final snapshot=await ref.get();
+    final patch=deletionPatch(snapshot.data()??{},kind,id,school);
+    if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before template deletion.');
+    final batch=db.batch();
+    batch.requireUnchanged(ref,snapshot.data());
+    batch.set(ref,{...patch,'updatedAt':FieldValue.serverTimestamp()},
+      const SetOptions(merge:true));
+    await batch.commit();
+    // Existing generated receipts and shared source assets remain intact.
+    // The durable school_settings outbox carries the deletion to other PCs.
   }
 
   /// Keep the visible/selected/printed catalog identical and school-scoped.
@@ -164,10 +202,19 @@ class WindowsTemplateCloudStore {
     if(draft.png.length>20*1024*1024){
       throw StateError('Template image is too large for verified Drive upload.');
     }
-    final contentHash=sha256.convert(draft.png).toString();
+    // Use the existing Compression Engine in an isolate. Template artwork
+    // is lossless-only: no raster text, QR, signature, or print pixels change.
+    final artwork=await compute(DocumentProcessingEngine.templateArtworkUpload,
+      {'bytes':draft.png});
+    ensureSchool();
+    final uploadPng=artwork['optimized'] as Uint8List;
+    final contentHash=sha256.convert(uploadPng).toString();
     final templateId=_idFor(draft,contentHash);
     final settings=await _settings();
     ensureSchool();
+    if(settings[deletionKey(draft.kind.name,templateId)]==true) {
+      throw StateError('This uploaded template was deleted by the school.');
+    }
     final existing=importedAsset(settings,draft.kind.name,templateId:templateId);
     if(existing!=null && canReuseVerifiedAsset(existing,
       schoolId:school,kind:draft.kind.name,contentHash:contentHash)){
@@ -212,7 +259,7 @@ class WindowsTemplateCloudStore {
         uploaded=await cloud.upload(
           'school_template_${draft.kind.name}_$contentHash.png',
           'image/png',
-          'data:image/png;base64,${base64Encode(draft.png)}',
+          'data:image/png;base64,${base64Encode(uploadPng)}',
           uploadKey:uploadKey,
         );
       }finally{cloud.close();}
@@ -255,6 +302,8 @@ class WindowsTemplateCloudStore {
       final snapshot=await settingsRef.get();
       ensureSchool();
       latestSettings=snapshot.data()??<String,dynamic>{};
+      if(latestSettings[deletionKey(draft.kind.name,templateId)]==true)
+        throw StateError('Template deleted during publication.');
       final allAssets=latestSettings['templateAssets'] is Map
         ?Map<String,dynamic>.from(latestSettings['templateAssets'] as Map)
         :<String,dynamic>{};

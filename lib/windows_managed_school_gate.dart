@@ -193,16 +193,23 @@ class _WindowsManagedSchoolGateState extends State<WindowsManagedSchoolGate> {
               children: [
                 Text('School ${s['schoolId']} • ${s['status']}'),
                 Text(renewalRequired
-                    ? 'Licence expired. Enter the new renewal key issued by the developer.'
+                    ? 'Licence expired. Ask the developer to renew the existing key, then check renewed access. Your saved school data remains intact.'
                     : trialAvailable
                         ? 'Use your school licence key, or skip to continue the five-day free trial.'
-                        : 'School access needs verification or a valid licence.'),
+                        : 'School access needs verification or a valid licence. Enter a new key only if the developer replaced it.'),
+                if (renewalRequired)
+                  FilledButton.icon(
+                    key: const ValueKey('check-renewed-school-licence'),
+                    onPressed: () { unawaited(engine.verify()); },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Check renewed licence'),
+                  ),
                 if (s['status'] != 'blocked' &&
                     s['status'] != 'auth_required') ...[
                   TextField(
                     controller: licence,
                     decoration: InputDecoration(
-                      labelText: renewalRequired ? 'New renewal licence key' : 'School licence key',
+                      labelText: renewalRequired ? 'Replacement key (only if newly issued)' : 'School licence key',
                     ),
                   ),
                   FilledButton(

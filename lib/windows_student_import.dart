@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
+import 'windows_test_school_local_demo_seed.dart';
 
 Future<String> readWindowsImportIdentity() async {
   final db=FirebaseFirestore.instance;
@@ -28,6 +29,15 @@ class _WindowsStudentImportState extends State<WindowsStudentImport> {
   bool planExpired=false;
   String? origin;
   bool identityChanged=false;
+  int? qaProgress;
+  int? qaFinished;
+  bool get isIsolatedTestSchool {
+    try {
+      final parts=jsonDecode(origin ?? '[]');
+      return parts is List && parts.length>=4 &&
+          parts[1]==WindowsTestSchoolLocalDemoSeed.schoolId;
+    } catch (_) { return false; }
+  }
   Timer? identityTimer;
   @override
   void initState() {
@@ -51,7 +61,10 @@ class _WindowsStudentImportState extends State<WindowsStudentImport> {
     try {
       final identity=await widget.readIdentity();
       if(!mounted || identityChanged) throw StateError('Import page is no longer active.');
-      if(origin==null) origin=identity;
+      if(origin==null) {
+        origin=identity;
+        if(mounted)setState(() {});
+      }
       else if(origin!=identity) {invalidateIdentity();throw StateError('School identity changed.');}
     } catch(e) {invalidateIdentity();rethrow;}
   }
@@ -117,12 +130,61 @@ class _WindowsStudentImportState extends State<WindowsStudentImport> {
       });
     });
   }
+  Future<void> addLocalTestStudents() async {
+    if(!isIsolatedTestSchool)return;
+    if(!await confirm('Add 1,00,000 local TEST students?',
+        'Add 100,000 demo students ONLY to this PC in TEST Sync V2. '
+        'Existing school records are retained. The TEST fixture is durable, '
+        'restart-safe and can be resumed. These records are LOCAL ONLY: '
+        'they are NOT uploaded to Google Drive or other PCs, and will '
+        'NOT be counted as verified cloud sync.'))return;
+    await run(() async {
+      final identity=jsonDecode(origin!);
+      final access=await guardedCall('managed/session');
+      if(access['success']!=true || access['allowed']!=true ||
+          access['storageReady']!=true ||
+          access['schoolId']!=WindowsTestSchoolLocalDemoSeed.schoolId ||
+          access['uid']!=identity[2]) {
+        throw StateError('Fresh authorized TEST school session required.');
+      }
+      final result=await WindowsTestSchoolLocalDemoSeed.create(
+        allowContinue:()=>mounted && !identityChanged,
+        verifyActiveSchool: () async {
+          await checkIdentity();
+          return mounted && !identityChanged;
+        },
+        onProgress:(present,total) {
+          if(mounted && !identityChanged)setState(() {qaProgress=present;});
+        },
+      );
+      await checkIdentity();
+      if(mounted)setState(() {qaFinished=result;});
+    });
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(appBar:AppBar(title:const Text('Designated Student Import Sheet')),
     body:ListView(padding:const EdgeInsets.all(24),children:[
       const Text('School-scoped import, maximum 100 rows per reviewed batch. Use only the designated Sheet. Preview before committing; cloud acknowledgement determines each result.'),
       if(busy)const LinearProgressIndicator(),
       if(error!=null)Text(error!),
+      if(isIsolatedTestSchool) ...[
+        const Divider(height:32),
+        const Text('TEST Sync V2 — 100,000 demo students (LOCAL QA ONLY)',
+            style:TextStyle(fontWeight:FontWeight.bold)),
+        const Text('Creates a resumable 1 lakh student dataset on this PC for '
+            'Windows student-list, fees, searches, printing and performance tests. '
+            'No Cloudflare or Google Drive ACK is implied; other PCs do not get '
+            'these locally generated rows. Existing records are never replaced.'),
+        const SizedBox(height:10),
+        Align(alignment:Alignment.centerLeft,child:FilledButton.icon(
+          onPressed:busy||identityChanged?null:addLocalTestStudents,
+          icon:const Icon(Icons.groups),
+          label:const Text('Add / Resume 1,00,000 local TEST students'))),
+        if(qaProgress!=null)Text('Local TEST dataset: $qaProgress / 100000 checked'),
+        if(qaFinished!=null)Text('Local TEST students ready: $qaFinished / 100000. '
+            'Google Drive bulk verification is separate.'),
+      ],
       if(planExpired)const Text('The import plan changed or expired. Review pending outcomes, then explicitly create a new preview.'),
       if(commitAttempted && preview!=null && !planExpired)const Text('Original import plan retained. Retry uses the same plan and operation IDs until authoritative verification.'),
       Wrap(spacing:12,children:[

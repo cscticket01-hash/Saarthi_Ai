@@ -1,7 +1,9 @@
 import {demand,digest,operationPattern} from './protocol';
 import {Buffer} from 'node:buffer';
 type Json=Record<string,unknown>;
-type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number};
+type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number;verified_at:number;purge_due:number};
+export const verifiedPayloadTtlMs=24*60*60*1000;
+export const verifiedPayloadExpired=(state:string,verifiedAt:number,purgeDue:number,now:number)=>state==='completed'&&verifiedAt>0&&purgeDue>=verifiedAt+verifiedPayloadTtlMs&&now>=purgeDue;
 export const spoolLane=(lane:string)=>lane==='records'||/^file-[a-f0-9]{64}$/.test(lane);
 const collections=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 export function canonical(value:unknown):string {
@@ -15,10 +17,13 @@ export function initSpool(storage:DurableObjectStorage){
  const columns=storage.sql.exec<{name:string}>('PRAGMA table_info(edge_ops)').toArray();
  if(!columns.some(c=>c.name==='resources'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN resources TEXT');
  if(!columns.some(c=>c.name==='created'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN created INTEGER NOT NULL DEFAULT 0');
+ if(!columns.some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
+ if(!columns.some(c=>c.name==='purge_due'))storage.sql.exec('ALTER TABLE edge_ops ADD COLUMN purge_due INTEGER NOT NULL DEFAULT 0');
 }
 // Unknown/legacy, person, document and financial dependencies stay barriers.
 // Only these independent record types may overtake a retry of another key.
 const independent=new Set(['school_expenses','attendance_records','attendance_logs','teacher_attendance']);
+const recordIdentity=(request:Json):Json=>request.action==='managed_records_batch'?{action:request.action,operations:(request.operations as Json[]).map(recordIdentity)}:Object.fromEntries(['action','collection','id','operation','syncProtocol','operationId','expectedRecordRevision'].filter(key=>request[key]!==undefined).map(key=>[key,request[key]]));
 function resources(request:Json):string {
  const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
  if(ops.some(op=>!independent.has(String(op.collection))))return '*';
@@ -61,6 +66,31 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
 
  }
  const receipt=(row:Row)=>({id:row.id,state:row.state,due:row.due,response:row.response?JSON.parse(row.response):null});
+ if(action==='expireVerified'){
+  // This cleanup runs only from an authenticated existing school-lane alarm;
+  // a stale unverified request can stay queued past 24h without data loss.
+  return storage.transactionSync(()=>{
+   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
+   let cleared=0;
+   for(const row of eligible){
+    if(!verifiedPayloadExpired(row.state,row.verified_at,row.purge_due,Date.now()))continue;
+    if(lane.startsWith('file-')){
+     storage.sql.exec("UPDATE edge_chunks SET body=x''");
+     // Keep the immutable manifest/Drive identity for a safe idempotent retry.
+     storage.sql.exec("UPDATE edge_ops SET purge_due=0 WHERE id=? AND state='completed'",row.id);
+    }else{
+     storage.sql.exec("UPDATE edge_ops SET payload='',purge_due=0 WHERE id=? AND state='completed' AND verified_at=?",row.id,row.verified_at);
+    }
+    cleared++;
+   }
+   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+   return {expired:cleared,nextCleanupAt:next??null};
+  });
+ }
+ if(action==='retention'){
+  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+  return {retentionHours:24,nextCleanupAt:next??null};
+ }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
  if(action==='pending'){
@@ -81,6 +111,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
   const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
+ if(action==='putSmall'){
+  // Atomically stage a small photo and its SHA-256 proof in one Durable Object
+  // command. This is a Cloudflare ACK, never a verified Google Drive ACK.
+  demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');
+  const m=b.manifest as Json;
+  demand(typeof m.uploadKey==='string'&&/^[A-Za-z0-9_-]{1,150}$/.test(m.uploadKey)&&await digest(JSON.stringify([school,m.uploadKey]))===id&&typeof m.sha256==='string'&&operationPattern.test(m.sha256)&&Number.isSafeInteger(m.sizeBytes)&&Number(m.sizeBytes)>0&&Number(m.sizeBytes)<=256*1024&&typeof m.name==='string'&&m.name.length>0&&m.name.length<=200&&typeof m.mime==='string'&&/^[-\w.+]+\/[-\w.+]+$/.test(m.mime)&&!m.mime.startsWith('application/vnd.google-apps.'),'Invalid small file manifest');
+  demand(typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=349528&&/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64),'Invalid small file encoding');
+  const bytes=new Uint8Array(Buffer.from(b.base64 as string,'base64'));
+  demand(bytes.length===m.sizeBytes&&Buffer.from(bytes).toString('base64')===b.base64,'Small file byte length mismatch');
+  const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
+  demand(actual===m.sha256,'Small file hash mismatch',409);
+  const fingerprint=await digest(canonical(m)),old=get(id);
+  if(old){
+   demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);
+   demand(old.state!=='receiving','Resumable upload must keep its existing chunk owner',409);
+   if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));
+   return {...receipt(old),manifest:JSON.parse(old.payload)};
+  }
+  const at=Date.now(),manifest=JSON.stringify({...m,received:bytes.length,driveOffset:0});
+  storage.transactionSync(()=>{
+   storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,created) VALUES(?,?,?,'pending',?,?)",id,fingerprint,manifest,at,at);
+   storage.sql.exec('INSERT INTO edge_chunks(offset,size,sha256,body) VALUES(?,?,?,?)',0,bytes.length,actual,bytes.buffer);
+  });
+  await wake(at+250);
+  return {...receipt(get(id)),manifest:JSON.parse(get(id).payload)};
+ }
  if(action==='begin'){
   demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');const m=b.manifest as Json;
   demand(typeof m.uploadKey==='string'&&/^[A-Za-z0-9_-]{1,150}$/.test(m.uploadKey)&&await digest(JSON.stringify([school,m.uploadKey]))===id&&typeof m.sha256==='string'&&operationPattern.test(m.sha256)&&Number.isSafeInteger(m.sizeBytes)&&Number(m.sizeBytes)>0&&Number(m.sizeBytes)<=20*1024*1024&&typeof m.name==='string'&&m.name.length>0&&m.name.length<=200&&typeof m.mime==='string'&&/^[-\w.+]+\/[-\w.+]+$/.test(m.mime)&&!m.mime.startsWith('application/vnd.google-apps.'),'Invalid file manifest');
@@ -89,6 +145,11 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  demand(operationPattern.test(id),'Invalid receipt ID');const row=get(id);demand(row,'Delivery receipt unavailable',404);
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
+ if(action==='projection'){
+  demand(lane==='records','Record projection unavailable',400);
+  const saved=row.response?JSON.parse(row.response):{};
+  return {id:row.id,state:row.state,due:row.due,authoritative:false,...(['pending','retry','processing'].includes(row.state)?{request:JSON.parse(row.payload)}:{identity:saved.identity||(row.payload?recordIdentity(JSON.parse(row.payload)):null)})};
+ }
  if(action==='part'){
   demand(lane==='file-'+id&&Number.isSafeInteger(b.offset)&&Number(b.offset)>=0&&typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=699052&&/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)&&typeof b.chunkSha256==='string'&&operationPattern.test(b.chunkSha256));
   const bytes=new Uint8Array(Buffer.from(b.base64,'base64'));demand(bytes.length>0&&bytes.length<=512*1024&&Buffer.from(bytes).toString('base64')===b.base64);const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');demand(hash===b.chunkSha256,'Chunk hash mismatch',409);
@@ -128,15 +189,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
    else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
-    const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!ack.recordRevision.startsWith('cf-')),'Unverified operation receipt');seen.add(ack.operationId);}
-   }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!result.recordRevision.startsWith('cf-'),'Unverified record receipt');
+    const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
+   }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
+  }
+  if(values.payloadPurged===true){
+   demand(lane==='records'&&values.state==='completed','Only verified record delivery may purge payloads');
+   const original=JSON.parse(row.payload) as Json,result=values.result as Json;
+   demand(canonical(values.identity)===canonical(recordIdentity(original)),'Payload cleanup identity mismatch');
+   const requests=original.action==='managed_records_batch'?original.operations as Json[]:[original];
+   const receipts=original.action==='managed_records_batch'?result.acknowledgements as Json[]:[result];
+   demand(receipts.length===requests.length&&receipts.every((receipt,index)=>{
+    const request=requests[index],source=receipt.recordSource as Json;
+    return receipt.success===true&&receipt.schoolId===school&&receipt.syncProtocol===2&&receipt.record===null&&source?.version===1&&source.collection===request.collection&&source.id===request.id&&source.operationId===request.operationId&&source.recordRevision===receipt.recordRevision&&typeof source.recordRevision==='string'&&source.recordRevision.length>0&&source.recordRevision.length<=100&&!/^(live-|cf-)/.test(source.recordRevision)&&typeof source.payloadHash==='string'&&operationPattern.test(source.payloadHash);
+   }),'Verified canonical source metadata required');
   }
   storage.transactionSync(()=>{
-   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(values),id);
-   // Bytes are pruned only after the broker verified a committed Drive receipt.
-   if(lane.startsWith('file-')&&values.state==='completed')storage.sql.exec("UPDATE edge_chunks SET body=x''");
+   const stored=values.payloadPurged===true?{...values,partial:{}}:values;
+   // An immutable Drive proof is required before the 24h retention timer
+   // starts. Retry/needsAttention never acquires an expiry deadline.
+   const verified=values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-'));
+   const verifiedAt=verified?Date.now():0,expiry=verified?verifiedAt+verifiedPayloadTtlMs:0;
+   storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=?,verified_at=?,purge_due=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(stored),verifiedAt,expiry,id);
+   // Original byte/request payload remains until the existing alarm expires.
   });
-  if(values.state==='retry')await wake(Number(values.nextAttemptAt));return true;
+  if(values.state==='retry')await wake(Number(values.nextAttemptAt));
+  if(values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-')))await wake(Date.now()+verifiedPayloadTtlMs);
+  return true;
  }
  throw Object.assign(Error('Unknown delivery command'),{status:400});
 }

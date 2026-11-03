@@ -1,0 +1,53 @@
+name: REAL TEST three person-photo Cloudflare Drive timings
+# TEST-only real mutations must be launched explicitly after the exact
+# compatible Worker and school Script versions are verified. Never replay a
+# synthetic person/photo workload automatically on every PR amendment.
+# A source change promoted to the explicit TEST deployment branch is an
+# owner-authorized canary; exact runtime/capability checks precede all writes.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/real_person_photo_edge_speed.cjs'
+      - '.github/workflows/real-person-photo-edge-speed.yml'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+jobs:
+  real-test-person-photo:
+    if: github.ref == 'refs/heads/feature/smart-sync-3' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Pin reviewed backend source independently of test-only instrumentation.
+      # The diff fence below prevents a different backend tree from running.
+      VS_EXPECTED_TEST_RUNTIME: df5a98f7314b2e4c29a9e545c89a6eb786c6fb00
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check canary syntax and exact reviewed backend tree
+        run: |
+          node --check .github/scripts/real_person_photo_edge_speed.cjs
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+      - name: Signed TEST school photo upload, persons add, CAS delete, Drive readback and Cloudflare timings
+        env:
+          VS_PERSON_PHOTO_TEST: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/real_person_photo_edge_speed.cjs
+      - name: Publish sanitized performance and fixture cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-person-photo-edge-speed
+          path: build/cloud-prerequisites/real-person-photo-edge-speed.json
+          if-no-files-found: warn
+          retention-days: 7

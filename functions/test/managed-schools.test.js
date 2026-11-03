@@ -616,3 +616,30 @@ test('current Script schedule rejection becomes a retained policy refusal instea
  const f=fixture(async()=>({ok:true,status:200,text:async()=>JSON.stringify({success:false,schoolId:A,message:'Student attendance is outside the school schedule'})}));
  await assert.rejects(f.call({action:'managed/mobile',schoolId:A,request:{action:'mobile_mark_attendance',sessionToken:'valid'}}),e=>e.status===400&&e.code==='ATTENDANCE_SCHEDULE_CLOSED');
 });
+
+for (const clientCount of [1, 2, 5]) {
+ test(`${clientCount} authenticated session clients refresh canonical GS binding without school data writes`, async () => {
+  const f = fixture(async (url, opt, authorize) => {
+   const body = JSON.parse(opt.body);
+   if (body.action === 'managed_connect') await authorize({action:'managed/storage/authorize',schoolId:A,ticket:body.ticket});
+   return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,storageReady:true,connectionSecret:secret,googleEmail:'school-a@gmail.com'})};
+  });
+  const original=structuredClone(f.docs.get('school_storage_private/'+A));
+  const foreign=structuredClone(f.docs.get('school_storage_private/'+B));
+  const entitlement=structuredClone(f.docs.get('school_entitlements/'+A));
+  const refresh=()=>Promise.all(Array.from({length:clientCount},()=>f.call({action:'managed/session'},'A-new-pc')));
+  assert((await refresh()).every(s=>s.scriptUrl===original.url));
+  const newUrl='https://script.google.com/macros/s/RefreshedSchoolDeployment/exec';
+  await f.call({action:'managed/storage/connect',scriptUrl:newUrl,replace:true,expectedScriptUrl:original.url});
+  for(const session of await refresh()) {
+   assert.equal(session.scriptUrl,newUrl);assert.equal(session.schoolId,A);assert.equal(session.uid,'A');assert.equal(session.storageReady,true);
+   assert.equal(session.secret,undefined);assert(!JSON.stringify(session).includes(secret));
+  }
+  assert.deepEqual(f.docs.get('school_storage_private/'+B),foreign);
+  assert.deepEqual(f.docs.get('school_entitlements/'+A),entitlement);
+  assert.equal(f.docs.get('school_storage_private/'+A).previousConnections[0].url,original.url);
+  await assert.rejects(f.call({action:'managed/session',schoolId:B},'A-new-pc'),e=>e.status===403);
+  assert.equal((await f.call({action:'managed/session'},'B')).scriptUrl,foreign.url);
+  assert(!f.sent.some(item=>JSON.parse(JSON.parse(item.opt.body).payload||'{}').operation==='write'));
+ });
+}

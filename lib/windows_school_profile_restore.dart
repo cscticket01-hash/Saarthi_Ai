@@ -1,6 +1,27 @@
+import 'package:http/http.dart' as http;
+
 /// Restores only the authenticated school's saved registration. The caller
 /// supplies an authenticated transport and checks the active identity each time.
 class WindowsSchoolProfileRestore {
+  // A broker restart may close a socket before response headers. Retrying
+  // exactly one authenticated READ is safe; writes, uploads, mutations and
+  // uncertain ACKs must never be retried by the profile restore layer.
+  static Future<Map<String,dynamic>> readWithTransportRecovery(
+    Future<Map<String,dynamic>> Function(String,Map<String,dynamic>) request,
+    String action, Map<String,dynamic> body) async {
+    try { return await request(action,body); }
+    on http.ClientException catch(error) {
+      final message=error.message.toLowerCase();
+      if(!(message.contains('connection closed before full header')||
+           message.contains('connection reset before headers')))rethrow;
+      if(!(action=='managed/profile'&&body['operation']=='read' ||
+           action=='managed/records'&&body['operation']=='read' ||
+           action=='managed/file/read'))rethrow;
+      await Future<void>.delayed(const Duration(milliseconds:400));
+      return request(action,body);
+    }
+  }
+
   static bool complete(Map<String, dynamic> profile) =>
       (profile['schoolName']?.toString().trim().length ?? 0) >= 2 &&
       (profile['principalName']?.toString().trim().length ?? 0) >= 2;
@@ -21,7 +42,7 @@ class WindowsSchoolProfileRestore {
       throw StateError('Foreign local school profile blocked.');
     }
     Future<Map<String, dynamic>> registry(String operation, [Map<String, dynamic> data = const {}]) async {
-      final result = await call('managed/profile', {'operation': operation, ...data});
+      final result = await readWithTransportRecovery(call,'managed/profile', {'operation': operation, ...data});
       if (result['success'] != true || result['schoolId'] != schoolId ||
           !['new', 'complete', 'unknown', 'recovery'].contains(result['registrationState']) ||
           result['storageReady'] is! bool) {
@@ -79,7 +100,7 @@ class WindowsSchoolProfileRestore {
       throw StateError('Foreign local school profile blocked.');
     }
     Future<Map<String, dynamic>> request(String action, Map<String, dynamic> body) async {
-      final result = await call(action, body);
+      final result = await readWithTransportRecovery(call,action,body);
       if (result['success'] != true || result['schoolId'] != schoolId) {
         throw StateError('School profile response belongs to a different school or failed.');
       }

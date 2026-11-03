@@ -12,6 +12,8 @@ import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'school_media_budgets.dart';
+import 'school_pdf_media.dart';
 import 'id_card_manifest.dart';
 import 'id_card_layout.dart';
 import 'id_card_indic_text.dart';
@@ -94,6 +96,7 @@ class IdCardEngine {
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
     pw.Font? font,
+    int printMediaStage = 0,
   }) async {
     data = normalizedInput(template,data);
     qr = compactQr(qr);
@@ -133,6 +136,7 @@ class IdCardEngine {
       Map.unmodifiable(backgrounds),
       Map.unmodifiable(shapedText),
       font ?? await loadFont(),
+      printMediaStage,
     );
   }
 
@@ -147,13 +151,27 @@ class IdCardEngine {
     Map<String, Uint8List> images = const {},
     String qr = '',
     Map<String, Uint8List> backgrounds = const {},
+    bool useCompactVectorFont = false,
+    bool compactBitmapAssets = false,
   }) async {
+    // Embed school-owned source backgrounds at their actual CR80 print size.
+    // This is bitmap-only optimization; the original image assets, vector
+    // QR, Indic text shaping and layout geometry remain unchanged.
+    final optimizedBackgrounds = <String, Uint8List>{
+      for (final entry in backgrounds.entries)
+        entry.key: SchoolPdfMedia.cardBackground(
+          entry.value, widthMm: template.printWidth,
+          heightMm: template.printHeight,
+          jpegQuality: compactBitmapAssets ? 88 : 92),
+    };
     final prepared = await prepare(
       template,
       data,
       images: images,
       qr: qr,
-      backgrounds: backgrounds,
+      backgrounds: optimizedBackgrounds,
+      font: useCompactVectorFont ? pw.Font.helvetica() : null,
+      printMediaStage: compactBitmapAssets ? 1 : 0,
     );
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: prepared.font));
     final width = template.printWidth * PdfPageFormat.mm;
@@ -180,7 +198,34 @@ class IdCardEngine {
         ),
       ),
     );
-    return pdf.save();
+    final output = await pdf.save();
+    if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
+      // Original catalog font wins when it fits. Only ASCII-only oversized
+      // cards retry with a non-embedded vector font; no QR/text rasterization,
+      // geometry shift or loss of Indic glyphs.
+      final asciiText = data.values.whereType<String>().every(
+        (value) => value.runes.every((code) =>
+            code == 9 || code == 10 || code == 13 ||
+            (code >= 32 && code <= 126)));
+      final asciiLabels = template.regions
+          .where((r) => r.kind == 'text')
+          .every((r) => r.label.runes.every((code) =>
+              code >= 32 && code <= 126));
+      if (asciiText && asciiLabels) {
+        return _render(template, data, images: images, qr: qr,
+            backgrounds: backgrounds, useCompactVectorFont: true);
+      }
+    }
+    if (!compactBitmapAssets && output.length > SchoolMediaBudgets.idCard) {
+      // Second safe pass: 280 DPI and JPEG quality 84 only on small embedded
+      // photo/branding bitmaps; all QR and text remain vector and the source
+      // bytes are untouched. Unicode retains the original embedded font.
+      return _render(template, data, images: images, qr: qr,
+          backgrounds: backgrounds,
+          useCompactVectorFont: useCompactVectorFont,
+          compactBitmapAssets: true);
+    }
+    return SchoolMediaBudgets.verifyGeneratedPdf('idCard', output);
   }
 }
 
@@ -194,12 +239,18 @@ class PreparedIdCard {
     this.backgrounds,
     this.shapedText,
     this.font,
+    this.printMediaStage,
   );
   final IdCardManifest template;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds, shapedText;
+  // Reuse identical JPEG/PNG objects across both sides of one generated ID.
+  // The same school logo appears on front and back; duplicate PDF objects
+  // increase byte size but add no print fidelity.
+  final Map<String, pw.MemoryImage> _printImageCache = {};
   final String qr;
   final pw.Font font;
+  final int printMediaStage;
   pw.Widget buildSide(String name) => pw.SizedBox(
     width: template.width,
     height: template.height,
@@ -231,6 +282,9 @@ class PreparedIdCard {
                                 cover: r.fit == 'cover',
                                 focusX: r.focusX,
                                 focusY: r.focusY,
+                                imageCache: _printImageCache,
+                                printDpi: printMediaStage == 0 ? 300 : 280,
+                                jpegQuality: printMediaStage == 0 ? 88 : 84,
                               )
                       : r.kind == 'qr'
                       ? qr.isEmpty

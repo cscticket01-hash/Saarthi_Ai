@@ -1,4 +1,6 @@
+import 'windows_drive_delivery_queue.dart';
 import 'windows_record_change_policy.dart';
+import 'live_sync_protocol.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_sync_recovery.dart';
 import 'sync_recovery_policy.dart';
@@ -381,12 +383,24 @@ class WindowsFirebaseRemote {
       'collection': collection,
       'id': id,
       'syncProtocol': 2,
+      if (item['operation'] == 'delete') 'deleteEverywhereVersion': 1,
       'operationId': item['operationId'],
       'expectedRecordRevision': item['baseCloudRevision'] ?? '',
+      if (item['createIntent'] == true) 'createIntent': true,
       if (item['deletedStudentGeneration'] is String)
         'deletedStudentGeneration': item['deletedStudentGeneration'],
       if (data != null) 'data': migrationJsonValue(data),
     };
+    // Reuse only the durable original baseline, never the edited local row.
+    // The broker verifies its complete hash against retained authority metadata.
+    final baseline=item['fieldPatchBase'];
+    if(liveSyncCollections.contains(collection) && baseline is Map &&
+        baseline['schoolId']==school &&
+        baseline['_syncRevision']==item['baseCloudRevision']) {
+      final candidate={...requestBody,'cachedBaseline':migrationJsonValue(baseline)};
+      if(utf8.encode(jsonEncode(candidate)).length<=250000)
+        requestBody['cachedBaseline']=candidate['cachedBaseline'];
+    }
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
@@ -404,6 +418,17 @@ class WindowsFirebaseRemote {
       ]);
       if (restored != 1) rethrow;
       result = await sendPrepared();
+    }
+    final liveCommit = verifyLiveRecordReceipt(result, school: school,
+      collection: collection, id: id, operationId: item['operationId'].toString(),
+      deleting: item['operation'] == 'delete');
+    if (liveCommit) await WindowsDriveDeliveryQueue.retain(school, collection, id,
+        item['operationId'].toString(), result, deleting: item['operation'] == 'delete');
+    if (item['operation'] == 'delete' && !liveCommit &&
+        (result['deleteEverywhereVersion'] != 1 ||
+         result['driveDeletionComplete'] != true ||
+         result['firebaseDeletionComplete'] != true)) {
+      throw StateError('Cloud deletion is not verified. Pending operation retained.');
     }
     if (result['schoolId'] != school ||
         result['syncProtocol'] != 2 ||
@@ -426,14 +451,14 @@ class WindowsFirebaseRemote {
           result['recordRevision'],
         );
     }
-    if (result['record'] is Map)
+    if (!liveCommit && result['record'] is Map)
       await cacheVerifiedSheetRecord(
         school,
         collection,
         id,
         Map<String, dynamic>.from(result['record'] as Map),
       );
-    if (result['record'] == null &&
+    if (!liveCommit && result['record'] == null &&
         data != null &&
         item['wireMode'] != 'fieldPatch1') {
       result['record'] = {
@@ -548,6 +573,7 @@ class WindowsFirebaseRemote {
         'syncProtocol': 2,
         'operationId': bound['operationId'],
         'expectedRecordRevision': bound['baseCloudRevision'] ?? '',
+        if (bound['createIntent'] == true) 'createIntent': true,
         'data': migrationJsonValue(bound['wireData']),
       };
       if (utf8.encode(jsonEncode([...operations, op])).length > 250000) break;

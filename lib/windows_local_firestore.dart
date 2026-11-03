@@ -1,4 +1,5 @@
 import 'student_lifecycle_policy.dart';
+import 'live_sync_protocol.dart';
 import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
@@ -284,6 +285,67 @@ class FirebaseFirestore {
       ()=>_database.applyOperations(operations));
   }
 
+  /// Retain a complete live page and its cursor in the same serialized disk
+  /// transaction. These are incoming records, never upload or Drive receipts.
+  Future<void> retainLiveSyncPage(LiveSyncPage page) async {
+    final profile=activeProfileId;
+    final school=activeProfileIdentity['schoolSyncId'];
+    if(school!=page.schoolId)throw StateError('Live page belongs to another school.');
+    LiveSyncPage.parse({'success':true,'liveProtocol':1,'schoolId':page.schoolId,
+      'cursor':page.cursor,'head':page.head,'more':page.more,'events':page.events},
+      page.schoolId,page.after);
+    final ref=collection('_windows_live_checkpoints').doc(page.schoolId);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    if(activeProfileId!=profile || old!=null&&old['schoolId']!=school ||
+        (old?['cursor']??0)!=page.after)throw StateError('Live checkpoint changed.');
+    final operations=[
+      for(final event in page.events)_WriteOperation._(type:_WriteType.set,
+        collection:'_windows_live_incoming',documentId:'${page.schoolId}-${event['sequence']}',
+        data:{'schoolId':page.schoolId,'sequence':event['sequence'],
+          'collection':event['collection'],'id':event['id'],
+          'record':jsonDecode(jsonEncode(event['record'])),'state':'retained',
+          if(event['retired']==true)...{'retired':true,'source':'drive',
+            'recordAuthority':'school-drive'}}),
+      _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
+        documentId:page.schoolId,data:{'schoolId':page.schoolId,'cursor':page.cursor}),
+    ];
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{page.schoolId:old}}));
+  }
+
+  /// Recovery-only checkpoint replacement after the runtime verified a pinned
+  /// authoritative snapshot through the ordinary pending-aware business owner.
+  Future<void> replaceLiveSyncCheckpointAfterVerifiedSnapshot(
+      String school, int expectedCursor, int nextCursor,
+      {Set<String>? verifiedCollections}) async {
+    final profile=activeProfileId;
+    if(activeProfileIdentity['schoolSyncId']!=school || expectedCursor<0 ||
+        nextCursor<expectedCursor)throw StateError('Live snapshot scope differs.');
+    final ref=collection('_windows_live_checkpoints').doc(school);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    final incoming=await collection('_windows_live_incoming').get();
+    if(activeProfileId!=profile || activeProfileIdentity['schoolSyncId']!=school ||
+        old!=null&&old['schoolId']!=school || (old?['cursor']??0)!=expectedCursor)throw StateError('Live snapshot checkpoint changed.');
+    final operations=<_WriteOperation>[];
+    for(final row in incoming.docs) {
+      final data=row.data(),sequence=data['sequence'];
+      if(data['schoolId']!=school || sequence is! int || sequence<1 ||
+          row.id!='$school-$sequence' || sequence>nextCursor)
+        throw StateError('Live snapshot incoming identity differs.');
+      // A snapshot of active collections cannot consume a retained invalidation
+      // whose authority has already returned to Drive. Its ordinary reconciler
+      // must still verify and apply that key before compacting the hint.
+      if(verifiedCollections==null || verifiedCollections.contains(data['collection']))
+        operations.add(_WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_live_incoming',documentId:row.id));
+    }
+    operations.add(_WriteOperation._(type:_WriteType.set,
+      collection:'_windows_live_checkpoints',documentId:school,
+      data:{'schoolId':school,'cursor':nextCursor,'snapshotVerified':true}));
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{school:old}}));
+  }
+
   /// Readback evidence only. A retained newer edit must never count as a download.
   Future<bool> syncedDocumentMatches(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? expected) async {
     ref.requireOriginProfile();
@@ -307,6 +369,18 @@ class FirebaseFirestore {
     required Map<String,dynamic> expected,required Map<String,dynamic> remote,
     required Map<String,dynamic> selected,required String choice,required String reason,
     required String localHash}) => _database.commitReviewedDocument(id,expected,remote,selected,choice,reason,localHash);
+
+  Future<void> commitRegeneratedIdConflict({required String id,
+    required Map<String,dynamic> expected,required Map<String,dynamic> remote,
+    required Map<String,dynamic> selected,required String localHash,
+    required List<DocumentSnapshot> sources}) {
+    if(sources.any((s)=>s.reference.originProfile!=activeProfileId))
+      throw StateError('School changed before derived ID commit.');
+    return _database.commitReviewedDocument(id,expected,remote,selected,'regenerated',
+      'Regenerated from verified current school ID inputs',localHash,
+      regeneratedSources:{for(final s in sources)
+        '${s.reference.collectionPath}/${s.id}':s.data()==null?null:Map<String,dynamic>.from(s.data() as Map)});
+  }
 
   /// Cached verified managed-session authorization supports offline admin review;
   /// the server reauthorizes the school before the protected cloud restore.
@@ -1203,6 +1277,7 @@ class _LocalSchoolDatabase {
           o.type == _WriteType.delete && o.collection == '_windows_firebase_outbox' &&
           o.acknowledgedRevision != null && o.data?['operationId'] is String);
         final metadataOnly = operations.every((o) => const {
+          '_windows_live_checkpoints','_windows_live_incoming',
           '_windows_verified_cloud_records','_windows_sync_downloads',
           '_windows_sync_manifest','_windows_sync_status','_windows_sync_dependencies',
         }.contains(o.collection) && o.acknowledgedRevision == null);
@@ -2152,7 +2227,8 @@ class _LocalSchoolDatabase {
   }
 
   Future<void> commitReviewedDocument(String id,Map<String,dynamic> expected,
-      Map<String,dynamic> remote,Map<String,dynamic> selected,String choice,String reason,String localHash) {
+      Map<String,dynamic> remote,Map<String,dynamic> selected,String choice,String reason,String localHash,
+      {Map<String,Map<String,dynamic>?>? regeneratedSources}) {
     final origin=_activeProfileId,school=_activeIdentity['schoolSyncId'];
     final completer=Completer<void>();
     _writeTail=_writeTail.then((_)async{
@@ -2160,15 +2236,32 @@ class _LocalSchoolDatabase {
         if(_activeProfileId!=origin || school is! String || school.isEmpty || _activeIdentity['blocked']==true ||
             expected['schoolId']!=school || remote['schoolId']!=school || selected['schoolId']!=school ||
             remote['id']!=id || selected['documentId']!=id || expected['syncState']!='conflict' || expected['deleted']==true ||
-            remote['_syncDeleted']==true || !{'local','cloud'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
+            remote['_syncDeleted']==true || !{'local','cloud','regenerated'}.contains(choice) || reason.trim().isEmpty || reason.length>1000 ||
             remote['_syncRevision'] is! String || remote['_syncRevision'].isEmpty || remote['documentRevision'] is! String || remote['documentRevision'].isEmpty ||
             !RegExp(r'^[a-f0-9]{64}$').hasMatch(localHash))throw StateError('Explicit verified school document review required.');
+        final regenerate=choice=='regenerated';
+        final sourcePaths={
+          '${expected['ownerRole']=='student'?'students_directory':'teachers_directory'}/${expected['studentId']}',
+          'school_config/school_profile_cache','school_settings/document_templates'};
+        if(regenerate && (expected['documentKind']!='idCard' || expected['inventoryCategory']!='generatedIdCard' ||
+          !{'student','teacher'}.contains(expected['ownerRole']) || regeneratedSources==null ||
+          regeneratedSources.length!=3 || !sourcePaths.containsAll(regeneratedSources.keys)))
+          throw StateError('Derived ID source dependencies required.');
         final historyKey='document-$id-${expected['documentRevision']}';
-        final root=await _readRoot(collections:{'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history','_windows_sync_receipts'},
+        final root=await _readRoot(collections:{'_windows_document_outbox','_local_student_documents','_windows_sync_conflict_history','_windows_sync_receipts',
+          if(regenerate)...sourcePaths.map((p)=>p.split('/').first)},
           recordScope:{'_windows_document_outbox':[id],'_local_student_documents':[id],'_windows_sync_conflict_history':[historyKey],
-            '_windows_sync_receipts':['cloud-choice-$historyKey']});
+            '_windows_sync_receipts':['cloud-choice-$historyKey'],
+            if(regenerate)for(final path in sourcePaths)path.split('/').first:[path.substring(path.indexOf('/')+1)]});
         if(_activeProfileId!=origin)throw StateError('School changed during document review commit.');
         final collections=_collections(root),queue=collections['_windows_document_outbox'];
+        if(regenerate)for(final path in sourcePaths){
+          final c=path.split('/').first,key=path.substring(path.indexOf('/')+1);
+          final actual=(collections[c] as Map?)?[key],wanted=regeneratedSources![path];
+          if((actual==null)!=(wanted==null) || (actual!=null &&
+            (actual is! Map || _jsonStableMap(Map<String,dynamic>.from(actual))!=_jsonStableMap(_encodeMap(wanted!)))))
+            throw StateError('ID source changed during atomic repair commit.');
+        }
         final current=queue is Map?queue[id]:null,local=(collections['_local_student_documents'] as Map?)?[id];
         if(current is! Map || local is! Map || _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(_encodeMap(expected)) ||
             local['documentRevision']!=expected['documentRevision'] || local['localPath']!=expected['localPath']) {
@@ -2180,13 +2273,19 @@ class _LocalSchoolDatabase {
         if(choice=='local' && (selected['syncState']!='Pending' || selected['documentRevision']==expected['documentRevision'] ||
             selected['baseCloudRevision']!=remote['documentRevision'] || selected['reviewedRecordRevision']!=remote['_syncRevision'] ||
             selected['localPath']!=expected['localPath']))throw StateError('Reviewed local CAS generation required.');
+        if(regenerate && (selected['syncState']!='Pending' || selected['documentRevision']==expected['documentRevision'] ||
+          selected['localPath']==expected['localPath'] || selected['mimeType']!='application/pdf' ||
+          selected['baseCloudRevision']!=remote['documentRevision'] || selected['reviewedRecordRevision']!=remote['_syncRevision'] ||
+          selected['inputRevision'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(selected['inputRevision']) ||
+          selected['contentHash'] is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(selected['contentHash'])))
+          throw StateError('Verified regenerated ID and cloud CAS baseline required.');
         if(choice=='cloud' && (selected['syncState']!='Synced' || selected['documentRevision']!=remote['documentRevision'] ||
             selected['contentHash']!=remote['contentHash'] || selected['localPath']==expected['localPath']))throw StateError('Verified retained cloud copy required.');
         final key='document-$id-${expected['documentRevision']}';
         final history=collections.putIfAbsent('_windows_sync_conflict_history',()=> <String,dynamic>{}) as Map;
         history.putIfAbsent(key,()=>_encodeMap({...expected,'verifiedCloud':remote,'resolution':'owner selected $choice',
           'reason':reason.trim(),'reviewedAt':DateTime.now().millisecondsSinceEpoch,'localContentHash':localHash}));
-        if(choice=='local')queue![id]=_encodeMap(selected);
+        if(choice=='local'||regenerate)queue![id]=_encodeMap(selected);
         else{
           final receipts=collections.putIfAbsent('_windows_sync_receipts',()=> <String,dynamic>{}) as Map;
           receipts['cloud-choice-$key']=_encodeMap({'schoolId':school,'documentId':id,'collection':'documents',

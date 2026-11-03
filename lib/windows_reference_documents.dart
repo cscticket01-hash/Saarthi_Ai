@@ -1,3 +1,5 @@
+import 'school_media_budgets.dart';
+import 'school_pdf_media.dart';
 import 'windows_maroon_marksheet.dart';
 import 'id_card_engine.dart';
 import 'id_card_layout.dart';
@@ -7,6 +9,7 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -135,6 +138,8 @@ Future<Uint8List?> _signatureInk(Uint8List? bytes, {bool white = false}) async {
   }
 }
 
+// Public document API cannot accept cached/unauthenticated compressed images.
+// Only the private recursive renderer can reuse its own validated media.
 Future<Uint8List> renderWindowsReferenceDocument({
   required String kind,
   required int template,
@@ -144,14 +149,65 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? logo,
   Uint8List? signature,
   Uint8List? seal,
+  int printPass = 0,
+}) => _renderWindowsReferenceDocument(
+  kind: kind, template: template, data: data, qr: qr,
+  photo: photo, logo: logo, signature: signature, seal: seal,
+  printPass: printPass,
+);
+
+Future<Uint8List> _renderWindowsReferenceDocument({
+  required String kind,
+  required int template,
+  required Map<String, dynamic> data,
+  String qr = '',
+  Uint8List? photo,
+  Uint8List? logo,
+  Uint8List? signature,
+  Uint8List? seal,
+  int printPass = 0,
+  ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? preparedMedia,
 }) async {
+  if (printPass < 0 || printPass > 4) {
+    throw const FormatException('Invalid ID print optimization stage.');
+  }
   if (!windowsReferenceDocumentNames.containsKey(kind))
     throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
-  final printSignature = await _signatureInk(
-    signature,
-    white: false,
-  );
+  // Compression can be expensive on an older school PC. Offload it to
+  // isolates in bounded pairs; preserve exact PDF bytes and the immutable
+  // source images. The existing sync/outbox owner is still serial.
+  Future<Uint8List?> portraitForPrint(Uint8List? bytes) =>
+      bytes == null ? Future<Uint8List?>.value(null)
+          : compute(SchoolPdfMedia.portrait, bytes);
+  Future<Uint8List?> brandingForPrint(
+    Uint8List? bytes, int maxPrintEdge,
+  ) => bytes == null ? Future<Uint8List?>.value(null)
+      : compute(SchoolPdfMedia.brandingSized,
+          {'bytes': bytes, 'maxPrintEdge': maxPrintEdge});
+  late final Uint8List? embeddedPhoto, embeddedLogo, embeddedSeal, printSignature;
+  if (preparedMedia != null) {
+    // A size retry reuses the exact verified source of the previous pass.
+    // Re-compressing unchanged media on every print-DPI attempt wastes CPU,
+    // memory and time on low-end school PCs.
+    embeddedPhoto = preparedMedia.photo;
+    embeddedLogo = preparedMedia.logo;
+    embeddedSeal = preparedMedia.seal;
+    printSignature = preparedMedia.signature;
+  } else {
+    final visualPair = await Future.wait<Uint8List?>([
+      portraitForPrint(photo), brandingForPrint(logo, kind == 'receipt' ? 120 : 256),
+    ]);
+    final signatureInk = await _signatureInk(signature, white: false);
+    final brandingPair = await Future.wait<Uint8List?>([
+      brandingForPrint(seal, kind == 'receipt' ? 144 : 256),
+      brandingForPrint(signatureInk, kind == 'receipt' ? 192 : 256),
+    ]);
+    embeddedPhoto = visualPair[0];
+    embeddedLogo = visualPair[1];
+    embeddedSeal = brandingPair[0];
+    printSignature = brandingPair[1];
+  }
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -168,13 +224,29 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final name = kind == 'teacherId'
       ? first(['name', 'teacherName'], 'Teacher name')
       : first(['studentName', 'name'], 'Student name');
-  final regular = pw.Font.ttf(
-    await rootBundle.load('assets/id_card_regular.ttf'),
-  );
-  final bold = pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
+  // Core PDF fonts need no embedded TTF program for ASCII school receipts.
+  // This is a lossless PDF-byte optimization: text stays selectable vector
+  // text and page measurements stay unchanged. Any non-ASCII record continues
+  // using the bundled Unicode-capable school font rather than losing glyphs.
+  bool isAscii(dynamic v) {
+    if (v == null || v is num || v is bool || v is Uint8List) return true;
+    if (v is String) return v.runes.every((r) => r <= 0x7f);
+    if (v is Map) return v.entries.every(
+      (entry) => isAscii(entry.key) && isAscii(entry.value));
+    if (v is Iterable) return v.every(isAscii);
+    return false;
+  }
+  final receiptCoreFonts = kind == 'receipt' && isAscii(data);
+  final regular = receiptCoreFonts
+      ? pw.Font.helvetica()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
+  final bold = receiptCoreFonts
+      ? pw.Font.helveticaBold()
+      : pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(base: regular, bold: bold),
   );
+  final imageCache = <String, pw.MemoryImage>{};
   final idRegions = <pw.Widget, List<double>>{};
   final idDecorations = <pw.Widget>{};
   pw.Widget at(double x, double y, double w, double h, pw.Widget child,
@@ -258,7 +330,13 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: label(placeholder, size: 11, color: PdfColors.grey600))
           : pw.ClipRect(
               child: kind == 'teacherId'
-                  ? IdCardLayout.image(bytes, cover: cover)
+                  ? IdCardLayout.image(bytes, cover: cover, imageCache: imageCache,
+                       printDpi: cover
+                           ? [300, 280, 260, 240, 220][printPass]
+                           : [250, 220, 220, 220, 220][printPass],
+                       jpegQuality: cover
+                           ? [88, 86, 84, 81, 78][printPass]
+                           : [88, 88, 88, 86, 84][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
@@ -387,11 +465,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
                 shape: pw.BoxShape.circle,
                 border: pw.Border.all(color: white, width: 4),
               ),
-              child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
+              child: pw.ClipOval(child: asset(embeddedPhoto, 'PHOTO', cover: true)),
             ),
           ),
           at(23, 296, 264, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
-          at(234, 76, 45, 45, asset(logo, 'LOGO')),
+          at(234, 76, 45, 45, asset(embeddedLogo, 'LOGO')),
           at(
             12,
             403,
@@ -402,7 +480,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
         ]);
       } else {
         front.addAll([
-          at(49, 15, 172, 192, asset(photo, 'PHOTO', cover: true)),
+          at(49, 15, 172, 192, asset(embeddedPhoto, 'PHOTO', cover: true)),
           at(
             49,
             15,
@@ -422,7 +500,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             label('TEACHER', size: 48, color: white, heavy: true),
           ),
           at(31, 335, 244, 88, table(details, firstHeader: false, font: 9, rowHeight: 17.6)),
-          at(35, 432, 45, 40, asset(logo, 'LOGO')),
+          at(35, 432, 45, 40, asset(embeddedLogo, 'LOGO')),
           at(
             86,
             432,
@@ -512,9 +590,9 @@ Future<Uint8List> renderWindowsReferenceDocument({
       if (i == 0)
         back.addAll([
           at(171, 237, 66, 66, qrCode(58)),
-          at(180, 19, 43, 43, asset(logo, 'LOGO')),
+          at(180, 19, 43, 43, asset(embeddedLogo, 'LOGO')),
         ]);
-      if (i == 1) back.add(at(236, 17, 54, 76, asset(logo, 'LOGO')));
+      if (i == 1) back.add(at(236, 17, 54, 76, asset(embeddedLogo, 'LOGO')));
       back.addAll([
         at(
           28,
@@ -585,7 +663,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
           144,
           pw.Container(
             decoration: pw.BoxDecoration(border: pw.Border.all(color: ink)),
-            child: asset(photo, 'PHOTO', cover: true),
+            child: asset(embeddedPhoto, 'PHOTO', cover: true),
           ),
         ),
         at(
@@ -600,11 +678,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
             heavy: true,
           ),
         ),
-        at(335, 224, 114, 44, asset(logo, 'SCHOOL LOGO')),
+        at(335, 224, 114, 44, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(88, 221, 57, 57, qrCode(49)),
       ]);
       back.addAll([
-        at(18, 12, 143, 46, asset(logo, 'SCHOOL LOGO')),
+        at(18, 12, 143, 46, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(
           254,
           14,
@@ -655,7 +733,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
       ]);
     } else {
       front.addAll([
-        at(17, 19, 40, 40, asset(logo, 'LOGO')),
+        at(17, 19, 40, 40, asset(embeddedLogo, 'LOGO')),
         at(63, 26, 155, 22, label(school, size: 15, color: white, heavy: true)),
         at(
           63,
@@ -696,7 +774,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
                 width: 6,
               ),
             ),
-            child: pw.ClipOval(child: asset(photo, 'PHOTO', cover: true)),
+            child: pw.ClipOval(child: asset(embeddedPhoto, 'PHOTO', cover: true)),
           ),
         ),
         at(
@@ -758,7 +836,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
         at(247, 440, 47, 42, qrCode(34)),
       ]);
       back.addAll([
-        at(20, 22, 40, 36, asset(logo, 'LOGO')),
+        at(20, 22, 40, 36, asset(embeddedLogo, 'LOGO')),
         at(
           70,
           22,
@@ -862,7 +940,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
     validateIdSide(back, w, h);
     addIdCardPair(pdf, front, back, w, h, landscape: landscape);
   } else if (kind == 'reportCard') {
-    return renderMaroonMarksheet(data, photo:photo,logo:logo,signature:printSignature,seal:seal);
+    return renderMaroonMarksheet(data, photo:embeddedPhoto,logo:embeddedLogo,signature:printSignature,seal:embeddedSeal);
   } else {
     final items = data['feeItems'] is Map
         ? Map<String, dynamic>.from(data['feeItems'])
@@ -900,7 +978,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             ),
           ),
         ),
-        at(86, 78, 75, 39, asset(logo, 'SCHOOL LOGO')),
+        at(86, 78, 75, 39, asset(embeddedLogo, 'SCHOOL LOGO')),
         at(86, 126, 245, 24, label(school, size: 16, heavy: true)),
         at(
           86,
@@ -1023,7 +1101,7 @@ Future<Uint8List> renderWindowsReferenceDocument({
             rowHeight: 18.6,
           ),
         ),
-        if (seal != null) at(285, 638, 60, 48, asset(seal, '')),
+        if (seal != null) at(285, 638, 60, 48, asset(embeddedSeal, '')),
         at(
           86,
           625,
@@ -1056,5 +1134,20 @@ Future<Uint8List> renderWindowsReferenceDocument({
       page(612, 792, layers);
     }
   }
-  return pdf.save();
+  final output = await pdf.save();
+  if (kind == 'teacherId' &&
+      output.length > SchoolMediaBudgets.idCard &&
+      printPass < 4) {
+    // Only the print-bitmap DPI changes; vector QR, text, dimensions and
+    // school media source bytes stay identical. Fail safely if all print
+    // variants still exceed the strict PDF budget.
+    return _renderWindowsReferenceDocument(
+      kind: kind, template: template, data: data, qr: qr,
+      photo: photo, logo: logo, signature: signature, seal: seal,
+      printPass: printPass + 1,
+      preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
+          seal: embeddedSeal, signature: printSignature),
+    );
+  }
+  return SchoolMediaBudgets.verifyGeneratedPdf(kind, output);
 }

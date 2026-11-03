@@ -103,3 +103,32 @@ String adaptiveSyncCard(Map? evidence) {
   };
   return '$range\nNext batch: $next records\nLast adjustment: $adjustment';
 }
+
+const _queueBriefCategories = <String>{
+  'networkPath', 'timeout', 'server', 'quota', 'authorization',
+  'configuration', 'validation', 'conflict', 'localStorage',
+  'fileMissing', 'unknown',
+};
+
+/// Safe overview summary: no raw exception text, student data, or credentials.
+String pendingQueueBrief(Map row, {required DateTime now}) {
+  final rawCategory = row['failureCategory'];
+  final category = rawCategory is String &&
+          _queueBriefCategories.contains(rawCategory)
+      ? rawCategory
+      : null;
+  final rawCode = row['failureCode'];
+  final code = rawCode is String &&
+          RegExp(r'^[A-Z0-9_]{5,64}$').hasMatch(rawCode)
+      ? rawCode
+      : null;
+  final deadline = row['retryAtMillis'];
+  final futureRetry = deadline is int && deadline > now.millisecondsSinceEpoch;
+  final parts = <String>[
+    if (category != null) 'Reason: $category',
+    if (code != null) 'Code: $code',
+    if (futureRetry)
+      'Retry: ${syncRetryTime(DateTime.fromMillisecondsSinceEpoch(deadline), now)}',
+  ];
+  return parts.isEmpty ? '' : '\n${parts.join(' · ')}';
+}

@@ -4,6 +4,7 @@ import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
 import 'school_qr_link.dart';
 import 'id_card_engine.dart';
+import 'school_media_budgets.dart';
 
 import 'package:crypto/crypto.dart' as crypto;
 
@@ -69,6 +70,7 @@ class WindowsBackendBridge {
     required double previousPaid,
     required Uint8List pdfBytes,
   }) => _documentWrite(() async {
+    SchoolMediaBudgets.enforcePdf('feeReceipt', pdfBytes);
     final db = FirebaseFirestore.instance;
     void scope() {
       if (db.activeProfileId != profileId)
@@ -379,16 +381,18 @@ class WindowsBackendBridge {
   /// Explicit administrator readback resolution. Never uploads or changes cloud files.
   static Future<void> recordVerifiedDocumentReview(
     String id,
-    Map<String, dynamic> expected,
+    Map<String, dynamic> expected, {
+    Future<Map<String,dynamic>> Function()? readCloud,
+  }
   ) async {
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
     final payload = await documentReviewPayload(id, expected);
-    final reply = await ManagedSchoolSession.callForSchool(
+    final reply = await (readCloud?.call() ?? ManagedSchoolSession.callForSchool(
       expected['schoolId'] as String,
       'managed/records',
       {'operation': 'read', 'collection': 'documents', 'syncProtocol': 2},
-    );
+    ));
     if (reply['syncProtocol'] != 2) throw const MissingSyncAcknowledgement();
     final cloud = (reply['records'] as Map?)?[id];
     final result = documentAcknowledgementFromReadback(payload, reply);
@@ -436,6 +440,102 @@ class WindowsBackendBridge {
       ); // Exact owner-locked acknowledged row only; original file retained.
       await batch.commit();
     });
+  }
+
+  static final Map<String,DateTime> _documentRepairChecks={};
+  /// Regenerate derived ID output only after its owner has verified current
+  /// source inputs against authenticated cloud records. Never applies to PDFs
+  /// uploaded by a user or to financial receipts. All previous files survive.
+  static Future<void> regenerateVerifiedIdConflict({
+    required String id,required Map<String,dynamic> expected,
+    required Map<String,dynamic> cloud,required Map<String,dynamic> person,
+    required String qr,required String inputRevision,required Uint8List bytes,
+    required List<DocumentSnapshot> dependencies,
+  }) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=expected['schoolId'];
+    final link=SchoolLink.parse(qr);
+    if(expected['documentKind']!='idCard' || expected['inventoryCategory']!='generatedIdCard' ||
+      expected['syncState']!='conflict' || expected['deleted']==true ||
+      school!=db.activeProfileIdentity['schoolSyncId'] || !link.managed || link.schoolId!=school ||
+      link.role!=expected['ownerRole'] || link.personId!=expected['studentId'] ||
+      person['mobileLinkToken']!=link.linkToken ||
+      (person['mobileStableId']??link.personId)!=expected['personId'] ||
+      cloud['schoolId']!=school || cloud['id']!=id || cloud['_syncDeleted']==true ||
+      cloud['documentKind']!='idCard' || cloud['ownerRole']!=expected['ownerRole'] ||
+      cloud['studentId']!=expected['studentId'] || cloud['personId']!=expected['personId'] ||
+      cloud['_syncRevision'] is! String || cloud['_syncRevision'].isEmpty ||
+      cloud['documentRevision'] is! String || cloud['documentRevision'].isEmpty ||
+      dependencies.length!=3 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(inputRevision) ||
+      bytes.isEmpty || bytes.length>20*1024*1024 || !await db.localPersistenceEnabled())
+      throw StateError('Verified current ID source and ownership required.');
+    final paths=dependencies.map((s)=>'${s.reference.collectionPath}/${s.id}').toSet();
+    final sources={
+      '${link.role=='student'?'students_directory':'teachers_directory'}/${link.personId}',
+      'school_config/school_profile_cache','school_settings/document_templates'};
+    if(paths.length!=3 || !paths.containsAll(sources) ||
+      dependencies.any((s)=>s.reference.originProfile!=origin))
+      throw StateError('Current school ID source dependencies required.');
+    final proof=await documentReviewPayload(id,expected);
+    await IdCardEngine.verifyExport(bytes,qr);
+    await _documentWrite(() async {
+      if(db.activeProfileId!=origin)throw StateError('School changed during ID repair.');
+      final queue=db.collection('_windows_document_outbox').doc(id);
+      final local=db.collection('_local_student_documents').doc(id);
+      final current=(await queue.get()).data(),previous=(await local.get()).data();
+      if(current==null || syncPayloadHash(current)!=syncPayloadHash(expected) ||
+        previous?['documentRevision']!=expected['documentRevision'] ||
+        previous?['localPath']!=expected['localPath'] ||
+        (await documentReviewPayload(id,current))['contentHash']!=proof['contentHash'])
+        throw StateError('ID generation changed during repair.');
+      final batch=db.batch();
+      final result=await _saveLocalStudentDocument({
+        '_queueCloud':true,'replaceDocumentId':id,'studentId':expected['studentId'],
+        'studentName':person['name'],'studentClass':person['class'],'rollNo':person['rollNo'],
+        'documentKind':'idCard','ownerRole':expected['ownerRole'],'personId':expected['personId'],
+        'inputRevision':inputRevision,'qr':qr,'documentName':'School ID card • Front & back',
+        'fileName':'$id.pdf','mimeType':'application/pdf','fileBase64':base64Encode(bytes),
+      },owningBatch:batch);
+      final replacement=Map<String,dynamic>.from(result['document'] as Map)
+        ..addAll({'baseCloudRevision':cloud['documentRevision'],
+          'baseCloudUploadedAt':cloud['uploadedAt'],'cloudRevision':cloud['documentRevision'],
+          'reviewedRecordRevision':cloud['_syncRevision'],'syncState':'Pending',
+          'retryCount':0,'retryAtMillis':0,'contentHash':crypto.sha256.convert(bytes).toString()});
+      final disk=File(replacement['localPath'] as String);
+      if((await crypto.sha256.bind(disk.openRead()).first).toString()!=replacement['contentHash'])
+        throw StateError('Regenerated ID disk verification failed.');
+      await db.commitRegeneratedIdConflict(id:id,expected:expected,remote:cloud,
+        selected:replacement,localHash:proof['contentHash'] as String,sources:dependencies);
+    });
+    onLocalDocumentCommitted?.call();
+  }
+
+  /// Retry lost ACKs through authenticated readback only. Different bytes,
+  /// inputs, owners or schools remain conflicts; never guess revision order.
+  static Future<int> repairIdenticalDocumentConflicts(String school,{
+    Future<Map<String,dynamic>> Function(String)? readCloud,
+    bool Function()? canAdmit,
+  }) async {
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    if(db.activeProfileIdentity['schoolSyncId']!=school)return 0;
+    final rows=await db.collection('_windows_document_outbox').get();
+    var checked=0,repaired=0;
+    for(final row in rows.docs){
+      if(checked>=3 || canAdmit?.call()==false || db.activeProfileId!=origin)break;
+      final value=row.data();
+      if(value['schoolId']!=school || value['syncState']!='conflict' || value['deleted']==true)continue;
+      final key='$origin:${row.id}:${value['documentRevision']}';
+      final prior=_documentRepairChecks[key],now=DateTime.now();
+      if(prior!=null && now.difference(prior)<const Duration(minutes:5))continue;
+      if(_documentRepairChecks.length>=128)_documentRepairChecks.remove(_documentRepairChecks.keys.first);
+      _documentRepairChecks[key]=now;checked++;
+      try{
+        await recordVerifiedDocumentReview(row.id,value,
+          readCloud:()=>readCloud?.call(row.id) ?? readManagedDocument(school,row.id));
+        repaired++;
+      }catch(_){/* No proof of identical durable content: retain the conflict. */}
+    }
+    return repaired;
   }
 
   /// Explicit same-school owner decision. No cloud write occurs here; local
@@ -2475,7 +2575,14 @@ class WindowsBackendBridge {
     if(automatic&&holdAutomaticIdCard(captured,pendingBeforeRead,cachedBeforeRead,link.schoolId))return;
     if(pendingBeforeRead!=null && (captured==null || {'conflict','needsAttention'}.contains(pendingBeforeRead['syncState'])))throw StateError('Existing ID generation requires owner review. Original queue retained.');
     Map<String, dynamic>? existingCloud;
-    if (captured == null) {
+    // A retained local PDF is not proof of a cloud baseline (e.g. restored
+    // device/old client). Verify before automatic regeneration, just as on a
+    // new device, instead of manufacturing an unbased replacement conflict.
+    final missingBaseline=automatic && pendingBeforeRead==null &&
+        captured?['inputRevision']!=inputRevision &&
+        captured?['ownerCloudChoiceInputRevision']!=inputRevision &&
+        (captured?['cloudRevision']?.toString().isNotEmpty!=true);
+    if (captured == null || missingBaseline) {
       Map<String, dynamic>? reply;
       try {
         reply =
@@ -2539,13 +2646,14 @@ class WindowsBackendBridge {
     // Decide whether an automatic receiver needs a package before rendering.
     // A verified existing card (or input conflict above) needs no new PDF.
     // Keep expensive rendering outside the document writer as well.
-    final reuseCloud = captured == null && existingCloud?['inputRevision'] == inputRevision;
+    final reuseCloud = existingCloud?['inputRevision'] == inputRevision;
     final reuseLocal = captured?['deleted'] != true &&
         (captured?['inputRevision'] == inputRevision || captured?['ownerCloudChoiceInputRevision'] == inputRevision);
     final package = reuseCloud || reuseLocal ? null : bytes ?? await prepareBytes?.call();
     if (!reuseCloud && !reuseLocal && (package == null || package.isEmpty)) {
       throw StateError('Selected ID renderer returned no package.');
     }
+    if (package != null) SchoolMediaBudgets.enforcePdf('idCard', package);
     // Cloud waits happen outside the local document writer, so another offline
     // document save can complete while this bounded inventory read is pending.
     var publicationQueued=false;
@@ -2576,7 +2684,7 @@ class WindowsBackendBridge {
               old?['ownerCloudChoiceInputRevision'] == inputRevision) &&
           old?['deleted'] != true)
         return;
-      if (old == null && existingCloud?['inputRevision'] == inputRevision) {
+      if (existingCloud?['inputRevision'] == inputRevision && retainedQueue==null) {
         // Same inputs already published: metadata restore is not a byte ACK.
         await db.applySyncedDocument(
           db.collection('documents').doc(id),

@@ -1,27 +1,72 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
+const {canGcRecord,scrubDomainReceipt,hydrateDomainReceipt}=require('./live-domain-delivery');
 const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
 const terminal=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
-function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnostics=entry=>console.info(JSON.stringify(entry))}){
+function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,atomicSmallFilesEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
+ const gcEnabled=school=>typeof payloadGcEnabled==='function'?payloadGcEnabled(school)===true:payloadGcEnabled===true;
+ const identity=request=>({action:request.action,collection:request.collection,id:request.id,operation:request.operation,syncProtocol:2,operationId:request.operationId,expectedRecordRevision:request.expectedRecordRevision});
+ async function hydrate(school,result,readDrive){
+  if(result.recordSource)return hydrateDomainReceipt(school,result,readDrive);
+  if(Array.isArray(result.acknowledgements)){
+   const acknowledgements=[];
+   for(const ack of result.acknowledgements)acknowledgements.push(ack.recordSource?await hydrateDomainReceipt(school,ack,readDrive):ack);
+   return {...result,acknowledgements};
+  }
+  return result;
+ }
+ async function scrub(school,result,request,deliver){
+  let proof=result;
+  if(!proof.record){
+   const readback=await deliver({action:'managed_records',operation:'read',collection:request.collection,id:request.id,syncProtocol:2});
+   if(readback?.success!==true||readback.schoolId!==school||readback.syncProtocol!==2||readback.pointRead!==true||!readback.records?.[request.id])fail(502,'DOMAIN_CANONICAL_UNVERIFIED');
+   proof={...result,record:readback.records[request.id]};
+  }
+  return scrubDomainReceipt(school,proof,request);
+ }
  const pending=(school,lane,id)=>({success:true,schoolId:school,edgeDeliveryVersion:1,cloudflareAccepted:true,driveState:'pending',delivery:{lane,id}});
- async function status(school,lane,id){
+ async function status(school,lane,id,readDrive){
   if(!(lane==='records'||FILE.test(lane))||!/^[a-f0-9]{64}$/.test(id)||FILE.test(lane)&&lane!=='file-'+id)fail(400,'INVALID_EDGE_RECEIPT');
   const row=await edge.rpc(school,lane,{command:'status',id});
+  return statusFromRow(school,lane,id,row,readDrive);
+ }
+ async function statusFromRow(school,lane,id,row,readDrive){
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
-  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...row.response.result,cloudflareAccepted:true,driveState:'verified',...measured};
+  // Only a fully successful, immutable Google ACK can say Drive verified.
+  // Historical completed batch receipts may include a rejected operation;
+  // never turn those into a green Drive result (or clear a client's outbox).
+  if(row.state==='completed'&&row.response?.result){
+   const result=row.response.result;
+   // A historical malformed batch response with no acknowledgements
+   // cannot satisfy the durable Drive proof contract either.
+   if(result.recordWriteBatchVersion===1&&
+    (!Array.isArray(result.acknowledgements)||result.acknowledgements.length===0))
+    fail(502,'ACK_UNVERIFIED');
+   const rejected=Array.isArray(result.acknowledgements)
+    ?result.acknowledgements.find(ack=>ack?.success!==true):null;
+   if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
+   return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+  }
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
    ...(/^[A-Z_]{1,80}$/.test(row.response?.failureCode||'')?{failureCode:row.response.failureCode}:{})}};
  }
- async function record(school,request){
+ async function record(school,request,readDrive){
   const identity=request.action==='managed_records_batch'?request.operations.map(op=>[op.collection,op.id,op.operationId]):[request.collection,request.id,request.operationId];
   const id=digest(JSON.stringify([school,request.action,identity]));
-  await edge.rpc(school,'records',{command:'enqueue',id,request});return status(school,'records',id);
+  const durable=await edge.rpc(school,'records',{command:'enqueue',id,request});
+  // The school-bound Durable Object's committed enqueue receipt is already a
+  // sufficient Cloudflare ACK. Do not waste a second network hop polling it.
+  // Completed replays, retries, unexpected receipts and legacy Workers still
+  // go through the signed status/Drive-proof verification owner.
+  if(durable?.id===id&&durable.state==='pending'&&durable.response==null)
+   return pending(school,'records',id);
+  return status(school,'records',id,readDrive);
  }
  function fileIdentity(school,uploadKey){const id=digest(JSON.stringify([school,uploadKey]));return {id,lane:'file-'+id};}
  async function file(school,request){
@@ -33,7 +78,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
    for(let pos=0;pos<bytes.length;pos+=512*1024){const chunk=bytes.subarray(pos,pos+512*1024);await edge.rpc(school,lane,{command:'part',id,offset:request.offset+pos,base64:chunk.toString('base64'),chunkSha256:digest(chunk)});}
   }
   const current=request.operation==='part'||request.operation==='status'?await edge.rpc(school,lane,{command:'status',id}):row;
-  if(current.manifest.received===manifest.sizeBytes)return status(school,lane,id);
+  if(current.manifest.received===manifest.sizeBytes)return statusFromRow(school,lane,id,current);
   return {success:true,schoolId:school,uploadResumableVersion:1,uploadKey:manifest.uploadKey,sha256:manifest.sha256,sizeBytes:manifest.sizeBytes,offset:current.manifest.received,committed:false,cloudflareAccepted:true,driveState:'receiving'};
  }
  async function wholeFile(school,request){
@@ -41,14 +86,24 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
   if(typeof request.base64!=='string'||! /^[A-Za-z0-9+/]*={0,2}$/.test(request.base64))fail(400,'INVALID_EDGE_FILE');
   const bytes=Buffer.from(request.base64,'base64');if(bytes.toString('base64')!==request.base64||!bytes.length||bytes.length>20*1024*1024)fail(400,'INVALID_EDGE_FILE');
   const m={uploadKey:request.uploadKey,sha256:digest(bytes),sizeBytes:bytes.length,name:request.name,mime:request.mime};
-  const {id,lane}=fileIdentity(school,m.uploadKey);const row=await edge.rpc(school,lane,{command:'begin',id,manifest:m});
+  const {id,lane}=fileIdentity(school,m.uploadKey);
+  if(atomicSmallFilesEnabled&&bytes.length<=256*1024){
+   // One verified durable Cloudflare put, then an immediate pending ACK.
+   // The broker delivery owner alone can later produce a real Drive file ID.
+   const row=await edge.rpc(school,lane,{command:'putSmall',id,manifest:m,base64:bytes.toString('base64')});
+   if(row.id!==id||row.manifest?.sha256!==m.sha256||row.manifest?.received!==m.sizeBytes)fail(502,'EDGE_SMALL_FILE_ACK_UNVERIFIED');
+   if(row.state==='completed'||row.state==='needsAttention')return status(school,lane,id);
+   if(!['pending','retry','processing'].includes(row.state))fail(502,'EDGE_SMALL_FILE_ACK_UNVERIFIED');
+   return pending(school,lane,id);
+  }
+  const row=await edge.rpc(school,lane,{command:'begin',id,manifest:m});
   if(row.state==='completed')return status(school,lane,id);
   for(let offset=row.manifest.received;offset<bytes.length;offset+=512*1024){const chunk=bytes.subarray(offset,offset+512*1024);await edge.rpc(school,lane,{command:'part',id,offset,base64:chunk.toString('base64'),chunkSha256:digest(chunk)});}
   return status(school,lane,id);
  }
  function verifiedRecord(result,school,request){
   if(result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
-    typeof result.recordRevision!=='string'||!result.recordRevision||result.recordRevision.startsWith('cf-'))return false;
+    typeof result.recordRevision!=='string'||!result.recordRevision||/^(live-|cf-)/.test(result.recordRevision))return false;
   const record=result.record;if(!record)return true;
   if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
   if(!request)return true;
@@ -85,9 +140,25 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
      }
      for(const ack of reply.acknowledgements)if(ack.success||terminal.has(ack.code))partial[ack.operationId]=ack;
      if(original.operations.some(op=>!partial[op.operationId])){
+      // A partial batch is still retained at Cloudflare. Report the actual
+      // allowlisted Script failure instead of replacing timeout/provider errors
+      // with an indistinguishable EDGE_DELIVERY_PENDING 503.
       const refusal=reply.acknowledgements.find(ack=>!ack.success&&!terminal.has(ack.code));
-      if(refusal?.code==='SCRIPT_QUOTA_EXCEEDED')fail(429,refusal.code);fail(503,'EDGE_DELIVERY_PENDING');
+      const providerStatuses={
+       SCRIPT_QUOTA_EXCEEDED:429,SCRIPT_TIMEOUT:504,SCRIPT_OPERATION_FAILED:502,
+       SCRIPT_TRANSPORT_ERROR:503,SCRIPT_RESPONSE_READ_FAILED:503,
+       SCRIPT_SHEET_RECOVERY_REQUIRED:503,SCRIPT_STUDENT_PARENT_PENDING:503,
+       SCRIPT_STORAGE_NOT_PREPARED:502,SCRIPT_MIGRATION_PENDING:503,
+      };
+      if(refusal&&Object.hasOwn(providerStatuses,refusal.code))fail(providerStatuses[refusal.code],refusal.code);
+      fail(503,'EDGE_DELIVERY_PENDING');
      }
+     // Terminal rejection is not an authoritative *batch* Drive ACK.
+     // Mark the original Cloudflare operation for owner review, retaining its
+     // partial successful receipts and original request for safe reconciliation.
+     // Without this guard a permission/conflict refusal looked 'completed'.
+     const terminalRefusal=original.operations.map(op=>partial[op.operationId]).find(ack=>ack?.success!==true);
+     if(terminalRefusal)fail(409,terminal.has(terminalRefusal.code)?terminalRefusal.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
      result={success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements:original.operations.map(op=>partial[op.operationId])};
     }else {result=await deliver(original);phase='verify';if(!verifiedRecord(result,school,original))fail(502,'ACK_UNVERIFIED');}
    }else {
@@ -105,13 +176,40 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,diagnos
     result={...progress,fileUrl:'https://drive.google.com/file/d/'+progress.fileId+'/view'};
    }
    phase='commit';
-   const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now()});return {processed:stored===true?1:0};
+   let cleanup={};
+   if(lane==='records'&&gcEnabled(school)){
+    if(original.action==='managed_records_batch'){
+     // Keep a failed/review batch intact. Never clear half of its request or
+     // hide only selected partial receipts behind a purged payload marker.
+     if(original.operations.every(canGcRecord)&&result.acknowledgements.every(ack=>ack.success===true)){
+      const acknowledgements=[];
+      for(const op of original.operations){const ack=result.acknowledgements.find(item=>item.operationId===op.operationId);acknowledgements.push(await scrub(school,{...ack,success:true,schoolId:school,syncProtocol:2},op,deliver));}
+      result={...result,acknowledgements};cleanup={payloadPurged:true,identity:{action:'managed_records_batch',operations:original.operations.map(identity)}};
+     }
+    }else if(canGcRecord(original)){
+     result=await scrub(school,result,original,deliver);cleanup={payloadPurged:true,identity:identity(original)};
+    }
+   }
+   const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
    const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
-   await finish({state:review?'needsAttention':'retry',nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(error.status===429?60000:5000,Math.min(86400000,Number(error.retryAfterMs)||0)),partial,
+   // Cloudflare preserves the operation, including partial verified receipts.
+   // Avoid hammering the same school Apps Script every five seconds during
+   // lock contention, quota pressure or a repeated transient provider error.
+   // Retry count lives with the durable Cloudflare receipt (not process memory).
+   const prior=job.response?JSON.parse(job.response):{};
+   const attempts=Number.isSafeInteger(prior.retryCount)&&prior.retryCount>=0&&prior.retryCount<=20?prior.retryCount:0;
+   const retryCount=Math.min(attempts+1,10);
+   const providerDelay=Number.isSafeInteger(error.retryAfterMs)&&error.retryAfterMs>0?
+    Math.min(86400000,error.retryAfterMs):0;
+   const floor=error.status===429?60000:5000;
+   const backoff=Math.min(300000,floor*2**(retryCount-1));
+   await finish({state:review?'needsAttention':'retry',
+    nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
+    ...(!review?{retryCount}:{}),partial,
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
   }

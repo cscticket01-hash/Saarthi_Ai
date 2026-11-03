@@ -1,3 +1,6 @@
+import 'windows_drive_delivery_queue.dart';
+import 'windows_live_sync_runtime.dart';
+import 'live_sync_protocol.dart';
 import 'windows_sync_evidence.dart';
 import 'windows_learned_sync_rules.dart';
 import 'windows_daily_access_guard.dart';
@@ -65,6 +68,37 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Map<String, dynamic>? _transferStatus;
   DateTime? _transferReadAfter;
   bool _transferReadBusy = false;
+  Timer? _driveDeliveryTimer;
+  Future<void> _refreshDriveDeliveries() async {
+    if (!_initialized || isPaused || _resetPaused || !ManagedSchoolSession.enabled ||
+        !validSchoolId(_activeSchoolSyncId)) return;
+    final school = _activeSchoolSyncId, profile = FirebaseFirestore.instance.activeProfileId;
+    try {
+      await WindowsDriveDeliveryQueue.poll(school,
+        canAdmit: () => _initialized && !isPaused && !_resetPaused &&
+            FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school,
+        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body));
+      if (FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school) {
+        _transferReadAfter = null;
+      }
+    } catch (_) { /* Receipt work stays durable; no record queue is cleared. */ }
+  }
+  Future<Map<String, dynamic>> _withDriveHistory(Map<String, dynamic> status, String profile) async {
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+    if (school is! String || !validSchoolId(school)) return status;
+    final history = await WindowsDriveDeliveryQueue.history(school);
+    if (FirebaseFirestore.instance.activeProfileId != profile) return status;
+    final combined = {for (final row in history) row['id']: row};
+    if (_liveRuntime != null && !isPaused && !_resetPaused) {
+      try {
+        final response = await ManagedSchoolSession.callForSchool(school, 'managed/live/backupHistory', {'liveProtocol':1});
+        if (FirebaseFirestore.instance.activeProfileId != profile) return status;
+        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) combined[row['id']] = row;
+      } catch (_) { /* The durable local receipt list survives a provider outage. */ }
+    }
+    final rows = combined.values.toList()..sort((a,b)=>(b['acceptedAt'] as num? ?? 0).compareTo(a['acceptedAt'] as num? ?? 0));
+    return {...status, 'driveSaveHistory': rows.take(25).toList(), 'driveHistoryLocal': true};
+  }
   Future<Map<String, dynamic>?> refreshTransferStatus() async {
     final origin = FirebaseFirestore.instance.activeProfileId;
     if (_transferProfile != origin) {
@@ -81,14 +115,14 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     try {
       final value = await ManagedSchoolSession.call('managed/cloudflare/status', {});
       if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
-      _transferStatus = value;
+      _transferStatus = await _withDriveHistory(value, origin);
     } catch (error) {
       if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
       final recovery = windowsSyncRecovery(error);
       if (recovery.kind == SyncFailureKind.quota) {
         _transferReadAfter = DateTime.now().add(recovery.delay(1));
       }
-      _transferStatus = {...?_transferStatus, 'unavailable': true};
+      _transferStatus = await _withDriveHistory({...?_transferStatus, 'unavailable': true}, origin);
     } finally {
       _transferReadBusy = false;
     }
@@ -148,6 +182,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _remoteCollections.isNotEmpty ||
         _remoteRecordIds.isNotEmpty ||
         _remoteResetPending ||
+        (_liveRuntime?.pendingWork??false) ||
         _pendingIdInputs.isNotEmpty ||
         _stalledDownloadRepairDue ||
         (lastError != null &&
@@ -156,6 +191,28 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
   Future<void> _automaticSync() async {
     if (_automaticDue) await syncNow();
+  }
+
+  bool _recoveringPendingDispatch = false;
+  // A dispatch can be consumed while profile activation owns the serial lane.
+  // Re-observe durable local work on the existing watchdog; never reset retries,
+  // user pause, quota limits, operation IDs or cloud acknowledgement state.
+  Future<void> _recoverPendingDispatch() async {
+    if (!automaticScheduleExpected || _syncing || _activating > 0 ||
+        _recoveringPendingDispatch || _dispatch.running) return;
+    _recoveringPendingDispatch = true;
+    final profile = _activeProfileId, school = _activeSchoolSyncId;
+    try {
+      await refreshDetails();
+      if (!automaticScheduleExpected || _syncing || _activating > 0 ||
+          _activeProfileId != profile || _activeSchoolSyncId != school ||
+          FirebaseFirestore.instance.activeProfileId != profile) return;
+      if (_hasAutomaticWork) scheduleSoon();
+    } catch (_) {
+      // A local storage transition is retried on the next existing tick.
+    } finally {
+      _recoveringPendingDispatch = false;
+    }
   }
 
   // The automatic owner checks local durable evidence. It cannot ACK or
@@ -233,6 +290,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'displayState': 'paused',
     };
     _remoteFeed.stop();
+    _closeLiveRuntime();
+    _protocolVerifiedAt=null;
     _pauseGeneration++;
     _dispatch.cancel();
     _rerunRequested = false;
@@ -308,6 +367,56 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   final _changeWatch = WindowsCloudChangeWatch();
   Timer? _changeTimer;
   bool _changeFeedSupported = false;
+  WindowsLiveSyncRuntime? _liveRuntime;
+  String? _liveRuntimeScope;
+  void _closeLiveRuntime() {
+    _liveRuntime?.close(); _liveRuntime=null; _liveRuntimeScope=null;
+  }
+  Future<void> _configureLiveRuntime(Map<String,dynamic> health, Map<String,dynamic> central) async {
+    final collections=health['liveSyncCollections'];
+    if(health['brokerLiveSyncVersion']!=1 || collections is! List ||
+        collections.isEmpty || collections.any((c)=>!liveSyncCollections.contains(c))) {
+      _closeLiveRuntime();return;
+    }
+    final profile=_activeProfileId,school=_activeSchoolSyncId;
+    final scope=jsonEncode([profile,school]);
+    if(_liveRuntimeScope==scope && _liveRuntime!=null)return;
+    _closeLiveRuntime();
+    final device=await ManagedDeviceCredentials.identity(
+      accountUid:central['uid'].toString(),endpoint:central['endpoint'].toString());
+    if(_activeProfileId!=profile || _activeSchoolSyncId!=school || isPaused)return;
+    _liveRuntimeScope=scope;
+    _liveRuntime=WindowsLiveSyncRuntime(school:school,profile:profile,deviceId:device,
+      store:WindowsLiveRuntimeLocalStore(FirebaseFirestore.instance,school,profile),
+      currentSchool:()=>_activeSchoolSyncId,currentProfile:()=>_activeProfileId,
+      canRun:()=>!isPaused&&!_resetPaused,
+      call:(action,body)=>ManagedSchoolSession.callForSchool(school,action,body),
+      onWork:(){if(automaticScheduleExpected){if(_syncing)_rerunRequested=true;scheduleSoon();}},
+      reconcile:(targets)async {
+        final generation=_remoteChangeGeneration;
+        await _pullManagedChanges(schoolOverride:school,verifyInventory:false,
+          selectedCollections:targets.keys.toSet(),targetRecordIds:targets,
+          // Point reads remain exact when a verified baseline is available.
+          // A fallback collection read must fetch actual records, rather than
+          // treating an unchanged manifest as proof of local business apply.
+          batchReader:(group)=>WindowsFirebaseRemote.readManagedBatch(
+            school,{for(final name in group.keys)name:''}));
+        // The same verified point download also satisfies an older ordinary
+        // feed hint. Preserve hints that arrived during the read.
+        if(_lastManagedApplyVerified && generation==_remoteChangeGeneration) {
+          for(final entry in targets.entries) {
+            _remoteRecordIds[entry.key]?.removeAll(entry.value);
+            if(_remoteRecordIds[entry.key]?.isEmpty??false)_remoteRecordIds.remove(entry.key);
+          }
+        }
+        return _lastManagedApplyVerified;
+      },recoverSnapshot:(selected)async {
+        await _pullManagedChanges(schoolOverride:school,verifyInventory:false,
+          selectedCollections:selected,batchReader:(group)=>WindowsFirebaseRemote.readManagedBatch(
+            school,{for(final name in group.keys)name:''}));
+        return _lastManagedApplyVerified;
+      });
+  }
   int _remoteChangeGeneration = 0;
   bool _remoteResetPending = false;
   final _pendingIdInputs = <String, Set<String>>{};
@@ -332,6 +441,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         WindowsSyncInbox.receive(_activeProfileId, school, event),
     onRecords: (records) {
       if (!automaticScheduleExpected) return;
+      if(records.keys.any(liveSyncCollections.contains))_liveRuntime?.hint();
       _remoteChangeGeneration++;
       for (final entry in records.entries) {
         if (!_remoteCollections.contains(entry.key))
@@ -342,6 +452,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     },
     onReset: () {
       if (!automaticScheduleExpected) return;
+      _liveRuntime?.reconnect();
       _remoteChangeGeneration++;
       _remoteResetPending = true;
       // Heads may be cached for five seconds on another broker. One bounded
@@ -359,6 +470,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     },
     onHint: (collections) {
       if (!automaticScheduleExpected) return;
+      if(collections.any(liveSyncCollections.contains))_liveRuntime?.hint();
       _remoteChangeGeneration++;
       _remoteCollections.addAll(collections);
       for (final collection in collections) _remoteRecordIds.remove(collection);
@@ -366,6 +478,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       scheduleSoon();
     },
     onVerified: () {
+      if(_networkUnavailableSchool==_activeSchoolSyncId)_liveRuntime?.reconnect();
       unawaited(_resumeNetworkPending());
     },
     onError: (error) {
@@ -384,9 +497,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   );
 
   String? _networkUnavailableSchool;
+  String? _lastNetworkResumeSchool;
+  DateTime? _lastNetworkResumeAt;
   bool _resumingNetwork = false;
   Future<void> _resumeNetworkPending() async {
-    if (_networkUnavailableSchool != _activeSchoolSyncId ||
+    if (!verifiedReconnectRecoveryDue(
+          activeSchool: _activeSchoolSyncId,
+          failedSchool: _networkUnavailableSchool,
+          now: DateTime.now(),
+          lastRecoveredAt: _lastNetworkResumeAt,
+          lastRecoveredSchool: _lastNetworkResumeSchool,
+        ) ||
         _resumingNetwork ||
         !automaticScheduleExpected ||
         _syncing ||
@@ -427,12 +548,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_activeProfileId != profile || db.activeProfileId != profile) return;
       _networkUnavailableSchool = null;
       if (count == 0) return;
+      _lastNetworkResumeAt = DateTime.now();
+      _lastNetworkResumeSchool = school;
       _nextRetry = null;
       _failures = 0;
       if (recoveryDecision?.kind == SyncFailureKind.networkPath ||
-          recoveryDecision?.kind == SyncFailureKind.timeout ||
-          recoveryDecision?.kind == SyncFailureKind.unknown)
+          recoveryDecision?.kind == SyncFailureKind.timeout) {
         recoveryDecision = null;
+        lastError = null; // Verified reconnect cleared the transport error, not the outbox.
+      }
       await refreshDetails();
       scheduleSoon(localMutation: true);
     } catch (error) {
@@ -1113,6 +1237,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _resetPaused = false;
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
+    CentralSchoolCloud.edgeDeliveryProfile = () => FirebaseFirestore.instance.activeProfileId;
+    CentralSchoolCloud.onEdgeDelivery = (notice) async {
+      await WindowsDriveDeliveryQueue.retainEdge(notice);
+      _transferReadAfter = null;
+    };
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
       _recordActivity({
@@ -1151,6 +1280,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
     if (_resetPaused) return;
 
+    _driveDeliveryTimer?.cancel();
+    _driveDeliveryTimer=Timer.periodic(const Duration(seconds:15), (_) => unawaited(_refreshDriveDeliveries()));
+    unawaited(_refreshDriveDeliveries());
     _historyExpiryTimer?.cancel();
     _historyExpiryTimer=Timer.periodic(const Duration(minutes:1),(_)=>_pruneRepairHistory());
     _schedule.start(reconciliationInterval);
@@ -1158,6 +1290,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _changeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_discoverManagedChanges());
       unawaited(_scheduleStalledDownloadRepair());
+      unawaited(_recoverPendingDispatch());
     });
     _schedule.armCheckpoint(_lastIntegrityAttempt ?? DateTime.now());
 
@@ -1218,7 +1351,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         isPaused ||
         !automaticSyncEnabled)
       return;
-    if (localMutation) _automaticMutationPending = true;
+    if (localMutation) {
+      _automaticMutationPending = true;
+      _liveRuntime?.markPending();
+    }
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
       if (!canScheduleAfterSyncFailure(
@@ -1364,14 +1500,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       }
     } finally {
       _activating--;
+      if (_activating == 0 && automaticScheduleExpected) {
+        scheduleSoon(delay: const Duration(milliseconds: 350));
+      }
     }
   }
 
   Future<void> pauseForAppReset() async {
     _resetPaused = true;
+    _closeLiveRuntime();
     _schedule.stop();
     _changeTimer?.cancel();
     _historyExpiryTimer?.cancel();
+    _driveDeliveryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();
@@ -1583,6 +1724,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     required bool seedGoogleConfig,
   }) async {
     if (_activeProfileId != profile.profileId) {
+      _closeLiveRuntime();
       _lastPull = null;
       _remoteResetPending = false;
       _remoteCollections.clear();
@@ -2041,6 +2183,27 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _protocolVerifiedAt == null ||
             DateTime.now().difference(_protocolVerifiedAt!) >=
                 const Duration(minutes: 5)) {
+          // One PC's verified school-owned GS /exec link is stored centrally.
+          // Every other authenticated PC adopts that SAME school's latest
+          // broker-authoritative link during its existing bounded health check.
+          // Never copy secrets/URLs through ordinary school records or overwrite
+          // pending local operations with another device's configuration.
+          await ManagedSchoolSession.callForSchool(
+            _activeSchoolSyncId,
+            'managed/session',
+            {},
+          );
+          final verifiedConfig = await CentralSchoolCloud.saved();
+          if (verifiedConfig['managed'] != true ||
+              verifiedConfig['schoolId'] != _activeSchoolSyncId ||
+              verifiedConfig['uid'] != central['uid']) {
+            throw StateError('School connection changed during GS refresh.');
+          }
+          if (verifiedConfig['scriptUrl'] != central['scriptUrl']) {
+            // Rebind first; do not send existing records to an obsolete URL.
+            unawaited(activateCurrentConnections(allowPairing: false));
+            return;
+          }
           final health = await ManagedSchoolSession.callForSchool(
             _activeSchoolSyncId,
             'managed/storage/check',
@@ -2077,6 +2240,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _changeHeadsSupported =
               health['recordChangeHeadsVersion'] == 1 &&
               health['brokerChangeHeadsVersion'] == 1;
+          await _configureLiveRuntime(Map<String,dynamic>.from(health),Map<String,dynamic>.from(central));
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
@@ -2171,6 +2335,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _admitBatch();
           _setCheckingCloud(false);
           await _measure('recordUploadStage', () => _pushManagedOutbox());
+          unawaited(_refreshDriveDeliveries());
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
               !isRecordSyncConflict(e))
@@ -2192,6 +2357,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }
           }
         }
+        await WindowsBackendBridge.repairIdenticalDocumentConflicts(
+          _activeSchoolSyncId,canAdmit:()=>!isPaused);
+        // Cloud reads/rendering for a derived repair must not block other data.
+        unawaited(WindowsDocumentTemplates.repairQueuedIdCards(
+          _activeSchoolSyncId,canAdmit:()=>!isPaused).then<void>((_) {},
+            onError:(Object _,StackTrace __) {}));
         // Keep locally acknowledged people and their cards in the same priority
         // dependency job, ahead of unrelated cloud pulls and audits.
         final priorityCardFailure = await _measure('priorityCardStage', () => WindowsPersonCardSync.priorityPass(() async {
@@ -2247,6 +2418,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ),
           canAdmit: () => !isPaused,
         );
+        // Live delivery is consumed inside this same serial sync lane. Hints
+        // never call the business writer or acknowledge a local upload.
+        if(scheduledCheck||integrityAudit||_manualSync)_liveRuntime?.markPending();
+        if(_liveRuntime?.pendingWork??false) {
+          _admitBatch();
+          await _measure('liveRecordDownloadStage',()=>_liveRuntime!.run());
+        }
         // Publication must use the same verified school inputs on every PC.
         // Merge cloud records first; applySyncedDocument retains pending edits.
         if (_lastPull == null ||
@@ -2583,6 +2761,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (_activeProfileId != syncOrigin) return;
       lastError = e.toString();
       recoveryDecision = windowsSyncRecovery(e);
+      if (recoveryDecision!.kind == SyncFailureKind.networkPath ||
+          recoveryDecision!.kind == SyncFailureKind.timeout) {
+        // Normal record-upload failures must arm the same recovery owner as
+        // change-feed failures. A verified later connection may reopen the
+        // original CAS operation, without touching quota or other schools.
+        _networkUnavailableSchool = _activeSchoolSyncId;
+      }
       _failures++;
       final learnedFloor=WindowsSharedRepairKnowledge.value('retry_floor',_activeSchoolSyncId,
         category:recoveryDecision!.kind.name);
@@ -4131,9 +4316,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   void dispose() {
+    _closeLiveRuntime();
     _schedule.stop();
     _changeTimer?.cancel();
     _historyExpiryTimer?.cancel();
+    _driveDeliveryTimer?.cancel();
     _remoteFeed.stop();
     _pauseTimer?.cancel();
     _dispatch.cancel();

@@ -17,7 +17,7 @@ async function boundedResults(rows,visit,limit=4){
 }
 /** Durable coordination only. School operational records remain in school Drive.
  * No accepted acknowledgement is sent before store.create has completed. */
-function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatchSize=25,maxBatchSize=200,deliveryBatchSize=25,random=Math.random,targetBatchMillis=2000,maxConcurrency=2,retryAtForSchool=()=>0}){
+function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatchSize=25,maxBatchSize=200,deliveryBatchSize=25,random=Math.random,targetBatchMillis=2000,maxConcurrency=2,retryAtForSchool=()=>0,completionReceipt=null}){
  if(typeof retryAtForSchool!=='function'||!Number.isInteger(minBatchSize)||!Number.isInteger(maxBatchSize)||minBatchSize<1||maxBatchSize>200||minBatchSize>maxBatchSize||!Number.isInteger(batchSize)||batchSize<minBatchSize||batchSize>maxBatchSize||!Number.isInteger(deliveryBatchSize)||deliveryBatchSize<1||deliveryBatchSize>25||!Number.isFinite(targetBatchMillis)||targetBatchMillis<=0||typeof random!=='function'||!Number.isInteger(maxConcurrency)||maxConcurrency<1||maxConcurrency>2)throw new Error('Invalid bounded attendance batch configuration');
  let draining=false,currentBatchSize=batchSize,currentConcurrency=1;
  const schoolCooldowns=new Map();let lastSchool=null;
@@ -87,10 +87,16 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
      const state=ack?.success===true?'completed':definitive?'needsAttention':'retry';
      const attempts=item.attempts+1;
      const retryAt=now()+Math.max(isQuota(deliveryError)?60000:0,Math.min(86400000,Number(deliveryError?.retryAfterMs)||0),Math.min(3600000,Math.floor(5000*2**Math.min(attempts,9)*(0.5+Math.max(0,Math.min(1,random()))))));
-     await store.finish(item.operationId,item.claim,{state,attempts,
+     let finishValues={state,attempts,
        ...(state==='completed'?{completedAt:now()}:{}),
        lastError:state==='completed'?'':definitive?'Attendance requires school review.':'Attendance service unavailable; operation retained.',
-       nextAttemptAt:['completed','needsAttention'].includes(state)?Number.MAX_SAFE_INTEGER:retryAt});
+       nextAttemptAt:['completed','needsAttention'].includes(state)?Number.MAX_SAFE_INTEGER:retryAt};
+     if(state==='completed'&&typeof completionReceipt==='function')finishValues=await completionReceipt({school,item,ack,values:finishValues});
+     // A superseded/expired claim is not a durable completion receipt. The
+     // Firestore adapter explicitly returns false for unmatched claims; older
+     // custom adapters returning void retain their existing contract.
+     const applied=await store.finish(item.operationId,item.claim,finishValues);
+     if(applied===false)throw Error('Attendance finalization claim changed; original operation retained');
      return {state,retryAt};
     });
     phases.finishMs+=Math.round(performance.now()-finishStart);
@@ -172,9 +178,9 @@ function firestoreAttendanceStore(db,{schoolId=null,collectionName='attendance_o
    tx.set(r,{state:'processing',claim,claimExpiresAt:expires,nextAttemptAt:expires},{merge:true});return true;
   }),
   finish:(id,claim,values)=>db.runTransaction(async tx=>{
-   const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return;
-   if(schoolId&&snap.data().schoolId!==schoolId)return;
-   tx.set(r,{...values,claim:'',claimExpiresAt:0},{merge:true});
+   const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return false;
+   if(schoolId&&snap.data().schoolId!==schoolId)return false;
+   tx.set(r,{...values,claim:'',claimExpiresAt:0},{merge:true});return true;
   }),
  };
 }

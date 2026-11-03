@@ -1,3 +1,4 @@
+import '../../lib/testing/isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
@@ -50,7 +51,7 @@ void main() {
   final transport=OfflineBoundary();
   try{
    final authentication=OfflineBoundary();final authenticationClock=Stopwatch()..start();
-   final login=await ManagedSchoolSession.login(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
+   final login=await authenticateIsolatedAdminFixture(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
    report['authenticationMs']=authenticationClock.elapsedMilliseconds;report['authenticationRequests']=authentication.samples;
    expect(login['schoolId'],school);
    final db=FirebaseFirestore.instance;await db.changeLocalStorageLocation('${tmp.path}/windows');
@@ -164,10 +165,29 @@ void main() {
    report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
 
    await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
-   final existingDocuments=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'read','syncProtocol':2});
-   final fixturePerson='isolated-v2-$unique-student';
-   final fixture=(existingDocuments['records'] as Map).values.firstWhere((r)=>r['syntheticTest']==true&&r['personId']==fixturePerson&&r['documentKind']=='idCard') as Map;
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixture['sizeBytes'],'contentHash':fixture['contentHash'],'documentRevision':fixture['documentRevision']}});
+   // Each retry owns its PDF fixture; a successful prerequisite job can belong
+   // to an earlier GITHUB_RUN_ATTEMPT and must not supply guessed identities.
+   final fixturePdf=utf8.encode('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
+   final fixtureHash=sha256.convert(fixturePdf).toString();
+   final fixture=await ManagedSchoolSession.callForSchool(school,'managed/file/upload',{
+    'name':'hosted-$unique-fixture.pdf','mime':'application/pdf',
+    'base64':base64Encode(fixturePdf),'uploadKey':'hosted-$unique-fixture'});
+   expect(fixture['schoolId'],school);expect(fixture['fileId'],isA<String>());
+   final fixtureReadback=await ManagedSchoolSession.callForSchool(school,'managed/file/read',{'fileId':fixture['fileId']});
+   expect(base64Decode(fixtureReadback['base64']),fixturePdf);
+   report['attemptOwnedPdfVerified']=true;
+   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixturePdf.length,'contentHash':fixtureHash,'documentRevision':fixtureHash}});
+   // The website intentionally consumes this run-stable notice ID. A retried
+   // client must import its verified prior revision before creating a new edit.
+   final priorNotices=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'school_notices','operation':'read','syncProtocol':2});
+   final priorNotice=(priorNotices['records'] as Map)[id];
+   if(priorNotice!=null){
+    expect(priorNotice,isA<Map>());expect(priorNotice['syntheticTest'],true);
+    expect(priorNotice['schoolId'],school);
+    expect(priorNotice['title'],'Actual Windows local-first TEST notice');
+    await db.applySyncedDocument(db.collection('school_notices').doc(id),Map<String,dynamic>.from(priorNotice));
+    report['priorAttemptNoticeRevisionImported']=true;
+   }
    report['conditions']='Fresh synthetic person and attendance; authenticated/warmed TEST service; unchanged deployed backend/Script; no physical devices';
    final clock=Stopwatch()..start();
    await db.collection('school_notices').doc(id).set({'schoolId':school,'syntheticTest':true,'title':'Actual Windows local-first TEST notice','timestamp':DateTime.now().millisecondsSinceEpoch});

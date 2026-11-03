@@ -22,3 +22,30 @@ String? cloudTransferMessage(Map<String, dynamic>? status) {
   }
   return null;
 }
+
+/// Live backup history uses a separate persisted journal. These messages cannot
+/// acknowledge the local record outbox and never relabel staging as Drive save.
+List<String> driveSaveMessages(Map<String, dynamic>? status) {
+  if (status == null || status['driveHistoryLocal'] != true && status['unavailable'] == true) return const [];
+  final rows = status['driveSaveHistory'];
+  if (rows is! List || rows.length > 25) return const [];
+  final messages = <String>[];
+  for (final row in rows) {
+    if (row is! Map || row['id'] is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['id'] as String)) continue;
+    final recordId = row['recordId'], collection = row['collection'];
+    final label = recordId is String && collection is String
+        ? '$collection · $recordId' : (row['id'] as String).substring(0, 8);
+    final completedAt = row['completedAt'];
+    if (row['state'] == 'completed' && completedAt is int && completedAt > 0) {
+      messages.add('Drive save completed · $label');
+    } else if (row['state'] == 'needsAttention') {
+      messages.add('Drive save needs review · $label');
+    } else if (const ['pending', 'retry', 'processing'].contains(row['state'])) {
+      messages.add(row['cloudflareAccepted'] == true
+          ? 'Cloudflare saved · Drive save pending · $label'
+          : 'Drive save pending · $label');
+    }
+  }
+  return messages;
+}

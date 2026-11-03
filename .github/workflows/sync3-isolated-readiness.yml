@@ -9,21 +9,31 @@ on:
       - '.github/workflows/sync3-isolated-readiness.yml'
 permissions:
   contents: read
+  actions: read
 concurrency:
+  # Cancel superseded diagnostics only. Explicit exact-source gates below
+  # order provider access without cancelling pending cloud workflows.
   group: sync3-isolated-readiness-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 jobs:
   read-only-test-cloud:
-    # Run on trusted in-repository release candidates too. Do not waive exact runtime,
+    # Include live-authority PR 206 in the genuine read-only TEST deployment gate. Do not waive exact runtime,
     # owner credentials, tested Apps Script version or read-only protocol acceptance.
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031')
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Wait for exact TEST writers without taking their mutation lock
+        if: github.head_ref == 'feature/live-sync-authority-v1-20261102'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VS_TEST_GATE_KIND: cloud
+          VS_TEST_GATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/await_test_gate.cjs
       - name: Read expected provider version from this exact source
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol
@@ -31,7 +41,9 @@ jobs:
           VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: node .github/scripts/test_cloud_readiness.cjs
+        run: |
+          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+          node .github/scripts/test_cloud_readiness.cjs
       - name: Require actual readiness rather than successful script execution alone
         run: node -e "const r=require('./build/cloud-prerequisites/report.json'); if(r.status!=='PASS') {console.error('Isolated TEST readiness '+r.status+'; inspect sanitized artifact.');process.exit(1);}"
       - uses: actions/upload-artifact@v4
@@ -39,3 +51,32 @@ jobs:
         with:
           name: sync3-isolated-read-only-readiness
           path: build/cloud-prerequisites/report.json
+
+  observe-deployed-test-cloud:
+    needs: read-only-test-cloud
+    # Diagnostic only: observe the real currently deployed TEST broker without
+    # claiming it matches the reviewed PR commit or Script contract.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'
+    name: Read-only current TEST licence and Drive diagnostic (not release acceptance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Observe existing TEST identity, entitlement and signed provider readiness
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_cloud_readiness.cjs
+      - name: Mark this as observation only, not new-code acceptance
+        if: always()
+        run: |
+          node -e "const fs=require('node:fs');const p='build/cloud-prerequisites/report.json';const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,'utf8')):{};console.log(JSON.stringify({mode:'OBSERVATION_ONLY',status:r.status||'UNAVAILABLE',runtimeCommit:r.runtimeCommit||null,entitlement:r.entitlement||null,script:r.deployedScriptEvidence||null,blocker:r.blocker||null}));"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-deployed-test-observation
+          path: build/cloud-prerequisites/report.json
+          retention-days: 7

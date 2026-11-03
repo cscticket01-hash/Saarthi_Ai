@@ -116,6 +116,8 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
         'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
         'OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED',
         'SCRIPT_TIMEOUT','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH',
+        'EDGE_DELIVERY_PENDING','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR',
+        'SCRIPT_MIGRATION_PENDING','ACK_UNVERIFIED',
         'SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED',
         'SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED',
         'SCHOOL_STORAGE_NOT_CONNECTED','SCRIPT_TRANSPORT_ERROR',
@@ -152,6 +154,21 @@ bool recoverablePendingAttention(
 bool networkRecoveryCandidate(Map item) =>
     {'retry','needsAttention'}.contains(item['syncState']) &&
     {'networkPath','timeout'}.contains(item['failureCategory']);
+
+/// Re-open only after a verified reconnect, and at most once per school
+/// within the cooldown. This is not permission to bypass quota or row CAS.
+bool verifiedReconnectRecoveryDue({
+  required String activeSchool,
+  required String? failedSchool,
+  required DateTime now,
+  DateTime? lastRecoveredAt,
+  String? lastRecoveredSchool,
+  Duration cooldown = const Duration(minutes: 2),
+}) {
+  if (activeSchool.isEmpty || activeSchool != failedSchool) return false;
+  if (lastRecoveredAt == null || lastRecoveredSchool != activeSchool) return true;
+  return !now.isBefore(lastRecoveredAt.add(cooldown));
+}
 
 SyncRecoveryDecision windowsSyncRecovery(Object error) {
   if (error is FieldDeltaUnavailable) return const SyncRecoveryDecision(

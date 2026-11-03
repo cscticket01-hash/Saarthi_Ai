@@ -171,6 +171,87 @@ void main() {
   tearDown(() async {
     await dir.delete(recursive: true);
   });
+  for(final mode in ['verified','unsynced-input','source-race','foreign-school']) {
+    test('derived ID conflict regeneration: $mode retains source authority and originals',()async{
+      await CentralSchoolCloud.updateSession(school,{'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
+      final person=<String,dynamic>{'schoolId':school,'_syncRevision':'person-r1',
+        'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'Class 1','rollNo':'12'};
+      final profile=<String,dynamic>{'schoolId':school,'_syncRevision':'profile-r1',
+        'schoolName':'Synthetic School','principalName':'Principal','schoolContactNo':'0000000000'};
+      final templates=<String,dynamic>{'schoolId':school,'_syncRevision':'templates-r1','studentId':'manifest:school-id-v1'};
+      await db.collection('students_directory').doc('S1').set(person);
+      await db.collection('school_config').doc('school_profile_cache').set(profile);
+      await db.collection('school_settings').doc('document_templates').set(templates);
+      final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+        'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+        'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+      final card=WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','S1',person);
+      final pending={...local,'documentId':card,'inventoryCategory':'generatedIdCard'};
+      final published={...cloud,'id':card,'documentId':card};
+      await db.collection('_local_student_documents').doc(card).set(pending);
+      await db.collection('_windows_document_outbox').doc(card).set(pending);
+      var personReads=0;
+      Future<Map<String,dynamic>> readSources(String collection,String key)async{
+        Map<String,dynamic>? row;
+        if(collection=='students_directory'){
+          personReads++;
+          row={...person,if(mode=='unsynced-input')'name':'Different school input'};
+          if(mode=='source-race'&&personReads==2)
+            await db.collection('students_directory').doc('S1').update({'name':'Edited during render'});
+        } else if(collection=='school_config')row=profile;
+        else if(collection=='school_settings')row=templates;
+        else row={...published,if(mode=='foreign-school')'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'};
+        return {'success':true,'schoolId':school,'syncProtocol':2,'records':{key:row}};
+      }
+      final printing=PrintingPlatform.instance;PrintingPlatform.instance=OwnerReviewPrinting(qr);
+      try{
+        final count=await WindowsDocumentTemplates.repairQueuedIdCards(school,readRecord:readSources);
+        final result=(await db.collection('_windows_document_outbox').doc(card).get()).data()!;
+        if(mode=='verified'){
+          expect(count,1);expect(result['syncState'],'Pending');
+          expect(result['documentRevision'],isNot(pending['documentRevision']));
+          expect(result['baseCloudRevision'],published['documentRevision']);
+          expect(result['reviewedRecordRevision'],published['_syncRevision']);
+          expect(result['localPath'],isNot(pending['localPath']));
+          expect(await File(result['localPath']).exists(),true);
+          expect((await db.collection('_windows_sync_conflict_history').get()).docs,isNotEmpty);
+        }else{expect(count,0);expect(result,pending);}
+        expect(await File(pending['localPath'] as String).exists(),true);
+        expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+      }finally{PrintingPlatform.instance=printing;}
+    });
+  }
+  test('self repair clears only an identical authenticated document ACK; differing inputs remain retained',()async{
+    cloud={...local,'id':id,'_syncRevision':'verified-record',
+      'contentHash':sha256.convert([1,2,3]).toString(),
+      'fileUrl':'https://drive.google.com/file/d/own-file/view'};
+    expect(await WindowsBackendBridge.repairIdenticalDocumentConflicts(school,readCloud:(_)=>read()),1);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false);
+    expect(await File(local['localPath'] as String).exists(),true);
+    final other='different-generation';
+    await db.collection('_local_student_documents').doc(other).set({...local,'documentId':other});
+    await db.collection('_windows_document_outbox').doc(other).set({...local,'documentId':other});
+    expect(await WindowsBackendBridge.repairIdenticalDocumentConflicts(school,readCloud:(_)async=>{
+      'schoolId':school,'syncProtocol':2,'records':{other:{...cloud,'id':other,'documentId':other,'inputRevision':'different-input'}}}),0);
+    expect((await db.collection('_windows_document_outbox').doc(other).get()).exists,true);
+  });
+  test('restored local ID without cloud baseline verifies before regenerating a conflicting PDF',()async{
+    final person={'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'1','rollNo':1};
+    final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
+      'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
+      'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
+    final cardId=WindowsBackendBridge.publishedIdCardOwnerIdForPerson('student','S1',person);
+    await db.collection('_local_student_documents').doc(cardId).set({
+      ...local,'documentId':cardId,'syncState':'Synced','inputRevision':'old-local-input'});
+    var renders=0,reads=0;
+    await expectLater(WindowsBackendBridge.publishIdCard(qr:qr,kind:'studentId',person:person,
+      inputRevision:'current-input',automatic:true,prepareBytes:()async{renders++;return Uint8List.fromList([9]);},
+      readPublished:()async{reads++;return {'schoolId':school,'syncProtocol':2,'records':{
+        cardId:{...cloud,'id':cardId,'documentId':cardId}}};}),throwsA(isA<PublishedIdInputConflict>()));
+    expect(reads,1);expect(renders,0);
+    expect((await db.collection('_windows_document_outbox').doc(cardId).get()).exists,false);
+    expect(await File(local['localPath'] as String).exists(),true);
+  });
   for(final source in ['local-deletion','pending-deletion','cloud-tombstone','deletion-during-read']) {
     test('automatic ID decision retains $source without a replacement upload', () async {
       final person={'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'1','rollNo':1};

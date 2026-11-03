@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -22,20 +23,48 @@ class SchoolTemplateImportEditor {
     final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
     bool sameSchool()=>db.activeProfileId==origin &&
       db.activeProfileIdentity['schoolSyncId']==school;
+    final progress=ValueNotifier<String>('Reading selected file…');
+    DialogRoute<void>? progressRoute;
+    NavigatorState? progressNavigator;
+    void closeProgress(){
+      final route=progressRoute;
+      progressRoute=null;
+      if(route!=null && route.isActive)progressNavigator?.removeRoute(route);
+    }
+    void stage(String message){progress.value=message;}
     try {
       SchoolTemplateImportEngine.verifySchool(school);
-      const types=XTypeGroup(label:'A4 PDF, image, Word or Excel',
+      const types=XTypeGroup(label:'A4 / Legal PDF, image, Word or Excel',
         extensions:['pdf','png','jpg','jpeg','doc','docx','xls','xlsx']);
       final file=await openFile(acceptedTypeGroups:[types]);
       if(file==null||!context.mounted)return;
       if(!sameSchool())throw StateError('School changed.');
+      progressNavigator=Navigator.of(context,rootNavigator:true);
+      progressRoute=DialogRoute<void>(context:context,barrierDismissible:false,
+        builder:(_)=>PopScope(canPop:false,child:AlertDialog(
+          title:const Text('Preparing school template'),
+          content:ValueListenableBuilder<String>(valueListenable:progress,
+            builder:(_,message,__)=>Column(mainAxisSize:MainAxisSize.min,
+              crossAxisAlignment:CrossAxisAlignment.start,children:[
+                const LinearProgressIndicator(),const SizedBox(height:16),
+                Text(message),const SizedBox(height:10),
+                const Text('Please wait. The template is saved only after verification.'),
+              ])),
+        )));
+      unawaited(progressNavigator!.push(progressRoute!));
+      // Paint feedback before starting raster analysis on the UI isolate.
+      await WidgetsBinding.instance.endOfFrame;
       final raw=await file.readAsBytes();
+      stage('Converting document to a printable page… Word/Excel requires installed Microsoft Office or LibreOffice.');
       final draft=await SchoolTemplateImportEngine.importBytes(
         kind:kind,schoolId:school,filename:file.name,
         bytes:Uint8List.fromList(raw));
       if(!sameSchool())throw StateError('School changed while uploading.');
+      final paperLabel=SchoolTemplateImportEngine.pageSizeLabel(draft.width,draft.height);
+      stage('Checking '+paperLabel+' page orientation…');
       final oriented=await TemplateForgeOfflineOcr.normalizeOrientation(draft);
       if(!sameSchool())throw StateError('School changed during orientation detection.');
+      stage('Recognizing text and template fields…');
       var tsv=await TemplateForgeOfflineOcr.recognize(oriented);
       if(!sameSchool())throw StateError('School changed during recognition.');
       var textRecognition=TemplateForgeAutoMapper.detect(oriented,tsv);
@@ -47,6 +76,7 @@ class SchoolTemplateImportEditor {
         w.contains('ambiguous') || w.contains('Overlapping') ||
         w.contains('appears to be'));
       if(!textRecognition.safeToActivate && !unsafe){
+        stage('Checking faint text with enhanced recognition…');
         final enhanced=await TemplateForgeOfflineOcr.recognize(
           oriented,enhanced:true);
         if(!sameSchool())throw StateError('School changed during OCR retry.');
@@ -65,6 +95,8 @@ class SchoolTemplateImportEditor {
           textRecognition=second;
         }
       }
+      stage('Checking photo, signature and QR positions…');
+      await Future<void>.delayed(Duration.zero);
       final labels=TemplateForgeVisualSlots.labelCounts(
         tsv,oriented.width,oriented.height);
       final slots=labels.isEmpty?const <ForgeVisualSlot>[]:
@@ -91,7 +123,7 @@ class SchoolTemplateImportEditor {
         final warnings=result.warnings.isEmpty?'none':result.warnings.join('; ');
         throw StateError('This scan is not safe to publish. Missing fields: '
           +missing+'. Recognition warnings: '+warnings+
-          '. Use a clearer A4 source; existing school templates remain unchanged.');
+          '. Use a clearer A4 or Legal source; existing school templates remain unchanged.');
       }
       final profile=(await db.collection('school_config')
         .doc('school_profile_cache').get()).data()??{};
@@ -106,6 +138,7 @@ class SchoolTemplateImportEditor {
         'schoolEmail':profile['schoolEmail']??profile['email']??example['schoolEmail']??'',
       };
       SchoolTemplateImportEngine.validatePreviewRecord(result.draft,record);
+      stage('Loading verified school images and preparing preview…');
       final imageAssets=await WindowsTemplateCloudStore.previewVisualAssets(
         result.draft,record);
       if(!sameSchool())throw StateError('School changed during image preview.');
@@ -122,17 +155,29 @@ class SchoolTemplateImportEditor {
       // Publish verifies the Drive image hash and reads back the manifest.
       // Reuse the already validated PDF instead of downloading all assets
       // and rendering the identical preview a second time.
+      stage('Saving to school Drive and verifying upload…');
       await WindowsDocumentTemplates.publishImportedTemplate(result.draft);
       if(!sameSchool()||!context.mounted)return;
+      closeProgress();
       await WindowsDocumentTemplates.preview(context,output,
-        title:kind.title+' • School template preview',
-        notice:'Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
+        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+          result.draft.width,result.draft.height)+' • School template preview',
+        notice:'Use matching A4 or Legal paper at Actual Size (100%) when printing. Drive image read-back and content hash verified. This template is saved to this PC’s school catalog; other PCs receive its manifest through school sync. Select “Use for school” after preview to apply it to future prints.');
     } catch(error) {
+      closeProgress();
       if(context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(duration:const Duration(seconds:9),
-            content:Text('TemplateForge: '+error.toString())));
+        await showDialog<void>(context:context,builder:(dialogContext)=>AlertDialog(
+          title:const Text('Template import did not finish'),
+          content:SingleChildScrollView(child:SelectableText(
+            'Stage: '+progress.value+'\n\n'+error.toString()+
+            '\n\nNo successful upload was confirmed. Existing templates remain available.')),
+          actions:[TextButton(onPressed:()=>Navigator.of(dialogContext).pop(),
+            child:const Text('Close'))],
+        ));
       }
+    } finally {
+      closeProgress();
+      progress.dispose();
     }
   }
 
@@ -160,7 +205,8 @@ class SchoolTemplateImportEditor {
         builder:(ctx)=>SimpleDialog(
           title:Text(kind.title+' • Auto generated drafts'),
           children:drafts.map((d)=>SimpleDialogOption(
-            child:Text(d.filename+' • '+d.fields.length.toString()+
+            child:Text(d.filename+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+              d.width,d.height)+' • '+d.fields.length.toString()+
               ' auto-detected fields'),
             onPressed:()=>Navigator.pop(ctx,d),
           )).toList(),
@@ -186,7 +232,8 @@ class SchoolTemplateImportEditor {
         throw StateError('School changed before draft preview.');
       }
       if(context.mounted)await WindowsDocumentTemplates.preview(context,pdf,
-        title:kind.title+' • Saved auto draft',
+        title:kind.title+' • '+SchoolTemplateImportEngine.pageSizeLabel(
+          draft.width,draft.height)+' • Saved auto draft',
         notice:'A local draft, not an approved/published school template. '
           'Original school document selections remain in effect.');
     }catch(e){

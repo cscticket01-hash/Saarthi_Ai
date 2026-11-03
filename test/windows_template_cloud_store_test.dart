@@ -2,6 +2,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/windows_template_cloud_store.dart';
 
 void main(){
+  test('deletion survives stale manifests on five devices and never affects school B',(){
+    const a='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const b='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    Map<String,dynamic> catalog(String school)=>{
+      'receipt':'imported:receipt-one',
+      'templateAssets':{'receipt':{'receipt-one':{
+        'version':1,'approved':true,'schoolId':school,'kind':'receipt',
+        'templateId':'receipt-one','sourceHash':'same-source',
+      }}},
+    };
+    final original=catalog(a),other=catalog(b);
+    final patch=WindowsTemplateCloudStore.deletionPatch(original,'receipt','receipt-one',a);
+    expect(patch['receipt'],0);
+    for(var pc=0;pc<5;pc++){
+      final received={...original,...patch};
+      // A late manifest upload cannot remove an independent deletion marker.
+      received['templateAssets']=original['templateAssets'];
+      expect(WindowsTemplateCloudStore.availableSchoolTemplates(received,'receipt',a),isEmpty);
+      expect(WindowsTemplateCloudStore.importedAsset(received,'receipt',templateId:'receipt-one'),isNull);
+    }
+    expect(WindowsTemplateCloudStore.availableSchoolTemplates(other,'receipt',b),hasLength(1));
+    expect(()=>WindowsTemplateCloudStore.deletionPatch(other,'receipt','receipt-one',a),throwsStateError);
+    expect(()=>WindowsTemplateCloudStore.deletionPatch(original,'receipt','builtin-reference',a),throwsStateError);
+  });
+  test('deleting an inactive upload preserves selection and other document kinds',(){
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final settings=<String,dynamic>{'receipt':0,'reportCard':'imported:report',
+      'templateAssets':{'receipt':{'version':1,'approved':true,'schoolId':school,
+        'kind':'receipt','sourceHash':'legacy'}}};
+    final patch=WindowsTemplateCloudStore.deletionPatch(settings,'receipt','legacy',school);
+    expect(patch.containsKey('receipt'),false);
+    expect(patch.containsKey('reportCard'),false);
+    expect(WindowsTemplateCloudStore.importedTemplates({...settings,...patch},'receipt'),isEmpty);
+  });
   test('template versions keep the active selection while exposing newest upload first',(){
     final old={
       'version':1,'approved':true,'templateId':'old-id',

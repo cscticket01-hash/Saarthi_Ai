@@ -32,6 +32,23 @@ void main() {
     await local.FirebaseFirestore.instance.switchProfile('test-${DateTime.now().microsecondsSinceEpoch}');
   });
   tearDown(() => ui.WindowsUiLanguage.change('en'));
+  test('unsafe exam delete is rejected without changing stored student records', () async {
+    await local.FirebaseFirestore.instance.collection('exams')
+      .doc('EXAM-preserved').set({'examId':'EXAM-preserved','examName':'Unit Test'});
+    await expectLater(
+      WindowsExamService.deleteUnusedExam('../other-school'),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      WindowsExamService.deleteUnusedExam('EXAM-preserved'),
+      throwsA(isA<StateError>()),
+    );
+    final unchanged = await local.FirebaseFirestore.instance.collection('exams')
+      .doc('EXAM-preserved').get();
+    expect(unchanged.exists,true,
+      reason:'An unverified/legacy school cannot erase even an empty exam');
+  });
+
   testWidgets('Windows attendance rejects malformed compact QR without a parser exception',(tester) async {
     await tester.pumpWidget(const MaterialApp(home:WindowsAttendanceScreen()));
     await tester.enterText(find.byType(TextField),'VS3|truncated');

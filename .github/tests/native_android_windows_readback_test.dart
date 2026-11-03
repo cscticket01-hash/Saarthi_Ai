@@ -1,3 +1,4 @@
+import '../../lib/testing/isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,7 +38,7 @@ void main() {
       expect(proof['websiteNoticeReadOnNativeAndroid'], true);
       expect(proof['syntheticPersonId'], 'synthetic-android-$run');
       expect(proof['originalCapturedAt'], isA<int>());
-      final login = await ManagedSchoolSession.login(
+      final login = await authenticateIsolatedAdminFixture(
           Platform.environment['VS_TEST_LOGIN_EMAIL']!,
           Platform.environment['VS_TEST_LOGIN_PASSWORD']!,
           endpoint: endpoint);

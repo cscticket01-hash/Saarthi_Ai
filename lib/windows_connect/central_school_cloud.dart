@@ -1,6 +1,8 @@
 import 'package:crypto/crypto.dart' as edge_crypto;
 import 'managed_resumable_upload.dart';
 import '../school_timestamp.dart' show Timestamp;
+import '../edge_delivery_retry.dart';
+import '../live_sync_protocol.dart';
 
 import 'dart:convert';
 import 'dart:async';
@@ -115,6 +117,10 @@ class CentralSchoolCloud {
     this.expectedSchoolId,
     this.storage = const FlutterSecureStorage(),
   }) : client = client ?? http.Client();
+  /// Receipt metadata only. Windows persists this before continuing a staged
+  /// request; the observer never acknowledges a business record outbox.
+  static Future<void> Function(Map<String, dynamic> notice)? onEdgeDelivery;
+  static String Function()? edgeDeliveryProfile;
   static const apiUrl = String.fromEnvironment('SAARTHI_SCHOOL_CLOUD_URL');
   static const key = 'vidya_saarthi_central_school_v2';
   static Future<void> _pendingSessionWrite = Future<void>.value();
@@ -376,6 +382,11 @@ class CentralSchoolCloud {
         'OPERATION_ID_CONFLICT': 'Sync operation ID conflict. Original operation retained; review before retrying.',
         'SCHOOL_STORAGE_NOT_CONNECTED': 'School storage is not connected. Ask the developer to verify the existing school storage binding.',
         'SCRIPT_MIGRATION_PENDING': 'School data organization is in progress. Pending changes are retained.',
+        'LIVE_LEGACY_WRITE_FENCED': 'School sync migration is in progress. Saved changes are retained.',
+        'LIVE_MIGRATION_NOT_ACTIVE': 'Live delivery is not active for this collection. Saved changes are retained.',
+        'LIVE_MIGRATION_ADMISSION_BUSY': 'School sync is busy. Saved changes are retained for retry.',
+        'LIVE_SNAPSHOT_REQUIRED': 'Retained live history requires a verified school snapshot. Saved changes are retained.',
+        'LIVE_PROTOCOL_REQUIRED': 'This school requires the current sync app. Saved changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
         'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
       };
@@ -476,6 +487,7 @@ class CentralSchoolCloud {
     Map<String, dynamic> body, {
     String? token,
   }) async {
+    final receiptProfile = edgeDeliveryProfile?.call();
     if (expectedSchoolId != null &&
         (await saved())['schoolId'] != expectedSchoolId)
       throw StateError('School changed during operation.');
@@ -488,10 +500,46 @@ class CentralSchoolCloud {
         || action=='managed/records/batch'
         || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String;
     final origin = expectedSchoolId != null ? await saved() : null;
+    Object? ordered(Object? value) {
+      if (value is Map) {
+        final keys = value.keys.map((key) => key.toString()).toList()..sort();
+        return {for (final key in keys) key: ordered(value[key])};
+      }
+      if (value is List) return value.map(ordered).toList();
+      return value;
+    }
+    final source = staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
+        ? edge_crypto.sha256.convert(utf8.encode(
+            jsonEncode(ordered(migrationJsonValue(body))))).toString()
+        : null;
+    Future<void> observe(Map<String, dynamic> proof) async {
+      final observer = onEdgeDelivery;
+      if (source == null || observer == null ||
+          proof['cloudflareAccepted'] != true ||
+          proof['edgeDeliveryVersion'] != 1 && proof['driveState'] != 'verified') return;
+      await observer({
+        'source': source, 'schoolId': body['schoolId'], 'action': action,
+        'profileId': receiptProfile,
+        if (body['collection'] is String) 'collection': body['collection'],
+        if (body['id'] is String) 'id': body['id'],
+        'proof': {
+          for (final key in ['success', 'schoolId', 'cloudflareAccepted',
+            'edgeDeliveryVersion', 'driveState', 'delivery', 'committed', 'fileId'])
+            if (proof.containsKey(key)) key: proof[key],
+          'edgeDeliveryVersion': 1,
+          if (action == 'managed/records/batch' && proof['driveState'] == 'verified')
+            'batchComplete': proof['acknowledgements'] is List &&
+                (proof['acknowledgements'] as List).isNotEmpty &&
+                (proof['acknowledgements'] as List).every((row) => row is Map && row['success'] == true),
+        },
+      });
+    }
+
     var result=await send('POST', Uri.parse(endpoint), token: token,
-        body: {...body, if(staged) 'edgeDeliveryVersion': 1});
+        body: {...negotiateLiveSync(body), if(staged) 'edgeDeliveryVersion': 1});
     final deadline=DateTime.now().add(const Duration(seconds: 90));
     Map<String, dynamic>? acceptedTicket;
+    var receiptRetained = false;
     while(result['edgeDeliveryVersion']==1 && result['delivery'] is Map) {
       final ticket=Map<String,dynamic>.from(result['delivery'] as Map);
       if(result['success']!=true || result['schoolId']!=body['schoolId'] ||
@@ -509,6 +557,17 @@ class CentralSchoolCloud {
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
+      if (!receiptRetained) {
+        await observe(result);
+        receiptRetained = true;
+      }
+      final retry = edgeDeliveryRetry(result['deliveryStatus'], DateTime.now());
+      if (retry != null) {
+        throw CentralCloudException(503, 'school_cloud',
+            'Cloudflare retained the request; Google storage delivery will retry. '
+            '[${retry.code}]', diagnosticCode: retry.code,
+            retryAfterMs: retry.retryAfterMs);
+      }
       if(DateTime.now().isAfter(deadline))throw CentralCloudException(503,'school_cloud',
           'Cloudflare retained the request; Google Drive verification is pending.',diagnosticCode:'EDGE_DELIVERY_PENDING');
       // Long-poll the authenticated owner; never resend a new business operation.
@@ -520,6 +579,8 @@ class CentralSchoolCloud {
          result['success'] != true || result['driveState'] != 'verified')) {
       throw StateError('Google Drive acknowledgement unverified; local work retained.');
     }
+    if (result['success'] == true && result['schoolId'] == body['schoolId'] &&
+        result['driveState'] == 'verified') await observe(result);
     return result;
   }
 

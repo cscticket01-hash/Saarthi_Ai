@@ -285,6 +285,17 @@ void main() {
     licences[0]['revoked']=true;
     expect(eligibleDeveloperLicenseSchools(schools,licences,now)
       .map((s)=>s['id']),contains(schoolA));
+    // A historical replaced key must not hide the CURRENT school from
+    // renewal; one school never gains access to another school's licence.
+    schools[0]['licenseId']='current-licence-A';
+    licences[0]['revoked']=false;
+    licences[0]['id']='historical-licence-A';
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']),contains(schoolA));
+    licences.add({'schoolId':schoolA,'id':'current-licence-A',
+      'expiresAt':now+120*86400000,'revoked':false});
+    expect(eligibleDeveloperLicenseSchools(schools,licences,now)
+      .map((s)=>s['id']),isNot(contains(schoolA)));
   });
   testWidgets(
     'school password action is in school row and validates before submitting',

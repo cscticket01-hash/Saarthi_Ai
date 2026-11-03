@@ -191,6 +191,77 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     _prepare();
   }
 
+  Future<void> _activateIssuedLicence() async {
+    final saved = await CentralSchoolCloud.saved();
+    if (!mounted || saved['managed'] != true) return;
+    final key = TextEditingController();
+    bool submitting = false;
+    String? problem;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialog) => StatefulBuilder(
+          builder: (dialog, update) => AlertDialog(
+            title: const Text('Activate this school licence'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Use only the key already issued for this same school. Students, Drive files and local data are not changed.'),
+                  TextField(
+                    controller: key,
+                    enabled: !submitting,
+                    decoration: const InputDecoration(labelText: 'Existing school licence key'),
+                  ),
+                  if (problem != null) Text(problem!),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting ? null : () => Navigator.pop(dialog),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: submitting ? null : () async {
+                  if (key.text.trim().isEmpty) {
+                    update(() => problem = 'Enter the key issued for this school.');
+                    return;
+                  }
+                  update(() { submitting = true; problem = null; });
+                  try {
+                    final response = await ManagedSchoolSession.call(
+                      'managed/licence/activate', {'key': key.text.trim()});
+                    if (response['success'] != true ||
+                        response['schoolId'] != saved['schoolId'] ||
+                        response['activated'] != true || response['allowed'] != true) {
+                      throw StateError('Licence activation was not verified.');
+                    }
+                    if (dialog.mounted) Navigator.pop(dialog);
+                    if (mounted) await _prepare();
+                  } catch (_) {
+                    if (dialog.mounted) {
+                      update(() {
+                        submitting = false;
+                        problem = 'Activation could not be verified for this school. Check the issued key and retry. No data was changed.';
+                      });
+                    }
+                  }
+                },
+                child: Text(submitting ? 'Verifying…' : 'Activate licence'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      key.clear();
+      key.dispose();
+    }
+  }
+
   Future<void> _prepare({bool skipRestoreChoice = false}) async {
     if (mounted)
       setState(() {
@@ -200,6 +271,7 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
     try {
       // Offer recovery before cloud cache hydration can populate a fresh install.
       final saved = await CentralSchoolCloud.saved();
+      if (mounted) _managed = saved['managed'] == true;
       if (widget.offerRestore &&
           !skipRestoreChoice &&
           saved['managed'] == true &&
@@ -280,6 +352,10 @@ class _WindowsStartupFlowState extends State<WindowsStartupFlow> {
                 FilledButton(
                   onPressed: _prepare,
                   child: const Text('Retry school profile restore'),
+                ),
+                if (_managed) TextButton(
+                  onPressed: _activateIssuedLicence,
+                  child: const Text('Activate already-issued school licence'),
                 ),
                 TextButton(
                   onPressed: () async {
