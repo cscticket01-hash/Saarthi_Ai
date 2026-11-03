@@ -25,4 +25,12 @@ function verifyEvidence(run,currentSha,comparison,branch='feature/smart-sync-3')
  }
  return {runId:run.id,sha:run.head_sha};
 }
-module.exports={fixture,verifyEvidence};
+// Only compatible reviewed evidence may admit a TEST recovery. A separate
+// branch build can be pending/failed without changing this source's proof.
+function selectCloudEvidence(runs,currentSha,pinnedId){
+ assert.ok(Array.isArray(runs));assert.match(currentSha||'',/^[a-f0-9]{40}$/);
+ const cloud=runs.filter(run=>run?.name==='Isolated TEST cloud prerequisites');
+ return cloud.find(run=>run.head_sha===currentSha)||
+   cloud.find(run=>pinnedId&&String(run.id)===String(pinnedId))||null;
+}
+module.exports={fixture,verifyEvidence,selectCloudEvidence};

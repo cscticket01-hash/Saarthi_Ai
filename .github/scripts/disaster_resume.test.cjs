@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {fixture,verifyEvidence}=require('./disaster_resume.cjs');
+const {fixture,verifyEvidence,selectCloudEvidence}=require('./disaster_resume.cjs');
 const env={GITHUB_REPOSITORY:'cscticket01-hash/Saarthi_Ai',GITHUB_REF:'refs/heads/feature/smart-sync-3',GITHUB_RUN_ID:'4000',GITHUB_RUN_ATTEMPT:'1'};
 const sha='a'.repeat(40),next='b'.repeat(40),run={id:123,name:'Isolated TEST cloud prerequisites',status:'completed',conclusion:'success',head_branch:'feature/smart-sync-3',head_repository:{full_name:env.GITHUB_REPOSITORY},head_sha:sha};
 const compare={status:'ahead',merge_base_commit:{sha},files:[{filename:'.github/scripts/test_disaster_live.cjs'}]};
@@ -33,4 +33,19 @@ test('retired engine branch cannot authorize TEST cloud writers',()=>{
  const branch='feature/universal-self-healing-2';
  assert.throws(()=>fixture({...env,GITHUB_REF:'refs/heads/'+branch}));
  assert.throws(()=>verifyEvidence({...run,head_branch:branch},sha,undefined,branch));
+});
+
+test('exact-source completed prerequisite is not held hostage by unrelated queued or failing branch runs',()=>{
+ const queued={...run,id:124,head_sha:next,status:'in_progress',conclusion:null};
+ const failed={...run,id:125,head_sha:'c'.repeat(40),conclusion:'failure'};
+ assert.equal(selectCloudEvidence([queued,failed,run],sha,'125').id,run.id);
+ assert.equal(verifyEvidence(selectCloudEvidence([queued,failed,run],sha,'125'),sha).runId,run.id);
+ assert.equal(selectCloudEvidence([queued,failed],sha,'125').id,125);
+ assert.throws(()=>verifyEvidence(selectCloudEvidence([queued,failed],sha,'125'),sha));
+});
+test('unfinished exact-source prerequisite cannot be bypassed by a successful old pinned run',()=>{
+ const current={...run,id:250,status:'in_progress',conclusion:null};
+ assert.equal(selectCloudEvidence([current,run],sha,123).id,250);
+ assert.throws(()=>verifyEvidence(selectCloudEvidence([current,run],sha,123),sha));
+ assert.equal(selectCloudEvidence([],sha,123),null);
 });

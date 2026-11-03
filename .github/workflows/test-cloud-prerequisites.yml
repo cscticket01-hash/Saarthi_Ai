@@ -15,6 +15,10 @@ on:
       - .github/scripts/review_fetch_evidence.test.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/test_runtime_identity.cjs
+      # Disaster evidence logic changes require a fresh exact-head prerequisite.
+      - .github/scripts/test_disaster_live.cjs
+      - .github/scripts/disaster_resume.cjs
+      - .github/scripts/disaster_resume.test.cjs
       - staging-school-cloud/**
       - functions/**
       - .github/scripts/isolated_live_sync.cjs
