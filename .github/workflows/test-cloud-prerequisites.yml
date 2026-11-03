@@ -15,13 +15,15 @@ on:
       - .github/scripts/review_fetch_evidence.test.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/test_runtime_identity.cjs
+      - .github/scripts/settle_test_delta.cjs
+      - .github/scripts/settle_test_delta.test.cjs
+      - .github/scripts/isolated_live_sync.cjs
       # Disaster evidence logic changes require a fresh exact-head prerequisite.
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
       - .github/scripts/disaster_resume.test.cjs
       - staging-school-cloud/**
       - functions/**
-      - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
       - .github/scripts/test_run_android_live_test.py
       - .github/tests/isolated_engine_live_test.dart
