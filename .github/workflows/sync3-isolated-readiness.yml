@@ -9,23 +9,31 @@ on:
       - '.github/workflows/sync3-isolated-readiness.yml'
 permissions:
   contents: read
+  actions: read
 concurrency:
-  # Even signed reads acquire the single Apps Script lock. Keep diagnostics
-  # out of the hosted writer/latency cohort, rather than manufacturing load.
-  group: sync3-verified-test-school-mutations
-  cancel-in-progress: false
+  # Cancel superseded diagnostics only. Explicit exact-source gates below
+  # order provider access without cancelling pending cloud workflows.
+  group: sync3-isolated-readiness-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 jobs:
   read-only-test-cloud:
     # Include live-authority PR 206 in the genuine read-only TEST deployment gate. Do not waive exact runtime,
     # owner credentials, tested Apps Script version or read-only protocol acceptance.
     if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Wait for exact TEST writers without taking their mutation lock
+        if: github.head_ref == 'feature/live-sync-authority-v1-20261102'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VS_TEST_GATE_KIND: cloud
+          VS_TEST_GATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/await_test_gate.cjs
       - name: Read expected provider version from this exact source
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol

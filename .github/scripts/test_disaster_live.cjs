@@ -34,6 +34,8 @@ async function run(){
    report.cloudEvidence=verifyEvidence(run,process.env.GITHUB_SHA,comparison,branch);report.originalRecoveryOperationResumed=identity.resumed;writersFinished=true;break;
   }if(n%10===0)console.log('Waiting for verified compatible end-to-end TEST writers');await delay(15000);
  }assert.ok(writersFinished);
+ stage='test_readiness_evidence';
+ report.readinessEvidence=await require('./await_test_gate.cjs').waitForTestGate({kind:'readiness',sha:process.env.GITHUB_SHA,token:process.env.GITHUB_TOKEN});
  // Never mutate a different broker deployment after the proof was reviewed.
  stage='test_runtime_identity';
  await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);

@@ -21,6 +21,8 @@ on:
       # Disaster evidence logic changes require a fresh exact-head prerequisite.
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
+      - .github/scripts/await_test_gate.test.cjs
+      - .github/scripts/await_test_gate.cjs
       - .github/scripts/disaster_fixture_resume.test.cjs
       - .github/scripts/disaster_fixture_resume.cjs
       - .github/scripts/disaster_resume.test.cjs
