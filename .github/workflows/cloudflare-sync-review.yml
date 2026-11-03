@@ -2,6 +2,18 @@ name: Cloudflare school sync review
 on:
   pull_request:
     paths:
+      - 'lib/document_processing_engine.dart'
+      - 'lib/school_media_budgets.dart'
+      - 'lib/windows_connect/managed_record_media.dart'
+      - 'lib/windows_template_cloud_store.dart'
+      - 'lib/windows_document_templates.dart'
+      - 'lib/id_card_engine.dart'
+      - 'lib/id_card_layout.dart'
+      - 'lib/school_document_renderer.dart'
+      - 'lib/windows_reference_documents.dart'
+      - 'test/template_artwork_compression_test.dart'
+      - 'test/school_media_budgets_test.dart'
+      - 'test/windows_local_first_save_test.dart'
       - 'cloudflare-sync/**'
       - 'functions/cloudflare-sync.js'
       - 'functions/cloudflare-delivery.js'
@@ -74,7 +86,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Verify 40 KB portrait size and retained quality
-        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart
+        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart
       - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
         env:
           APPDATA: ${{ runner.temp }}/live-five-pc-queues

@@ -66,6 +66,13 @@ class SchoolPdfMedia {
     return outcome['optimized'] as Uint8List;
   }
 
+  // Isolate-friendly adapter for an individual print-region budget.
+  // No extra compressor: every path still runs through branding().
+  static Uint8List? brandingSized(Map<String, dynamic> request) => branding(
+    request['bytes'] as Uint8List?,
+    maxPrintEdge: request['maxPrintEdge'] as int,
+  );
+
   static Uint8List? branding(Uint8List? original, {int maxPrintEdge = 256}) {
     if (original == null) return null;
     final outcome = DocumentProcessingEngine.brandingUpload({'bytes': original});

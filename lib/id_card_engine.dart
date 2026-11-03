@@ -225,7 +225,7 @@ class IdCardEngine {
           useCompactVectorFont: useCompactVectorFont,
           compactBitmapAssets: true);
     }
-    return SchoolMediaBudgets.enforcePdf('idCard', output);
+    return SchoolMediaBudgets.verifyGeneratedPdf('idCard', output);
   }
 }
 

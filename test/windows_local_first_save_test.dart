@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../lib/main_dashboard_screen_windows.dart' show SchoolSettingsScreen;
 import '../lib/windows_profile_image_policy.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:image/image.dart' as img;
@@ -247,6 +248,64 @@ void main() {
     await expectLater(prepareManagedRecord(data,school,(a,b) async => {'success':true,'schoolId':'other','fileId':'foreign','fileUrl':'foreign'}),throwsStateError);
     await expectLater(prepareManagedRecord({...data,'schoolId':'other'},school,(a,b) async => throw StateError('must not upload')),throwsStateError);
   });
+  test('independent school images upload two at a time with verified receipts', () async {
+    final png = img.encodePng(img.Image(width: 64, height: 96));
+    final uri = 'data:image/png;base64,${base64Encode(png)}';
+    final source = <String, dynamic>{
+      'schoolId': school,
+      'photoUrl': uri, 'logoUrl': uri,
+      'sealUrl': uri, 'principalSignatureUrl': uri,
+    };
+    final original = Map<String, dynamic>.from(source);
+    final firstPair = Completer<void>();
+    var started = 0, inFlight = 0, peak = 0;
+    final prepared = await prepareManagedRecord(source, school, (action, body) async {
+      expect(action, 'managed/file/upload');
+      final name = body['name'] as String;
+      started++;
+      inFlight++;
+      if (inFlight > peak) peak = inFlight;
+      // Both first requests must enter before either is allowed to finish;
+      // the next pair must not overtake them.
+      if (started == 2) firstPair.complete();
+      await firstPair.future.timeout(const Duration(seconds: 15));
+      expect(inFlight, lessThanOrEqualTo(2));
+      inFlight--;
+      final id = 'verified-${(body['uploadKey'] as String).substring(0, 20)}';
+      return {
+        'success': true, 'schoolId': school, 'fileId': id,
+        'fileUrl': 'https://drive.google.com/file/d/$id/view',
+      };
+    });
+    expect(peak, 2);
+    expect(started, 4);
+    expect(inFlight, 0);
+    expect(source, original, reason: 'Source record is never mutated');
+    for (final prefix in ['photo', 'logo', 'seal', 'principalSignature']) {
+      expect(prepared['${prefix}FileId'], isNotNull);
+      expect(prepared['${prefix}SourceHash'], isNotNull);
+      expect(prepared['${prefix}Url'], startsWith('https://drive.google.com/'));
+    }
+  });
+
+  test('invalid parallel image ACK rejects the whole record without rewriting source', () async {
+    final png = img.encodePng(img.Image(width: 64, height: 96));
+    final uri = 'data:image/png;base64,${base64Encode(png)}';
+    final input = <String, dynamic>{
+      'schoolId': school, 'photoUrl': uri, 'logoUrl': uri,
+    };
+    final before = Map<String, dynamic>.from(input);
+    await expectLater(prepareManagedRecord(input, school, (action, body) async {
+      if ((body['name'] as String).startsWith('logo_')) {
+        return {'success': true, 'schoolId': 'another-school',
+          'fileId': 'invalid', 'fileUrl': 'invalid'};
+      }
+      return {'success': true, 'schoolId': school,
+        'fileId': 'own-photo', 'fileUrl': 'https://drive.google.com/file/d/own-photo/view'};
+    }), throwsStateError);
+    expect(input, before);
+  });
+
   test('settings confirmation uses only App Lock without Firebase authentication', () async {
     await WindowsLocalSecurity.initialize();
     await WindowsLocalSecurity.create(adminId:'School app',password:'local-app-lock');

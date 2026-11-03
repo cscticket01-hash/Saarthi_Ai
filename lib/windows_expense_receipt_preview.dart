@@ -63,7 +63,7 @@ class WindowsExpenseReceiptPreview {
         pw.SizedBox(height: 28),
         pw.Text('This receipt reflects a saved school expense record.'),
       ]));
-    return SchoolMediaBudgets.enforcePdf('expenseReceipt', await pdf.save());
+    return SchoolMediaBudgets.verifyGeneratedPdf('expenseReceipt', await pdf.save());
   }
 
   static Future<void> open(BuildContext context, Map<String, dynamic> expense) {

@@ -357,7 +357,7 @@ Future<Uint8List> renderSchoolDocument(
                       const pw.TextStyle(fontSize: 8, color: PdfColors.grey600))
             ]));
   }
-  return SchoolMediaBudgets.enforcePdf(kind, await pdf.save());
+  return SchoolMediaBudgets.verifyGeneratedPdf(kind, await pdf.save());
 }
 
 // A named alias keeps the dense card layout readable without Flutter types.

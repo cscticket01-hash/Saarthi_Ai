@@ -1,3 +1,4 @@
+import 'school_media_budgets.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
@@ -56,5 +57,5 @@ Future<Uint8List> renderWindowsPayslip(Map<String,dynamic> row,{String schoolNam
       pw.SizedBox(height:12),pw.Text('A payslip summarises this salary record. It does not record a new payment.',style:const pw.TextStyle(fontSize:9,color:PdfColors.grey700)),
       pw.SizedBox(height:36),pw.Row(mainAxisAlignment:pw.MainAxisAlignment.spaceBetween,children:[pw.Text('Employee signature: ______________'),pw.Text('Authorised signature: ______________')]),
     ]));
-  return doc.save();
+  return SchoolMediaBudgets.verifyGeneratedPdf('payslip', await doc.save());
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -10,6 +11,26 @@ import '../lib/school_pdf_media.dart';
 import '../lib/id_card_layout.dart';
 
 void main() {
+  test('PDF preflight rejects truncated render output before publishing', () {
+    final correct = Uint8List.fromList(utf8.encode(
+      '%PDF-1.7\n1 0 obj <</Type /Catalog>> endobj\n%%EOF\n'));
+    expect(identical(SchoolMediaBudgets.verifyGeneratedPdf('receipt', correct),
+      correct), isTrue);
+    final truncated = Uint8List.fromList(
+      utf8.encode('%PDF-1.7\n1 0 obj <</Type /Catalog>> endobj'));
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf('receipt', truncated),
+      throwsFormatException);
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf(
+      'idCard', Uint8List.fromList(utf8.encode('not a PDF %%EOF'))),
+      throwsFormatException);
+    final oversized = Uint8List(30 * 1024 + 1);
+    oversized.setRange(0, 5, utf8.encode('%PDF-'));
+    oversized.setRange(oversized.length - 5, oversized.length,
+      utf8.encode('%%EOF'));
+    expect(() => SchoolMediaBudgets.verifyGeneratedPdf('receipt', oversized),
+      throwsFormatException);
+  });
+
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
     expect(SchoolMediaBudgets.idCard, 85 * 1024);
     expect(SchoolMediaBudgets.reportCard, 150 * 1024);
@@ -114,6 +135,17 @@ void main() {
     expect(face.sublist(0, 2), [0xff, 0xd8]);
     expect(img.decodeJpg(face), isNotNull);
     expect(img.decodeJpg(face)!.height, lessThanOrEqualTo(480));
+
+    final smallerJpeg = IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
+      aspect: .8, cover: true, jpegQuality: 80,
+    );
+    expect(smallerJpeg.length, lessThanOrEqualTo(face.length));
+    expect(img.decodeJpg(smallerJpeg), isNotNull);
+    expect(() => IdCardLayout.preparePdfImage(
+      Uint8List.fromList(img.encodeJpg(portrait, quality: 94)),
+      aspect: .8, cover: true, jpegQuality: 76,
+    ), throwsFormatException);
 
     final stamp = img.Image(width: 200, height: 200, numChannels: 4);
     img.fill(stamp, color: img.ColorRgba8(0, 0, 0, 0));
