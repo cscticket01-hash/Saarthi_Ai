@@ -74,6 +74,42 @@ test('authoritative licence denial is retained for attention; temporary service 
  const s=store(),q=createAttendanceQueue({store:s,deliver:async(_,items)=>items.map(i=>({operationId:i.operationId,success:false,authoritative:true}))});
  await q.enqueue(event());await q.drain();assert.equal([...s.rows.values()][0].state,'needsAttention');assert.equal(s.rows.size,1);
 });
+test('Firestore finalization confirms the exact current claim and original school before acknowledging',async()=>{
+ let row={schoolId:A,claim:'current',state:'processing'},writes=0;
+ const db={collection:()=>({}),doc:()=>({}),runTransaction:async fn=>fn({
+  get:async()=>({exists:true,data:()=>row}),
+  set:(_,patch)=>{writes++;row={...row,...patch};}
+ })};
+ const adapter=firestoreAttendanceStore(db,{schoolId:A});
+ assert.equal(await adapter.finish('original','expired',{state:'completed'}),false);
+ assert.equal(writes,0);assert.equal(row.state,'processing');
+ row.schoolId=B;
+ assert.equal(await adapter.finish('original','current',{state:'completed'}),false);
+ assert.equal(writes,0);assert.equal(row.state,'processing');
+ row.schoolId=A;
+ assert.equal(await adapter.finish('original','current',{state:'completed'}),true);
+ assert.equal(writes,1);assert.equal(row.state,'completed');
+ assert.equal(row.claim,'');
+});
+test('lost finalization claim does not report false completion and original event survives lease recovery',async()=>{
+ const s=store(),realFinish=s.finish;let now=1000,loseOnce=true;
+ s.finish=async(...args)=>{
+  if(loseOnce){loseOnce=false;return false;}
+  return realFinish(...args);
+ };
+ const q=createAttendanceQueue({store:s,now:()=>now,batchSize:25,minBatchSize:25,maxBatchSize:25,
+  deliver:async(_,items)=>items.map(item=>({operationId:item.operationId,success:true}))});
+ const operation=await q.enqueue(event(A,'verified-finalization'));
+ await assert.rejects(q.drain(),/finalization claim changed/);
+ assert.equal(q.metrics.completed,0);
+ assert.equal(s.rows.get(operation.operationId).state,'processing');
+ now+=120001;
+ await q.drain();
+ assert.equal(q.metrics.completed,1);
+ assert.equal(s.rows.get(operation.operationId).state,'completed');
+ assert.equal(s.rows.size,1,'no duplicate attendance record was created');
+});
+
 module.exports={store,event};
 
 test('malformed or ambiguous cloud receipts never clear accepted attendance',async()=>{

@@ -92,7 +92,11 @@ function createAttendanceQueue({store,deliver,now=Date.now,batchSize=100,minBatc
        lastError:state==='completed'?'':definitive?'Attendance requires school review.':'Attendance service unavailable; operation retained.',
        nextAttemptAt:['completed','needsAttention'].includes(state)?Number.MAX_SAFE_INTEGER:retryAt};
      if(state==='completed'&&typeof completionReceipt==='function')finishValues=await completionReceipt({school,item,ack,values:finishValues});
-     await store.finish(item.operationId,item.claim,finishValues);
+     // A superseded/expired claim is not a durable completion receipt. The
+     // Firestore adapter explicitly returns false for unmatched claims; older
+     // custom adapters returning void retain their existing contract.
+     const applied=await store.finish(item.operationId,item.claim,finishValues);
+     if(applied===false)throw Error('Attendance finalization claim changed; original operation retained');
      return {state,retryAt};
     });
     phases.finishMs+=Math.round(performance.now()-finishStart);
@@ -174,9 +178,9 @@ function firestoreAttendanceStore(db,{schoolId=null,collectionName='attendance_o
    tx.set(r,{state:'processing',claim,claimExpiresAt:expires,nextAttemptAt:expires},{merge:true});return true;
   }),
   finish:(id,claim,values)=>db.runTransaction(async tx=>{
-   const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return;
-   if(schoolId&&snap.data().schoolId!==schoolId)return;
-   tx.set(r,{...values,claim:'',claimExpiresAt:0},{merge:true});
+   const r=ref(id),snap=await tx.get(r);if(!snap.exists||snap.data().claim!==claim)return false;
+   if(schoolId&&snap.data().schoolId!==schoolId)return false;
+   tx.set(r,{...values,claim:'',claimExpiresAt:0},{merge:true});return true;
   }),
  };
 }
