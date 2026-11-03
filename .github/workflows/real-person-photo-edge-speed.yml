@@ -24,7 +24,7 @@ jobs:
     env:
       # Pin reviewed backend source independently of test-only instrumentation.
       # The diff fence below prevents a different backend tree from running.
-      VS_EXPECTED_TEST_RUNTIME: a013327e9bab7e79ffa307dcebbb20ce670f74b6
+      VS_EXPECTED_TEST_RUNTIME: 461a0712885a942d07e6c9ef18719ebe413d3afa
     steps:
       - uses: actions/checkout@v4
         with:
