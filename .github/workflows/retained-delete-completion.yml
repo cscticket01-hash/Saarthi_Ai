@@ -1,0 +1,71 @@
+name: Verify retained TEST delete completion after retry correction
+on:
+  push:
+    branches: [verify/retained-delete-checkpoint-20261104]
+    paths: ['.github/workflows/retained-delete-completion.yml']
+permissions: {contents: read}
+jobs:
+  retained-delete-completion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Observe only the existing operation and verify final readback
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const school='vs-db8afb01a3be46a983c8284714d06e5d',endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+          const expected='8222b1e359564b011d4b2af49e5828f00611b8a4';
+          const report={scope:'read-only existing synthetic operation completion; no replays, new deletes or queue clearing',observations:[],status:'PENDING'};
+          let token,requests=0;
+          async function req(url,body){
+            if(++requests>90)throw Error('Read budget exhausted');
+            const r=await fetch(url,{method:body?'POST':'GET',redirect:'error',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(60000)});
+            return {status:r.status,data:await r.json()};
+          }
+          async function call(action,body={}){
+            const r=await req(endpoint,{...body,action,schoolId:school});
+            if(r.status!==200||!r.data?.success||r.data.schoolId!==school)throw Error('Scoped read refused');
+            return r.data;
+          }
+          function save(){fs.mkdirSync('build/retained-completion',{recursive:true});fs.writeFileSync('build/retained-completion/report.json',JSON.stringify({...report,requests},null,2));}
+          (async()=>{
+            const health=await req(endpoint+'/healthz');
+            if(health.status!==200||health.data.runtimeCommit!==expected||!health.data.ready)throw Error('Exact runtime fence failed');
+            report.runtimeCommit=expected;
+            const auth=await req('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A',{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
+            if(auth.status!==200||!auth.data.idToken)throw Error('TEST login refused');token=auth.data.idToken;
+            const session=await call('managed/session');if(!session.allowed||session.uid!==auth.data.localId)throw Error('TEST identity refused');
+            const started=Date.now(),deadline=started+15*60*1000;
+            let receipt;
+            for(let i=0;i<60&&Date.now()<deadline;i++){
+              receipt=await call('managed/cloudflare/operation',{lane:'records',id:'e4db901bf30142e7d31cbf5bf342e43ad9194617a864cb425cf273bba2ca4ca6',waitMillis:0});
+              report.observations.push({elapsedMs:Date.now()-started,driveState:receipt.driveState,deliveryStatus:receipt.deliveryStatus||null});save();
+              if(!receipt.delivery)break;
+              await new Promise(r=>setTimeout(r,15000));
+            }
+            if(receipt?.delivery)throw Error('Existing archive cleanup still pending');
+            if(receipt.driveState!=='verified'||receipt.driveDeletionComplete!==true||receipt.firebaseDeletionComplete!==true||!receipt.deletedFileIds?.includes('18TUXgeDx759mKDDEVvc8klA5K-bUeMEy'))throw Error('Final delete owner proof missing');
+            const read=await call('managed/records',{collection:'students_directory',operation:'read',id:'CFSPEED_STUDENT_41705585136_0_c65fd6',syncProtocol:2});
+            const row=read.records?.CFSPEED_STUDENT_41705585136_0_c65fd6,p=row?._syncErasePlan;
+            if(row?._syncDeleted!==true||row?._syncOperationId!=='6ab63ea1f0d2c4be797c4339968df505'||p?.complete!==true||p.archivesComplete!==true)throw Error('Final tombstone/plan readback unverified');
+            const file=await req(endpoint,{action:'managed/file/read',schoolId:school,fileId:'18TUXgeDx759mKDDEVvc8klA5K-bUeMEy'});
+            if(file.status===200&&file.data?.success===true)throw Error('Deleted synthetic photo remains readable');
+            const end=await req(endpoint+'/healthz');if(end.data.runtimeCommit!==expected)throw Error('Runtime changed');
+            report.proof={driveDeletionComplete:true,firebaseDeletionComplete:true,tombstoneVerified:true,archiveCursor:p.archiveCursor,archives:p.archiveIds?.length,archivesComplete:true,exactOwnedPhotoNotReadable:true};
+            report.elapsedMs=Date.now()-started;report.status='PASS';
+          })().catch(e=>{report.status='INCOMPLETE';report.reason=['Existing archive cleanup still pending','Final delete owner proof missing','Final tombstone/plan readback unverified','Deleted synthetic photo remains readable','Runtime changed','Exact runtime fence failed','Read budget exhausted','Scoped read refused','TEST login refused','TEST identity refused'].includes(e.message)?e.message:'Read unavailable';process.exitCode=1;}).finally(()=>{save();console.log('RETAINED_DELETE_COMPLETION '+JSON.stringify(report));});
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retained-delete-completion
+          path: build/retained-completion/report.json
+          if-no-files-found: warn
+          retention-days: 7
