@@ -29,7 +29,7 @@ jobs:
       - name: Upload only TEST2-DEMO students; require exact Google Drive ACK and readback
         env:
           VS_TEST_100K_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
-          VS_TEST_100K_START: '76'
+          VS_TEST_100K_START: '96'
           VS_TEST_100K_END: '100000'
           VS_TEST_100K_BUDGET_MINUTES: '330'
           VS_EXPECTED_TEST_RUNTIME: a2d92cb82aea4929a7323454932d81e2d706cb6b
