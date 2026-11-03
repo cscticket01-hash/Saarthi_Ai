@@ -109,5 +109,5 @@ Future<Uint8List> renderMaroonMarksheet(Map<String, dynamic> data, {
     ];
     pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,margin:pw.EdgeInsets.zero,build:(_)=>pw.Stack(children:layers)));
   }
-  return SchoolMediaBudgets.enforcePdf('reportCard', await pdf.save());
+  return SchoolMediaBudgets.verifyGeneratedPdf('reportCard', await pdf.save());
 }

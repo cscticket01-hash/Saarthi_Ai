@@ -253,7 +253,7 @@ class IdCardLayout {
     int maxPrintEdge = 480,
     int jpegQuality = 88,
   }) {
-    if (jpegQuality < 80 || jpegQuality > 94) {
+    if (jpegQuality < 78 || jpegQuality > 94) {
       throw const FormatException('Unsafe ID print JPEG quality.');
     }
     final normalized = prepareImage(bytes, aspect: aspect, cover: cover,

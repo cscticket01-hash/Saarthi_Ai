@@ -98,7 +98,7 @@ class WindowsDocumentTemplates {
 
   static Future<Uint8List> renderImportedTemplate(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
-  ) async => SchoolMediaBudgets.enforcePdf(
+  ) async => SchoolMediaBudgets.verifyGeneratedPdf(
     kind, await WindowsTemplateCloudStore.render(kind,manifest,record));
 
   static Future<Uint8List?> _image(dynamic raw) async {
@@ -151,7 +151,7 @@ class WindowsDocumentTemplates {
   }) async {
     qr = IdCardEngine.compactQr(qr);
     final rendered = await _selected(kind, data, qr: qr);
-    final bytes = rendered == null ? null : SchoolMediaBudgets.enforcePdf(kind, rendered);
+    final bytes = rendered == null ? null : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
     if (bytes != null &&
         {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
         qr.isNotEmpty)

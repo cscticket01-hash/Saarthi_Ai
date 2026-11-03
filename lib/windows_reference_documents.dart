@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -35,24 +36,6 @@ int windowsReferenceDocumentIndex(String kind, dynamic value) {
           value.toInt() < count
       ? value.toInt()
       : 0;
-}
-
-// The built-in PDF font uses no embedded TTF bytes, which is important for
-// 30 KiB receipts. It is safe ONLY for plain ASCII receipt values. Any Hindi,
-// Bengali, Assamese or other Unicode input keeps the actual embedded fonts;
-// never silently swap text into boxes/tofu to pass a size test.
-bool _receiptCanUseStandardPdfFonts(dynamic input) {
-  if (input is String) {
-    return input.runes.every((r) => r == 9 || r == 10 || r == 13 ||
-        (r >= 32 && r <= 126));
-  }
-  if (input is Map) {
-    return input.values.every(_receiptCanUseStandardPdfFonts);
-  }
-  if (input is Iterable) {
-    return input.every(_receiptCanUseStandardPdfFonts);
-  }
-  return true;
 }
 
 int? windowsReferenceTermNumber(Map<String, dynamic> data) {
@@ -155,6 +138,8 @@ Future<Uint8List?> _signatureInk(Uint8List? bytes, {bool white = false}) async {
   }
 }
 
+// Public document API cannot accept cached/unauthenticated compressed images.
+// Only the private recursive renderer can reuse its own validated media.
 Future<Uint8List> renderWindowsReferenceDocument({
   required String kind,
   required int template,
@@ -165,23 +150,64 @@ Future<Uint8List> renderWindowsReferenceDocument({
   Uint8List? signature,
   Uint8List? seal,
   int printPass = 0,
+}) => _renderWindowsReferenceDocument(
+  kind: kind, template: template, data: data, qr: qr,
+  photo: photo, logo: logo, signature: signature, seal: seal,
+  printPass: printPass,
+);
+
+Future<Uint8List> _renderWindowsReferenceDocument({
+  required String kind,
+  required int template,
+  required Map<String, dynamic> data,
+  String qr = '',
+  Uint8List? photo,
+  Uint8List? logo,
+  Uint8List? signature,
+  Uint8List? seal,
+  int printPass = 0,
+  ({Uint8List? photo, Uint8List? logo, Uint8List? seal, Uint8List? signature})? preparedMedia,
 }) async {
-  if (printPass < 0 || printPass > 2) {
+  if (printPass < 0 || printPass > 4) {
     throw const FormatException('Invalid ID print optimization stage.');
   }
   if (!windowsReferenceDocumentNames.containsKey(kind))
     throw ArgumentError.value(kind, 'kind');
   final i = windowsReferenceDocumentIndex(kind, template);
-  // Optimize the embedded assets only; original school images remain intact.
-  final embeddedPhoto = SchoolPdfMedia.portrait(photo);
-  final embeddedLogo = SchoolPdfMedia.branding(logo,
-      maxPrintEdge: kind == 'receipt' ? 120 : 256);
-  final embeddedSeal = SchoolPdfMedia.branding(seal,
-      maxPrintEdge: kind == 'receipt' ? 144 : 256);
-  final printSignature = SchoolPdfMedia.branding(await _signatureInk(
-    signature,
-    white: false,
-  ), maxPrintEdge: kind == 'receipt' ? 192 : 256);
+  // Compression can be expensive on an older school PC. Offload it to
+  // isolates in bounded pairs; preserve exact PDF bytes and the immutable
+  // source images. The existing sync/outbox owner is still serial.
+  Future<Uint8List?> portraitForPrint(Uint8List? bytes) =>
+      bytes == null ? Future<Uint8List?>.value(null)
+          : compute(SchoolPdfMedia.portrait, bytes);
+  Future<Uint8List?> brandingForPrint(
+    Uint8List? bytes, int maxPrintEdge,
+  ) => bytes == null ? Future<Uint8List?>.value(null)
+      : compute(SchoolPdfMedia.brandingSized,
+          {'bytes': bytes, 'maxPrintEdge': maxPrintEdge});
+  late final Uint8List? embeddedPhoto, embeddedLogo, embeddedSeal, printSignature;
+  if (preparedMedia != null) {
+    // A size retry reuses the exact verified source of the previous pass.
+    // Re-compressing unchanged media on every print-DPI attempt wastes CPU,
+    // memory and time on low-end school PCs.
+    embeddedPhoto = preparedMedia.photo;
+    embeddedLogo = preparedMedia.logo;
+    embeddedSeal = preparedMedia.seal;
+    printSignature = preparedMedia.signature;
+  } else {
+    final visualPair = await Future.wait<Uint8List?>([
+      portraitForPrint(photo), brandingForPrint(logo, kind == 'receipt' ? 120 : 256),
+    ]);
+    final signatureInk = await _signatureInk(signature, white: false);
+    final brandingPair = await Future.wait<Uint8List?>([
+      brandingForPrint(seal, kind == 'receipt' ? 144 : 256),
+      brandingForPrint(signatureInk, kind == 'receipt' ? 192 : 256),
+    ]);
+    embeddedPhoto = visualPair[0];
+    embeddedLogo = visualPair[1];
+    embeddedSeal = brandingPair[0];
+    printSignature = brandingPair[1];
+  }
   String v(String key, [String fallback = '-']) {
     final raw = data[key]?.toString().trim() ?? '';
     return raw.isEmpty || raw == 'null' ? fallback : raw;
@@ -198,12 +224,23 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final name = kind == 'teacherId'
       ? first(['name', 'teacherName'], 'Teacher name')
       : first(['studentName', 'name'], 'Student name');
-  final useStandardReceiptFont =
-      kind == 'receipt' && _receiptCanUseStandardPdfFonts(data);
-  final regular = useStandardReceiptFont
+  // Core PDF fonts need no embedded TTF program for ASCII school receipts.
+  // This is a lossless PDF-byte optimization: text stays selectable vector
+  // text and page measurements stay unchanged. Any non-ASCII record continues
+  // using the bundled Unicode-capable school font rather than losing glyphs.
+  bool isAscii(dynamic v) {
+    if (v == null || v is num || v is bool || v is Uint8List) return true;
+    if (v is String) return v.runes.every((r) => r <= 0x7f);
+    if (v is Map) return v.entries.every(
+      (entry) => isAscii(entry.key) && isAscii(entry.value));
+    if (v is Iterable) return v.every(isAscii);
+    return false;
+  }
+  final receiptCoreFonts = kind == 'receipt' && isAscii(data);
+  final regular = receiptCoreFonts
       ? pw.Font.helvetica()
       : pw.Font.ttf(await rootBundle.load('assets/id_card_regular.ttf'));
-  final bold = useStandardReceiptFont
+  final bold = receiptCoreFonts
       ? pw.Font.helveticaBold()
       : pw.Font.ttf(await rootBundle.load('assets/id_card_bold.ttf'));
   final pdf = pw.Document(
@@ -295,9 +332,11 @@ Future<Uint8List> renderWindowsReferenceDocument({
               child: kind == 'teacherId'
                   ? IdCardLayout.image(bytes, cover: cover, imageCache: imageCache,
                        printDpi: cover
-                           ? [300, 280, 260][printPass]
-                           : [250, 220, 220][printPass],
-                       jpegQuality: [88, 84, 80][printPass])
+                           ? [300, 280, 260, 240, 220][printPass]
+                           : [250, 220, 220, 220, 220][printPass],
+                       jpegQuality: cover
+                           ? [88, 86, 84, 81, 78][printPass]
+                           : [88, 88, 88, 86, 84][printPass])
                   : pw.Image(
                       pw.MemoryImage(bytes),
                       fit: cover ? pw.BoxFit.cover : pw.BoxFit.contain,
@@ -1098,15 +1137,17 @@ Future<Uint8List> renderWindowsReferenceDocument({
   final output = await pdf.save();
   if (kind == 'teacherId' &&
       output.length > SchoolMediaBudgets.idCard &&
-      printPass < 2) {
+      printPass < 4) {
     // Only the print-bitmap DPI changes; vector QR, text, dimensions and
     // school media source bytes stay identical. Fail safely if all print
     // variants still exceed the strict PDF budget.
-    return renderWindowsReferenceDocument(
+    return _renderWindowsReferenceDocument(
       kind: kind, template: template, data: data, qr: qr,
       photo: photo, logo: logo, signature: signature, seal: seal,
       printPass: printPass + 1,
+      preparedMedia: (photo: embeddedPhoto, logo: embeddedLogo,
+          seal: embeddedSeal, signature: printSignature),
     );
   }
-  return SchoolMediaBudgets.enforcePdf(kind, output);
+  return SchoolMediaBudgets.verifyGeneratedPdf(kind, output);
 }
