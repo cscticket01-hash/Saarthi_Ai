@@ -426,6 +426,58 @@ void main() {
     }
   });
 
+  test('revoked PC proof suppresses repeating 401 theme heartbeats until fresh login', () async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
+    var attempts=0;
+    ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async {
+      attempts++;
+      throw CentralCloudException(401,'school_cloud',
+        'This PC authorization was revoked or invalid',
+        diagnosticCode:'DEVICE_AUTHORIZATION_REJECTED');
+    };
+    try {
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      expect(attempts,1);
+      expect(ManagedSchoolSession.appearanceAuthorizationBlockedForTesting,true);
+      // The periodic 30-second heartbeat and App Lock must not flood the
+      // server with the same rejected proof, or fake an authorized device.
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      await ManagedSchoolSession.reportAppearanceLock(false);
+      expect(attempts,1);
+      expect(await ManagedSchoolSession.refreshAppearanceAtUnlock(),
+        ThemeUnlockOutcome.deferred);
+      expect(attempts,1);
+      // This test reset models fresh password login with verified registration.
+      ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      expect(attempts,2);
+    } finally {
+      ManagedSchoolSession.appearanceRequestForTesting=null;
+      ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
+    }
+  });
+
+  test('transient theme connection error remains retryable; only proof refusal latches', () async {
+    FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
+    ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
+    var attempts=0;
+    ManagedSchoolSession.appearanceRequestForTesting=(_,locked) async {
+      attempts++;
+      throw CentralCloudException(503,'school_cloud','temporary unavailable',
+        diagnosticCode:'SCRIPT_TRANSPORT_ERROR');
+    };
+    try {
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      expect(ManagedSchoolSession.appearanceAuthorizationBlockedForTesting,false);
+      await ManagedSchoolSession.reportAppearanceLock(true);
+      expect(attempts,2);
+    } finally {
+      ManagedSchoolSession.appearanceRequestForTesting=null;
+      ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
+    }
+  });
+
   Map<String, dynamic> unlockTheme(String revision) => {
     'activation': 'app-lock-unlock-v2',
     'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
