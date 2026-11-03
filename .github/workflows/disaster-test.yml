@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/disaster-test.yml
       - .github/tests/isolated_admin_fixture.dart
+      - .github/tests/isolated_engine_live_test.dart
       - .github/tests/isolated_admin_fixture_test.dart
       - integration_test/sync_v2_android_live_test.dart
       - .github/scripts/test_disaster_live.cjs
