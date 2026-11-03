@@ -14,7 +14,7 @@ jobs:
   isolated-test-students:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/verify/test-100k-students'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,9 +29,9 @@ jobs:
       - name: Upload only TEST2-DEMO students; require exact Google Drive ACK and readback
         env:
           VS_TEST_100K_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
-          VS_TEST_100K_START: '1'
-          VS_TEST_100K_END: '10'
-          VS_TEST_100K_BUDGET_MINUTES: '60'
+          VS_TEST_100K_START: '11'
+          VS_TEST_100K_END: '100000'
+          VS_TEST_100K_BUDGET_MINUTES: '330'
           VS_EXPECTED_TEST_RUNTIME: 16c91f81b5cf5ef53b72891a1ea11e4de4eb7b0e
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
