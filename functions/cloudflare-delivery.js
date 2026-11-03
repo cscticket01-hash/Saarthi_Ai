@@ -35,7 +35,21 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function statusFromRow(school,lane,id,row,readDrive){
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
-  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...await hydrate(school,row.response.result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+  // Only a fully successful, immutable Google ACK can say Drive verified.
+  // Historical completed batch receipts may include a rejected operation;
+  // never turn those into a green Drive result (or clear a client's outbox).
+  if(row.state==='completed'&&row.response?.result){
+   const result=row.response.result;
+   // A historical malformed batch response with no acknowledgements
+   // cannot satisfy the durable Drive proof contract either.
+   if(result.recordWriteBatchVersion===1&&
+    (!Array.isArray(result.acknowledgements)||result.acknowledgements.length===0))
+    fail(502,'ACK_UNVERIFIED');
+   const rejected=Array.isArray(result.acknowledgements)
+    ?result.acknowledgements.find(ack=>ack?.success!==true):null;
+   if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
+   return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+  }
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
@@ -139,6 +153,12 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
       if(refusal&&Object.hasOwn(providerStatuses,refusal.code))fail(providerStatuses[refusal.code],refusal.code);
       fail(503,'EDGE_DELIVERY_PENDING');
      }
+     // Terminal rejection is not an authoritative *batch* Drive ACK.
+     // Mark the original Cloudflare operation for owner review, retaining its
+     // partial successful receipts and original request for safe reconciliation.
+     // Without this guard a permission/conflict refusal looked 'completed'.
+     const terminalRefusal=original.operations.map(op=>partial[op.operationId]).find(ack=>ack?.success!==true);
+     if(terminalRefusal)fail(409,terminal.has(terminalRefusal.code)?terminalRefusal.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
      result={success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements:original.operations.map(op=>partial[op.operationId])};
     }else {result=await deliver(original);phase='verify';if(!verifiedRecord(result,school,original))fail(502,'ACK_UNVERIFIED');}
    }else {
