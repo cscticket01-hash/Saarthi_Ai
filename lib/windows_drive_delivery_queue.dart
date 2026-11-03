@@ -8,6 +8,7 @@ import 'windows_local_firestore.dart';
 class WindowsDriveDeliveryQueue {
   static const collection = '_windows_drive_deliveries';
   static bool _busy = false;
+  static Future<void> _edgeWriteTail = Future<void>.value();
   static void _scope(String school, String profile) {
     final db = FirebaseFirestore.instance;
     if (db.activeProfileId != profile ||
@@ -78,6 +79,80 @@ class WindowsDriveDeliveryQueue {
     _scope(school, profile);
   }
 
+  /// Track the existing staging lane independently of the native live lane.
+  /// Only metadata is stored. A pending or completed receipt cannot clear the
+  /// original record/file queue, whose existing version-safe ACK still owns it.
+  static Future<void> retainEdge(Map<String, dynamic> notice) {
+    final originalProof = notice['proof'];
+    final copy = Map<String, dynamic>.from(notice);
+    if (originalProof is Map) {
+      final proof = Map<String, dynamic>.from(originalProof);
+      if (proof['delivery'] is Map) {
+        proof['delivery'] = Map<String, dynamic>.from(proof['delivery'] as Map);
+      }
+      copy['proof'] = proof;
+    }
+    final next = _edgeWriteTail.catchError((Object _) {}).then((_) => _retainEdge(copy));
+    _edgeWriteTail = next;
+    return next;
+  }
+
+  static Future<void> _retainEdge(Map<String, dynamic> notice) async {
+    final school = notice['schoolId'], source = notice['source'];
+    final proof = notice['proof'];
+    if (school is! String || !validSchoolId(school) || source is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(source) || proof is! Map ||
+        proof['success'] != true || proof['schoolId'] != school ||
+        proof['cloudflareAccepted'] != true || proof['edgeDeliveryVersion'] != 1 ||
+        !const ['managed/records', 'managed/records/batch', 'managed/file/upload'].contains(notice['action'])) {
+      throw StateError('Unverified Cloudflare staging receipt.');
+    }
+    final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
+    final review = completed && notice['action'] == 'managed/records/batch' && proof['batchComplete'] != true;
+    if (completed && notice['action'] == 'managed/file/upload' &&
+        (proof['committed'] != true || proof['fileId'] is! String || (proof['fileId'] as String).isEmpty)) {
+      throw StateError('File bytes have no verified Drive completion.');
+    }
+    if (!completed && (proof['driveState'] != 'pending' || ticket is! Map ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(ticket['id']?.toString() ?? '') ||
+        !(ticket['lane'] == 'records' || ticket['lane'] == 'file-${ticket['id']}'))) {
+      throw StateError('Unverified Cloudflare staging ticket.');
+    }
+    final db = FirebaseFirestore.instance, profile = db.activeProfileId;
+    if (notice['profileId'] != profile) {
+      throw StateError('School profile changed during Cloudflare delivery.');
+    }
+    _scope(school, profile);
+    final operationId = 'edge-$source', ref = db.collection(collection).doc('edge-$source');
+    final old = (await ref.get()).data();
+    _scope(school, profile);
+    if (old != null) {
+      if (old['schoolId'] != school || old['edgeDeliveryVersion'] != 1 ||
+          old['action'] != notice['action'] ||
+          ticket is Map && old['ticketId'] != null && (old['ticketId'] != ticket['id'] || old['lane'] != ticket['lane'])) {
+        throw StateError('Cloudflare staging receipt identity changed.');
+      }
+      if (const ['completed', 'needsAttention'].contains(old['state'])) return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+      () => ref.set({
+        'schoolId': school, 'operationId': operationId, 'edgeDeliveryVersion': 1,
+        'action': notice['action'], 'cloudflareAccepted': true,
+        'collection': notice['collection'] is String ? notice['collection'] : 'school_files',
+        'id': notice['id'] is String ? notice['id'] : source.substring(0, 8),
+        if (ticket is Map) 'ticketId': ticket['id'],
+        if (ticket is Map) 'lane': ticket['lane'],
+        if (ticket is! Map && old != null && old['ticketId'] != null) 'ticketId': old['ticketId'],
+        if (ticket is! Map && old != null && old['lane'] != null) 'lane': old['lane'],
+        'state': review ? 'needsAttention' : completed ? 'completed' : 'pending',
+        'acceptedAt': old?['acceptedAt'] ?? now,
+        'completedAt': completed && !review ? now : 0,
+      }),
+    );
+    _scope(school, profile);
+  }
+
   /// Bind the separate Drive proof to the exact accepted cloud operation.
   /// A canonical live record or a boolean alone cannot prove a Drive write.
   static bool verifiedBackupReceipt(Map journal, Map receipt) {
@@ -113,6 +188,7 @@ class WindowsDriveDeliveryQueue {
           rows.where((row) {
             final item = row.data();
             return item['schoolId'] == school &&
+                item['liveProtocol'] == 1 &&
                 item['state'] == 'pending' &&
                 (item['nextPollAt'] as num? ?? 0) <=
                     now().millisecondsSinceEpoch;
@@ -283,6 +359,7 @@ class WindowsDriveDeliveryQueue {
         .map(
           (row) => {
             'id': row['operationId'],
+            if (row['edgeDeliveryVersion'] == 1) 'cloudflareAccepted': true,
             'state': row['state'],
             'acceptedAt': row['acceptedAt'],
             'completedAt': row['completedAt'],

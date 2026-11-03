@@ -42,7 +42,9 @@ List<String> driveSaveMessages(Map<String, dynamic>? status) {
     } else if (row['state'] == 'needsAttention') {
       messages.add('Drive save needs review · $label');
     } else if (const ['pending', 'retry', 'processing'].contains(row['state'])) {
-      messages.add('Drive save pending · $label');
+      messages.add(row['cloudflareAccepted'] == true
+          ? 'Cloudflare saved · Drive save pending · $label'
+          : 'Drive save pending · $label');
     }
   }
   return messages;

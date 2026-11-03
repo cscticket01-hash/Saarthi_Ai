@@ -41,6 +41,61 @@ void main() {
       identity: {'schoolSyncId': school},
     );
   });
+  Map<String, dynamic> edgeNotice({bool completed = false}) => {
+    'source': List.filled(64, 'a').join(), 'schoolId': school,
+    'profileId': db.activeProfileId, 'action': 'managed/records',
+    'collection': 'school_expenses', 'id': 'edge-one',
+    'proof': {
+      'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+      'cloudflareAccepted': true, 'driveState': completed ? 'verified' : 'pending',
+      if (!completed) 'delivery': {'lane': 'records', 'id': List.filled(64, 'b').join()},
+    },
+  };
+  test('staging receipt survives restart/replay without clearing the business outbox', () async {
+    await db.collection('school_expenses').doc('edge-one').set({'schoolId': school, 'amount': 42});
+    await WindowsDriveDeliveryQueue.retainEdge(edgeNotice());
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'pending');
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['cloudflareAccepted'], true);
+    var polls = 0;
+    await WindowsDriveDeliveryQueue.poll(school, call: (action, body) async {
+      polls++; throw StateError('Staging receipt is serviced by its original outbox');
+    });
+    expect(polls, 0);
+    await WindowsDriveDeliveryQueue.retainEdge(edgeNotice(completed: true));
+    await WindowsDriveDeliveryQueue.retainEdge(edgeNotice());
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'completed');
+    expect((await db.collection('_windows_firebase_outbox').get()).docs, hasLength(1));
+  });
+  test('concurrent completed and pending receipts cannot regress the durable state', () async {
+    await Future.wait([
+      WindowsDriveDeliveryQueue.retainEdge(edgeNotice(completed: true)),
+      WindowsDriveDeliveryQueue.retainEdge(edgeNotice()),
+    ]);
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'completed');
+  });
+  test('staging receipt refuses foreign school/profile and changed delivery identity', () async {
+    final original = edgeNotice();
+    await WindowsDriveDeliveryQueue.retainEdge(original);
+    for (final bad in [
+      {...edgeNotice(), 'profileId': 'another-profile'},
+      {...edgeNotice(), 'schoolId': other},
+      {...edgeNotice(), 'proof': {...(edgeNotice()['proof'] as Map), 'cloudflareAccepted': false}},
+      {...edgeNotice(), 'proof': {...(edgeNotice()['proof'] as Map),
+        'delivery': {'lane': 'records', 'id': List.filled(64, 'c').join()}}},
+    ]) {
+      await expectLater(WindowsDriveDeliveryQueue.retainEdge(bad), throwsStateError);
+    }
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'pending');
+  });
+  test('a prepared upload session and a partly rejected batch cannot claim Drive save complete', () async {
+    final session = edgeNotice(completed: true)..['action'] = 'managed/file/upload';
+    await expectLater(WindowsDriveDeliveryQueue.retainEdge(session), throwsStateError);
+    final batch = edgeNotice(completed: true)..['action'] = 'managed/records/batch';
+    (batch['proof'] as Map)['batchComplete'] = false;
+    await WindowsDriveDeliveryQueue.retainEdge(batch);
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'needsAttention');
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['completedAt'], 0);
+  });
   test('cloud commitment clears its outbox while Drive completion stays separately pending', () async {
     await db.collection('school_expenses').doc('one').set({
       'schoolId': school,

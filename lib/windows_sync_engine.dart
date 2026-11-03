@@ -1237,6 +1237,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _resetPaused = false;
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
+    CentralSchoolCloud.edgeDeliveryProfile = () => FirebaseFirestore.instance.activeProfileId;
+    CentralSchoolCloud.onEdgeDelivery = (notice) async {
+      await WindowsDriveDeliveryQueue.retainEdge(notice);
+      _transferReadAfter = null;
+    };
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
       _recordActivity({
