@@ -46,6 +46,11 @@ class WindowsBinaryDownloads {
   // transport budget: a valid signed response may arrive after 40 seconds.
   // This is a read-only inventory budget, not a transfer or write retry.
   static const inventoryRequestBudget = Duration(seconds: 120);
+  // File reads use the same authenticated managed transport as inventory.
+  // A 40-second outer deadline previously discarded legitimate signed Drive
+  // bytes returned after 40s, causing guaranteed retry exhaustion on slow GS.
+  // Whole-file bytes and every range still require exact hash/owner proof.
+  static const binaryReadRequestBudget = Duration(seconds: 120);
   static const maxBytes = 20 * 1024 * 1024;
   static const maxItems = 1000;
   final Map<String, Map<String, dynamic>> _items = {};
@@ -382,7 +387,7 @@ class WindowsBinaryDownloads {
         'action': 'managed/file/download', 'schoolId': schoolId,
         'fileId': item['fileId'], 'expectedSha256': item['sha256'],
         'expectedVersion': item['version'],
-      }).timeout(const Duration(seconds: 40));
+      }).timeout(binaryReadRequestBudget);
       _guard();
       if (response['success'] != true || response['schoolId'] != schoolId ||
           response['binaryDownloadVersion'] != 1 ||
@@ -432,7 +437,7 @@ class WindowsBinaryDownloads {
           'action': 'managed/file/download/part', 'schoolId': schoolId,
           'fileId': item['fileId'], 'expectedSha256': item['sha256'],
           'expectedVersion': item['version'], 'offset': offset, 'length': 256 * 1024,
-        }).timeout(remaining < const Duration(seconds: 40) ? remaining : const Duration(seconds: 40));
+        }).timeout(remaining < binaryReadRequestBudget ? remaining : binaryReadRequestBudget);
         _guard();
         if (response['success'] != true || response['schoolId'] != schoolId ||
             response['binaryRangeVersion'] != 1 || response['fileId'] != item['fileId'] ||
