@@ -2,9 +2,45 @@ name: Cloudflare school sync review
 on:
   pull_request:
     paths:
+      - 'lib/document_processing_engine.dart'
+      - 'lib/school_media_budgets.dart'
+      - 'lib/windows_connect/managed_record_media.dart'
+      - 'lib/windows_template_cloud_store.dart'
+      - 'lib/windows_document_templates.dart'
+      - 'lib/id_card_engine.dart'
+      - 'lib/id_card_layout.dart'
+      - 'lib/school_document_renderer.dart'
+      - 'lib/windows_reference_documents.dart'
+      - 'test/template_artwork_compression_test.dart'
+      - 'test/school_media_budgets_test.dart'
+      - 'test/windows_local_first_save_test.dart'
       - 'cloudflare-sync/**'
       - 'functions/cloudflare-sync.js'
       - 'functions/cloudflare-delivery.js'
+      - 'functions/live-sync.js'
+      - 'functions/live-domain-delivery.js'
+      - 'functions/live-person-lifecycle.js'
+      - 'functions/live-sync-reconciliation.js'
+      - 'functions/test/live-domain-delivery.test.js'
+      - 'functions/test/live-person-lifecycle.test.js'
+      - 'functions/test/live-sync-reconciliation.test.js'
+      - 'functions/live-sync-canonical.js'
+      - 'lib/live_sync_protocol.dart'
+      - 'lib/windows_live_sync_store.dart'
+      - 'lib/windows_live_sync_runtime.dart'
+      - 'lib/windows_drive_delivery_queue.dart'
+      - 'test/windows_drive_delivery_queue_test.dart'
+      - 'test/windows_live_sync_runtime_test.dart'
+      - 'test/windows_live_sync_store_test.dart'
+      - 'test/live_sync_receipt_test.dart'
+      - 'test/windows_sheet_recovery_test.dart'
+      - 'lib/windows_sheet_recovery.dart'
+      - 'lib/windows_connect/central_school_cloud.dart'
+      - 'lib/windows_connect/managed_school_session.dart'
+      - 'test/windows_startup_test.dart'
+      - 'functions/live-sync-gateway.js'
+      - 'functions/live-sync-migration.js'
+      - '.github/tests/live_sync_protocol.dart'
       - 'test/central_school_cloud_test.dart'
       - 'test/windows_sync_intelligent_repair_test.dart'
       - 'lib/windows_backend_bridge.dart'
@@ -40,6 +76,46 @@ concurrency:
   group: cloudflare-sync-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
+  five-pc-sqlite:
+    name: Independent 1/2/5-PC SQLite convergence (synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Verify 40 KB portrait size and retained quality
+        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart
+      - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-queues
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'independent SQLite PCs retain offline queues and merge disjoint same-row edits' test/windows_multi_pc_sync_test.dart
+      - name: Enforce five-device delta without reupload
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-expense
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'school expense delta reaches five separate SQLite PCs without duplicate uploads' test/windows_multi_pc_sync_test.dart
+      - name: Enforce five-device durable convergence
+        env:
+          APPDATA: ${{ runner.temp }}/live-five-pc-convergence
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name 'five independent SQLite devices converge without joining their queues' test/windows_multi_pc_sync_test.dart
+  synthetic-sqlite-load:
+    name: Synthetic 1k/5k student queues and verified Script VM ACK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Exercise existing 1000/5000 student upload, readback and delta test
+        env:
+          APPDATA: ${{ runner.temp }}/live-synthetic-student-load
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 15m --tags load --plain-name 'queued students -> real Script VM -> independent SQLite PC, measured' test/windows_multi_pc_sync_test.dart
   worker:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -67,8 +143,20 @@ jobs:
           cache: true
       - run: dart --disable-dart-dev .github/tests/sync3_pressure_policy.dart
       - run: dart --disable-dart-dev .github/tests/sync3_diagnostics_adaptive.dart
+      - run: dart --disable-dart-dev .github/tests/live_sync_protocol.dart
       - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart lib/windows_person_card_sync.dart lib/windows_school_identity.dart
+      - name: Stop revoked-PC 401 heartbeat retries and preserve Firebase session
+        env:
+          APPDATA: ${{ runner.temp }}/test-device-authorization
+        run: flutter test --concurrency=1 --timeout 90s --name 'revoked PC proof|PC proof rejection keeps|transient theme connection error' test/windows_startup_test.dart
+      - env:
+          APPDATA: ${{ runner.temp }}/live-protocol-recovery
+        run: flutter test --concurrency=1 test/pdf_media_dedup_test.dart test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart
+      - name: Verify existing offline duplicate self-repair on independent SQLite devices
+        env:
+          APPDATA: ${{ runner.temp }}/live-duplicate-recovery
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'offline identical entry adopts cloud original' test/windows_multi_pc_sync_test.dart
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_drive_delivery_queue.dart lib/windows_firebase_sync.dart lib/cloud_transfer_status.dart lib/windows_connect/managed_school_session.dart lib/windows_live_sync_runtime.dart lib/live_sync_protocol.dart lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart lib/windows_person_card_sync.dart lib/windows_school_identity.dart
       - env:
           APPDATA: ${{ runner.temp }}/cloudflare-apps
         run: flutter test --concurrency=1 --timeout 90s test/windows_person_card_sync_test.dart test/windows_sync_comparison_test.dart test/central_school_cloud_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_local_first_save_test.dart test/windows_school_profile_restore_test.dart test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart test/sync_recovery_policy_test.dart test/windows_sync_control_cleanup_test.dart

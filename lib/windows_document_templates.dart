@@ -17,6 +17,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
+import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
 import 'windows_id_card_designer_entry.dart';
@@ -97,7 +98,8 @@ class WindowsDocumentTemplates {
 
   static Future<Uint8List> renderImportedTemplate(
     String kind,Map<String,dynamic> manifest,Map<String,dynamic> record,
-  ) => WindowsTemplateCloudStore.render(kind,manifest,record);
+  ) async => SchoolMediaBudgets.verifyGeneratedPdf(
+    kind, await WindowsTemplateCloudStore.render(kind,manifest,record));
 
   static Future<Uint8List?> _image(dynamic raw) async {
     final source = raw?.toString().trim() ?? '';
@@ -148,7 +150,8 @@ class WindowsDocumentTemplates {
     bool publish = false,
   }) async {
     qr = IdCardEngine.compactQr(qr);
-    final bytes = await _selected(kind, data, qr: qr);
+    final rendered = await _selected(kind, data, qr: qr);
+    final bytes = rendered == null ? null : SchoolMediaBudgets.verifyGeneratedPdf(kind, rendered);
     if (bytes != null &&
         {'studentId', 'teacherId', 'otherStaffId'}.contains(kind) &&
         qr.isNotEmpty)

@@ -1,4 +1,5 @@
 import 'student_lifecycle_policy.dart';
+import 'live_sync_protocol.dart';
 import 'deleted_owner_document_policy.dart';
 import 'school_profile_policy.dart';
 import 'school_timestamp.dart';
@@ -282,6 +283,67 @@ class FirebaseFirestore {
     }
     return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
       ()=>_database.applyOperations(operations));
+  }
+
+  /// Retain a complete live page and its cursor in the same serialized disk
+  /// transaction. These are incoming records, never upload or Drive receipts.
+  Future<void> retainLiveSyncPage(LiveSyncPage page) async {
+    final profile=activeProfileId;
+    final school=activeProfileIdentity['schoolSyncId'];
+    if(school!=page.schoolId)throw StateError('Live page belongs to another school.');
+    LiveSyncPage.parse({'success':true,'liveProtocol':1,'schoolId':page.schoolId,
+      'cursor':page.cursor,'head':page.head,'more':page.more,'events':page.events},
+      page.schoolId,page.after);
+    final ref=collection('_windows_live_checkpoints').doc(page.schoolId);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    if(activeProfileId!=profile || old!=null&&old['schoolId']!=school ||
+        (old?['cursor']??0)!=page.after)throw StateError('Live checkpoint changed.');
+    final operations=[
+      for(final event in page.events)_WriteOperation._(type:_WriteType.set,
+        collection:'_windows_live_incoming',documentId:'${page.schoolId}-${event['sequence']}',
+        data:{'schoolId':page.schoolId,'sequence':event['sequence'],
+          'collection':event['collection'],'id':event['id'],
+          'record':jsonDecode(jsonEncode(event['record'])),'state':'retained',
+          if(event['retired']==true)...{'retired':true,'source':'drive',
+            'recordAuthority':'school-drive'}}),
+      _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
+        documentId:page.schoolId,data:{'schoolId':page.schoolId,'cursor':page.cursor}),
+    ];
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{page.schoolId:old}}));
+  }
+
+  /// Recovery-only checkpoint replacement after the runtime verified a pinned
+  /// authoritative snapshot through the ordinary pending-aware business owner.
+  Future<void> replaceLiveSyncCheckpointAfterVerifiedSnapshot(
+      String school, int expectedCursor, int nextCursor,
+      {Set<String>? verifiedCollections}) async {
+    final profile=activeProfileId;
+    if(activeProfileIdentity['schoolSyncId']!=school || expectedCursor<0 ||
+        nextCursor<expectedCursor)throw StateError('Live snapshot scope differs.');
+    final ref=collection('_windows_live_checkpoints').doc(school);
+    final old=(await ref.get()).data();ref.requireOriginProfile();
+    final incoming=await collection('_windows_live_incoming').get();
+    if(activeProfileId!=profile || activeProfileIdentity['schoolSyncId']!=school ||
+        old!=null&&old['schoolId']!=school || (old?['cursor']??0)!=expectedCursor)throw StateError('Live snapshot checkpoint changed.');
+    final operations=<_WriteOperation>[];
+    for(final row in incoming.docs) {
+      final data=row.data(),sequence=data['sequence'];
+      if(data['schoolId']!=school || sequence is! int || sequence<1 ||
+          row.id!='$school-$sequence' || sequence>nextCursor)
+        throw StateError('Live snapshot incoming identity differs.');
+      // A snapshot of active collections cannot consume a retained invalidation
+      // whose authority has already returned to Drive. Its ordinary reconciler
+      // must still verify and apply that key before compacting the hint.
+      if(verifiedCollections==null || verifiedCollections.contains(data['collection']))
+        operations.add(_WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_live_incoming',documentId:row.id));
+    }
+    operations.add(_WriteOperation._(type:_WriteType.set,
+      collection:'_windows_live_checkpoints',documentId:school,
+      data:{'schoolId':school,'cursor':nextCursor,'snapshotVerified':true}));
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,expected:{'_windows_live_checkpoints':{school:old}}));
   }
 
   /// Readback evidence only. A retained newer edit must never count as a download.
@@ -1215,6 +1277,7 @@ class _LocalSchoolDatabase {
           o.type == _WriteType.delete && o.collection == '_windows_firebase_outbox' &&
           o.acknowledgedRevision != null && o.data?['operationId'] is String);
         final metadataOnly = operations.every((o) => const {
+          '_windows_live_checkpoints','_windows_live_incoming',
           '_windows_verified_cloud_records','_windows_sync_downloads',
           '_windows_sync_manifest','_windows_sync_status','_windows_sync_dependencies',
         }.contains(o.collection) && o.acknowledgedRevision == null);

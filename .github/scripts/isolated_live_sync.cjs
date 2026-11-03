@@ -52,7 +52,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  let delta=await admin({action:'managed/changes',collections:['students_directory','school_notices','documents'],knownRevisions:{}});
  check('Second PC protocol discovers shared TEST records',delta,delta.http===200&&delta.data.changes?.documents?.records?.[docId]?.fileId===fileId);
  const knownRevisions=Object.fromEntries(Object.entries(delta.data.changes).map(([k,v])=>[k,v.collectionRevision]));
- delta=await admin({action:'managed/changes',collections:Object.keys(knownRevisions),knownRevisions});
+ delta=await require('./settle_test_delta.cjs').settleTestDelta(admin,knownRevisions,report);
  check('Unchanged delta omits unchanged records',delta,delta.http===200&&Object.values(delta.data.changes).every(x=>x.unchanged===true&&Object.keys(x.records).length===0));
  r=await post(endpoint,{action:'managed/changes',schoolId:'vs-'+'0'.repeat(32),collections:['documents']},token);
  check('Foreign school rejected with authenticated TEST token',r,r.http===403&&r.data.code==='ISOLATED_TEST_SCOPE_REQUIRED');

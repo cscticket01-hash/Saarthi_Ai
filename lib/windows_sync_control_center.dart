@@ -1918,11 +1918,15 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     final message = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
       ? cloudTransferMessage(_status) : null;
     if (widget.panelBuilder != null) {
-      final messages = <String>{...widget.messages, if (message != null) message}.toList();
+      final messages = <String>{...widget.messages, if (message != null) message,
+        if (widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId) ...driveSaveMessages(_status)}.toList();
       return messages.isEmpty ? const SizedBox.shrink() : widget.panelBuilder!(messages);
     }
-    if (message == null) return const SizedBox.shrink();
-    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(message,
+    final history = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+        ? driveSaveMessages(_status) : const <String>[];
+    final lines = [if (message != null) message, ...history];
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(lines.join('\n'),
       style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
         color: WindowsAppearance.foreground(Colors.orangeAccent))));
   }

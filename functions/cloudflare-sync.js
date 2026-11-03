@@ -20,7 +20,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
-  if(!r.ok||result.success!==true||result.schoolId!==school){const message=result.message;throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{status:r.status===409?409:503,code:message==='Record revision conflict'?'RECORD_REVISION_CONFLICT':message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE',publicMessage:true});}
+  if(!r.ok||result.success!==true||result.schoolId!==school){const message=result.message;throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{status:r.status===409?409:503,code:message==='Replay history compacted; snapshot required'?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT':message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE',publicMessage:true});}
   return result.value;
  }
  const lane=id=>'attendance-'+id.slice(0,2);
@@ -49,6 +49,7 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
  }
  function grant(policy){if(!enabled(policy.schoolId)||!Number.isSafeInteger(policy.expiresAt)||policy.expiresAt<=now())return undefined;const expiresAt=Math.min(policy.expiresAt,now()+900000);const value=Buffer.from(JSON.stringify({...policy,expiresAt})).toString('base64url');return {endpoint:new URL('/mobile',endpoint).href,schoolId:policy.schoolId,expiresAt,grant:value+'.'+createHmac('sha256',key).update(value).digest('hex')};}
  function decryptAttendance(payload){const cipher=Buffer.from(payload.body,'base64'),iv=Buffer.from(payload.iv,'base64');if(iv.length!==12||cipher.length<17||cipher.length>20000)throw Error('Invalid edge attendance envelope');const decoder=createDecipheriv('aes-256-gcm',createHash('sha256').update(key).digest(),iv);decoder.setAuthTag(cipher.subarray(-16));return JSON.parse(Buffer.concat([decoder.update(cipher.subarray(0,-16)),decoder.final()]).toString('utf8'));}
- return {enabled,verify,rpc,attendanceStore,notices,writeNotice,drainNotices,grant,decryptAttendance};
+ const liveGrant=policy=>{if(!enabled(policy.schoolId))throw Error('Cloudflare school not enabled');return require('./live-sync').liveGrant({...policy,key,endpoint:endpoint.href,now:now()});};
+ return {enabled,verify,rpc,attendanceStore,notices,writeNotice,drainNotices,grant,decryptAttendance,liveGrant};
 }
 module.exports={createCloudflareSync};

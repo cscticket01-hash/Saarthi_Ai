@@ -7,6 +7,41 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('portrait upload enforces its own 40 KB contract despite caller overrides', () {
+    final source = img.Image(width: 600, height: 800);
+    final random = math.Random(41);
+    for (final pixel in source) {
+      pixel.r = random.nextInt(256);
+      pixel.g = random.nextInt(256);
+      pixel.b = random.nextInt(256);
+    }
+    final bytes = Uint8List.fromList(img.encodePng(source));
+    final result = DocumentProcessingEngine.portraitUpload({
+      'bytes': bytes, 'kind': 'document', 'targetBytes': 256 * 1024,
+    });
+    expect(result['targetBytes'], 40 * 1024);
+    expect((result['optimized'] as Uint8List).length, lessThanOrEqualTo(40 * 1024));
+    expect(result['quality'], greaterThanOrEqualTo(78));
+    expect(result['height'], greaterThanOrEqualTo(256));
+    expect(result['width'] / result['height'], closeTo(.75, .01));
+    expect(result['highQuality'], isNotEmpty);
+  });
+  test('adaptive portrait spends spare byte budget on higher JPEG quality', () {
+    final source = img.Image(width: 600, height: 800);
+    final random = math.Random(42);
+    for (final pixel in source) {
+      pixel.r = random.nextInt(256);
+      pixel.g = random.nextInt(256);
+      pixel.b = random.nextInt(256);
+    }
+    final result = DocumentProcessingEngine.portraitUpload({
+      'bytes': Uint8List.fromList(img.encodePng(source)),
+    });
+    expect(result['height'], lessThan(source.height));
+    expect(result['quality'], greaterThan(78));
+    expect(result['actualBytes'], lessThanOrEqualTo(40 * 1024));
+    expect(img.decodeImage(result['optimized'] as Uint8List), isNotNull);
+  });
   test(
     'portrait target preserves aspect ratio and avoids document edge cropping',
     () {

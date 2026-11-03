@@ -15,16 +15,30 @@ on:
       - .github/scripts/review_fetch_evidence.test.cjs
       - .github/scripts/connect_isolated_test_storage.cjs
       - .github/scripts/test_runtime_identity.cjs
+      - .github/scripts/settle_test_delta.cjs
+      - .github/scripts/settle_test_delta.test.cjs
+      - .github/scripts/isolated_live_sync.cjs
+      # Disaster evidence logic changes require a fresh exact-head prerequisite.
+      - .github/scripts/test_disaster_live.cjs
+      - .github/scripts/disaster_resume.cjs
+      - .github/scripts/await_test_gate.test.cjs
+      - .github/scripts/await_test_gate.cjs
+      - .github/scripts/disaster_fixture_resume.test.cjs
+      - .github/scripts/disaster_fixture_resume.cjs
+      - .github/scripts/disaster_resume.test.cjs
       - staging-school-cloud/**
       - functions/**
-      - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/run_android_live_test.sh
       - .github/scripts/test_run_android_live_test.py
       - .github/tests/isolated_engine_live_test.dart
       - .github/tests/native_android_windows_readback_test.dart
       - integration_test/sync_v2_android_live_test.dart
+      - lib/testing/isolated_admin_fixture.dart
+      - .github/tests/isolated_admin_fixture_test.dart
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml
+      - .github/workflows/disaster-test.yml
+      - .github/workflows/sync3-isolated-readiness.yml
       - school-backend/managed/**
       - lib/mobile/school_session.dart
       - lib/mobile/attendance_store.dart
@@ -32,6 +46,8 @@ on:
       - lib/mobile/school_request_deadlines.dart
       - lib/windows_connect/managed_record_media.dart
       - lib/windows_school_image_cache.dart
+      - lib/windows_binary_downloads.dart
+      - test/windows_binary_downloads_test.dart
       - lib/document_processing_engine.dart
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_connect/central_school_cloud.dart
@@ -103,7 +119,7 @@ jobs:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: flutter test .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+        run: flutter test .github/tests/isolated_admin_fixture_test.dart .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -200,7 +216,8 @@ jobs:
         import re
         p='pubspec.yaml'
         s=open(p).read()
-        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','image_picker','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
+        # The native QR gallery scanner imports image_picker; never strip it from Android TEST builds.
+        for name in ['agora_rtc_engine','flutter_contacts','google_sign_in','googleapis','google_generative_ai','permission_handler','firebase_auth','cloud_firestore','font_awesome_flutter']:
           s=re.sub(r'^  '+name+r':[^\n]*\n','',s,flags=re.M)
         open(p,'w').write(s)
         PY

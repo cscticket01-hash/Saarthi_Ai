@@ -4,6 +4,7 @@ import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
 import 'school_qr_link.dart';
 import 'id_card_engine.dart';
+import 'school_media_budgets.dart';
 
 import 'package:crypto/crypto.dart' as crypto;
 
@@ -69,6 +70,7 @@ class WindowsBackendBridge {
     required double previousPaid,
     required Uint8List pdfBytes,
   }) => _documentWrite(() async {
+    SchoolMediaBudgets.enforcePdf('feeReceipt', pdfBytes);
     final db = FirebaseFirestore.instance;
     void scope() {
       if (db.activeProfileId != profileId)
@@ -2651,6 +2653,7 @@ class WindowsBackendBridge {
     if (!reuseCloud && !reuseLocal && (package == null || package.isEmpty)) {
       throw StateError('Selected ID renderer returned no package.');
     }
+    if (package != null) SchoolMediaBudgets.enforcePdf('idCard', package);
     // Cloud waits happen outside the local document writer, so another offline
     // document save can complete while this bounded inventory read is pending.
     var publicationQueued=false;

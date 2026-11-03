@@ -11,6 +11,151 @@ class DocumentProcessingEngine {
   static const sourceLimit = 50 * 1024 * 1024;
   static const photoTarget = 80 * 1024;
   static const portraitTarget = 40 * 1024;
+  static const brandingTarget = 30 * 1024;
+
+  /// Losslessly optimize the normalized PNG artwork used by TemplateForge.
+  /// Unlike portrait/photo compression, print backgrounds must retain every
+  /// pixel, including fine text, stamps and transparent edges. This runs in
+  /// an isolate before the existing verified school-Drive publication.
+  /// A larger, non-identical or color-profiled re-encode keeps source bytes.
+  static Map<String, dynamic> templateArtworkUpload(Map<String, dynamic> input) {
+    final source = input['bytes'] as Uint8List;
+    if (source.isEmpty || source.length > 20 * 1024 * 1024) {
+      throw const FormatException('Template artwork exceeds the 20 MiB safe upload limit.');
+    }
+    try {
+    final decoder = img.PngDecoder();
+    final info = decoder.startDecode(source);
+    if (info == null || info.width <= 0 || info.height <= 0 ||
+        info.width * info.height > 20000000 || decoder.numFrames() != 1) {
+      throw const FormatException('Template artwork must be a valid single-frame PNG.');
+    }
+    final original = decoder.decodeFrame(0);
+    if (original == null) {
+      throw const FormatException('Template artwork cannot be decoded.');
+    }
+    Uint8List result = source;
+    // Re-encoding an ICC-profiled design could change its printed colours.
+    if (original.iccProfile == null) {
+      final candidate = Uint8List.fromList(img.encodePng(original, level: 9));
+      if (candidate.length < source.length) {
+        final verified = img.decodePng(candidate);
+        if (verified != null && verified.width == original.width &&
+            verified.height == original.height) {
+          var identicalPixels = true;
+          for (var y = 0; y < original.height && identicalPixels; y++) {
+            for (var x = 0; x < original.width; x++) {
+              final before = original.getPixel(x, y);
+              final after = verified.getPixel(x, y);
+              if (before.r != after.r || before.g != after.g ||
+                  before.b != after.b || before.a != after.a) {
+                identicalPixels = false;
+                break;
+              }
+            }
+          }
+          if (identicalPixels) result = candidate;
+        }
+      }
+    }
+    return {
+      'optimized': result, 'mimeType': 'image/png',
+      'originalBytes': source.length, 'actualBytes': result.length,
+      'lossless': true, 'pixelsVerified': true,
+      'reusedSource': identical(result, source),
+    };
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException('Template artwork cannot be safely decoded.');
+    }
+  }
+
+  /// Optimize school logo, seal and signature for a strict 30 KB upload.
+  /// Unlike the document-scanner pathway, transparent ink is never flattened
+  /// onto white JPEG. This protects transparent signatures and round seals.
+  /// No generated output is accepted unless the exact encoded bytes fit.
+  static Map<String, dynamic> brandingUpload(Map<String, dynamic> input) {
+    final source = input['bytes'] as Uint8List;
+    SchoolImageInput.validate(source);
+    final decoder = img.findDecoderForData(source);
+    final info = decoder?.startDecode(source);
+    if (info == null || info.width <= 0 || info.height <= 0 ||
+        info.width * info.height > 20000000 || decoder!.numFrames() != 1) {
+      throw const FormatException('Branding image is invalid or exceeds 20 megapixels.');
+    }
+    final decoded = decoder!.decodeFrame(0);
+    if (decoded == null) {
+      throw const FormatException('Cannot decode school branding image.');
+    }
+    final oriented = img.bakeOrientation(decoded).convert(numChannels: 4);
+    oriented.exif = img.ExifData();
+    oriented.textData = null;
+    oriented.iccProfile = null;
+    var hasTransparency = false;
+    for (final pixel in oriented) {
+      if (pixel.a < 255) {
+        hasTransparency = true;
+        break;
+      }
+    }
+    final longest = math.max(oriented.width, oriented.height);
+    final steps = <int>[
+      longest,
+      for (final edge in [1024, 768, 640, 512, 448, 384, 320, 256])
+        if (longest > edge) edge,
+    ].toSet().toList();
+    for (final edge in steps) {
+      final frame = edge == longest ? oriented : img.copyResize(
+        oriented,
+        width: oriented.width >= oriented.height ? edge : null,
+        height: oriented.height > oriented.width ? edge : null,
+        interpolation: img.Interpolation.average,
+      );
+      final png = Uint8List.fromList(img.encodePng(frame, level: 9));
+      if (png.length <= brandingTarget) {
+        return {
+          'optimized': png, 'mimeType': 'image/png', 'targetMet': true,
+          'actualBytes': png.length, 'originalBytes': source.length,
+          'targetBytes': brandingTarget, 'width': frame.width,
+          'height': frame.height, 'transparencyPreserved': hasTransparency,
+          'quality': 'lossless PNG at selected resolution',
+        };
+      }
+      if (!hasTransparency) {
+        final rgb = frame.convert(numChannels: 3);
+        for (final quality in [92, 86, 80]) {
+          final jpeg = Uint8List.fromList(img.encodeJpg(rgb, quality: quality));
+          if (jpeg.length <= brandingTarget) {
+            return {
+              'optimized': jpeg, 'mimeType': 'image/jpeg', 'targetMet': true,
+              'actualBytes': jpeg.length, 'originalBytes': source.length,
+              'targetBytes': brandingTarget, 'width': frame.width,
+              'height': frame.height, 'transparencyPreserved': true,
+              'quality': quality,
+            };
+          }
+        }
+      }
+    }
+    throw const FormatException(
+      'School logo, seal or signature cannot fit 30 KB without losing '
+      'important detail or transparency. Original retained; use a clearer asset.',
+    );
+  }
+
+  /// Upload contract for profile photos. Never silently send an oversized
+  /// fallback, or lower the quality floor merely to claim the budget passed.
+  static Map<String, dynamic> portraitUpload(Map<String, dynamic> input) {
+    final result = process({...input, 'kind': 'portrait', 'targetBytes': portraitTarget});
+    final bytes = result['optimized'] as Uint8List;
+    if (result['targetMet'] != true || bytes.length > portraitTarget) {
+      throw const FormatException(
+        'Photo cannot fit 40 KB safely. Original retained; please choose a clearer portrait.',
+      );
+    }
+    return result;
+  }
   // Retain the existing eight-document aggregate measurement contract.
   static const setTarget = 8 * photoTarget;
   static Map<String, dynamic> process(Map<String, dynamic> input) {
@@ -206,6 +351,27 @@ class DocumentProcessingEngine {
           optimizedWidth=candidateImage.width;optimizedHeight=candidateImage.height;quality=78;
         }
         edge=nextEdge;
+      }
+      // Recover the highest JPEG quality that fits at the chosen dimensions.
+      // Adaptive sizing used q78 to find a safe resolution, not as a fixed
+      // quality setting for every face. Always encode from the source pixels.
+      if (optimized.length <= target && quality < 94) {
+        final candidateImage = optimizedWidth == image.width && optimizedHeight == image.height
+            ? image
+            : img.copyResize(image, width: optimizedWidth, height: optimizedHeight,
+                interpolation: img.Interpolation.average);
+        var low = quality + 1, high = 94;
+        while (low <= high) {
+          final q = (low + high) ~/ 2;
+          final candidate = Uint8List.fromList(img.encodeJpg(candidateImage, quality: q));
+          if (candidate.length <= target) {
+            optimized = candidate;
+            quality = q;
+            low = q + 1;
+          } else {
+            high = q - 1;
+          }
+        }
       }
     }
     // A recompression must not consume more than the safe existing source.

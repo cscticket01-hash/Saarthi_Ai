@@ -60,7 +60,14 @@ test('file bytes are hash-verified, school isolated, resumable at non-chunk offs
   assert.equal(current.fileId,undefined);await new Promise(r=>setTimeout(r,300));
  }
  assert(offset===bytes.length&&parts>=3);
- const pruned=await rpc(school,staged.delivery.lane,{command:'readPart',id:staged.delivery.id,offset:0});assert.equal(pruned.status,409);
+ const retained=await rpc(school,staged.delivery.lane,{command:'readPart',id:staged.delivery.id,offset:0});
+ assert.equal(retained.status,200);assert.equal(retained.value.sizeBytes,512*1024);
+ const retention=await rpc(school,staged.delivery.lane,{command:'retention'});
+ assert.equal(retention.value.retentionHours,24);assert.ok(retention.value.nextCleanupAt>Date.now());
+ const sweep=await rpc(school,staged.delivery.lane,{command:'expireVerified'});
+ assert.equal(sweep.value.expired,0); // Never remove verified bytes before 24h.
+ const stillReadable=await rpc(school,staged.delivery.lane,{command:'readPart',id:staged.delivery.id,offset:0});
+ assert.equal(stillReadable.status,200);
  const replay=await delivery.wholeFile(school,{...manifest,base64:bytes.toString('base64')});assert.equal(replay.fileId,'verified-drive-file');
 });
 test('changed upload manifest and chunk replay are rejected; incomplete bytes never become a Drive file',async()=>{

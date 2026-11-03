@@ -30,6 +30,38 @@ class _StreamClient extends http.BaseClient {
   void close() { closes++; }
 }
 void main() {
+  tearDown(() { CentralSchoolCloud.onEdgeDelivery = null; CentralSchoolCloud.edgeDeliveryProfile = null; });
+  test('Cloudflare receipt is retained before polling and contains metadata only', () async {
+    final notices = <Map<String, dynamic>>[], calls = <String>[];
+    CentralSchoolCloud.edgeDeliveryProfile = () => 'original-profile';
+    CentralSchoolCloud.onEdgeDelivery = (notice) async { notices.add(notice); };
+    final id = List.filled(64, 'a').join();
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api', client: MockClient((request) async {
+      final body = jsonDecode(request.body) as Map;
+      calls.add(body['action'] as String);
+      if (calls.length == 1) return http.Response(jsonEncode({
+        'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+        'cloudflareAccepted': true, 'driveState': 'pending',
+        'delivery': {'lane': 'records', 'id': id},
+      }), 200);
+      expect(notices, hasLength(1));
+      return http.Response(jsonEncode({
+        'success': true, 'schoolId': school,
+        'cloudflareAccepted': true, 'driveState': 'verified', 'recordRevision': 'drive-one',
+      }), 200);
+    }));
+    await cloud.api({'action': 'managed/records', 'schoolId': school, 'syncProtocol': 2,
+      'operation': 'write', 'collection': 'school_expenses', 'id': 'one',
+      'operationId': 'original-operation-id', 'data': {'privateName': 'must-not-be-in-receipt'}});
+    expect(notices, hasLength(2));
+    expect(notices.first['source'], notices.last['source']);
+    expect(notices.first['profileId'], 'original-profile');
+    expect(jsonEncode(notices), isNot(contains('must-not-be-in-receipt')));
+    expect((notices.last['proof'] as Map)['driveState'], 'verified');
+    expect(calls, ['managed/records', 'managed/cloudflare/operation']);
+    cloud.close();
+  });
+
   test('retained delivery retry preserves Script reason and deadline without 90-second polling', () async {
     var calls = 0;
     final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
@@ -175,6 +207,24 @@ void main() {
           .having((e)=>e.toString(),'privacy',isNot(contains('NEVER_EXPOSE')))));
       cloud.close();
     }
+  });
+  test('record transport negotiates live delivery without changing saved operation identity', () async {
+    final requests=<Map<String,dynamic>>[];
+    final cloud=CentralSchoolCloud(endpoint:'https://central.example/school-cloud',
+      client:MockClient((request) async {
+        requests.add(Map<String,dynamic>.from(jsonDecode(request.body) as Map));
+        return http.Response(jsonEncode({'success':true,'schoolId':school}),200);
+      }));
+    final body=<String,dynamic>{'action':'managed/records','schoolId':school,
+      'operation':'write','syncProtocol':2,'operationId':'original-operation-0001',
+      'expectedRecordRevision':'gs-original','data':{'schoolId':school,'amount':10}};
+    await cloud.api(body);
+    expect(requests.single['liveProtocol'],1);
+    expect(requests.single['operationId'],body['operationId']);
+    expect(requests.single['expectedRecordRevision'],'gs-original');
+    expect(requests.single['syncProtocol'],2);
+    expect(body.containsKey('liveProtocol'),isFalse);
+    cloud.close();
   });
   test('safe coded storage failures remain distinct from revision conflicts', () async {
     final cloud = CentralSchoolCloud(endpoint: 'https://central.example/school-cloud',

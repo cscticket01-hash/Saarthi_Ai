@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'live_sync_protocol.dart';
 
 import 'windows_local_firestore.dart';
 import 'windows_connect/managed_school_session.dart';
@@ -27,8 +28,13 @@ Future<void> cacheVerifiedSheetRecords(String school,String collection,
       (record['_syncRevision'] as String).isEmpty)) {
     throw StateError('Verified same-school cloud record required.');
   }
+  // Live records have their own durable authority and Drive handoff. They
+  // must never seed legacy missing-Sheet repair with a projected revision.
+  final driveRecords=records.entries.where((entry)=>
+      isDriveRecoveryRevision(entry.value['_syncRevision'])).toList();
+  if(driveRecords.isEmpty)return;
   final batch=db.batch();
-  for(final entry in records.entries) {
+  for(final entry in driveRecords) {
   final ref = db
       .collection('_windows_verified_cloud_records')
       .doc(sheetRecoveryCacheKey(collection, entry.key));
@@ -62,7 +68,7 @@ Future<int> recoverMissingSheetRecords(
     if (raw is! Map ||
         raw['deleted'] == true ||
         raw['id'] is! String ||
-        raw['revision'] is! String)
+        !isDriveRecoveryRevision(raw['revision']))
       continue;
     final id = raw['id'] as String;
     final cached =

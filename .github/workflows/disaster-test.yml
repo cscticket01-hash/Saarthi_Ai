@@ -5,9 +5,21 @@ on:
     branches: [feature/smart-sync-3]
     paths:
       - .github/workflows/disaster-test.yml
+      - .github/workflows/sync3-isolated-readiness.yml
+      - lib/testing/isolated_admin_fixture.dart
+      - .github/tests/isolated_engine_live_test.dart
+      - .github/tests/isolated_admin_fixture_test.dart
+      - integration_test/sync_v2_android_live_test.dart
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
+      - .github/scripts/await_test_gate.test.cjs
+      - .github/scripts/await_test_gate.cjs
+      - .github/scripts/disaster_fixture_resume.test.cjs
+      - .github/scripts/disaster_fixture_resume.cjs
       - .github/scripts/test_runtime_identity.cjs
+      - .github/scripts/settle_test_delta.cjs
+      - .github/scripts/settle_test_delta.test.cjs
+      - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/test_sync_review_web.cjs
       - .github/scripts/review_response_match.cjs
       - .github/scripts/review_response_body.cjs
@@ -46,7 +58,7 @@ jobs:
           VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
           VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
         run: |
-          node --test .github/scripts/disaster_resume.test.cjs
+          node --test .github/scripts/disaster_resume.test.cjs .github/scripts/disaster_fixture_resume.test.cjs .github/scripts/await_test_gate.test.cjs
           node .github/scripts/test_disaster_live.cjs
       - uses: actions/upload-artifact@v4
         if: always()

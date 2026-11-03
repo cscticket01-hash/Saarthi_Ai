@@ -42,6 +42,15 @@ class WindowsBinaryDownloads {
   // Bound the lifetime of a single foreground repair attempt. Its verified
   // chunks remain resumable under the same durable school/file journal.
   static const transferAttemptBudget = Duration(minutes: 3);
+  // Inventory hashes up to five Drive files. Match the managed storage
+  // transport budget: a valid signed response may arrive after 40 seconds.
+  // This is a read-only inventory budget, not a transfer or write retry.
+  static const inventoryRequestBudget = Duration(seconds: 120);
+  // File reads use the same authenticated managed transport as inventory.
+  // A 40-second outer deadline previously discarded legitimate signed Drive
+  // bytes returned after 40s, causing guaranteed retry exhaustion on slow GS.
+  // Whole-file bytes and every range still require exact hash/owner proof.
+  static const binaryReadRequestBudget = Duration(seconds: 120);
   static const maxBytes = 20 * 1024 * 1024;
   static const maxItems = 1000;
   final Map<String, Map<String, dynamic>> _items = {};
@@ -251,7 +260,7 @@ class WindowsBinaryDownloads {
       final response = await request({
         'action': 'managed/file/inventory', 'schoolId': schoolId,
         if (_cursor != null) 'cursor': _cursor,
-      }).timeout(const Duration(seconds: 40));
+      }).timeout(inventoryRequestBudget);
       _guard();
       if (response['success'] != true || response['schoolId'] != schoolId ||
           response['binaryInventoryVersion'] != 1 ||
@@ -367,7 +376,7 @@ class WindowsBinaryDownloads {
         // A broker rollback must prove that the negotiated capability is gone.
         // Access/quota failures never enter this backward-compatible fallback.
         final capability = await request({'action': 'managed/file/inventory', 'schoolId': schoolId})
-            .timeout(const Duration(seconds: 40));
+            .timeout(inventoryRequestBudget);
         _guard();
         if (capability['success'] != true || capability['schoolId'] != schoolId ||
             capability['binaryInventoryVersion'] != 1 || capability['binaryRangeVersion'] == 1) rethrow;
@@ -378,7 +387,7 @@ class WindowsBinaryDownloads {
         'action': 'managed/file/download', 'schoolId': schoolId,
         'fileId': item['fileId'], 'expectedSha256': item['sha256'],
         'expectedVersion': item['version'],
-      }).timeout(const Duration(seconds: 40));
+      }).timeout(binaryReadRequestBudget);
       _guard();
       if (response['success'] != true || response['schoolId'] != schoolId ||
           response['binaryDownloadVersion'] != 1 ||
@@ -428,7 +437,7 @@ class WindowsBinaryDownloads {
           'action': 'managed/file/download/part', 'schoolId': schoolId,
           'fileId': item['fileId'], 'expectedSha256': item['sha256'],
           'expectedVersion': item['version'], 'offset': offset, 'length': 256 * 1024,
-        }).timeout(remaining < const Duration(seconds: 40) ? remaining : const Duration(seconds: 40));
+        }).timeout(remaining < binaryReadRequestBudget ? remaining : binaryReadRequestBudget);
         _guard();
         if (response['success'] != true || response['schoolId'] != schoolId ||
             response['binaryRangeVersion'] != 1 || response['fileId'] != item['fileId'] ||

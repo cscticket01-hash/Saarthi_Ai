@@ -39,6 +39,22 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('temporary live revisions never become legacy Sheet recovery evidence', () async {
+    await cacheVerifiedSheetRecords(school, 'school_expenses', {
+      'original': {'schoolId': school, '_syncRevision': 'gs-verified', 'amount': 1},
+      'pending': {'schoolId': school, '_syncRevision': 'live-pending', 'amount': 2},
+      'old-edge': {'schoolId': school, '_syncRevision': 'cf-pending', 'amount': 3},
+    });
+    final cache = await db.collection('_windows_verified_cloud_records').get();
+    expect(cache.docs.length, 1);
+    expect(cache.docs.single.data()['documentId'], 'original');
+    var calls = 0;
+    expect(await recoverMissingSheetRecords(school, 'school_expenses', [
+      {'id': 'pending', 'revision': 'live-pending'},
+      {'id': 'old-edge', 'revision': 'cf-pending'},
+    ], request: (action, body) async { calls++; return {}; }), 0);
+    expect(calls, 0);
+  });
   test('recovery sends exact cached cloud record while a newer edit remains queued after reopen', () async {
     final original = {
       'schoolId': school,

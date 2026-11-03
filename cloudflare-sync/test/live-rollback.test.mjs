@@ -1,0 +1,71 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+const require=createRequire(import.meta.url);
+const {createLiveSync}=require('../../functions/live-sync');
+const {createCloudflareSync}=require('../../functions/cloudflare-sync');
+const {createLiveMigration}=require('../../functions/live-sync-migration');
+const {fixture}=require('../../functions/test/helpers/managed-school-broker');
+const {storage}=require('../../functions/test/helpers/managed-storage');
+const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32),key='isolated-live-rollback-secret-0000000001';
+async function setup(t,collection){
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'live-rollback',modules:true,scriptPath:new URL('../dist/worker.js',import.meta.url).pathname,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:A,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ t.after(()=>mf.dispose());
+ const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
+ const live=createLiveSync({edge,schools:[A]}),gs=storage({lifecycle:true,bundle:true}),read=async body=>gs.call(body);
+ await live.prepare(A,collection,read);
+ const commit=(id,extra={})=>live.commit(A,{collection,id,operation:'write',operationId:'rollback-operation-'+id,expectedRevision:'',data:{schoolId:A,title:id},...extra},read);
+ const drain=async()=>{for(let n=0;n<30;n++){const stats=await live.command(A,{command:'stats'});if(stats.backups.every(row=>row.state==='verified'))return;assert.equal((await live.drain(A,read)).processed,1);}throw Error('unexpected undrained backup');};
+ return {live,gs,read,commit,drain};
+}
+test('actual signed GS handoff verifies rollback including tombstone and resumes after Worker seal response loss',async t=>{
+ const collection='school_calendar',f=await setup(t,collection);
+ await f.commit('retained');const deleted=await f.commit('deleted');await f.drain();
+ await f.live.commit(A,{collection,id:'deleted',operation:'delete',operationId:'rollback-delete-operation-0001',expectedRevision:deleted.recordRevision},f.read);await f.drain();
+ const broker=fixture(),gate=createLiveMigration({db:broker.db,drainGraceMs:0});
+ broker.docs.set('school_live_migrations/'+A,{collections:{[collection]:{state:'active'}},inflight:{},liveInflight:{}});
+ let sealed;
+ await assert.rejects(gate.rollback(A,collection,async context=>{sealed=await f.live.rollback(A,collection,f.read,context.rollbackToken);throw Error('broker stopped after Worker seal');}),/broker stopped/);
+ assert.equal(sealed.driveVerified,true);assert.equal(sealed.pending,0);
+ assert.equal(await gate.state(A,collection),'rolling_back');
+ assert.equal((await f.live.command(A,{command:'head'})).collections.find(c=>c.collection===collection).state,'legacy');
+ await assert.rejects(f.commit('too-late'),e=>e.status===503||e.status===412);
+ const result=await gate.rollback(A,collection,context=>f.live.rollback(A,collection,f.read,context.rollbackToken));
+ assert.equal(result.state,'legacy');assert.equal(result.fingerprint,sealed.fingerprint);
+ assert.equal(await gate.state(A,collection),'legacy');
+ const saved=f.gs.call({action:'managed_records',collection,operation:'read',syncProtocol:2});
+ assert.equal(saved.records.retained.title,'retained');assert.equal(saved.records.deleted._syncDeleted,true);
+ assert.ok(saved.records.retained._syncRevision&&!saved.records.retained._syncRevision.startsWith('live-'));
+ const stats=await f.live.command(A,{command:'stats'});assert.deepEqual(stats.payloadCopies,{records:0,events:0,backups:0,operations:0});
+ const replay=await f.live.replay(A,{command:'changes',after:0},f.read);
+ assert.equal(replay.events.length,3);
+ for(const event of replay.events){assert.equal(event.record,null);assert.equal(event.retired,true);assert.equal(event.source,'drive');assert.equal(event.recordAuthority,'school-drive');}
+ await f.live.prepare(A,'school_settings',f.read);
+ await f.live.commit(A,{collection:'school_settings',id:'still-live',operation:'write',operationId:'rollback-other-collection-0001',expectedRevision:'',data:{schoolId:A,title:'other collection still replays'}},f.read);
+ const continued=await f.live.replay(A,{command:'changes',after:0},f.read);
+ assert.equal(continued.events.at(-1).record.title,'other collection still replays');
+ assert.equal(continued.cursor,4);
+});
+test('rollback never accepts pending backups, fake fingerprint or newer conflicting Drive revision',async t=>{
+ const collection='school_expenses',f=await setup(t,collection);await f.commit('expense');
+ await assert.rejects(f.live.rollback(A,collection,f.read,'pending-token'),e=>e.code==='LIVE_BACKUP_PENDING');
+ let head=await f.live.command(A,{command:'head'});
+ await assert.rejects(f.live.command(A,{command:'rollbackSeal',collection,cursor:head.cursor,fingerprint:'0'.repeat(64)}),e=>e.status===409);
+ await f.drain();head=await f.live.command(A,{command:'head'});
+ await assert.rejects(f.live.command(A,{command:'rollbackSeal',collection,cursor:head.cursor,fingerprint:'0'.repeat(64)}),e=>e.status===409);
+ const original=f.gs.call({action:'managed_records',collection,operation:'read',id:'expense',syncProtocol:2}).records.expense;
+ const changed=f.gs.call({action:'managed_records',collection,operation:'write',id:'expense',syncProtocol:2,operationId:'external-newer-drive-operation-001',expectedRecordRevision:original._syncRevision,data:{schoolId:A,title:'newer external data'}});
+ assert.equal(changed.success,true,JSON.stringify(changed));
+ await assert.rejects(f.live.rollback(A,collection,f.read,'newer-token'),e=>e.code==='LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+ assert.equal((await f.live.command(A,{command:'head'})).collections[0].state,'active');
+ assert.equal(f.gs.call({action:'managed_records',collection,operation:'read',id:'expense',syncProtocol:2}).records.expense.title,'newer external data');
+ await assert.rejects(f.live.rollback(B,collection,f.read,'foreign-token'),e=>e.code==='LIVE_SYNC_DISABLED');
+});
+test('pinned rollback snapshot cannot seal after a concurrent accepted live edit',async t=>{
+ const collection='school_settings',f=await setup(t,collection);await f.commit('existing');await f.drain();let changed=false;
+ const concurrentRead=async body=>{const result=await f.read(body);if(!changed){changed=true;await f.commit('newer');}return result;};
+ await assert.rejects(f.live.rollback(A,collection,concurrentRead,'racing-token'),e=>e.status===409);
+ assert.equal((await f.live.command(A,{command:'head'})).collections[0].state,'active');
+ assert.equal((await f.live.read(A,collection,'newer',f.read)).record.title,'newer');
+});
