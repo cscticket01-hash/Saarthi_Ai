@@ -51,6 +51,7 @@ class WindowsTestSchoolLocalDemoSeed {
   /// school switch and licence change throughout the operation.
   static Future<int> create({
     required Future<bool> Function() verifyActiveSchool,
+    bool Function()? allowContinue,
     void Function(int present, int total)? onProgress,
     int count = target,
   }) async {
@@ -59,7 +60,8 @@ class WindowsTestSchoolLocalDemoSeed {
     final profile = db.activeProfileId;
 
     void scope() {
-      if (db.activeProfileId != profile ||
+      if ((allowContinue != null && !allowContinue()) ||
+          db.activeProfileId != profile ||
           db.activeProfileIdentity['schoolSyncId'] != schoolId ||
           db.activeProfileIdentity['blocked'] == true) {
         throw StateError('School changed. Local TEST data was not added to another school.');
