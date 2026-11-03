@@ -1,0 +1,67 @@
+name: Read retained TEST student delete checkpoint
+on:
+  push:
+    branches: [verify/retained-delete-checkpoint-20261104]
+    paths: ['.github/workflows/retained-delete-checkpoint.yml']
+permissions:
+  contents: read
+jobs:
+  read-retained-delete:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/verify/retained-delete-checkpoint-20261104'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Read only exact synthetic fixture and existing receipt
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const school='vs-db8afb01a3be46a983c8284714d06e5d';
+          const endpoint='https://saarthi-sync-v2-test.onrender.com/school-cloud';
+          const report={scope:'read-only exact retained synthetic TEST fixture; no writes, retries, queue clears or deletes',checks:[]};
+          let token;
+          async function request(url,body){
+            const r=await fetch(url,{method:body?'POST':'GET',redirect:'error',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(60000)});
+            return {status:r.status,data:await r.json()};
+          }
+          async function call(action,body={}){
+            const r=await request(endpoint,{...body,action,schoolId:school});
+            report.checks.push({action,http:r.status,...(typeof r.data?.code==='string'&&/^[A-Z_]{1,80}$/.test(r.data.code)?{code:r.data.code}:{})});
+            if(r.status!==200||r.data?.success!==true||r.data.schoolId!==school)throw Error('Scoped read refused');
+            return r.data;
+          }
+          (async()=>{
+            const h=await request(endpoint+'/healthz');
+            if(h.status!==200||h.data.runtimeCommit!=='10132bf32a3b81a3ba084a3c0b77cad9955a67cd')throw Error('Runtime fence failed');
+            const login=await request('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A',{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
+            if(login.status!==200||!login.data.idToken)throw Error('Login refused');
+            token=login.data.idToken;
+            const s=await call('managed/session');
+            if(!s.allowed||s.uid!==login.data.localId)throw Error('TEST identity refused');
+            const receipt=await call('managed/cloudflare/operation',{lane:'records',id:'e4db901bf30142e7d31cbf5bf342e43ad9194617a864cb425cf273bba2ca4ca6',waitMillis:0});
+            report.receipt={driveState:receipt.driveState,deliveryStatus:receipt.deliveryStatus||null,stillPending:!!receipt.delivery};
+            const r=await call('managed/records',{collection:'students_directory',operation:'read',id:'CFSPEED_STUDENT_41705585136_0_c65fd6',syncProtocol:2});
+            const row=r.records?.CFSPEED_STUDENT_41705585136_0_c65fd6,p=row?._syncErasePlan;
+            report.record={exists:!!row,deleted:row?._syncDeleted===true,operationMatches:row?._syncOperationId==='6ab63ea1f0d2c4be797c4339968df505',plan:p?{version:p.version,complete:p.complete,targets:p.targets?.length,files:p.files?.length,cursor:p.cursor,fileCursor:p.fileCursor,archivesComplete:p.archivesComplete,archives:p.archiveIds?.length,archiveCursor:p.archiveCursor}:null};
+            const health=await call('managed/sync/status');
+            report.serverEvidence=health.serverEvidence||null;
+            report.status='READ_COMPLETE';
+          })().catch(()=>{report.status='READ_BLOCKED';process.exitCode=1;}).finally(()=>{
+            fs.mkdirSync('build/retained-delete',{recursive:true});
+            fs.writeFileSync('build/retained-delete/report.json',JSON.stringify(report,null,2));
+            console.log('RETAINED_DELETE_CHECKPOINT '+JSON.stringify(report));
+          });
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retained-delete-checkpoint
+          path: build/retained-delete/report.json
+          if-no-files-found: warn
+          retention-days: 7
