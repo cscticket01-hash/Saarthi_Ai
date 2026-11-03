@@ -92,7 +92,11 @@ async function main(){
  // Retain the original operation identity: a retry must not invent a second
  // delete or infer completion merely from the presence of a tombstone.
  const priorId='CFSPEED_STUDENT_41496978963_0_b10f4c',priorFile='10tja6gbObZ18mgxQy-jZDTgQ90YYgbCj';
- const prior=await recordsRead('students_directory',priorId),priorRow=prior.value.records?.[priorId];
+ // A fresh diagnostic must not silently resume cleanup from another run.
+ // The historical fixture has its own explicit, identity-verified recovery.
+ const prior=process.env.VS_PERSON_PHOTO_RESUME_PRIOR==='1'
+  ?await recordsRead('students_directory',priorId):{value:{records:{}}};
+ const priorRow=prior.value.records?.[priorId];
  if(priorRow){
   const cleanup=await call('managed/records',priorFixtureDeleteBody(priorRow));
   const receipt=await settle(cleanup,'prior synthetic fixture cleanup');
@@ -109,6 +113,7 @@ async function main(){
   report.roles.push(entry);
   let created=false,revision=null,personGeneration='p-'+crypto.randomBytes(16).toString('hex'),fileId=null;
   let operationAdd=makeOp();
+  const personStarted=now();
   try{
    const original=await recordsRead(collection,id);
    check(!original.value.records?.[id],role+' fixture already exists');
@@ -148,6 +153,7 @@ async function main(){
       (stored.photoFileId===fileId||stored.photoUrl===data.photoUrl),'Cloud-written profile with photo not verified on Drive');
    entry.addReadbackMs=point.ms;
    entry.addDriveVerified=true;created=true;
+   entry.totalPhotoAndRecordVerifiedMs=round(now()-personStarted);
   }catch(e){entry.addFailure=String(e.message).slice(0,240);}
   // Cleanup only exact synthetic owner revision, never unrelated school data.
   // The unique fixture must not be force-deleted if the edge job is unresolved.
