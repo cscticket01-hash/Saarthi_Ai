@@ -24,7 +24,7 @@ void main() {
         'endpoint':'https://unreachable.example/school-cloud'
       })
     });
-    expect(WindowsLocalStorage.sqliteEnabled,true);
+    if (!WindowsLocalStorage.sqliteEnabled) return; // Linux review has no Windows SQLite.
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     final tmp=await Directory.systemTemp.createTemp('local-100k-demo-');
     await db.changeLocalStorageLocation(tmp.path);
@@ -64,7 +64,7 @@ void main() {
       count:1001,verifyActiveSchool:()async=>true);
     expect(again,1001);
     expect((await db.collection('students_directory').get()).docs,hasLength(1002));
-  });
+  },skip:!WindowsLocalStorage.sqliteEnabled);
   test('denies other schools, invalid session, and existing conflicting TEST IDs',() async {
     await expectLater(WindowsTestSchoolLocalDemoSeed.create(
       count:5,verifyActiveSchool:()async=>false),throwsStateError);
@@ -81,5 +81,14 @@ void main() {
       'schoolSyncId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'});
     await expectLater(WindowsTestSchoolLocalDemoSeed.create(
       count:5,verifyActiveSchool:()async=>true),throwsStateError);
+  },skip:!WindowsLocalStorage.sqliteEnabled);
+  test('100k QA identities remain unique across class/section/roll cycles',() {
+    final keys=<String>{};
+    for(var i=1;i<=WindowsTestSchoolLocalDemoSeed.target;i++) {
+      final s=WindowsTestSchoolLocalDemoSeed.student(i);
+      expect(keys.add('${s['class']}/${s['section']}/${s['rollNo']}'),true);
+    }
+    expect(keys.length,100000);
+    expect(WindowsTestSchoolLocalDemoSeed.idFor(100000),'TEST2-LOCAL-100000');
   });
 }
