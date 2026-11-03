@@ -112,14 +112,46 @@ test('provider retry-after longer than exponential delay is respected and remain
  assert.equal(row.response.failureCode,'SCRIPT_QUOTA_EXCEEDED');
  assert.equal(row.payload.includes('synthetic-operation-0001'),true);
 });
-test('permission refusal stays needsAttention instead of endlessly retrying',async()=>{
+test('permission refusal stays needsAttention instead of appearing Drive-verified',async()=>{
  const {row,delivery}=fixture();
  await delivery.drain(school,'records',async()=>({
   success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,
   acknowledgements:[{operationId:operation.operationId,success:false,code:'SCRIPT_PERMISSION_DENIED'}],
  }));
- assert.equal(row.state,'completed');
- assert.equal(row.response.result.acknowledgements[0].success,false);
- assert.equal(row.response.result.acknowledgements[0].code,'SCRIPT_PERMISSION_DENIED');
+ assert.equal(row.state,'needsAttention');
+ assert.equal(row.response.failureCode,'SCRIPT_PERMISSION_DENIED');
+ assert.equal(row.response.partial[operation.operationId].success,false);
  assert.equal(row.response.cleanup?.payloadPurged,undefined);
+ await assert.rejects(delivery.status(school,'records',row.id),e=>
+  e.status===409&&e.code==='SCRIPT_PERMISSION_DENIED');
+});
+test('legacy completed batch with rejected ACK never gives false green Drive verification',async()=>{
+ const {row,delivery}=fixture();
+ row.state='completed';
+ row.response={result:{success:true,schoolId:school,syncProtocol:2,
+  recordWriteBatchVersion:1,
+  acknowledgements:[{operationId:operation.operationId,success:false,code:'SCRIPT_PERMISSION_DENIED'}]}};
+ await assert.rejects(delivery.status(school,'records',row.id),e=>
+  e.status===409&&e.code==='SCRIPT_PERMISSION_DENIED');
+});
+test('mixed successful and permission-denied batch preserves both receipts for review',async()=>{
+ const {row,delivery}=fixture();
+ const second={...operation,id:'synthetic-2',operationId:'synthetic-operation-0002'};
+ row.payload=JSON.stringify({action:'managed_records_batch',operations:[operation,second]});
+ await delivery.drain(school,'records',async()=>({
+  success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,
+  acknowledgements:[
+   {operationId:operation.operationId,success:true,recordRevision:'drive-verified-1',
+    record:{id:operation.id,schoolId:school,_syncRevision:'drive-verified-1',
+     _syncOperationId:operation.operationId}},
+   {operationId:second.operationId,success:false,code:'SCRIPT_PERMISSION_DENIED'},
+  ],
+ }));
+ assert.equal(row.state,'needsAttention');
+ assert.equal(row.response.partial[operation.operationId].success,true);
+ assert.equal(row.response.partial[second.operationId].success,false);
+ assert.equal(row.response.failureCode,'SCRIPT_PERMISSION_DENIED');
+ assert.equal(row.payload.includes('synthetic-operation-0002'),true);
+ await assert.rejects(delivery.status(school,'records',row.id),e=>
+  e.status===409&&e.code==='SCRIPT_PERMISSION_DENIED');
 });
