@@ -40,6 +40,11 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
   // never turn those into a green Drive result (or clear a client's outbox).
   if(row.state==='completed'&&row.response?.result){
    const result=row.response.result;
+   // A historical malformed batch response with no acknowledgements
+   // cannot satisfy the durable Drive proof contract either.
+   if(result.recordWriteBatchVersion===1&&
+    (!Array.isArray(result.acknowledgements)||result.acknowledgements.length===0))
+    fail(502,'ACK_UNVERIFIED');
    const rejected=Array.isArray(result.acknowledgements)
     ?result.acknowledgements.find(ack=>ack?.success!==true):null;
    if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
