@@ -32,7 +32,7 @@ jobs:
           VS_TEST_100K_START: '76'
           VS_TEST_100K_END: '100000'
           VS_TEST_100K_BUDGET_MINUTES: '330'
-          VS_EXPECTED_TEST_RUNTIME: 16c91f81b5cf5ef53b72891a1ea11e4de4eb7b0e
+          VS_EXPECTED_TEST_RUNTIME: a2d92cb82aea4929a7323454932d81e2d706cb6b
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: node .github/scripts/test_100k_students.cjs
