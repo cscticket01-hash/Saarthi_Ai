@@ -35,7 +35,21 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function statusFromRow(school,lane,id,row,readDrive){
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
-  if(['completed','needsAttention'].includes(row.state)&&row.response?.result)return {...await hydrate(school,row.response.result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+  // Only a fully successful, immutable Google ACK can say Drive verified.
+  // Historical completed batch receipts may include a rejected operation;
+  // never turn those into a green Drive result (or clear a client's outbox).
+  if(row.state==='completed'&&row.response?.result){
+   const result=row.response.result;
+   // A historical malformed batch response with no acknowledgements
+   // cannot satisfy the durable Drive proof contract either.
+   if(result.recordWriteBatchVersion===1&&
+    (!Array.isArray(result.acknowledgements)||result.acknowledgements.length===0))
+    fail(502,'ACK_UNVERIFIED');
+   const rejected=Array.isArray(result.acknowledgements)
+    ?result.acknowledgements.find(ack=>ack?.success!==true):null;
+   if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
+   return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+  }
   if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
@@ -126,9 +140,25 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      }
      for(const ack of reply.acknowledgements)if(ack.success||terminal.has(ack.code))partial[ack.operationId]=ack;
      if(original.operations.some(op=>!partial[op.operationId])){
+      // A partial batch is still retained at Cloudflare. Report the actual
+      // allowlisted Script failure instead of replacing timeout/provider errors
+      // with an indistinguishable EDGE_DELIVERY_PENDING 503.
       const refusal=reply.acknowledgements.find(ack=>!ack.success&&!terminal.has(ack.code));
-      if(refusal?.code==='SCRIPT_QUOTA_EXCEEDED')fail(429,refusal.code);fail(503,'EDGE_DELIVERY_PENDING');
+      const providerStatuses={
+       SCRIPT_QUOTA_EXCEEDED:429,SCRIPT_TIMEOUT:504,SCRIPT_OPERATION_FAILED:502,
+       SCRIPT_TRANSPORT_ERROR:503,SCRIPT_RESPONSE_READ_FAILED:503,
+       SCRIPT_SHEET_RECOVERY_REQUIRED:503,SCRIPT_STUDENT_PARENT_PENDING:503,
+       SCRIPT_STORAGE_NOT_PREPARED:502,SCRIPT_MIGRATION_PENDING:503,
+      };
+      if(refusal&&Object.hasOwn(providerStatuses,refusal.code))fail(providerStatuses[refusal.code],refusal.code);
+      fail(503,'EDGE_DELIVERY_PENDING');
      }
+     // Terminal rejection is not an authoritative *batch* Drive ACK.
+     // Mark the original Cloudflare operation for owner review, retaining its
+     // partial successful receipts and original request for safe reconciliation.
+     // Without this guard a permission/conflict refusal looked 'completed'.
+     const terminalRefusal=original.operations.map(op=>partial[op.operationId]).find(ack=>ack?.success!==true);
+     if(terminalRefusal)fail(409,terminal.has(terminalRefusal.code)?terminalRefusal.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
      result={success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements:original.operations.map(op=>partial[op.operationId])};
     }else {result=await deliver(original);phase='verify';if(!verifiedRecord(result,school,original))fail(502,'ACK_UNVERIFIED');}
    }else {
@@ -166,7 +196,20 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
-   await finish({state:review?'needsAttention':'retry',nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(error.status===429?60000:5000,Math.min(86400000,Number(error.retryAfterMs)||0)),partial,
+   // Cloudflare preserves the operation, including partial verified receipts.
+   // Avoid hammering the same school Apps Script every five seconds during
+   // lock contention, quota pressure or a repeated transient provider error.
+   // Retry count lives with the durable Cloudflare receipt (not process memory).
+   const prior=job.response?JSON.parse(job.response):{};
+   const attempts=Number.isSafeInteger(prior.retryCount)&&prior.retryCount>=0&&prior.retryCount<=20?prior.retryCount:0;
+   const retryCount=Math.min(attempts+1,10);
+   const providerDelay=Number.isSafeInteger(error.retryAfterMs)&&error.retryAfterMs>0?
+    Math.min(86400000,error.retryAfterMs):0;
+   const floor=error.status===429?60000:5000;
+   const backoff=Math.min(300000,floor*2**(retryCount-1));
+   await finish({state:review?'needsAttention':'retry',
+    nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
+    ...(!review?{retryCount}:{}),partial,
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
   }
