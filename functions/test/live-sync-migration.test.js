@@ -92,6 +92,39 @@ test('uncertain live write survives restart and blocks rollback without deleting
  assert.equal(verified,0);assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).liveInflight).length,1);
 });
 
+test('concurrent immutable legacy retries retain migration fence until every admitted request settles',async()=>{
+ const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ const body={...write,syncProtocol:2,id:'one',operationId:'concurrent-legacy-retry-0001',expectedRecordRevision:'',data:{schoolId:A,amount:1}};
+ let endFirst,endSecond,started=0,ready;const both=new Promise(r=>ready=r);
+ const launch=end=>()=>new Promise(r=>{end(r);if(++started===2)ready();});
+ const first=gate.legacy(A,body,launch(r=>endFirst=r));
+ const second=gate.legacy(A,body,launch(r=>endSecond=r));
+ await both;
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,1);
+ assert.equal(Object.values(f.docs.get('school_live_migrations/'+A).inflight)[0].activeAttempts,2);
+ endFirst({success:true});await first;
+ assert.equal(Object.values(f.docs.get('school_live_migrations/'+A).inflight)[0].activeAttempts,1);
+ await assert.rejects(gate.prepare(A,write.collection,async()=>true,async()=>({state:'active'})),e=>e.code==='LIVE_LEGACY_WRITES_IN_FLIGHT');
+ endSecond({success:true});await second;
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,0);
+ await gate.prepare(A,write.collection,async()=>true,async()=>({state:'active'}));
+ await gate.assertActive(A,write.collection);
+});
+test('concurrent immutable live retries prevent rollback while a peer still runs',async()=>{
+ const f=activeGate(),gate=f.gate;
+ const body={collection:write.collection,id:'one',operation:'write',operationId:'concurrent-live-retry-0001',expectedRevision:'',data:{schoolId:A,amount:1}};
+ let endFirst,endSecond,started=0,ready;const both=new Promise(r=>ready=r);
+ const launch=end=>()=>new Promise(r=>{end(r);if(++started===2)ready();});
+ const first=gate.live(A,write.collection,launch(r=>endFirst=r),body);
+ const second=gate.live(A,write.collection,launch(r=>endSecond=r),body);
+ await both;
+ assert.equal(Object.values(f.docs.get('school_live_migrations/'+A).liveInflight)[0].activeAttempts,2);
+ endFirst({liveProtocol:1,cloudState:'committed'});await first;
+ assert.equal(Object.values(f.docs.get('school_live_migrations/'+A).liveInflight)[0].activeAttempts,1);
+ await assert.rejects(gate.rollback(A,write.collection,async()=>{throw Error('rollback cannot begin');}),e=>e.code==='LIVE_WRITES_IN_FLIGHT');
+ endSecond({liveProtocol:1,cloudState:'committed'});await second;
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).liveInflight).length,0);
+});
 test('mobile lifecycle remains available while admitted admin collections are active',async()=>{
  const f=activeGate();assert.equal(await f.gate.legacy(A,{action:'managed_mobile',operation:'session'},async()=>42),42);
 });
