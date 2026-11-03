@@ -62,6 +62,7 @@ import 'windows_html_shim.dart' as html;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'windows_local_firestore.dart';
+import 'windows_test_school_local_demo_seed.dart';
 import 'windows_local_auth.dart';
 import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_secure_storage.dart';
@@ -9537,8 +9538,29 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ),
-      body: const WindowsSettingsBody(children: [
-        WindowsAppUpdateCard(), SizedBox(height: 12), WindowsSyncStatusCard(),
+      body: WindowsSettingsBody(children: [
+        const WindowsAppUpdateCard(),
+        const SizedBox(height: 12),
+        const WindowsSyncStatusCard(),
+        FutureBuilder<Map<String,dynamic>>(
+          future:CentralSchoolCloud.saved(),
+          builder:(context,snapshot) {
+            final school=snapshot.data;
+            if(school?['managed']!=true ||
+                school?['schoolId']!=WindowsTestSchoolLocalDemoSeed.schoolId) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding:const EdgeInsets.only(top:18),
+              child:OutlinedButton.icon(
+                key:const ValueKey('test-100k-local-student-import'),
+                onPressed:()=>Navigator.of(context).pushNamed('/admin/student-import'),
+                icon:const Icon(Icons.groups_rounded),
+                label:const Text('TEST Sync V2: Add 1,00,000 demo students'),
+              ),
+            );
+          },
+        ),
       ]),
     );
   }
