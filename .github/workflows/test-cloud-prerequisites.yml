@@ -46,6 +46,8 @@ on:
       - lib/mobile/school_request_deadlines.dart
       - lib/windows_connect/managed_record_media.dart
       - lib/windows_school_image_cache.dart
+      - lib/windows_binary_downloads.dart
+      - test/windows_binary_downloads_test.dart
       - lib/document_processing_engine.dart
       - lib/windows_connect/managed_school_session.dart
       - lib/windows_connect/central_school_cloud.dart
