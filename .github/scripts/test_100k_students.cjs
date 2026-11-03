@@ -12,8 +12,13 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const pad=n=>String(n).padStart(6,'0');
 const student=n=>{
  const label=pad(n),id='TEST2-DEMO-'+label,cls='Class '+(1+(n-1)%12);
- const section=String.fromCharCode(65+(n-1)%10),rollNo=String(1+Math.floor((n-1)/120));
- return {id,operationId:'VS100K_'+label+'_'+digest(SCHOOL+'/'+id).slice(0,16),
+ const section=String.fromCharCode(65+(n-1)%10);
+ // Class+section repeats every 60 students. Roll numbers must remain distinct
+ // within that pair; the old /120 slot numbering collided at student #61.
+ // Preserve the first 60 completed IDs, and use a new durable operation ID
+ // for the corrected payload of all uncommitted entries.
+ const rollNo=n<=60?'1':String(n);
+ return {id,operationId:(n<=60?'VS100K_':'VS100K2_')+label+'_'+digest(SCHOOL+'/'+id).slice(0,16),
   data:{schoolId:SCHOOL,name:'Demo Student '+label,class:cls,studentClass:cls,
    section,rollNo,mobileStableId:'p-'+digest('TEST2-DEMO-STUDENT/'+id).slice(0,32),
    syntheticTest:true,syntheticBatch:'TEST2-DEMO-100K'}};
