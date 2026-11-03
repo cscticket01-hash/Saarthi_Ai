@@ -5,6 +5,9 @@ on:
     branches: [feature/smart-sync-3]
     paths:
       - .github/workflows/disaster-test.yml
+      - .github/tests/isolated_admin_fixture.dart
+      - .github/tests/isolated_admin_fixture_test.dart
+      - integration_test/sync_v2_android_live_test.dart
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
       - .github/scripts/test_runtime_identity.cjs

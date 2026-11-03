@@ -31,6 +31,7 @@ on:
       - .github/tests/isolated_admin_fixture_test.dart
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml
+      - .github/workflows/disaster-test.yml
       - school-backend/managed/**
       - lib/mobile/school_session.dart
       - lib/mobile/attendance_store.dart
