@@ -87,9 +87,7 @@ class ManagedSchoolSession {
       // Revision, quota and transport failures do not invalidate authentication.
       // A revoked/missing PC proof is independent of the school Firebase login.
       // Refreshing a good Firebase token cannot repair a revoked PC credential.
-      if (error is CentralCloudException &&
-          (error.invalidRefresh ||
-              (error.status == 401 && !_deviceProofRejected(error)))) {
+      if (shouldInvalidateFirebaseToken(error)) {
         CentralSchoolCloud.clearFirebaseToken();
       }
       rethrow;
@@ -170,6 +168,11 @@ class ManagedSchoolSession {
         'DEVICE_FRESH_LOGIN_REQUIRED',
         'REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL',
       }.contains(error.diagnosticCode);
+  @visibleForTesting
+  static bool shouldInvalidateFirebaseToken(Object error) =>
+      error is CentralCloudException &&
+      (error.invalidRefresh ||
+          (error.status == 401 && !_deviceProofRejected(error)));
   @visibleForTesting
   static bool get appearanceAuthorizationBlockedForTesting =>
       _appearanceRejectedScope != null;
