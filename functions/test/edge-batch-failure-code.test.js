@@ -48,6 +48,20 @@ test('cleanup continuation never bypasses a provider retry-after window',async()
   status:503,code:'SCRIPT_DELETE_EVERYWHERE_PENDING',retryAfterMs:90000});});
  assert.equal(row.response.nextAttemptAt,100000);
 });
+test('unresolved cleanup returns to exponential backoff after its durable bounded continuation budget',async()=>{
+ const {row,delivery}=fixture();
+ row.payload=JSON.stringify({action:'managed_records',collection:'documents',id:'owned',operation:'delete',syncProtocol:2,deleteEverywhereVersion:1});
+ const delays=[];
+ for(let i=0;i<36;i++){
+  row.state='pending';row.response=row.response===null?null:JSON.stringify(row.response);
+  await delivery.drain(school,'records',async()=>{throw Object.assign(Error('pending'),{status:503,code:'SCRIPT_DELETE_EVERYWHERE_PENDING'});});
+  delays.push(row.response.nextAttemptAt-10000);
+ }
+ assert.deepEqual(delays.slice(0,32),Array(32).fill(5000));
+ assert.deepEqual(delays.slice(32),[5000,10000,20000,40000]);
+ assert.equal(row.response.cleanupContinuationCount,32);
+ assert.equal(row.state,'retry');
+});
 for(const request of [
  {action:'managed_records',operation:'write',syncProtocol:2,deleteEverywhereVersion:1},
  {action:'managed_records',operation:'delete',syncProtocol:2},
