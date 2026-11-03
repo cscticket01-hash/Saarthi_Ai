@@ -1,0 +1,45 @@
+name: Retire one superseded TEST disaster gate
+on:
+  push:
+    branches: [ops/retire-stalled-disaster-20261103]
+    paths: [.github/workflows/retire-stalled-disaster.yml]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  retire:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact superseded run before cancellation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node <<'JS'
+          const assert=require('node:assert/strict');
+          const root='https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/actions/runs';
+          async function request(path,method='GET'){
+            const r=await fetch(root+path,{method,headers:{Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});
+            assert.ok(r.ok,'GitHub control request failed '+r.status);
+            return r.status===204?null:r.json();
+          }
+          (async()=>{
+            const old=await request('/41661344138');
+            assert.equal(old.name,'Isolated TEST disaster recovery acceptance');
+            assert.equal(old.head_sha,'2fc2b7b4ebaab6306b6b4600e2ffe2c91bc0b18f');
+            assert.equal(old.head_branch,'feature/smart-sync-3');
+            assert.equal(old.event,'push');
+            const next=await request('/41681861412');
+            assert.equal(next.head_sha,'10132bf32a3b81a3ba084a3c0b77cad9955a67cd');
+            assert.equal(next.name,old.name);
+            assert.equal(next.head_branch,old.head_branch);
+            if(old.status==='completed'){console.log('Superseded run already complete');return;}
+            assert.equal(old.status,'in_progress');
+            await request('/41661344138/cancel','POST');
+            console.log('Requested cancellation of exact superseded TEST run only; original recovery fixtures remain retained');
+          })().catch(()=>{console.error('Exact superseded-run control failed');process.exitCode=1});
+          JS
