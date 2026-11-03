@@ -1,4 +1,4 @@
-import '../.github/tests/isolated_admin_fixture.dart';
+import '../lib/testing/isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';

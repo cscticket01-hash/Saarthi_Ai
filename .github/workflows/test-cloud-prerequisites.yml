@@ -29,7 +29,7 @@ on:
       - .github/tests/isolated_engine_live_test.dart
       - .github/tests/native_android_windows_readback_test.dart
       - integration_test/sync_v2_android_live_test.dart
-      - .github/tests/isolated_admin_fixture.dart
+      - lib/testing/isolated_admin_fixture.dart
       - .github/tests/isolated_admin_fixture_test.dart
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml

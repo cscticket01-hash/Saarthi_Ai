@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import '../../lib/platform/platform_config.dart';
 import '../../lib/windows_connect/central_school_cloud.dart';
-import 'isolated_admin_fixture.dart';
+import '../../lib/testing/isolated_admin_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

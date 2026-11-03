@@ -1,3 +1,4 @@
+import 'testing/isolated_admin_fixture.dart';
 import 'dart:math';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,7 +145,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
   }
 
   Future<void> login() async {
-    final session = await ManagedSchoolSession.login(email.text, password.text,
+    final session = await authenticateIsolatedAdminFixture(email.text, password.text,
         endpoint: endpoint);
     password.clear();
     if (session['schoolId'] != school || session['storageReady'] != true) {

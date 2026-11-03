@@ -5,7 +5,7 @@ on:
     paths:
       - '.github/tests/isolated_engine_live_test.dart'
       - 'integration_test/sync_v2_android_live_test.dart'
-      - .github/tests/isolated_admin_fixture.dart
+      - lib/testing/isolated_admin_fixture.dart
       - .github/tests/isolated_admin_fixture_test.dart
       - '.github/scripts/run_android_live_test.sh'
       - '.github/scripts/test_run_android_live_test.py'

@@ -4,9 +4,9 @@
 // setup scripts. Device enforcement, when enabled, still rejects this request.
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../../lib/platform/platform_config.dart';
-import '../../lib/windows_connect/central_school_cloud.dart';
-import '../../lib/windows_secure_storage.dart';
+import '../platform/platform_config.dart';
+import '../windows_connect/central_school_cloud.dart';
+import '../windows_secure_storage.dart';
 
 Future<Map<String, dynamic>> authenticateIsolatedAdminFixture(
     String email, String password, {required String endpoint,
