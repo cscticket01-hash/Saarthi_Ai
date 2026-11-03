@@ -458,6 +458,18 @@ void main() {
     }
   });
 
+  test('PC proof rejection keeps a valid Firebase token; identity failure clears it', () {
+    final deviceError = CentralCloudException(401, 'school_cloud',
+      'PC proof invalid', diagnosticCode:'DEVICE_AUTHORIZATION_REJECTED');
+    final tokenError = CentralCloudException(401, 'school_cloud',
+      'Session token invalid');
+    final expiredRefresh = CentralCloudException(401, 'school_cloud',
+      'Refresh invalid', invalidRefresh:true);
+    expect(ManagedSchoolSession.shouldInvalidateFirebaseToken(deviceError),false);
+    expect(ManagedSchoolSession.shouldInvalidateFirebaseToken(tokenError),true);
+    expect(ManagedSchoolSession.shouldInvalidateFirebaseToken(expiredRefresh),true);
+  });
+
   test('transient theme connection error remains retryable; only proof refusal latches', () async {
     FlutterSecureStorage.setMockInitialValues(trialSchoolIdentity());
     ManagedSchoolSession.resetAppearanceAuthorizationForTesting();
