@@ -205,9 +205,16 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    // An authenticated bounded delete owner deliberately yields between archive
    // batches. Continue that SAME durable operation without treating each yield
    // as another provider outage. Never accelerate unrelated 503s or quotas.
-   const cleanupContinuation=error.status===503&&error.code==='SCRIPT_DELETE_EVERYWHERE_PENDING'&&
+   const cleanupPending=error.status===503&&error.code==='SCRIPT_DELETE_EVERYWHERE_PENDING'&&
     lane==='records'&&original.action==='managed_records'&&original.operation==='delete'&&
     original.syncProtocol===2&&original.deleteEverywhereVersion===1;
+   const priorCleanup=Number.isSafeInteger(prior.cleanupContinuationCount)&&prior.cleanupContinuationCount>=0?
+    Math.min(prior.cleanupContinuationCount,32):0;
+   // The old Script uses this category for both bounded progress and some
+   // verification delays. Limit fast continuations durably; an unresolved
+   // owner eventually returns to normal outage backoff without losing work.
+   const cleanupContinuation=cleanupPending&&priorCleanup<32;
+   const cleanupContinuationCount=cleanupPending?Math.min(priorCleanup+1,32):priorCleanup;
    const retryCount=cleanupContinuation?attempts:Math.min(attempts+1,10);
    const providerDelay=Number.isSafeInteger(error.retryAfterMs)&&error.retryAfterMs>0?
     Math.min(86400000,error.retryAfterMs):0;
@@ -215,7 +222,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const backoff=cleanupContinuation?5000:Math.min(300000,floor*2**(retryCount-1));
    await finish({state:review?'needsAttention':'retry',
     nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
-    ...(!review?{retryCount}:{}),partial,
+    ...(!review?{retryCount}:{}),...(cleanupContinuationCount?{cleanupContinuationCount}:{}),partial,
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
   }
