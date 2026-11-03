@@ -126,8 +126,18 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      }
      for(const ack of reply.acknowledgements)if(ack.success||terminal.has(ack.code))partial[ack.operationId]=ack;
      if(original.operations.some(op=>!partial[op.operationId])){
+      // A partial batch is still retained at Cloudflare. Report the actual
+      // allowlisted Script failure instead of replacing timeout/provider errors
+      // with an indistinguishable EDGE_DELIVERY_PENDING 503.
       const refusal=reply.acknowledgements.find(ack=>!ack.success&&!terminal.has(ack.code));
-      if(refusal?.code==='SCRIPT_QUOTA_EXCEEDED')fail(429,refusal.code);fail(503,'EDGE_DELIVERY_PENDING');
+      const providerStatuses={
+       SCRIPT_QUOTA_EXCEEDED:429,SCRIPT_TIMEOUT:504,SCRIPT_OPERATION_FAILED:502,
+       SCRIPT_TRANSPORT_ERROR:503,SCRIPT_RESPONSE_READ_FAILED:503,
+       SCRIPT_SHEET_RECOVERY_REQUIRED:503,SCRIPT_STUDENT_PARENT_PENDING:503,
+       SCRIPT_STORAGE_NOT_PREPARED:502,SCRIPT_MIGRATION_PENDING:503,
+      };
+      if(refusal&&Object.hasOwn(providerStatuses,refusal.code))fail(providerStatuses[refusal.code],refusal.code);
+      fail(503,'EDGE_DELIVERY_PENDING');
      }
      result={success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,acknowledgements:original.operations.map(op=>partial[op.operationId])};
     }else {result=await deliver(original);phase='verify';if(!verifiedRecord(result,school,original))fail(502,'ACK_UNVERIFIED');}
