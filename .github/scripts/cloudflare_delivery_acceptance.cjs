@@ -43,14 +43,14 @@ async function acceptance({env=process.env,request=transport}={}){
   requireCheck(health.storageReady===true&&health.brokerEdgeDeliveryVersion===1&&health.recordSyncVersion===2&&health.uploadResumableVersion===1);
   report.checks.push({name:stage,status:'PASS'});
   // Authentication is valid but no PC proof is sent. Enrollment-only must
-  // reject the malformed proof BEFORE any registry transaction; a 503 means
+  // reject the absent proof BEFORE any registry transaction; a 503 means
   // the TEST rollout is still disabled. Never consume a real school PC slot.
   stage='TEST device enrollment accepts protocol 2 but rejects missing PC proof';
   const deviceProbe=await request(ENDPOINT,{action:'managed/device/register',
     schoolId:SCHOOL,deviceManagementProtocol:2,deviceName:'SYNTHETIC NO-PROOF CHECK',
     deviceOs:'Windows'},token);
-  requireCheck(deviceProbe.status===400&&
-    deviceProbe.data?.code==='INVALID_DEVICE_ID');
+  requireCheck(deviceProbe.status===401&&
+    deviceProbe.data?.code==='DEVICE_PROOF_REQUIRED');
   report.checks.push({name:stage,status:'PASS'});
   async function settle(result){
    const ticket=result.delivery;requireCheck(result.cloudflareAccepted===true&&result.driveState==='pending'&&ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&/^(records|file-[a-f0-9]{64})$/.test(ticket.lane));
