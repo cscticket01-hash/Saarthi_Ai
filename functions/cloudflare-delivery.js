@@ -193,7 +193,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
-   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
+   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
    // Cloudflare preserves the operation, including partial verified receipts.
@@ -202,11 +202,17 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    // Retry count lives with the durable Cloudflare receipt (not process memory).
    const prior=job.response?JSON.parse(job.response):{};
    const attempts=Number.isSafeInteger(prior.retryCount)&&prior.retryCount>=0&&prior.retryCount<=20?prior.retryCount:0;
-   const retryCount=Math.min(attempts+1,10);
+   // An authenticated bounded delete owner deliberately yields between archive
+   // batches. Continue that SAME durable operation without treating each yield
+   // as another provider outage. Never accelerate unrelated 503s or quotas.
+   const cleanupContinuation=error.status===503&&error.code==='SCRIPT_DELETE_EVERYWHERE_PENDING'&&
+    lane==='records'&&original.action==='managed_records'&&original.operation==='delete'&&
+    original.syncProtocol===2&&original.deleteEverywhereVersion===1;
+   const retryCount=cleanupContinuation?attempts:Math.min(attempts+1,10);
    const providerDelay=Number.isSafeInteger(error.retryAfterMs)&&error.retryAfterMs>0?
     Math.min(86400000,error.retryAfterMs):0;
    const floor=error.status===429?60000:5000;
-   const backoff=Math.min(300000,floor*2**(retryCount-1));
+   const backoff=cleanupContinuation?5000:Math.min(300000,floor*2**(retryCount-1));
    await finish({state:review?'needsAttention':'retry',
     nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
     ...(!review?{retryCount}:{}),partial,
