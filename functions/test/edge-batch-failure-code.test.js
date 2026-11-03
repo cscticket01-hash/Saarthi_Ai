@@ -155,3 +155,12 @@ test('mixed successful and permission-denied batch preserves both receipts for r
  await assert.rejects(delivery.status(school,'records',row.id),e=>
   e.status===409&&e.code==='SCRIPT_PERMISSION_DENIED');
 });
+
+test('malformed historical empty batch cannot produce a verified Google ACK',async()=>{
+ const {row,delivery}=fixture();
+ row.state='completed';
+ row.response={result:{success:true,schoolId:school,syncProtocol:2,
+  recordWriteBatchVersion:1,acknowledgements:[]}};
+ await assert.rejects(delivery.status(school,'records',row.id),e=>
+  e.status===502&&e.code==='ACK_UNVERIFIED');
+});
