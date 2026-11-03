@@ -29,3 +29,13 @@ test('fresh fixture still requires an actual upload and durable record ACK',asyn
  const calls=[];const result=await prepareDisasterFixture(async body=>{calls.push(body);return body.action==='managed/file/upload'?{fileId:'new-file'}:{recordRevision:'new-ack'};},{...identity,resumed:false},school,pdf,{});
  assert.equal(calls.length,2);assert.equal(calls[1].operation,'write');assert.equal(calls[1].expectedRecordRevision,'');assert.equal(result.original.recordRevision,'new-ack');
 });
+
+test('resume monitor distinguishes a verified read from a new durable write ACK',()=>{
+ const {fixtureMonitorVerified}=require('./disaster_fixture_resume.cjs');
+ const read={version:1,observedAt:123456,outcome:'verified_response',stage:'managed_records',protocol:2};
+ assert.equal(fixtureMonitorVerified(read,true),true);
+ assert.equal(fixtureMonitorVerified(read,false),false);
+ assert.equal(fixtureMonitorVerified({...read,outcome:'durable_ack'},false),true);
+ for(const bad of [{...read,outcome:'failed'},{...read,protocol:1},{...read,observedAt:0},{...read,stage:'managed_mobile'},{...read,unverifiedPayload:'forbidden'}])
+  assert.equal(fixtureMonitorVerified(bad,true),false);
+});

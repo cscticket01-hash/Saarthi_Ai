@@ -55,15 +55,15 @@ async function run(){
  try {
   const monitoring=await call({action:'managed/sync/status'}),evidence=monitoring.serverEvidence||{};
   const shape=Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
-  const verified=evidence.outcome==='durable_ack'&&evidence.stage==='managed_records'&&evidence.protocol===2&&Number.isSafeInteger(evidence.observedAt)&&evidence.observedAt>0&&shape&&
+  const verified=require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(evidence,identity.resumed)&&
     (monitoring.latestWindowsReport===null||monitoring.latestWindowsReport.source==='latest_windows_client_report');
   const safeCodes=['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'];
-  report.centralMonitor={verified,stage:'central_monitor_validation',backendDurableAckObserved:evidence.outcome==='durable_ack',evidenceShapeVerified:shape,
+  report.centralMonitor={verified,stage:'central_monitor_validation',backendDurableAckObserved:evidence.outcome==='durable_ack',backendVerifiedReadObserved:evidence.outcome==='verified_response',fixtureAckMode:report.fixtureAckMode,evidenceShapeVerified:shape,
     observedAt:Number.isSafeInteger(evidence.observedAt)?evidence.observedAt:null,
     residualFailureCode:evidence.code===undefined?null:safeCodes.includes(evidence.code)?evidence.code:'SCRIPT_UNVERIFIED',
     windowsReportObserved:monitoring.latestWindowsReport!==null};
  } catch (_) {report.centralMonitor={verified:false,stage:'central_monitor_validation',category:'MONITOR_STATUS_UNAVAILABLE'};}
- report.checks.push({name:'Actual central monitor backend ACK evidence; missing client report stays unknown',status:report.centralMonitor.verified?'PASS':'FAIL'});
+ report.checks.push({name:identity.resumed?'Actual central monitor verified response after original ACK proof; missing client report stays unknown':'Actual central monitor backend ACK evidence; missing client report stays unknown',status:report.centralMonitor.verified?'PASS':'FAIL'});
  console.log(JSON.stringify({check:'Central monitor validation',...report.centralMonitor}));
  const execute=async request=>{stage=request.operation==='backup'?'backup_readback':'restore_readback';let result,retries=0;for(let step=0;step<400;step++){
    try{result=await call({action:'managed/disaster',...request});retries=0;}catch(error){if(++retries>3)throw error;await delay(Math.min(30000,4000*2**retries)+Math.floor(Math.random()*1000));continue;}
