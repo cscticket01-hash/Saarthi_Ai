@@ -12,6 +12,8 @@ on:
       - integration_test/sync_v2_android_live_test.dart
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
+      - .github/scripts/disaster_fixture_resume.test.cjs
+      - .github/scripts/disaster_fixture_resume.cjs
       - .github/scripts/test_runtime_identity.cjs
       - .github/scripts/settle_test_delta.cjs
       - .github/scripts/settle_test_delta.test.cjs
@@ -54,7 +56,7 @@ jobs:
           VS_TEST_DISASTER_FIXTURE_RUN_ID: '38020985989'
           VS_TEST_DISASTER_FIXTURE_ATTEMPT: '2'
         run: |
-          node --test .github/scripts/disaster_resume.test.cjs
+          node --test .github/scripts/disaster_resume.test.cjs .github/scripts/disaster_fixture_resume.test.cjs
           node .github/scripts/test_disaster_live.cjs
       - uses: actions/upload-artifact@v4
         if: always()

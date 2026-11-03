@@ -47,10 +47,9 @@ async function run(){
  let ready=false;for(let n=0;n<40;n++){try{const r=await call({action:'managed/storage/check'});if(r.disasterRehearsalVersion===5&&r.brokerDisasterRehearsalVersion===5&&r.disasterReadbackVersion===1&&r.brokerDisasterReadbackVersion===1){ready=true;break;}}catch(_){}await delay(15000);}assert.ok(ready);pass('Authenticated TEST broker and reviewed disaster capability');
  stage='fixture_ack';
  await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
- const id=identity.id,op=id+'-create';
- const pdf=Buffer.from('%PDF-1.4\nSynthetic TEST disaster binary\n%%EOF\n'),uploadKey=crypto.createHash('sha256').update(id).digest('hex');
- const upload=await call({action:'managed/file/upload',name:id+'.pdf',mime:'application/pdf',base64:pdf.toString('base64'),uploadKey});
- const original=await call({action:'managed/records',operation:'write',collection:'school_notices',id,syncProtocol:2,operationId:op,expectedRecordRevision:'',data:{schoolId,syntheticTest:true,title:'Disposable disaster recovery fixture',fileId:upload.fileId,capturedAt:12345}});assert.ok(original.recordRevision);pass('Original operation and file durable ACK');
+ const pdf=Buffer.from('%PDF-1.4\nSynthetic TEST disaster binary\n%%EOF\n');
+ const {id,op,upload,original}=await require('./disaster_fixture_resume.cjs').prepareDisasterFixture(call,identity,schoolId,pdf,report);
+ pass(identity.resumed?'Original operation and retained Drive bytes positively verified':'Original operation and file durable ACK');
  // Monitoring is independently checked; a metadata failure must not block
  // verification of the already acknowledged, immutable recovery checkpoint.
  try {
