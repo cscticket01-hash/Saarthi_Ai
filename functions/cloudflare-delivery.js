@@ -176,7 +176,20 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
-   await finish({state:review?'needsAttention':'retry',nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(error.status===429?60000:5000,Math.min(86400000,Number(error.retryAfterMs)||0)),partial,
+   // Cloudflare preserves the operation, including partial verified receipts.
+   // Avoid hammering the same school Apps Script every five seconds during
+   // lock contention, quota pressure or a repeated transient provider error.
+   // Retry count lives with the durable Cloudflare receipt (not process memory).
+   const prior=job.response?JSON.parse(job.response):{};
+   const attempts=Number.isSafeInteger(prior.retryCount)&&prior.retryCount>=0&&prior.retryCount<=20?prior.retryCount:0;
+   const retryCount=Math.min(attempts+1,10);
+   const providerDelay=Number.isSafeInteger(error.retryAfterMs)&&error.retryAfterMs>0?
+    Math.min(86400000,error.retryAfterMs):0;
+   const floor=error.status===429?60000:5000;
+   const backoff=Math.min(300000,floor*2**(retryCount-1));
+   await finish({state:review?'needsAttention':'retry',
+    nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
+    ...(!review?{retryCount}:{}),partial,
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
   }
