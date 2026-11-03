@@ -31,8 +31,8 @@ jobs:
           cp .dev.vars.example .dev.vars
           npm run types
           npm run check
-          npm test
           npm run build
+          npm test
       - name: Save a content-hashed review bundle to this isolated branch only
         shell: bash
         run: |
