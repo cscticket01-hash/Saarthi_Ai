@@ -70,6 +70,14 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='staff record edge acceptance and verified Drive write';
   const staff='CF_TEST_STAFF_'+run;
   await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
+  // Student write is independently verified before any large TEST-only import.
+  // Stable school-scoped identity and a QA-only class prevent duplicate tests
+  // or collisions with real students. No deletion or production data changes.
+  stage='one synthetic student: verified Google Drive write, exact replay and readback';
+  const student='CF_TEST_STUDENT_'+run;
+  await record('students_directory',student,{name:'SYNTHETIC TEST STUDENT',
+    class:'QA SYNTHETIC ONLY',rollNo:'999981',
+    mobileStableId:'p-'+hash(run).slice(0,32)});
   const bytes=Buffer.alloc(768*1024,32);Buffer.from('%PDF-1.4\n% SYNTHETIC CLOUD DELIVERY TEST ONLY\n%%EOF\n').copy(bytes);
   const uploadKey='cf_test_document_'+run,meta={action:'managed/file/upload/resumable',uploadKey,
    name:uploadKey+'.pdf',mime:'application/pdf',sizeBytes:bytes.length,sha256:hash(bytes),edgeDeliveryVersion:1};
