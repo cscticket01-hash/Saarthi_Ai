@@ -8,8 +8,10 @@ const GATES={
 function selectGate(runs,kind,sha){
  assert.ok(Object.hasOwn(GATES,kind));assert.match(sha||'',/^[a-f0-9]{40}$/);assert.ok(Array.isArray(runs));
  const gate=GATES[kind];
- return runs.find(run=>run?.name===gate.name&&run.head_sha===sha&&run.head_branch===gate.branch&&
-  run.event===gate.event&&run.head_repository?.full_name===REPO)||null;
+ return runs.find(run=>run?.name===gate.name&&run.head_sha===sha&&
+  ((run.head_branch===gate.branch&&run.event===gate.event)||
+   (kind==='readiness'&&run.head_branch==='feature/smart-sync-3'&&run.event==='push'))&&
+  run.head_repository?.full_name===REPO)||null;
 }
 async function waitForTestGate({kind,sha,token,fetchImpl=fetch,delay=ms=>new Promise(r=>setTimeout(r,ms)),attempts=180}){
  assert.ok(token);assert.ok(Object.hasOwn(GATES,kind));assert.match(sha||'',/^[a-f0-9]{40}$/);

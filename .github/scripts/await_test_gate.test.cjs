@@ -30,3 +30,12 @@ test('missing, inaccessible or malformed metadata never authorizes school access
  await assert.rejects(waitForTestGate({kind:'cloud',sha,token:'private',fetchImpl:async()=>({status:403}),attempts:1}),/unavailable/);
  assert.throws(()=>selectGate([], 'other',sha));assert.throws(()=>selectGate([], '__proto__',sha));assert.throws(()=>selectGate([], 'cloud','bad'));
 });
+
+test('merged TEST branch readiness requires exact source, own repo and push event',async()=>{
+ const readiness=run({name:'Sync 3 isolated TEST readiness'});
+ assert.equal((await waitForTestGate({kind:'readiness',sha,token:'private',fetchImpl:fetchRuns([readiness]),attempts:1})).runId,123);
+ for(const bad of [{head_sha:'b'.repeat(40)},{head_branch:'main'},{event:'workflow_dispatch'},{event:'pull_request'},{head_repository:{full_name:'foreign/repo'}}])
+  assert.equal(selectGate([{...readiness,...bad}],'readiness',sha),null);
+ for(const conclusion of ['failure','skipped','cancelled'])
+  await assert.rejects(waitForTestGate({kind:'readiness',sha,token:'private',fetchImpl:fetchRuns([{...readiness,conclusion}]),attempts:1}),/did not pass/);
+});

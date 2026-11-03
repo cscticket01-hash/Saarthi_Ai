@@ -1,5 +1,15 @@
 name: Sync 3 isolated TEST readiness
 on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/await_test_gate*'
+      - '.github/workflows/sync3-isolated-readiness.yml'
+      - '.github/scripts/test_disaster_live.cjs'
+      - '.github/scripts/test_runtime_identity.cjs'
+      - 'functions/**'
+      - 'school-backend/**'
+      - 'staging-school-cloud/**'
   pull_request:
     branches: [main]
     paths:
@@ -19,7 +29,7 @@ jobs:
   read-only-test-cloud:
     # Include live-authority PR 206 in the genuine read-only TEST deployment gate. Do not waive exact runtime,
     # owner credentials, tested Apps Script version or read-only protocol acceptance.
-    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102')
+    if: (github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3') || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -28,17 +38,17 @@ jobs:
         with:
           node-version: '22'
       - name: Wait for exact TEST writers without taking their mutation lock
-        if: github.head_ref == 'feature/live-sync-authority-v1-20261102'
+        if: github.event_name == 'push' || github.head_ref == 'feature/live-sync-authority-v1-20261102'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VS_TEST_GATE_KIND: cloud
-          VS_TEST_GATE_SHA: ${{ github.event.pull_request.head.sha }}
+          VS_TEST_GATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/await_test_gate.cjs
       - name: Read expected provider version from this exact source
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol
         env:
-          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha }}
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: |
