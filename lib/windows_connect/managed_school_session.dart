@@ -85,8 +85,9 @@ class ManagedSchoolSession {
       return result;
     } catch (error) {
       // Revision, quota and transport failures do not invalidate authentication.
-      if (error is CentralCloudException &&
-          (error.status == 401 || error.invalidRefresh)) {
+      // A revoked/missing PC proof is independent of the school Firebase login.
+      // Refreshing a good Firebase token cannot repair a revoked PC credential.
+      if (shouldInvalidateFirebaseToken(error)) {
         CentralSchoolCloud.clearFirebaseToken();
       }
       rethrow;
@@ -139,6 +140,11 @@ class ManagedSchoolSession {
       if(old.isNotEmpty&&old['managed']!=true)await const WindowsSecureStorage().write(key:'vidya_saarthi_legacy_cloud_preserved',value:jsonEncode(old));
       await const WindowsSecureStorage().write(key:CentralSchoolCloud.key,value:jsonEncode({'managed':true,'endpoint':endpoint,'projectId':platformProjectId,'schoolId':session['schoolId'],'uid':auth['localId'],'email':auth['email']??email.trim(),'firebaseRefreshToken':auth['refreshToken'],'folderId':'managed',...configuration,...retainedAdminGoogleProfile(previous:old,verified:googleProfile,uid:auth['localId'],schoolId:session['schoolId'],verifiedEmail:auth['email']?.toString()??email.trim()),'verifiedAccess':session}));
       await const WindowsSecureStorage().write(key:'vidya_saarthi_managed_required',value:'true');
+      // A successful fresh school password login and verified registration (or
+      // server-confirmed disabled rollout) is the only automatic reset point.
+      // Do not reopen the 30-second theme loop after a rejected PC proof.
+      _appearanceRejectedScope = null;
+      _appearanceAuthorizationEpoch++;
       startAppearanceControl();
       changed.value++;return session;
     }finally{cloud.close();}
@@ -148,7 +154,33 @@ class ManagedSchoolSession {
   @visibleForTesting
   static Future<Map<String,dynamic>> Function(String schoolId)? appearanceUnlockRequestForTesting;
   static int _appearanceEpoch=0, _appearanceAttempt=0;
+  static int _appearanceAuthorizationEpoch=0;
+  static String? _appearanceRejectedScope;
   static Timer? _appearanceTimer;
+  static String _appearanceScope(Map<String,dynamic> saved) =>
+      jsonEncode([saved['endpoint'],saved['schoolId'],saved['uid']]);
+  static bool _deviceProofRejected(Object error) =>
+      error is CentralCloudException &&
+      error.status == 401 &&
+      const {
+        'DEVICE_AUTHORIZATION_REJECTED',
+        'DEVICE_PROOF_REQUIRED',
+        'DEVICE_FRESH_LOGIN_REQUIRED',
+        'REAUTHORIZATION_REQUIRES_NEW_CREDENTIAL',
+      }.contains(error.diagnosticCode);
+  @visibleForTesting
+  static bool shouldInvalidateFirebaseToken(Object error) =>
+      error is CentralCloudException &&
+      (error.invalidRefresh ||
+          (error.status == 401 && !_deviceProofRejected(error)));
+  @visibleForTesting
+  static bool get appearanceAuthorizationBlockedForTesting =>
+      _appearanceRejectedScope != null;
+  @visibleForTesting
+  static void resetAppearanceAuthorizationForTesting() {
+    _appearanceAuthorizationEpoch++;
+    _appearanceRejectedScope = null;
+  }
   static bool _appearanceLocked = true;
   static bool _appearanceNeedsReport = true;
   static Future<void> _appearanceQueue = Future<void>.value();
@@ -171,8 +203,20 @@ class ManagedSchoolSession {
       try {
         final before=await CentralSchoolCloud.saved();
         if(before['managed']!=true)return;
-        await (appearanceRequestForTesting?.call(before['schoolId'].toString(),locked) ?? callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked}));
-        if(locked==_appearanceLocked)_appearanceNeedsReport=false;
+        final scope = _appearanceScope(before);
+        if(_appearanceRejectedScope == scope)return;
+        final authorizationEpoch = _appearanceAuthorizationEpoch;
+        try {
+          await (appearanceRequestForTesting?.call(before['schoolId'].toString(),locked) ?? callForSchool(before['schoolId'], 'managed/theme/state', {'locked':locked}));
+          if(locked==_appearanceLocked)_appearanceNeedsReport=false;
+        } catch (error) {
+          // Never turn a revoked/missing proof into an admitted PC. Stop the
+          // repeating 401 heartbeat until a fresh school login can register.
+          if(_deviceProofRejected(error) &&
+              authorizationEpoch == _appearanceAuthorizationEpoch) {
+            _appearanceRejectedScope = scope;
+          }
+        }
       } catch (_) {/* Offline/unknown PCs never count as confirmed locked. */}
     });
     _appearanceQueue=next.catchError((Object _) {});
@@ -193,6 +237,11 @@ class ManagedSchoolSession {
     try {
       final before = await CentralSchoolCloud.saved();
       if (before['managed'] != true) return ThemeUnlockOutcome.notManaged;
+      // An interactive unlock cannot reauthorize a revoked PC; avoid another
+      // denied request until fresh password login has verified its proof.
+      if (_appearanceRejectedScope == _appearanceScope(before)) {
+        return ThemeUnlockOutcome.deferred;
+      }
       final request =
           appearanceUnlockRequestForTesting?.call(
             before['schoolId'].toString(),
@@ -277,6 +326,8 @@ class ManagedSchoolSession {
     try {await call('managed/disconnect').timeout(const Duration(seconds:5));}catch(_){}
 
     _transport?.close();_transport=null;_transportScope=null;
+    _appearanceRejectedScope = null;
+    _appearanceAuthorizationEpoch++;
     await const WindowsSecureStorage().delete(key:CentralSchoolCloud.key);
     CentralSchoolCloud.clearFirebaseToken();changed.value++;
   }
