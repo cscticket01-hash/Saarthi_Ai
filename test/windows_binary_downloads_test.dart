@@ -75,6 +75,41 @@ void main() {
     expect(cache.summary['pending'], 1);
   });
 
+  for (final range in [false, true]) test('signed media read beyond 40s verifies bytes (range: $range)', () async {
+    final bytes = original;
+    final cache = manager();
+    remote = (body) {
+      if (body['action'] == 'managed/file/inventory') {
+        return Future.value({...inventory([expected]), if (range) 'binaryRangeVersion': 1});
+      }
+      expect(body['action'], range ? 'managed/file/download/part' : 'managed/file/download');
+      final payload = range
+        ? <String, dynamic>{'success': true, 'schoolId': school, 'binaryRangeVersion': 1,
+            'fileId': expected['fileId'], 'sha256': expected['sha256'],
+            'version': expected['version'], 'sizeBytes': bytes.length,
+            'offset': 0, 'nextOffset': bytes.length,
+            'chunkSha256': sha256.convert(bytes).toString(), 'base64': base64Encode(bytes)}
+        : download(expected, bytes);
+      return Future<Map<String, dynamic>>.delayed(const Duration(seconds: 45), () => payload);
+    };
+    await cache.refreshInventory();
+    final budgets = <Duration>[];
+    final accepted = await runZoned(() => cache.repairNext(), zoneSpecification: ZoneSpecification(
+      createTimer: (self, parent, zone, duration, callback) {
+        budgets.add(duration);
+        final scaled = duration == const Duration(seconds: 45)
+            ? const Duration(milliseconds: 10)
+            : duration == const Duration(seconds: 40) ? Duration.zero
+            : duration == const Duration(seconds: 120) ? const Duration(seconds: 2) : duration;
+        return parent.createTimer(zone, scaled, callback);
+      },
+    ));
+    expect(accepted, isTrue);
+    expect(budgets, contains(WindowsBinaryDownloads.binaryReadRequestBudget));
+    expect(cache.summary['verifiedFiles'], 1);
+    expect(await File((await cache.verifiedPath('school_file_1'))!).readAsBytes(), bytes);
+  });
+
   test('metadata stays pending until actual hash-verified byte download', () async {
     final cache = manager();
     await cache.refreshInventory();
