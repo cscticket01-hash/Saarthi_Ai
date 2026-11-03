@@ -1,3 +1,4 @@
+import '../.github/tests/isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
@@ -89,7 +90,7 @@ void main() {
         if (credentials['VS_TEST_CONNECT_CONFIRM'] != school)
           throw StateError('TEST credential scope required');
         try {
-          final admin = await ManagedSchoolSession.login(
+          final admin = await authenticateIsolatedAdminFixture(
               credentials['VS_TEST_LOGIN_EMAIL'] as String,
               credentials['VS_TEST_LOGIN_PASSWORD'] as String,
               endpoint: endpoint);

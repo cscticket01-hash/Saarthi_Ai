@@ -1,3 +1,4 @@
+import 'isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
@@ -50,7 +51,7 @@ void main() {
   final transport=OfflineBoundary();
   try{
    final authentication=OfflineBoundary();final authenticationClock=Stopwatch()..start();
-   final login=await ManagedSchoolSession.login(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
+   final login=await authenticateIsolatedAdminFixture(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
    report['authenticationMs']=authenticationClock.elapsedMilliseconds;report['authenticationRequests']=authentication.samples;
    expect(login['schoolId'],school);
    final db=FirebaseFirestore.instance;await db.changeLocalStorageLocation('${tmp.path}/windows');
