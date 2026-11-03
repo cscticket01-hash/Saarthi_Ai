@@ -5,6 +5,7 @@ on:
     branches: [feature/smart-sync-3]
     paths:
       - .github/workflows/disaster-test.yml
+      - .github/workflows/sync3-isolated-readiness.yml
       - .github/tests/isolated_admin_fixture.dart
       - .github/tests/isolated_engine_live_test.dart
       - .github/tests/isolated_admin_fixture_test.dart

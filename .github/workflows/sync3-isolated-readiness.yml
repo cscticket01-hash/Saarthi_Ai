@@ -10,8 +10,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sync3-isolated-readiness-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # Even signed reads acquire the single Apps Script lock. Keep diagnostics
+  # out of the hosted writer/latency cohort, rather than manufacturing load.
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
 jobs:
   read-only-test-cloud:
     # Include live-authority PR 206 in the genuine read-only TEST deployment gate. Do not waive exact runtime,
@@ -31,7 +33,9 @@ jobs:
           VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: node .github/scripts/test_cloud_readiness.cjs
+        run: |
+          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+          node .github/scripts/test_cloud_readiness.cjs
       - name: Require actual readiness rather than successful script execution alone
         run: node -e "const r=require('./build/cloud-prerequisites/report.json'); if(r.status!=='PASS') {console.error('Isolated TEST readiness '+r.status+'; inspect sanitized artifact.');process.exit(1);}"
       - uses: actions/upload-artifact@v4
@@ -41,6 +45,7 @@ jobs:
           path: build/cloud-prerequisites/report.json
 
   observe-deployed-test-cloud:
+    needs: read-only-test-cloud
     # Diagnostic only: observe the real currently deployed TEST broker without
     # claiming it matches the reviewed PR commit or Script contract.
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'

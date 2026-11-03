@@ -34,6 +34,7 @@ on:
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml
       - .github/workflows/disaster-test.yml
+      - .github/workflows/sync3-isolated-readiness.yml
       - school-backend/managed/**
       - lib/mobile/school_session.dart
       - lib/mobile/attendance_store.dart
