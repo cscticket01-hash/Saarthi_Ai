@@ -1,0 +1,45 @@
+name: TEST 100k student import, signed Drive ACK
+on:
+  push:
+    branches: [verify/test-100k-students]
+    paths:
+      - '.github/scripts/test_100k_students.cjs'
+      - '.github/workflows/test-100k-students.yml'
+permissions:
+  contents: read
+concurrency:
+  group: isolated-test-100k-students
+  cancel-in-progress: false
+jobs:
+  isolated-test-students:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/verify/test-100k-students'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Static 100k dataset and source check
+        run: |
+          node --check .github/scripts/test_100k_students.cjs
+          node -e "const a=require('./.github/scripts/test_100k_students.cjs'); if(a.TARGET!==100000||a.SCHOOL!=='vs-db8afb01a3be46a983c8284714d06e5d'||a.student(1).id!=='TEST2-DEMO-000001'||a.student(100000).id!=='TEST2-DEMO-100000'||a.student(1).id===a.student(2).id) process.exit(1)"
+      - name: Upload only TEST2-DEMO students; require exact Google Drive ACK and readback
+        env:
+          VS_TEST_100K_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_100K_START: '1'
+          VS_TEST_100K_END: '10'
+          VS_TEST_100K_BUDGET_MINUTES: '60'
+          VS_EXPECTED_TEST_RUNTIME: 16c91f81b5cf5ef53b72891a1ea11e4de4eb7b0e
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_100k_students.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-100k-students-verified-progress
+          path: build/test-100k/progress.json
+          if-no-files-found: warn
+          retention-days: 14
