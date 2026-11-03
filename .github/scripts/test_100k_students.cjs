@@ -64,6 +64,25 @@ async function run({env=process.env,send=transport}={}){
     throw Object.assign(Error('TEST broker '+code),{status:reply.status,code,retryAtMillis:reply.data?.deliveryStatus?.retryAtMillis});
    }return reply.data;
   }
+  // Retry immutable TEST operations safely on transient Render/Google failure.
+  // A lost response never produces a new operation ID or revision.
+  async function verifiedRequest(body){
+    let lastFailure;
+    for(let retry=0;retry<7;retry++){
+      try{return await call(body);}catch(error){
+        lastFailure=error;
+        const retryable=error?.status==null ||
+          [408,425,429,500,502,503,504].includes(error.status);
+        if(!retryable||retry===6)throw error;
+        const due=Number.isSafeInteger(error?.retryAtMillis)?
+          Math.max(0,error.retryAtMillis-Date.now()):0;
+        const delay=Math.max(due,Math.min(30000,2000*2**retry));
+        if(Date.now()+delay > started+budgetMinutes*60000-90000)throw error;
+        await pause(delay);
+      }
+    }
+    throw lastFailure;
+  }
   report.stage='TEST membership and signed Google storage';
   const session=await call({action:'managed/session'});
   require(session.allowed===true&&session.uid===uid&&session.storageReady===true,'Invalid school membership/entitlement');
@@ -76,17 +95,7 @@ async function run({env=process.env,send=transport}={}){
    const body={action:'managed/records',collection:'students_directory',operation:'write',
     syncProtocol:2,edgeDeliveryVersion:1,id:s.id,operationId:s.operationId,
     expectedRecordRevision:'',data:s.data};
-   let ack;let lastCode='';
-   // Same ID and operationId on every retry. Do not invent a replacement write.
-   for(let retry=0;retry<6;retry++){
-    try{ack=await call(body);break;}catch(e){
-     lastCode=e.code||'REQUEST_FAILURE';
-     if(![429,502,503,504].includes(e.status))throw e;
-     if(Date.now()-started>budgetMinutes*60000-120000)throw e;
-     await pause(Math.min(30000,2000*2**retry));
-    }
-   }
-   require(ack!=null,'No accepted receipt '+lastCode);
+   let ack=await verifiedRequest(body);
    if(ack.delivery){
     require(ack.cloudflareAccepted===true&&ack.driveState==='pending'&&
       ack.delivery.lane==='records'&&/^[a-f0-9]{64}$/.test(ack.delivery.id),'Invalid Cloudflare ticket');
@@ -94,7 +103,7 @@ async function run({env=process.env,send=transport}={}){
     let completed=false;
     for(let poll=0;poll<75;poll++){
      if(Date.now()-started>budgetMinutes*60000-120000)break;
-     const result=await call({action:'managed/cloudflare/operation',...ack.delivery,waitMillis:20000});
+     const result=await verifiedRequest({action:'managed/cloudflare/operation',...ack.delivery,waitMillis:20000});
      if(!result.delivery){require(result.driveState==='verified','Google ACK missing');ack=result;completed=true;break;}
      require(result.delivery.id===ack.delivery.id&&result.delivery.lane==='records','Staged ticket changed');
      const wait=result.deliveryStatus?.retryAtMillis;
@@ -104,7 +113,7 @@ async function run({env=process.env,send=transport}={}){
    }
    require(ack.driveState==='verified'&&typeof ack.recordRevision==='string'&&!!ack.recordRevision,'Missing Google record proof');
    report.stage='student '+n+' canonical Drive readback';
-   const actual=await call({action:'managed/records',collection:'students_directory',operation:'read',syncProtocol:2,id:s.id});
+   const actual=await verifiedRequest({action:'managed/records',collection:'students_directory',operation:'read',syncProtocol:2,id:s.id});
    const item=actual.records?.[s.id];
    require(item&&item.schoolId===SCHOOL&&item._syncRevision===ack.recordRevision&&
     item._syncOperationId===s.operationId&&item.name===s.data.name&&
