@@ -87,3 +87,20 @@ test('legacy script lock and quota failures are retryable without leaking messag
   assert.equal(f.sent.length,1);
  }
 });
+
+test('anonymous signed-request rejection with hidden schoolId is not falsely called a foreign school',async()=>{
+ const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({
+   success:false,code:'SCRIPT_OPERATION_FAILED',message:'NEVER_EXPOSE'
+ })}));
+ await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_SIGNED_RESPONSE_UNVERIFIED'&&
+   e.publicMessage===true&&!e.message.includes('NEVER_EXPOSE')&&!e.message.includes(A));
+ assert.equal(f.sent.length,1,'original immutable operation must not be resubmitted');
+});
+test('malformed signed-response identity never acknowledges a delete or write',async()=>{
+ for(const payload of [null,[],{success:true},{success:false,schoolId:null}]){
+  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify(payload)}));
+  await assert.rejects(f.call(body),e=>
+   e.status===502&&['SCRIPT_INVALID_RESPONSE','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_IDENTITY_MISMATCH'].includes(e.code));
+  assert.equal(f.sent.length,1);
+ }
+});
