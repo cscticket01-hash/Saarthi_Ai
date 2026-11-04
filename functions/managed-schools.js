@@ -718,6 +718,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
  await db.runTransaction(async tx=>{const current=await tx.get(ref);const e=current.data();if(!e||e.active!==true||e.blocked===true||e.licenseHash!==m.entitlement.licenseHash||Number(e.expiresAt)<=now()||Number(e.startsAt)>now())fail(403,'School licence changed or access was blocked');tx.set(ref,{activated:true},{merge:true});});return {...lease(m),activated:true,status:'licensed'};}
  if(!lease(m).allowed||(m.entitlement.status!=='trial'&&m.entitlement.activated!==true))fail(403,'Activate the school licence before normal operations');
  if(typeof action==='string'&&action.startsWith('managed/live/')){
+  if(action==='managed/live/rollout-status')return require('./live-sync-rollout-status').rolloutStatus({schoolId:m.schoolId,enabled:liveSync.enabled(m.schoolId),db,edge:cloudflareSync,readDrive:body=>signedRequest(m,body)});
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
