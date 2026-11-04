@@ -78,13 +78,22 @@ jobs:
     if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      # A TEST-only harness edit need not re-deploy unchanged business code.
+      # Never trust a changed backend/application source without exact replay.
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.ref == 'refs/heads/feature/smart-sync-3' && '189343b2cdfd7607296b8affccd413952e47d246' || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify exact canonical Script version and runtime source fences
-        run: node --test .github/scripts/*.test.cjs
+      - name: Verify exact TEST business source, runtime identity and Script version
+        shell: bash
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
+          node --test .github/scripts/*.test.cjs
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
