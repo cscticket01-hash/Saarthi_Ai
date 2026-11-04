@@ -38,7 +38,9 @@ List<String> driveSaveMessages(Map<String, dynamic>? status) {
         ? '$collection · $recordId' : (row['id'] as String).substring(0, 8);
     final completedAt = row['completedAt'];
     if (row['state'] == 'completed' && completedAt is int && completedAt > 0) {
-      messages.add('Drive save completed · $label');
+      // Completed writes remain in the durable history, not the alert panel.
+      // Do not hide pending/retry or needsAttention entries.
+      continue;
     } else if (row['state'] == 'needsAttention') {
       messages.add('Drive save needs review · $label');
     } else if (const ['pending', 'retry', 'processing'].contains(row['state'])) {
