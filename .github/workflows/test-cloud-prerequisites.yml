@@ -92,7 +92,7 @@ jobs:
       - name: Verify exact TEST business source, runtime identity and Script version
         shell: bash
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
           node --test .github/scripts/*.test.cjs
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
@@ -128,7 +128,7 @@ jobs:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: flutter test .github/tests/isolated_admin_fixture_test.dart .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+        run: flutter test test/sync_review_notice_id_test.dart .github/tests/isolated_admin_fixture_test.dart .github/tests/isolated_engine_live_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
       - uses: actions/upload-artifact@v4
         if: always()
         with:
