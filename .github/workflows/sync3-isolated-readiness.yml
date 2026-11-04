@@ -5,6 +5,10 @@ on:
     paths:
       - '.github/scripts/await_test_gate*'
       - '.github/workflows/sync3-isolated-readiness.yml'
+      - '.github/workflows/disaster-test.yml'
+      - '.github/workflows/test-cloud-prerequisites.yml'
+      - '.github/scripts/connect_isolated_test_storage.cjs'
+      - '.github/scripts/test_sync_review_web.cjs'
       - '.github/scripts/test_disaster_live.cjs'
       - '.github/scripts/test_runtime_identity.cjs'
       - 'functions/**'
@@ -32,11 +36,19 @@ jobs:
     if: (github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3') || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # TEST business sources stay fixed while review-only harness files change.
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feature/smart-sync-3' && '189343b2cdfd7607296b8affccd413952e47d246' || github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Reject changed TEST runtime or application source
+        if: github.event_name == 'push'
+        run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
       - name: Wait for exact TEST writers without taking their mutation lock
         if: github.event_name == 'push' || github.head_ref == 'feature/live-sync-authority-v1-20261102'
         env:
@@ -48,7 +60,6 @@ jobs:
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol
         env:
-          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: |
