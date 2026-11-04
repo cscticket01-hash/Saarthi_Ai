@@ -16,7 +16,7 @@
     "redirects": [
       {
         "source": "/downloads/windows.exe",
-        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.229/Vidya_Saarthi_Setup_2.1.229.exe",
+        "destination": "https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.230/Vidya_Saarthi_Setup_2.1.230.exe",
         "type": 302
       },
       {
