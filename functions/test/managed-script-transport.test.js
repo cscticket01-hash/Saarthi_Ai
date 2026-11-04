@@ -31,6 +31,15 @@ test('database exceptions are not mislabeled as Script failures and foreign scho
  await assert.rejects(f.call({...body,schoolId:'vs-'+ 'b'.repeat(32)}),e=>e.status===403);assert.equal(f.sent.length,0);
 });
 
+for(const code of ['SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW','SCRIPT_DELETE_ARCHIVE_SCAN_REVIEW','SCRIPT_DELETE_ARCHIVE_GENERATION_REVIEW'])
+ test('signed school archive review retains exact diagnostic without exposing school payload: '+code,async()=>{
+  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({
+   success:false,schoolId:A,code,message:'NEVER_EXPOSE_SCHOOL_RECORD'
+  })}));
+  await assert.rejects(f.call(body),e=>e.status===409&&e.code===code&&
+    e.publicMessage===true&&!e.message.includes('NEVER_EXPOSE'));
+  assert.equal(f.sent.length,1);
+ });
 test('verified school-root failure retains safe provider provenance instead of generic operation failure',async()=>{
  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,code:'SCRIPT_ROOT_IDENTITY_MISMATCH',message:'NEVER_EXPOSE'})}));
  await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_ROOT_IDENTITY_MISMATCH'&&!e.message.includes('NEVER_EXPOSE'));
