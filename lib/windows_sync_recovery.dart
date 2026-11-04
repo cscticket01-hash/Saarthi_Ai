@@ -112,6 +112,8 @@ Map<String,dynamic> documentFailureDiagnostic(Object error, String stage) {
     if(error is RecordLocalStorageFailure && error.cause.osError?.errorCode != null)
       'failureOsErrorCode':error.cause.osError!.errorCode,
     'failureCode':error is FieldDeltaUnavailable ? 'FIELD_DELTA_UNAVAILABLE' : error is RecordLocalStorageFailure ? 'RECORD_LOCAL_STORAGE_IO' : error is MissingSyncAcknowledgement ? 'ACK_UNVERIFIED' :
+      error is StateError && error.message == 'Cloud deletion is not verified. Pending operation retained.' ? 'DELETE_ACK_UNVERIFIED' :
+      error is StateError && error.message == 'Google Drive acknowledgement unverified; local work retained.' ? 'DRIVE_ACK_UNVERIFIED' :
       error is CentralCloudException && const {
         'SCRIPT_DOCUMENT_REVISION_CONFLICT','RECORD_REVISION_CONFLICT',
         'OPERATION_ID_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED',
@@ -194,6 +196,17 @@ SyncRecoveryDecision windowsSyncRecovery(Object error) {
   }
   if (error is StateError && {'Invalid document ID.', 'Document revision missing.', 'Valid school exact location required.'}.contains(error.message)) {
     return SyncRecoveryDecision.classify(status:422);
+  }
+  if (error is StateError &&
+      const {
+        'Cloud deletion is not verified. Pending operation retained.',
+        'Google Drive acknowledgement unverified; local work retained.',
+      }.contains(error.message)) {
+    // These are incomplete proofs, never successful deletes. Retain the
+    // immutable request and allow bounded, version-safe server rechecking.
+    return const SyncRecoveryDecision(
+      SyncFailureKind.server, retry: true, independentRecords: true,
+    );
   }
   if (error is MissingSyncAcknowledgement) {
     return const SyncRecoveryDecision(SyncFailureKind.server, retry: true);

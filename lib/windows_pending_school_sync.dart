@@ -31,6 +31,32 @@ bool pendingRecordBackoffDue(
       deadline <= now.millisecondsSinceEpoch;
 }
 
+/// An unclassified failed notice delete can be retried only after an
+/// authenticated point read proves either its unchanged original CAS baseline
+/// or the tombstone for this exact immutable operation. This is NOT an ACK.
+bool verifiedUnknownNoticeDeleteReadback(
+  Map item, Object? remote, String school,
+) {
+  if (item['schoolId'] != school ||
+      item['collection'] != 'school_notices' ||
+      item['operation'] != 'delete' ||
+      item['syncState'] != 'needsAttention' ||
+      item['failureCategory'] != 'unknown' ||
+      item['baseCloudRevision'] is! String ||
+      (item['baseCloudRevision'] as String).isEmpty ||
+      item['operationId'] is! String ||
+      remote is! Map ||
+      remote['schoolId'] != school ||
+      remote['_syncRevision'] is! String ||
+      (remote['_syncRevision'] as String).isEmpty) {
+    return false;
+  }
+  return remote['_syncRevision'] == item['baseCloudRevision'] &&
+          remote['_syncDeleted'] != true ||
+      remote['_syncDeleted'] == true &&
+          remote['_syncOperationId'] == item['operationId'];
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -72,10 +98,19 @@ class WindowsPendingSchoolSync {
       final item = row.data(),
           state = item['syncState'],
           category = item['failureCategory'];
+      // Existing unknown notices must not be stuck forever. Probe only the
+      // original same-school DELETE; no automatic replay without readback.
+      final unknownNoticeDelete = state == 'needsAttention' &&
+          category == 'unknown' &&
+          item['collection'] == 'school_notices' &&
+          item['operation'] == 'delete' &&
+          item['baseCloudRevision'] is String &&
+          (item['baseCloudRevision'] as String).isNotEmpty;
       if (item['schoolId'] != school ||
           !{'conflict', 'needsAttention'}.contains(state) ||
           state != 'conflict' &&
-              !{'networkPath', 'timeout', 'server'}.contains(category) ||
+              !{'networkPath', 'timeout', 'server'}.contains(category) &&
+              !unknownNoticeDelete ||
           !{'set', 'update', 'delete'}.contains(item['operation']) ||
           item['collection'] == 'documents' ||
           item['operationId'] is! String ||
@@ -93,6 +128,10 @@ class WindowsPendingSchoolSync {
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
       }
+      // One authenticated recovery attempt per immutable unknown deletion.
+      // The journal survives restarts and manual Sync Now requests.
+      if (unknownNoticeDelete &&
+          prior?['unknownNoticeDeleteReplayV1'] == true) continue;
       final learned = learnedAction?.call(item['collection'] as String, category?.toString() ?? 'conflict');
       // One learned replay per immutable operation; server CAS/idempotency remain
       // authoritative. Quota/auth/configuration/conflict never use this shortcut.
@@ -234,6 +273,56 @@ class WindowsPendingSchoolSync {
           (response['records'] as Map).keys.any((k) => k != item['documentId']))
         throw StateError('Repair readback unverified; original retained.');
       final remote = response['records'][item['documentId']];
+      if (unknownNoticeDelete) {
+        var outcome = 'review_required';
+        final current = (await row.reference.get()).data();
+        scope();
+        final currentSignature = current == null ? null : syncPayloadHash({
+          'schoolId': school, 'collection': current['collection'],
+          'documentId': current['documentId'],
+          'operationId': current['operationId'],
+          'operation': current['operation'],
+          'baseCloudRevision': current['baseCloudRevision'],
+          'data': current['data'],
+        });
+        if (verifiedUnknownNoticeDeleteReadback(item, remote, school) &&
+            current != null && currentSignature == inputSignature &&
+            current['syncState'] == 'needsAttention' &&
+            current['failureCategory'] == 'unknown') {
+          // The original operation ID and CAS revision are unchanged. The
+          // server must still return the real verified deletion receipt.
+          final admitted = await db.recordOutboxFailure(
+            row.reference, current,
+            state: 'retry', failureCategory: 'server',
+            retryCount: 0,
+            retryAtMillis: clock().millisecondsSinceEpoch,
+            error: 'Authenticated notice deletion readback verified; original operation retained for authoritative retry.',
+          );
+          scope();
+          if (admitted) {
+            await journal.set({'unknownNoticeDeleteReplayV1': true},
+                const SetOptions(merge: true));
+            scope();
+            outcome = 'retry_admitted';
+            repaired++;
+          }
+        }
+        await journal.set({
+          'outcome': outcome,
+          'verifiedReadbackAt': clock().millisecondsSinceEpoch,
+        }, const SetOptions(merge: true));
+        scope();
+        onActivity?.call({
+          'schoolId': school, 'queueCollection': '_windows_firebase_outbox',
+          'queueId': row.id, 'operationId': item['operationId'],
+          'collection': item['collection'],
+          'documentId': item['documentId'],
+          'failureCategory': 'unknown',
+          'stage': 'repairDiagnosed', 'outcome': outcome,
+          'at': clock().millisecondsSinceEpoch,
+        });
+        continue;
+      }
       if (remote != null) {
         if (remote is! Map ||
             remote['schoolId'] != school ||
