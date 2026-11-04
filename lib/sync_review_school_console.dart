@@ -6,6 +6,12 @@ import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
 
+/// Accept only TEST-only notice IDs from CI runs (and bounded rerun attempts).
+/// Legacy single-number offline drafts remain valid.
+bool isValidSyntheticReviewNoticeId(String id) =>
+    RegExp(r'^synthetic-web-notice-[1-9][0-9]{0,19}(?:-[1-9][0-9]{0,9})?$')
+        .hasMatch(id);
+
 /// An isolated review UI using the existing authenticated school protocol.
 /// Only synthetic notices in the registered TEST school may be created here.
 class SyncReviewSchoolConsole extends StatefulWidget {
@@ -54,8 +60,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
         final payload = Map<String, dynamic>.from(draft['payload'] as Map);
         if (draft['schoolId'] != school ||
             draft['endpoint'] != endpoint ||
-            !RegExp(r'^synthetic-web-notice-[0-9]+$')
-                .hasMatch(draft['id'] as String) ||
+            !isValidSyntheticReviewNoticeId(draft['id'] as String) ||
             !RegExp(r'^web-review-[a-f0-9]{48}$')
                 .hasMatch(draft['operationId'] as String) ||
             payload['schoolId'] != school ||
@@ -158,7 +163,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
 
   Future<void> publish() async {
     if (!logged ||
-        !RegExp(r'^synthetic-web-notice-[0-9]+$').hasMatch(noticeId.text) ||
+        !isValidSyntheticReviewNoticeId(noticeId.text) ||
         !title.text.startsWith('Synthetic website exchange ') ||
         title.text.length > 200)
       throw StateError('Synthetic TEST notice required');
