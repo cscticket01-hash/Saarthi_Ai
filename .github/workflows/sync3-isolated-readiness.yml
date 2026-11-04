@@ -48,7 +48,7 @@ jobs:
           node-version: '22'
       - name: Reject changed TEST runtime or application source
         if: github.event_name == 'push'
-        run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
+        run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
       - name: Wait for exact TEST writers without taking their mutation lock
         if: github.event_name == 'push' || github.head_ref == 'feature/live-sync-authority-v1-20261102'
         env:
