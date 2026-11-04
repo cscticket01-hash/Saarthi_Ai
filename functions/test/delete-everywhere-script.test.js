@@ -51,7 +51,11 @@ test('archive inventory omits ordinary media but retains every supported archive
  const marked=s.roots[A].createFile('Exact.json','{}','application/json');marked.setDescription('VIDYA_RECORD_JSON:'+A+':hash');
  const folder=s.roots[A].createFolder('records_students_directory');
  const record=folder.createFile('legacy.json','{}','application/json');
- const ids=Array.from(s.context.VS_eraseArchiveInventory());
+ const plan={};let attempts=0;
+ while(!s.context.VS_eraseArchiveInventory(plan,()=>{})){
+  assert(++attempts<100,'Archive iterator must make bounded forward progress');
+ }
+ const ids=plan.archiveIds;
  for(const f of [legacy,audit,marked,record])assert(ids.includes(f.id));
  assert.equal(ids.length,4);
 });
