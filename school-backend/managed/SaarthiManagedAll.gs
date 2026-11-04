@@ -7682,7 +7682,7 @@ function VS_managedHandle(e) {
       try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
     }
     const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
-    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
+    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified?{schoolId:school}:{}));
   }
 }
 
