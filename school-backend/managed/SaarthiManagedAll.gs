@@ -8654,12 +8654,18 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   // Shared school assets remain owned by the surviving records; deleting one
   // reference must not remove another pupil's ID card/photo or school seal.
   const references=new Set();references.retirementScanComplete=true;
-  for(const collection of VS_LAYOUT_COLLECTIONS){
-    const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
-    if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
-    for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+  // A metadata-only delete owns no Drive file. Scanning every school collection
+  // cannot protect a file that is not being deleted; it only delays the
+  // version-safe tombstone/receipt and can exhaust Apps Script execution.
+  // Every file-bearing delete keeps the complete shared-reference census.
+  if(files.size>0){
+    for(const collection of VS_LAYOUT_COLLECTIONS){
+      const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
+      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+    }
+    if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   }
-  if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   const owned=[];for(const fileId of files){if(references.has(fileId)){retainedShared.push(fileId);continue;}VS_managedFile(fileId);owned.push(fileId);}
   const data={schoolId:school,_syncDeleted:true,_syncRevision:revision,_syncOperationId:b.operationId,_syncRequestHash:wireHash,_syncErasePlan:{version:1,targets:targets,files:owned,retainedShared:retainedShared,cursor:0,fileCursor:0,archivesComplete:false,complete:false}};
   if(generation)data._syncDeletedOwner=generation;
