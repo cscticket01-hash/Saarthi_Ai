@@ -73,3 +73,36 @@ test('old unfiltered deletion plans skip ordinary media without consuming archiv
  assert.equal(s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),true);assert.equal(plan.archiveCursor,70);assert.equal(saves,1);
  assert(ids.every(id=>s.all.has(id)));
 });
+
+
+test('text-only notice delete skips unrelated school collections and retains verified tombstone',()=>{
+ const s=storage({lifecycle:true}),a=write(s,'school_notices','notice-only',{title:'Holiday',description:'Holiday tomorrow'});
+ assert(a.success);rest(s);
+ const before=s.context.VS_managedSheet,inspected=[];
+ s.context.VS_managedSheet=collection=>{inspected.push(collection);return before(collection);};
+ const request=deletion('notice-only',a.recordRevision,'school_notices');
+ const r=s.call(request);
+ assert.equal(r.success,true,JSON.stringify(r));
+ assert.equal(r.driveDeletionComplete,true);
+ assert(inspected.length>0);
+ assert(inspected.every(collection=>collection==='school_notices'),JSON.stringify(inspected));
+ const after=read(s,'school_notices').records['notice-only'];
+ assert.equal(after._syncDeleted,true);
+ assert.equal(after.title,undefined);
+ assert.equal(s.call(request).recordRevision,r.recordRevision);
+});
+
+test('notice with owned file still checks other collections and preserves shared Drive reference',()=>{
+ const s=storage({lifecycle:true}),photo=s.roots[A].createFile('Notice image','bytes','image/png'),calls=rest(s);
+ const a=write(s,'school_notices','notice-file',{title:'With image',photoFileId:photo.id});
+ assert(a.success);
+ assert(write(s,'school_config','shared-image',{signatureUrl:'https://drive.google.com/file/d/'+photo.id+'/view'}).success);
+ const before=s.context.VS_managedSheet,inspected=[];
+ s.context.VS_managedSheet=collection=>{inspected.push(collection);return before(collection);};
+ const r=s.call(deletion('notice-file',a.recordRevision,'school_notices'));
+ assert.equal(r.success,true,JSON.stringify(r));
+ assert(inspected.includes('school_config'),'shared reference collection was not scanned');
+ assert(s.all.has(photo.id),'shared file must never be erased');
+ assert.equal(calls.length,0);
+ assert.deepEqual(r.retainedSharedFileIds,[photo.id]);
+});

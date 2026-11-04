@@ -389,6 +389,7 @@ class CentralSchoolCloud {
         'LIVE_PROTOCOL_REQUIRED': 'This school requires the current sync app. Saved changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
         'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
+        'SCRIPT_SIGNED_RESPONSE_UNVERIFIED': 'The school Apps Script returned no authenticated school identity. Verify the existing school /exec deployment and its school-bound credentials; pending changes are retained.',
       };
       final diagnosticCode = uri.toString() == endpoint &&
               syncFailures.containsKey(errorBody['code'])
