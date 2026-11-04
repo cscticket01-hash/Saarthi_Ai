@@ -153,10 +153,10 @@ void main(){
         data:MediaQueryData(textScaler:TextScaler.linear(1.5)),child:WindowsSyncFlow(
           phase:'idle',label:'Idle',local:'D:\\ 10 GB / 100 GB',cloud:'No verified ACK yet',drive:'Unknown',pending:0,lastMicros:2400000))))));
       await tester.pumpAndSettle();
-      expect(find.text('Local Storage'),findsOneWidget);expect(find.text('2.40 sec'),findsOneWidget);
+      expect(find.text('Local Storage'),findsOneWidget);expect(find.text('Last sync: 2.40 sec'),findsOneWidget);
       expect(find.text('Open Folder'),findsNothing);
       ui.WindowsUiLanguage.change('bn');await tester.pumpAndSettle();
-      expect(find.text('স্থানীয় স্টোরেজ'),findsOneWidget);expect(find.text('2.40 সেকেন্ড'),findsOneWidget);
+      expect(find.text('স্থানীয় স্টোরেজ'),findsOneWidget);expect(find.text('শেষ সিঙ্ক: 2.40 সেকেন্ড'),findsOneWidget);
       expect(tester.takeException(),isNull);await tester.pumpWidget(const SizedBox());
     });
   }
