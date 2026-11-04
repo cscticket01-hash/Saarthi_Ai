@@ -7,10 +7,14 @@ school and does not turn a staged/Drive-pending operation into a Drive ACK.
 
 Set `SAARTHI_LIVE_SYNC_SCHOOLS` on the existing broker and `LIVE_SYNC_SCHOOLS`
 on the matching Worker to the same comma-separated canonical school IDs.
+For 400 schools use 100 IDs per binding: the base variable followed by `_2`,
+`_3`, `_4` (on the broker each name also has the `SAARTHI_` prefix).
+Cloudflare permits at most 5 KB per variable; every list part is bounded to
+5120 characters. Canonical school IDs are ASCII, so 100 IDs fit comfortably.
 Whitespace is trimmed and duplicates removed. Wildcards, malformed IDs and
 lists above 400 schools are refused. Existing isolated TEST bindings still work.
 The existing edge delivery school allowlist must also admit each selected ID.
-Apply provider limits when splitting large lists across deployment cohorts;
+Keep the same four list parts on both services;
 never truncate a list silently or substitute `*` for rejected configuration.
 
 School IDs in these lists only enable protocol admission. Existing per-school
