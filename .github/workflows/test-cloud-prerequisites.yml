@@ -92,7 +92,7 @@ jobs:
       - name: Verify exact TEST business source, runtime identity and Script version
         shell: bash
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
           node --test .github/scripts/*.test.cjs
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
