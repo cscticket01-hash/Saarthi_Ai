@@ -422,9 +422,17 @@ class WindowsFirebaseRemote {
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
+    // The dedicated legacy notice lane commits a tombstone and its durable
+    // delivery job atomically. The device may go Idle while the Worker retries
+    // Drive deletion. Never conflate this edge ACK with Drive/Firebase success.
+    final noticeEdgeCommit = verifyLegacyCloudflareNoticeReceipt(
+      result, school: school, collection: collection, id: id,
+      operationId: item['operationId'].toString(),
+      deleting: item['operation'] == 'delete',
+    );
     if (liveCommit) await WindowsDriveDeliveryQueue.retain(school, collection, id,
         item['operationId'].toString(), result, deleting: item['operation'] == 'delete');
-    if (item['operation'] == 'delete' && !liveCommit &&
+    if (item['operation'] == 'delete' && !liveCommit && !noticeEdgeCommit &&
         (result['deleteEverywhereVersion'] != 1 ||
          result['driveDeletionComplete'] != true ||
          result['firebaseDeletionComplete'] != true)) {
@@ -451,7 +459,7 @@ class WindowsFirebaseRemote {
           result['recordRevision'],
         );
     }
-    if (!liveCommit && result['record'] is Map)
+    if (!liveCommit && !noticeEdgeCommit && result['record'] is Map)
       await cacheVerifiedSheetRecord(
         school,
         collection,

@@ -156,6 +156,47 @@ bool verifyLiveRecordReceipt(Map<String, dynamic> receipt, {
   return true;
 }
 
+/// A legacy school-notice lane durably commits the exact versioned record to
+/// Cloudflare SQLite *before* its asynchronous Google Drive delivery. This is
+/// an edge ACK, not a Drive/Firebase delete-everywhere ACK. The Cloudflare
+/// owner separately retains and retries the immutable Drive job until verified.
+/// Only this strict same-school tombstone/record may retire device pending.
+bool verifyLegacyCloudflareNoticeReceipt(
+  Map<String, dynamic> receipt, {
+  required String school,
+  required String collection,
+  required String id,
+  required String operationId,
+  bool deleting = false,
+}) {
+  if (collection != 'school_notices' ||
+      receipt['cloudflareAccepted'] != true ||
+      receipt['recordRevision'] is! String ||
+      !(receipt['recordRevision'] as String).startsWith('cf-')) {
+    return false;
+  }
+  final record = receipt['record'];
+  if (receipt['success'] != true ||
+      receipt['schoolId'] != school ||
+      receipt['syncProtocol'] != 2 ||
+      receipt.containsKey('liveProtocol') ||
+      receipt['driveState'] != 'pending' ||
+      receipt['collectionRevision'] is! String ||
+      !(receipt['collectionRevision'] as String).startsWith('cf-') ||
+      receipt['recordRevision'] == 'cf-' ||
+      record is! Map ||
+      record['schoolId'] != school ||
+      record['id'] != id ||
+      record['_syncRevision'] != receipt['recordRevision'] ||
+      record['_syncOperationId'] != operationId ||
+      (record['_syncDeleted'] == true) != deleting) {
+    throw StateError(
+      'Cloudflare notice commitment did not verify; original operation retained.',
+    );
+  }
+  return true;
+}
+
 /// A projected live revision cannot be submitted as a verified GS repair row.
 bool isDriveRecoveryRevision(Object? revision) => revision is String &&
     revision.isNotEmpty && !revision.startsWith('live-') &&
