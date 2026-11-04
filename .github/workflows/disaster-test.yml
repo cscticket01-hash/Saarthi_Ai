@@ -39,11 +39,17 @@ jobs:
     if: github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      VS_EXPECTED_TEST_RUNTIME: 189343b2cdfd7607296b8affccd413952e47d246
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Prove running TEST business tree matches reviewed deployment
+        run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend lib package.json package-lock.json
       - name: TEST-only bounded backup and separate Sheets/Drive restore readback
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
