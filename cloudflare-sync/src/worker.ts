@@ -1,6 +1,7 @@
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
 import {mobileRequest} from './mobile';
 import {initLive,liveCommand} from './live-records';
+import {liveSchoolEnabled} from './live-rollout';
 import {liveSocketGrant,LiveSocketGrant} from './live-socket';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
@@ -24,7 +25,7 @@ export class SyncLane extends DurableObject<Env>{
   demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
   const identity=school+'/'+lane;demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);
   if(lane==='live'){
-   demand((this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'Live authority is not enabled for this school',412);
+   demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
    if(b.command==='commit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b);
@@ -41,7 +42,7 @@ export class SyncLane extends DurableObject<Env>{
   if(spoolLane(lane))return spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
   const action=String(b.command||''),id=String(b.id||'');
   if(action==='retireNoticeCache'){
-   demand(lane==='notices'&&(this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID===school,'Isolated live notice owner required',412);
+   demand(lane==='notices'&&liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Isolated live notice owner required',412);
    const owner=await this.env.LANES.getByName(school+'/live').command(school,'live',{command:'head'}) as {collections:{collection:string;state:string}[]};
    demand(owner.collections.some(row=>row.collection==='school_notices'&&row.state==='active'),'Verified live notice baseline required',409);
    demand(this.ctx.storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM jobs WHERE state!='completed'").toArray()[0].n===0,'Legacy notice delivery pending',409);
@@ -128,7 +129,7 @@ export class SyncLane extends DurableObject<Env>{
   return this.connectLive(await liveSocketGrant(request,this.env.EDGE_KEY));
  }
  async connectLive(grant:LiveSocketGrant):Promise<Response>{
-  demand(grant.schoolId===(this.env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID&&grant.expiresAt>Date.now(),'Live stream unavailable',412);
+  demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},grant.schoolId)&&grant.expiresAt>Date.now(),'Live stream unavailable',412);
   const identity=grant.schoolId+'/live';demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);initLive(this.ctx.storage);
   for(const socket of this.ctx.getWebSockets()){const old=socket.deserializeAttachment() as LiveSocketGrant;if(old.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');}
   demand(this.ctx.getWebSockets().length<100,'Live connection limit',429);
@@ -191,7 +192,7 @@ export default {
    const url=new URL(request.url);if(url.pathname==='/healthz'&&request.method==='GET')return Response.json({service:'vidya-saarthi-cloudflare-sync',version:2,edgeDeliveryVersion:1,attendancePartitions:256},{headers});
    if(url.pathname==='/live'&&request.method==='GET'){
     const grant=await liveSocketGrant(request,env.EDGE_KEY);
-    demand(grant.schoolId===(env as Env&{LIVE_SYNC_TEST_SCHOOL_ID?:string}).LIVE_SYNC_TEST_SCHOOL_ID,'Live authority is not enabled',412);
+    demand(liveSchoolEnabled(env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},grant.schoolId),'Live authority is not enabled',412);
     return env.LANES.getByName(grant.schoolId+'/live').fetch(request);
    }
    if(request.method==='POST'&&url.pathname==='/mobile')return Response.json(await mobileRequest(request,env),{headers});
