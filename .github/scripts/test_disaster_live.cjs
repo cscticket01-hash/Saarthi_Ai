@@ -71,7 +71,27 @@ async function run(){
    try{result=await call({action:'managed/disaster',...request});retries=0;}catch(error){if(++retries>3)throw error;await delay(Math.min(30000,4000*2**retries)+Math.floor(Math.random()*1000));continue;}
    report.recoveryProgress={operation:request.operation,phase:result.phase,step,copied:result.copied,binaryCount:result.binaryCount};
    assert.equal(result.disasterVersion,5);assert.equal(result.operationId,request.operationId);assert.equal(result.activeStorageChanged,false);
-   if(result.complete){assert.equal(result.verified,true);assert.ok(result.verifiedAt>0);const repeated=await call({action:'managed/disaster',...request});assert.equal(repeated.fileId,result.fileId);return result;}
+   if(result.complete){
+    assert.equal(result.verified,true);assert.ok(result.verifiedAt>0);
+    // Google Apps Script can time out on the read-only repeat after a fully
+    // verified durable ACK. Recheck only the SAME operation, without creating
+    // a new backup or treating the timeout as success.
+    let repeated;
+    for(let attempt=0;attempt<4;attempt++){
+      try{repeated=await call({action:'managed/disaster',...request});break;}
+      catch(error){
+        if(![503,504].includes(error.http)||attempt===3)throw error;
+        await delay(2000*(attempt+1));
+      }
+    }
+    assert.equal(repeated.operationId,request.operationId);
+    assert.equal(repeated.fileId,result.fileId);
+    assert.equal(repeated.complete,true);
+    assert.equal(repeated.verified,true);
+    assert.equal(repeated.recordCount,result.recordCount);
+    assert.equal(repeated.binaryCount,result.binaryCount);
+    return result;
+   }
    if(step%10===0)console.log(JSON.stringify({stage:request.operation,phase:result.phase,step,copied:result.copied,binaryCount:result.binaryCount}));await delay(2000);
  }throw Error('TEST disaster job exceeds bounded verification window');};
  await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);

@@ -5,7 +5,9 @@ const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path');
 const {installBrowserEvidence}=require('./review_fetch_evidence.cjs');
 (async()=>{
- const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID;
+ const school='vs-db8afb01a3be46a983c8284714d06e5d',run=process.env.GITHUB_RUN_ID,attempt=process.env.GITHUB_RUN_ATTEMPT||'1';
+ if(!/^[1-9][0-9]{0,19}$/.test(run||'')||!/^[1-9][0-9]{0,9}$/.test(attempt))throw Error('Valid hosted TEST attempt identity required');
+ const webNoticeId=`synthetic-web-notice-${run}-${attempt}`,webNoticeTitle=`Synthetic website exchange ${run}-${attempt}`;
  if(process.env.VS_TEST_CONNECT_CONFIRM!==school||process.env.GITHUB_ACTIONS!=='true')throw Error('Isolated hosted TEST runner required');
  const browser=await chromium.launch({headless:true});
  const context=await browser.newContext();
@@ -28,7 +30,7 @@ const {installBrowserEvidence}=require('./review_fetch_evidence.cjs');
    category:typeof failure==='string'&&/^net::ERR_[A-Z_]+$/.test(failure)?failure:'OTHER_TRANSPORT_FAILURE'});
  }});
  const page=await context.newPage();
- await page.addInitScript(installBrowserEvidence,{endpoint:'https://saarthi-sync-v2-test.onrender.com/school-cloud',school,noticeId:`synthetic-web-notice-${run}`,title:`Synthetic website exchange ${run}`});
+ await page.addInitScript(installBrowserEvidence,{endpoint:'https://saarthi-sync-v2-test.onrender.com/school-cloud',school,noticeId:webNoticeId,title:webNoticeTitle});
  async function typeField(label,value){
   const input=page.getByRole('textbox',{name:label,exact:true});
   // Flutter installs its focused DOM editing bridge on a subsequent frame.
@@ -68,7 +70,7 @@ const {installBrowserEvidence}=require('./review_fetch_evidence.cjs');
   await page.getByText('Cloud records verified',{exact:true}).waitFor({timeout:150000});
   await page.getByText(`synthetic-hosted-notice-${run} | Actual Windows local-first TEST notice`,{exact:true}).waitFor({timeout:30000});
   proof.windowsNoticeReadOnWebsite=true;
-  const id=`synthetic-web-notice-${run}`,title=`Synthetic website exchange ${run}`;
+  const id=webNoticeId,title=webNoticeTitle;
   await typeField('Synthetic notice ID',id);
   await typeField('Synthetic notice title',title);
   proof.stage='offline draft save';
