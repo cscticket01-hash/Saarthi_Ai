@@ -219,3 +219,61 @@ test('Sync3 metadata bundle commits all records atomically, replays without dupl
   operations:[{...operation('bundle-payment-a'),collection:'fee_payments'},operation('bundle-payment-b')]})).status,412);
  assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
 });
+
+test('Sync 3 media preflight checks exact staged bytes and never exposes partial person bundles',async()=>{
+ async function fileCommand(school,lane,body){
+  const raw=JSON.stringify({...body,schoolId:school,lane}),time=String(Date.now());
+  const response=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{
+   'content-type':'application/json','x-vidya-time':time,
+   'x-vidya-signature':createHmac('sha256',key).update(time+'\\n'+raw).digest('hex')},body:raw});
+  return {status:response.status,...await response.json()};
+ }
+ async function stage(uploadKey,mime,bytes){
+  const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+  const sha256=createHash('sha256').update(bytes).digest('hex');
+  const manifest={uploadKey,sha256,sizeBytes:bytes.length,name:uploadKey,mime};
+  const r=await fileCommand(A,'file-'+id,{command:'putSmall',id,manifest,base64:bytes.toString('base64')});
+  assert.equal(r.status,200,JSON.stringify(r));
+  return {id,uploadKey,sha256,sizeBytes:bytes.length,mime};
+ }
+ const pdf=Buffer.alloc(85*1024,32);
+ pdf.write('%PDF-1.7',0,'ascii');pdf.write('%%EOF',pdf.length-5,'ascii');
+ const card={kind:'idCard',...await stage('sync3-atomic-idcard-exact-85k-v1','application/pdf',pdf)};
+ const body={command:'bundlePrepare',bundleId:'sync3-atomic-media-proof-0001',media:[card]};
+ const before=(await rpc({command:'head'})).value.cursor;
+ const first=await rpc(body);assert.equal(first.status,200,JSON.stringify(first));
+ assert.equal(first.value.mediaReady,true);
+ assert.equal(first.value.schoolId,A);
+ assert.equal(first.value.proofs.length,1);
+ assert.equal(first.value.proofs[0].sizeBytes,85*1024);
+ assert.match(first.value.manifestHash,/^[a-f0-9]{64}$/);
+ assert.deepEqual((await rpc(body)).value,first.value,'same verified files give deterministic proof');
+ assert.equal((await rpc({command:'head'})).value.cursor,before,'preflight never publishes a record');
+
+ const portrait=Buffer.alloc(40*1024,32);
+ const photo={kind:'photo',...await stage('sync3-atomic-photo-exact-40k-v1','image/jpeg',portrait)};
+ const pair=await rpc({...body,media:[card,photo]});
+ assert.equal(pair.status,200,JSON.stringify(pair));
+ assert.equal(pair.value.proofs.length,2);
+ assert.equal((await rpc({...body,media:[photo]})).status,412,'photo-only is never a card bundle');
+ assert.equal((await rpc({...body,media:[card,card]})).status,400,'duplicate card is rejected');
+ assert.equal((await rpc({...body,media:[card,{...photo,sha256:'a'.repeat(64)}]})).status,409,
+  'forged digest cannot authorize staged media');
+ assert.equal((await rpc({...body,media:[{...card,sizeBytes:85*1024+1}]})).status,413);
+ assert.equal((await rpc({...body,media:[{...card,id:'a'.repeat(64)}]})).status,409);
+ const over=Buffer.alloc(85*1024+1,32);
+ over.write('%PDF-1.7',0,'ascii');over.write('%%EOF',over.length-5,'ascii');
+ const tooBig={kind:'idCard',...await stage('sync3-oversize-idcard-85k-plus-one-v1','application/pdf',over)};
+ assert.equal((await rpc({...body,media:[tooBig]})).status,413);
+ const broken=Buffer.alloc(64,32);
+ const invalid={kind:'idCard',...await stage('sync3-invalid-idcard-envelope-v1','application/pdf',broken)};
+ assert.equal((await rpc({...body,media:[invalid]})).status,412,
+  'a valid hash cannot turn fake PDF bytes into a valid card');
+ assert.equal((await rpc({command:'bundleCommit',bundleId:'sync3-media-not-yet-committable-v1',
+  operations:[{collection:'school_expenses',id:'not-committed-a',operation:'write',
+   operationId:'sync3-block-partial-a-0001',expectedRevision:'',data:{schoolId:A,amount:2}},
+   {collection:'school_expenses',id:'not-committed-b',operation:'write',
+   operationId:'sync3-block-partial-b-0001',expectedRevision:'',data:{schoolId:A,amount:3}}],
+  media:[card]})).status,412,'readiness is not an atomic person/file commit');
+ assert.equal((await rpc({command:'head'})).value.cursor,before,'no partial bundle may reach peers');
+});
