@@ -859,6 +859,31 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    const bytes=Buffer.from(b.base64,'base64');
    if(bytes.length!==b.sizeBytes||bytes.toString('base64')!==b.base64||
       hash(bytes)!==b.sha256)fail(409,'Atomic file bytes differ from manifest');
+   if(kind==='photo'){
+    // Isolated TEST photo admission: reject wrong MIME, truncated containers
+    // and filenames that lie about the encoded format before any Drive job.
+    // A signature is only a preflight; the original file DO and client still
+    // require immutable SHA-256 and a decodable image.
+    const suffix=b.name.toLowerCase();
+    const jpeg=mime==='image/jpeg'&&/\\.(jpg|jpeg)$/.test(suffix)&&
+      bytes.length>=32&&bytes[0]===0xff&&bytes[1]===0xd8&&
+      bytes[2]===0xff&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9;
+    const png=mime==='image/png'&&suffix.endsWith('.png')&&bytes.length>=57&&
+      bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&
+      bytes.toString('ascii',12,16)==='IHDR'&&
+      bytes.readUInt32BE(8)===13&&bytes.readUInt32BE(16)>0&&
+      bytes.readUInt32BE(20)>0&&
+      bytes.readUInt32BE(16)*bytes.readUInt32BE(20)<=20000000&&
+      bytes.readUInt32BE(bytes.length-12)===0&&
+      bytes.toString('ascii',bytes.length-8,bytes.length-4)==='IEND';
+    const webp=mime==='image/webp'&&suffix.endsWith('.webp')&&bytes.length>=20&&
+      bytes.toString('ascii',0,4)==='RIFF'&&
+      bytes.toString('ascii',8,12)==='WEBP'&&
+      ['VP8 ','VP8L','VP8X'].includes(bytes.toString('ascii',12,16))&&
+      bytes.readUInt32LE(4)+8===bytes.length;
+    if(!jpeg&&!png&&!webp)
+      fail(400,'Invalid TEST atomic photo container or MIME');
+   }
    const provider=await cachedRead(uploadCapabilities,m.schoolId,
       ()=>signedRequest(m,{action:'managed_health'}),300000);
    if(provider?.success!==true||provider.storageReady!==true||
