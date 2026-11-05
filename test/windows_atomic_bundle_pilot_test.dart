@@ -170,6 +170,12 @@ void main(){
      {...parent,'wireData':{'schoolId':school,'mobileStableId':'p-'+'8'*32,
        'photoBase64':'YWJjZA=='}},doc),isFalse,
        reason:'A pre-bound wire photo cannot be silently omitted from the bundle');
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...parent,'wireData':{'schoolId':school,'mobileStableId':'p-'+'8'*32,
+       'photoUrl':'https://drive.google.com/file/d/prior-drive-portrait/view'}},
+     doc),isFalse,reason:'A legacy Drive upload cannot be counted as a new atomic photo');
+   expect(WindowsAtomicPersonCardCoordinator.photoFreeWire(
+     {'photoUrl':'','schoolId':school}),isTrue);
    final key=WindowsAtomicPersonCardCoordinator.uploadKey(
       school,doc['documentRevision'] as String);
    final bundle=WindowsAtomicPersonCardCoordinator.bundleId(
