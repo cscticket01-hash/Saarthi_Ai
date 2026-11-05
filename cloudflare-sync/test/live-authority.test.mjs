@@ -225,7 +225,7 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
   const raw=JSON.stringify({...body,schoolId:school,lane}),time=String(Date.now());
   const response=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{
    'content-type':'application/json','x-vidya-time':time,
-   'x-vidya-signature':createHmac('sha256',key).update(time+'\\n'+raw).digest('hex')},body:raw});
+   'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+raw).digest('hex')},body:raw});
   return {status:response.status,...await response.json()};
  }
  async function stage(uploadKey,mime,bytes){
