@@ -79,3 +79,29 @@ test('TEST school media preflight is licensed and does not create a live bundle 
  await assert.rejects(f.call(request),e=>e.status===403);
  assert.equal(calls.length,2,'revoked school never receives a staged media proof');
 });
+
+test('atomic person publish refuses unapproved, foreign and unmigrated school before any visible cloud write',async()=>{
+ const calls=[],edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  calls.push({s,l,b});return {liveProtocol:1,schoolId:s};
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ const request={action:'managed/live/bundle-publish',liveProtocol:1,
+  confirmIsolatedBundleTest:true,bundleId:'sync3-person-and-card-test-0001',
+  mediaManifestHash:'a'.repeat(64),
+  media:[{kind:'idCard',id:'b'.repeat(64),uploadKey:'person-card-test-1',
+   sha256:'c'.repeat(64),sizeBytes:1024,mime:'application/pdf'}],
+  operations:[{collection:'students_directory',id:'p1',operation:'write',
+   operationId:'sync3-atomic-person-write-0001',expectedRevision:'',
+   data:{schoolId:A,mobileStableId:'p-'+'e'.repeat(32)}},
+  {collection:'documents',id:'card1',operation:'write',
+   operationId:'sync3-atomic-card-write-0001',expectedRevision:'',
+   data:{schoolId:A,studentId:'p1',personId:'p-'+'e'.repeat(32),ownerRole:'student'}}]};
+ await assert.rejects(f.call({...request,confirmIsolatedBundleTest:false}),e=>e.status===400);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call(request),e=>e.status===503,
+  'native lifecycle group must have an active migration fence');
+ assert.equal(calls.length,0,'no Cloudflare writes before migration proof');
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ assert.equal(calls.length,0);
+});
