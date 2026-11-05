@@ -414,6 +414,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      ...(verifiedMedia&&['students_directory','teachers_directory'].includes(String((b.operations as Json[])[0].collection))&&index===0&&archiveFiles.length===2?{
        data:{...(item.data as Json),atomicPortrait:{
          bundleId:b.bundleId,documentId:(b.operations as Json[])[1].id,
+         role:bundleOwner?.role,
          id:archiveFiles[1].id,sha256:archiveFiles[1].sha256,
          mime:archiveFiles[1].mime,sizeBytes:archiveFiles[1].sizeBytes,
        }}
