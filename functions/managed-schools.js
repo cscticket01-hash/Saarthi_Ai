@@ -865,7 +865,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     // A signature is only a preflight; the original file DO and client still
     // require immutable SHA-256 and a decodable image.
     const suffix=b.name.toLowerCase();
-    const jpeg=mime==='image/jpeg'&&/\\.(jpg|jpeg)$/.test(suffix)&&
+    const jpeg=mime==='image/jpeg'&&/\.(jpg|jpeg)$/.test(suffix)&&
       bytes.length>=32&&bytes[0]===0xff&&bytes[1]===0xd8&&
       bytes[2]===0xff&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9;
     const png=mime==='image/png'&&suffix.endsWith('.png')&&bytes.length>=57&&
