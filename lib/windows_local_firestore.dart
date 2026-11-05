@@ -330,6 +330,190 @@ class FirebaseFirestore {
       _database.applyOperations(operations,rejectBlockedDownload:true));
   }
 
+
+  /// TEST-only: reserve the two existing queues in the same disk transaction.
+  /// No queue is removed and a Cloudflare receipt is never a Drive receipt.
+  Future<void> markAtomicPersonCardOutbox({
+    required String school,required String parentQueueId,
+    required Map<String,dynamic> parentBefore,required String documentId,
+    required Map<String,dynamic> documentBefore,required String bundleId,
+    required String state,String? parentCloudRevision,
+    String? documentCloudRevision,
+  }) {
+    final personCollection=parentBefore['collection'];
+    final personId=parentBefore['documentId'];
+    final personOp=parentBefore['operationId'];
+    final cardOp=documentBefore['documentRevision'];
+    final data=parentBefore['data'];
+    final generation=data is Map?data['mobileStableId']:null;
+    if(activeProfileIdentity['schoolSyncId']!=school||
+       !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       !{'students_directory','teachers_directory'}.contains(personCollection)||
+       personId is! String||personOp is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(personOp)||
+       cardOp is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(cardOp)||
+       personOp==cardOp||
+       data is! Map||generation is! String||
+       parentBefore['schoolId']!=school||parentBefore['operation']!='set'||
+       parentBefore['priorDeletion']!=null||
+       parentBefore['baseCloudRevision']!=''||
+       documentBefore['schoolId']!=school||
+       documentBefore['documentId']!=documentId||
+       documentBefore['documentKind']!='idCard'||
+       documentBefore['deleted']==true||
+       documentBefore['baseCloudRevision']!=''||
+       documentBefore['studentId']!=personId||
+       documentBefore['personId']!=generation||
+       documentBefore['ownerRole']!=(personCollection=='teachers_directory'?'teacher':'student')||
+       !{'reserved','committed'}.contains(state)||
+       [parentBefore,documentBefore].any((row)=>
+         row['atomicBundleId']!=null&&row['atomicBundleId']!=bundleId||
+         row['atomicState']!=null&&!{'reserved','committed'}.contains(row['atomicState']))||
+       (state=='reserved'&&[parentBefore,documentBefore].any((row)=>
+         row['atomicState']=='committed'))||
+       (state=='committed'&&(
+         parentCloudRevision is! String||documentCloudRevision is! String||
+         !parentCloudRevision.startsWith('live-')||
+         !documentCloudRevision.startsWith('live-'))))
+      throw StateError('Original same-school atomic outbox pair changed.');
+    final parent={...parentBefore,'atomicBundleId':bundleId,'atomicState':state,
+      'atomicOperationId':personOp,
+      if(state=='committed')'atomicCloudRevision':parentCloudRevision};
+    final child={...documentBefore,'atomicBundleId':bundleId,'atomicState':state,
+      'atomicOperationId':cardOp,
+      if(state=='committed')'atomicCloudRevision':documentCloudRevision};
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations([
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_firebase_outbox',documentId:parentQueueId,data:parent),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_document_outbox',documentId:documentId,data:child),
+      ],expected:{
+        '_windows_firebase_outbox':{parentQueueId:_encodeMap(parentBefore)},
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+      }));
+  }
+
+
+  /// One serialized retirement after TWO verified Google Drive backups.
+  /// If either original queue or either local Save changed, nothing is
+  /// removed, no matter how many Cloudflare retries have succeeded.
+  Future<void> finishVerifiedAtomicPersonCardOutbox({
+    required String school,required String parentQueueId,
+    required Map<String,dynamic> parentBefore,
+    required Map<String,dynamic> parentLocalBefore,
+    required String documentId,required Map<String,dynamic> documentBefore,
+    required Map<String,dynamic> documentLocalBefore,
+    required String bundleId,required Map<String,dynamic> parentCloud,
+    required Map<String,dynamic> documentCloud,
+    required List<Map<String,dynamic>> verifiedBackups,
+    required String cardSha256,
+  }) {
+    final collection=parentBefore['collection'];
+    final personId=parentBefore['documentId'];
+    final personOp=parentBefore['operationId'];
+    final cardOp=documentBefore['documentRevision'];
+    final source=parentBefore['data'];
+    final generation=source is Map?source['mobileStableId']:null;
+    final role=collection=='teachers_directory'?'teacher':'student';
+    final media=documentCloud['bundleMedia'];
+    final fileId=documentCloud['fileId'];
+    if(activeProfileIdentity['schoolSyncId']!=school||
+       !{'students_directory','teachers_directory'}.contains(collection)||
+       personId is! String||personOp is! String||cardOp is! String||
+       generation is! String||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(cardSha256)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       [parentBefore,documentBefore].any((r)=>
+         r['atomicBundleId']!=bundleId||r['atomicState']!='committed')||
+       documentBefore['documentRevision']!=documentLocalBefore['documentRevision']||
+       documentBefore['localPath']!=documentLocalBefore['localPath']||
+       documentBefore['personId']!=generation||
+       parentLocalBefore['schoolId']!=school||
+       parentCloud['schoolId']!=school||
+       parentCloud['_syncDeleted']==true||
+       parentCloud['mobileStableId']!=generation||
+       parentCloud['_syncOperationId']!=personOp||
+       documentCloud['schoolId']!=school||
+       documentCloud['_syncDeleted']==true||
+       documentCloud['bundleId']!=bundleId||
+       documentCloud['personId']!=generation||
+       documentCloud['ownerRole']!=role||
+       (role=='student'?documentCloud['studentId']:documentCloud['teacherId'])!=personId||
+       documentCloud['_syncOperationId']!=cardOp||
+       documentCloud['contentHash']!=cardSha256||
+       media is! List||media.isEmpty||media.first is! Map||
+       (media.first as Map)['sha256']!=cardSha256||
+       fileId is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId)||
+       verifiedBackups.length!=2)
+      throw StateError('Atomic Person and ID Card archive identity differs.');
+    final originalOps=[personOp,cardOp],
+      originalCollections=[collection,'documents'],originalIds=[personId,documentId],
+      cloudRecords=[parentCloud,documentCloud];
+    for(var i=0;i<2;i++){
+      final backup=verifiedBackups[i];
+      if(backup['operationId']!=originalOps[i]||
+         backup['collection']!=originalCollections[i]||
+         backup['id']!=originalIds[i]||
+         backup['backupState']!='verified'||
+         backup['driveVerified']!=true||
+         backup['recordRevision']!=cloudRecords[i]['_syncRevision']||
+         backup['driveRevision'] is! String||
+         (backup['driveRevision'] as String).isEmpty||
+         (backup['driveRevision'] as String).startsWith('live-')||
+         (backup['driveRevision'] as String).startsWith('cf-'))
+        throw StateError('Both original Drive backup ACKs required.');
+    }
+    if(parentBefore['atomicCloudRevision']!=parentCloud['_syncRevision']||
+       documentBefore['atomicCloudRevision']!=documentCloud['_syncRevision'])
+      throw StateError('Original atomic Cloudflare revisions differ.');
+    final observedProfile=activeProfileId;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final documentLocal={...documentLocalBefore,
+      'cloudRevision':verifiedBackups[1]['driveRevision'],
+      'baseCloudRevision':verifiedBackups[1]['driveRevision'],
+      'cloudFileUrl':'https://drive.google.com/file/d/$fileId/view',
+      'cloudUploadedAt':now,'atomicBundleId':bundleId,'syncState':'Synced'};
+    if(activeProfileId!=observedProfile||
+       activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before original queue retirement.');
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations([
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_firebase_outbox',documentId:parentQueueId,
+          data:parentBefore,acknowledgedRevision:parentCloud['_syncRevision'] as String,
+          canonicalRecord:parentCloud),
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_document_outbox',documentId:documentId,
+          data:documentBefore),
+        _WriteOperation._(type:_WriteType.set,
+          collection:collection as String,documentId:personId,data:parentCloud),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'documents',documentId:documentId,data:documentCloud),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_local_student_documents',
+          documentId:documentId,data:documentLocal),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_sync_receipts',
+          documentId:'document-$documentId-$cardOp',data:{
+            'schoolId':school,'operationId':cardOp,'collection':'documents',
+            'documentId':documentId,'recordRevision':documentCloud['_syncRevision'],
+            'driveRevision':verifiedBackups[1]['driveRevision'],
+            'contentHash':cardSha256,'bundleId':bundleId,
+            'verification':'original Drive backup and signed live readback',
+            'acknowledgedAt':now,
+          }),
+      ],expected:{
+        '_windows_firebase_outbox':{parentQueueId:_encodeMap(parentBefore)},
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+        collection as String:{personId:_encodeMap(parentLocalBefore)},
+        '_local_student_documents':{documentId:_encodeMap(documentLocalBefore)},
+      }));
+  }
+
   /// Retain a complete live page and its cursor in the same serialized disk
   /// transaction. These are incoming records, never upload or Drive receipts.
   Future<void> retainLiveSyncPage(LiveSyncPage page) async {
