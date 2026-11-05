@@ -404,3 +404,55 @@ test('isolated receipt/marksheet stage has independent 30/150 KiB PDF limits and
      'Rejected PDF must never stage an unverified Cloudflare file');
  }
 });
+
+
+test('mobile financial PDF only reaches exact signed student generation and document ID',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.from('%PDF-1.7\nOriginal student financial PDF\n%%EOF');
+ const sha=createHash('sha256').update(bytes).digest('hex');
+ const bundleId='mobile-financial-own-verified-bundle-0001',id='e'.repeat(64);
+ let fileOwner='verified-pupil',kind='receipt',documentId='FEE-own';
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push(b.command);
+   if(b.command==='ownerFinancialBundle'){
+     assert.equal(b.role,kind==='receipt'?'feeReceipt':'marksheet');
+     assert.equal(b.documentId,documentId);
+     return {bundleProtocol:1,schoolId:s,found:true,
+       documentId,bundleId,id,kind,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length};
+   }
+   if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+     bundleId,id,kind,sha256:sha,mime:'application/pdf',
+     sizeBytes:bytes.length,ownerRole:kind==='receipt'?'feeReceipt':'marksheet',
+     personId:fileOwner,archiveReady:false};
+   if(b.command==='bundleProof')return {version:1,schoolId:s,
+     id,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length,staged:true};
+   if(b.command==='readPart')return {offset:0,sizeBytes:bytes.length,
+     sha256:sha,base64:bytes.toString('base64')};
+   throw Error('Unexpected financial media operation '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const request={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_document',sessionToken:'s'.repeat(64),
+     deviceId:'mobile-financial-session-device-0001',kind,documentId}};
+ const result=await f.call(request);
+ assert.equal(result.available,true);assert.equal(result.mobileAtomicDocument,true);
+ assert.equal(result.documentId,documentId);assert.equal(result.contentHash,sha);
+ assert.equal(result.documentRevision,'atomic-'+bundleId);
+ assert.equal(Buffer.from(result.base64,'base64').toString(),bytes.toString());
+ kind='marksheet';documentId='SHEET-own';
+ const marksheet=await f.call({...request,request:{...request.request,kind,documentId}});
+ assert.equal(marksheet.kind,'marksheet');
+ assert.equal(marksheet.contentHash,sha);
+ fileOwner='foreign-generation';
+ await assert.rejects(f.call({...request,request:{...request.request,kind,documentId}}),
+   e=>e.status===403);
+ const callsBefore=calls.length;
+ await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
+ await assert.rejects(f.call({...request,request:{...request.request,
+   kind:'receipt',documentId:'../foreign'}}),e=>e.status===400);
+ assert.equal(calls.length,callsBefore,'Rejected identities never fetch file bytes');
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+});
