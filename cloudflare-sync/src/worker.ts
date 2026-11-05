@@ -67,8 +67,26 @@ export class SyncLane extends DurableObject<Env>{
     return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
       mediaReady:true,archiveReady:b.requireDrive===true,manifestHash,proofs};
    }
+   let verifiedMedia:Json|undefined;
+   if(b.command==='bundlePublish'){
+    // This is the ONLY path from external staged bytes to a visible person
+    // bundle. Both files must already have their immutable Drive receipt.
+    demand(Object.keys(b).every(k=>['command','schoolId','lane','bundleId',
+      'operations','media','mediaManifestHash'].includes(k))&&
+      typeof b.mediaManifestHash==='string'&&/^[a-f0-9]{64}$/.test(b.mediaManifestHash),
+      'Invalid atomic person bundle request');
+    const prior=liveCommand(this.ctx.storage,school,{command:'bundleReceipt',
+      bundleId:b.bundleId,operations:b.operations,media:b.media,
+      mediaManifestHash:b.mediaManifestHash});
+    if(prior.found===true)return prior.receipt;
+    verifiedMedia=await this.command(school,'live',{command:'bundlePrepare',
+      bundleId:b.bundleId,media:b.media,requireDrive:true}) as Json;
+    demand(verifiedMedia.archiveReady===true&&verifiedMedia.mediaReady===true&&
+      verifiedMedia.manifestHash===b.mediaManifestHash,'Staged archive manifest changed',409);
+    b={...b,command:'bundleCommit'};
+   }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
-   const result=liveCommand(this.ctx.storage,school,b);
+   const result=liveCommand(this.ctx.storage,school,b,Date.now(),false,verifiedMedia);
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
     const head=liveCommand(this.ctx.storage,school,{command:'head'});
     if(Number(head.cursor)>10000)liveCommand(this.ctx.storage,school,{command:'compact',before:Number(head.cursor)-10000});
