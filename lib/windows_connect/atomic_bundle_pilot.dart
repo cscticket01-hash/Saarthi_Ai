@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
 
 import 'managed_school_session.dart';
 import 'atomic_portrait_preflight.dart';
@@ -90,7 +91,7 @@ class AtomicBundlePilot {
     if ((!buildEnabled && request == null) || !isolatedTest) {
       throw StateError('Atomic portrait preflight is TEST-only.');
     }
-    final prepared = AtomicPortraitPreflight.prepare(original);
+    final prepared = await compute(AtomicPortraitPreflight.prepare, original);
     // The normalized container may differ from the retained original.
     final stem = name.replaceFirst(
       RegExp(r'\.(jpe?g|png|webp)$', caseSensitive: false), '');
