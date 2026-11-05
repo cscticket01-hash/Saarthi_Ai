@@ -52,8 +52,8 @@ void main() {
     // Regression: student preview previously threw above the arbitrary 85 KiB
     // cap even though this size is safe for the atomic Cloudflare file path.
     final pdf = Uint8List(141 * 1024 + 512);
-    pdf.setRange(0, 9, utf8.encode('%PDF-1.7\\n'));
-    pdf.setRange(pdf.length - 6, pdf.length, utf8.encode('%%EOF\\n'));
+    pdf.setRange(0, 8, utf8.encode('%PDF-1.7'));
+    pdf.setRange(pdf.length - 5, pdf.length, utf8.encode('%%EOF'));
     final original = Uint8List.fromList(pdf);
     final valid = SchoolMediaBudgets.verifyGeneratedPdf('idCard', pdf);
     expect(identical(valid, pdf), isTrue);
