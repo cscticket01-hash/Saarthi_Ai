@@ -357,6 +357,14 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.deepEqual((await rpc({command:'bundlePublish',bundleId,media,
    operations,mediaManifestHash})).value,commit.value,'Retry must not duplicate events');
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'idCard',id})).value.sha256,sha256);
+ const deleteCard=await rpc({command:'commit',collection:'documents',id:'card-stage-first',
+   operation:'delete',operationId:'sync3-stage-card-delete-0001',
+   expectedRevision:doc._syncRevision});
+ assert.equal(deleteCard.status,200,JSON.stringify(deleteCard));
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'idCard',id})).status,409,
+   'A deleted ID card cannot keep its old media capability');
+ assert.equal((await rpc({command:'ownerBundle',role:'student',
+   personId:'p-stage-first-0001'})).value.found,false);
 });
 
 test('Sync3 archived person and document publish as one Ready transaction, never a partial peer event',async()=>{

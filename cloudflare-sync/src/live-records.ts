@@ -146,6 +146,18 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
+ // A published file capability is valid only while its exact document
+ // revision remains the current non-deleted school record. A later delete or
+ // replacement must instantly retire the old Cloudflare read authority.
+ const currentBundleDocument=(receipt:Json,bundleId:string):boolean=>{
+  const refs=sql.exec<{id:string;revision:string;body:string}>(
+   "SELECT r.id,r.revision,r.body FROM live_events e JOIN live_records r ON r.collection=e.collection AND r.id=e.id WHERE e.bundle_id=? AND e.bundle_index=1 AND e.collection='documents' LIMIT 2",
+   bundleId).toArray();
+  const a=receipt.acknowledgements;
+  return refs.length===1&&Array.isArray(a)&&a.length===2&&
+   refs[0].revision===(a[1] as Json).recordRevision&&
+   (!refs[0].body||JSON.parse(refs[0].body)._syncDeleted!==true);
+ };
  if(command==='ownerBundle'){
   // Internal only; the broker first verifies the student's own signed school
   // session. Query only the original school Durable Object's published receipts.
@@ -159,6 +171,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   const saved=JSON.parse(row.receipt) as Json,files=saved.files as Json[];
   demand(saved.cloudState==='committed'&&saved.mediaReady===true&&
     saved.owner&&Array.isArray(files),'Published mobile bundle unavailable',412);
+  if(!currentBundleDocument(saved,String(saved.bundleId)))
+   return {bundleProtocol:1,schoolId:school,found:false};
   const card=files.filter(f=>f.kind==='idCard');
   demand(card.length===1&&typeof card[0].id==='string'&&
     /^[a-f0-9]{64}$/.test(card[0].id),'Published ID card proof unavailable',412);
@@ -197,6 +211,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(receipt.schoolId===school&&receipt.cloudState==='committed'&&
     receipt.mediaReady===true&&Array.isArray(receipt.files),
     'Atomic media bundle is unavailable',412);
+  demand(currentBundleDocument(receipt,String(b.bundleId)),
+    'The published ID was replaced or deleted',409);
   const found=(receipt.files as Json[]).filter(f=>f.id===b.id&&f.kind===b.kind);
   demand(found.length===1&&/^[a-f0-9]{64}$/.test(String(found[0].sha256||''))&&
     Number.isSafeInteger(found[0].sizeBytes)&&Number(found[0].sizeBytes)>0&&
