@@ -27,7 +27,7 @@ void main(){
  });
  test('TEST Web accepts original photo only with same person and document SHA',(){
    final withPhoto=group.map((e)=>Map<String,dynamic>.from(e)).toList();
-   const photoId='f'*64,photoSha='e'*64;
+   final photoId='f'*64,photoSha='e'*64;
    withPhoto[0]['record']={
      ...(withPhoto[0]['record'] as Map),
      'atomicPortrait':{
