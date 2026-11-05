@@ -583,6 +583,120 @@ class FirebaseFirestore {
       }));
   }
 
+
+  /// Only exact verified Drive backups of every original queue member can
+  /// acknowledge and retire the SAME local fee/exam transaction atomically.
+  Future<void> finishVerifiedAtomicFinancialOutbox({
+    required String school,required String bundleId,
+    required List<Map<String,dynamic>> parents,
+    required List<Map<String,dynamic>> parentLocalBefore,
+    required String documentId,required Map<String,dynamic> documentBefore,
+    required Map<String,dynamic> documentLocalBefore,
+    required List<Map<String,dynamic>> cloudRecords,
+    required List<Map<String,dynamic>> verifiedBackups,
+    required String pdfSha256,
+  }) {
+    final count=parents.length,kind=count==2?'receipt':'marksheet';
+    final names=count==2?['fee_payments','fee_ledger']:['exam_results'];
+    if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
+       activeProfileIdentity['schoolSyncId']!=school||
+       !(count==1||count==2)||
+       parentLocalBefore.length!=count||cloudRecords.length!=count+1||
+       verifiedBackups.length!=count+1||
+       documentBefore['atomicBundleId']!=bundleId||
+       documentBefore['atomicState']!='committed'||
+       documentBefore['documentId']!=documentId||
+       documentBefore['contentHash']!=pdfSha256||
+       documentLocalBefore['documentRevision']!=documentBefore['documentRevision']||
+       documentLocalBefore['localPath']!=documentBefore['localPath']||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(pdfSha256))
+      throw StateError('Original financial save changed before Drive ACK.');
+    final doc=cloudRecords.last,proof=doc['bundleMedia'],fileId=doc['fileId'];
+    if(doc['schoolId']!=school||doc['bundleId']!=bundleId||
+       doc['_syncDeleted']==true||
+       doc['_syncOperationId']!=documentBefore['documentRevision']||
+       doc['contentHash']!=pdfSha256||
+       doc['atomicBundleId']!=null||
+       proof is! List||proof.length!=1||proof.single is! Map||
+       (proof.single as Map)['kind']!=kind||
+       (proof.single as Map)['sha256']!=pdfSha256||
+       fileId is! String||!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId))
+      throw StateError('Signed financial PDF Drive identity differs.');
+    final ops=<_WriteOperation>[];
+    final expectedParents=<String,Map<String,dynamic>>{};
+    final localExpected=<String,Map<String,dynamic>>{};
+    for(var i=0;i<count;i++){
+      final entry=parents[i],prior=entry['before'],queueId=entry['queueId'];
+      final local=parentLocalBefore[i],cloud=cloudRecords[i],backup=verifiedBackups[i];
+      if(prior is! Map<String,dynamic>||queueId is! String||
+         prior['collection']!=names[i]||prior['schoolId']!=school||
+         prior['atomicBundleId']!=bundleId||prior['atomicState']!='committed'||
+         prior['atomicCloudRevision']!=cloud['_syncRevision']||
+         prior['documentId'] is! String||prior['operationId'] is! String||
+         local['schoolId']!=school||cloud['schoolId']!=school||
+         cloud['_syncDeleted']==true||cloud['_syncOperationId']!=prior['operationId']||
+         backup['collection']!=names[i]||backup['id']!=prior['documentId']||
+         backup['operationId']!=prior['operationId']||
+         backup['recordRevision']!=cloud['_syncRevision']||
+         backup['backupState']!='verified'||backup['driveVerified']!=true||
+         backup['driveRevision'] is! String||
+         (backup['driveRevision'] as String).isEmpty||
+         expectedParents.containsKey(queueId))
+        throw StateError('Financial record lacks original signed Drive ACK.');
+      expectedParents[queueId]=_encodeMap(prior);
+      (localExpected[names[i]]??=<String,dynamic>{})[
+        prior['documentId'] as String]=_encodeMap(local);
+      ops.add(_WriteOperation._(type:_WriteType.delete,
+        collection:'_windows_firebase_outbox',documentId:queueId,
+        data:prior,acknowledgedRevision:cloud['_syncRevision'] as String,
+        canonicalRecord:cloud));
+      ops.add(_WriteOperation._(type:_WriteType.set,
+        collection:names[i],documentId:prior['documentId'] as String,data:cloud));
+    }
+    final backup=verifiedBackups.last;
+    if(documentBefore['atomicCloudRevision']!=doc['_syncRevision']||
+       backup['collection']!='documents'||backup['id']!=documentId||
+       backup['operationId']!=documentBefore['documentRevision']||
+       backup['recordRevision']!=doc['_syncRevision']||
+       backup['backupState']!='verified'||backup['driveVerified']!=true||
+       backup['driveRevision'] is! String||
+       (backup['driveRevision'] as String).isEmpty)
+      throw StateError('Receipt or marksheet has no verified Drive ACK.');
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final docLocal={...documentLocalBefore,
+      'cloudRevision':backup['driveRevision'],
+      'baseCloudRevision':backup['driveRevision'],
+      'cloudFileUrl':'https://drive.google.com/file/d/$fileId/view',
+      'cloudUploadedAt':now,'atomicBundleId':bundleId,'syncState':'Synced'};
+    ops.addAll([
+      _WriteOperation._(type:_WriteType.delete,
+        collection:'_windows_document_outbox',documentId:documentId,
+        data:documentBefore),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'documents',documentId:documentId,data:doc),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'_local_student_documents',documentId:documentId,data:docLocal),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'_windows_sync_receipts',
+        documentId:'document-' + documentId + '-' +
+          (documentBefore['documentRevision'] as String),
+        data:{'schoolId':school,'operationId':documentBefore['documentRevision'],
+          'collection':'documents','documentId':documentId,
+          'recordRevision':doc['_syncRevision'],
+          'driveRevision':backup['driveRevision'],
+          'contentHash':pdfSha256,'bundleId':bundleId,
+          'verification':'signed live record and original Drive backup',
+          'acknowledgedAt':now}),
+    ]);
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(ops,expected:{
+        '_windows_firebase_outbox':expectedParents,
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+        '_local_student_documents':{documentId:_encodeMap(documentLocalBefore)},
+        ...localExpected,
+      }));
+  }
+
   /// Retain a complete live page and its cursor in the same serialized disk
   /// transaction. These are incoming records, never upload or Drive receipts.
   Future<void> retainLiveSyncPage(LiveSyncPage page) async {
