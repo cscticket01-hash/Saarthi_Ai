@@ -159,4 +159,50 @@ void main(){
      school,parent['operationId'] as String,'changed-card-revision-0002')));
  });
 
+ test('receipt and marksheet reuse TEST cloud stage with exact printable PDF ceilings',() async {
+   Uint8List document(int size) {
+     final bytes=Uint8List(size);
+     bytes.setRange(0,8,latin1.encode('%PDF-1.7'));
+     bytes.setRange(size-5,size,latin1.encode('%%EOF'));
+     return bytes;
+   }
+   for(final entry in <(String,int)>[
+     ('receipt',30*1024),('marksheet',150*1024)
+   ]){
+     final kind=entry.$1,limit=entry.$2;
+     final bytes=document(limit);
+     final key='test-school-pdf-$kind-0001';
+     final id=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+     final sha=sha256.convert(bytes).toString();
+     final received=<Map<String,dynamic>>[];
+     final result=await AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'application/pdf',bytes:bytes,isolatedTest:true,
+       request:(action,body)async{
+         expect(action,'managed/live/bundle-stage');
+         expect(body['sizeBytes'],limit);
+         expect(body['sha256'],sha);
+         expect(base64Decode(body['base64'] as String),bytes);
+         received.add(body);
+         return {'success':true,'schoolId':school,'bundleProtocol':1,
+           'mediaReady':true,'cloudflareAccepted':true,'driveVerified':false,
+           'media':{'kind':kind,'id':id,'uploadKey':key,
+             'sha256':sha,'sizeBytes':limit,'mime':'application/pdf'}};
+       });
+     expect(result['sha256'],sha);
+     expect(result.containsKey('fileId'),isFalse);
+     expect(received.length,1);
+     await expectLater(AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'application/pdf',bytes:document(limit+1),isolatedTest:true,
+       request:(action,body)async{fail('Oversized PDF entered cloud');}),
+       throwsStateError);
+     await expectLater(AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'image/png',bytes:bytes,isolatedTest:true,
+       request:(action,body)async{fail('Invalid PDF MIME entered cloud');}),
+       throwsStateError);
+   }
+ });
+
 }
