@@ -398,7 +398,7 @@ test('isolated receipt/marksheet stage has independent 30/150 KiB PDF limits and
      sha256:createHash('sha256').update(oversized).digest('hex')};
    await assert.rejects(f.call(larger),e=>e.status===400);
    await assert.rejects(f.call({...request,name:'bad.png'}),e=>e.status===400);
-   await assert.rejects(f.call({...request,kind:'idCard'}),e=>e.status===400);
+   await assert.rejects(f.call({...request,kind:'photo'}),e=>e.status===400);
    await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
    assert.deepEqual(calls,['putSmall','bundleProof'],
      'Rejected PDF must never stage an unverified Cloudflare file');
