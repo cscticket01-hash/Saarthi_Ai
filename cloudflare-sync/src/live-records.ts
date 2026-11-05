@@ -94,7 +94,7 @@ function retireChildren(storage:DurableObjectStorage,school:string,col:string,id
  }
  return predecessors;
 }
-export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false):Json{
+export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
@@ -139,6 +139,17 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
+ if(command==='bundleReceipt'){
+  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&Array.isArray(b.media)&&
+    typeof b.mediaManifestHash==='string','Invalid bundle replay identity');
+  const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations,
+    media:b.media,mediaManifestHash:b.mediaManifestHash});
+  const prior=sql.exec<{fingerprint:string;receipt:string}>(
+    'SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
+  if(!prior)return {found:false};
+  demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);
+  return {found:true,receipt:JSON.parse(prior.receipt) as Json};
+ }
  if(command==='bundleCommit'){
   // First safe increment of the existing live authority: atomic *record*
   // groups. Uploaded photo/PDF bytes are not in this transaction, so media
@@ -146,9 +157,44 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   // cross-lane staged-file manifest owner has been verified. No new queue.
   demand(!withinBundle,'Nested bundle rejected');
   demand(opId(b.bundleId)&&Array.isArray(b.operations)&&b.operations.length>=2&&b.operations.length<=5,'Invalid atomic bundle');
-  demand(b.media===undefined&&b.files===undefined&&b.fileReferences===undefined,'Media bundle staging not yet verified',412);
+  demand(b.files===undefined&&b.fileReferences===undefined,'Unverified media references',412);
+  if(verifiedMedia){
+   demand(Array.isArray(b.media)&&b.media.length>=1&&b.media.length<=2&&
+     verifiedMedia.archiveReady===true&&verifiedMedia.mediaReady===true&&
+     verifiedMedia.manifestHash===b.mediaManifestHash&&
+     Array.isArray(verifiedMedia.proofs)&&verifiedMedia.proofs.length===b.media.length,
+     'Immutable media/Drive proof required',412);
+  }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
+    'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
-  const allowed=new Set(['school_notices','school_calendar','school_settings','school_expenses']);
+  const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','documents']):
+   new Set(['school_notices','school_calendar','school_settings','school_expenses']);
+  let archiveFiles:Json[]=[];
+  if(verifiedMedia){
+   const ops=b.operations as Json[];
+   demand(ops.length===2&&personCollections.has(String(ops[0].collection))&&
+     ops[1].collection==='documents'&&ops.every(op=>op.operation==='write'),
+     'Person and ID document must commit as one ordered pair',412);
+   const person=ops[0],document=ops[1],parent=person.data as Json,child=document.data as Json;
+   demand(parent&&child&&parent.schoolId===school&&child.schoolId===school&&
+     !Object.hasOwn(parent,'bundleMedia')&&!Object.hasOwn(child,'bundleMedia'),
+     'Client cannot supply verified media metadata',403);
+   const teacher=person.collection==='teachers_directory';
+   const generation=String(parent.mobileStableId||person.id);
+   demand(child.personId===generation&&child.ownerRole===(teacher?'teacher':'student')&&
+     (teacher?child.teacherId===person.id:child.studentId===person.id),
+     'Document must belong to the exact person generation',409);
+   const proofs=verifiedMedia.proofs as Json[];
+   demand(proofs[0].kind==='idCard'&&proofs.every(p=>p.driveVerified===true&&
+     typeof p.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(p.fileId)&&
+     typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256))&&
+     (proofs.length===1||proofs[1].kind==='photo'),
+     'Complete verified Drive files required',412);
+   archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,fileId:p.fileId,
+     sha256:p.sha256,sizeBytes:p.sizeBytes,mime:p.mime}));
+   demand(child.fileId===undefined||child.fileId===proofs[0].fileId,
+     'Document file identity differs from Drive proof',409);
+  }
   const operationIds=new Set<string>(),recordKeys=new Set<string>();
   for(const item of b.operations as Json[]){
    demand(item&&typeof item==='object'&&!Array.isArray(item),'Invalid bundled record');
@@ -159,7 +205,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(!recordKeys.has(key)&&!operationIds.has(item.operationId),'Duplicate bundle record/operation',409);
    recordKeys.add(key);operationIds.add(String(item.operationId));
   }
-  const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations});
+  const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations,
+    ...(verifiedMedia?{media:b.media,mediaManifestHash:b.mediaManifestHash}:{})});
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);return JSON.parse(prior.receipt) as Json;}
@@ -168,11 +215,15 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    for(const id of operationIds)demand(
     sql.exec<{operation_id:string}>('SELECT operation_id FROM live_operations WHERE operation_id=?',id).toArray().length===0,
     'An existing operation cannot be repackaged as an atomic bundle',409);
-   const acknowledgements=(b.operations as Json[]).map(item=>
-    liveCommand(storage,school,{...item,command:'commit'},now,true));
+   const acknowledgements=(b.operations as Json[]).map((item,index)=>
+    liveCommand(storage,school,{...item,command:'commit',
+     ...(verifiedMedia&&index===1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
+       bundleManifestHash:b.mediaManifestHash,fileId:archiveFiles[0].fileId}}:{})},now,true));
    const receipt={bundleProtocol:1,liveProtocol:1,schoolId:school,bundleId:b.bundleId,
     cloudState:'committed',backupState:acknowledgements.every(r=>r.backupState==='verified')?'verified':'pending',
     cursor:head(),manifestHash:fingerprint,
+    ...(verifiedMedia?{mediaReady:true,archiveReady:true,mediaManifestHash:b.mediaManifestHash,
+      files:archiveFiles}:{}),
     acknowledgements:acknowledgements.map(r=>({operationId:r.operationId,
       recordRevision:r.recordRevision,cloudState:r.cloudState,backupState:r.backupState,
       cursor:r.cursor,unchanged:r.unchanged===true}))};
