@@ -84,7 +84,8 @@ test('atomic person publish refuses unapproved, foreign and unmigrated school be
  const calls=[],edge={enabled:()=>true,rpc:async(s,l,b)=>{
   calls.push({s,l,b});return {liveProtocol:1,schoolId:s};
  }};
- const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ const disabled=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],atomicBundleTestSchools:[A]});
  const request={action:'managed/live/bundle-publish',liveProtocol:1,
   confirmIsolatedBundleTest:true,bundleId:'sync3-person-and-card-test-0001',
   mediaManifestHash:'a'.repeat(64),
@@ -96,6 +97,8 @@ test('atomic person publish refuses unapproved, foreign and unmigrated school be
   {collection:'documents',id:'card1',operation:'write',
    operationId:'sync3-atomic-card-write-0001',expectedRevision:'',
    data:{schoolId:A,studentId:'p1',personId:'p-'+'e'.repeat(32),ownerRole:'student'}}]};
+ await assert.rejects(disabled.call(request),e=>e.status===412,
+  'production default must reject even a client-confirmed TEST bundle');
  await assert.rejects(f.call({...request,confirmIsolatedBundleTest:false}),e=>e.status===400);
  await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
  await assert.rejects(f.call(request),e=>e.status===503,
