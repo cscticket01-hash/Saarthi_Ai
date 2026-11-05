@@ -812,6 +812,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Future<void> _openSchoolDocument(Map<String, dynamic> document) async {
     final active = _s.link;
     try {
+      // Only an explicitly published atomic receipt/marksheet uses this
+      // authenticated Cloudflare-first reader. Legacy school documents keep
+      // their original verified Drive route without a new TEST request.
+      final bundle=document['bundleId'],proofs=document['bundleMedia'];
+      final type=document['documentKind']=='feeReceipt'?'receipt':
+        document['documentKind']=='marksheet'?'marksheet':null;
+      final documentId=document['documentId'];
+      if(bundle is String&&proofs is List&&type!=null&&documentId is String){
+        final bytes=await _s.publishedAtomicFinancialDocument(type,documentId);
+        if(!mounted||!identical(active,_s.link))return;
+        if(bytes==null || (document['contentHash'] is String&&
+           sha256.convert(bytes).toString()!=document['contentHash']))
+          throw StateError('Published school PDF changed. Refresh before opening.');
+        await _previewPdf(bytes,document['documentName']?.toString()??'School document');
+        return;
+      }
       final result = await _s.schoolCall('mobile_document', {
         'documentId': document['documentId'],
       });
