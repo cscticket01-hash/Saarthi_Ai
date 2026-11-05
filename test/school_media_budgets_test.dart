@@ -32,7 +32,7 @@ void main() {
   });
 
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
-    expect(SchoolMediaBudgets.idCard, 85 * 1024);
+    expect(SchoolMediaBudgets.idCard, 256 * 1024);
     expect(SchoolMediaBudgets.reportCard, 150 * 1024);
     expect(SchoolMediaBudgets.receipt, 30 * 1024);
     expect(SchoolMediaBudgets.branding, 30 * 1024);
@@ -46,6 +46,29 @@ void main() {
     }
     // Bulk-print sheets are not a single ID; source PDFs are never truncated.
     expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), null);
+  });
+
+  test('141.5 KB real-size ID card keeps complete print bytes for preview and publish', () {
+    // Regression: student preview previously threw above the arbitrary 85 KiB
+    // cap even though this size is safe for the atomic Cloudflare file path.
+    final pdf = Uint8List(141 * 1024 + 512);
+    pdf.setRange(0, 9, utf8.encode('%PDF-1.7\\n'));
+    pdf.setRange(pdf.length - 6, pdf.length, utf8.encode('%%EOF\\n'));
+    final original = Uint8List.fromList(pdf);
+    final valid = SchoolMediaBudgets.verifyGeneratedPdf('idCard', pdf);
+    expect(identical(valid, pdf), isTrue);
+    expect(valid.length, 144896);
+    expect(valid, original, reason: 'never truncate or degrade a printed PDF');
+
+    for (final kind in ['studentId', 'teacherId', 'otherStaffId', 'idCard']) {
+      expect(SchoolMediaBudgets.enforcePdf(kind, pdf), same(pdf));
+      expect(() => SchoolMediaBudgets.enforcePdf(kind,
+        Uint8List(SchoolMediaBudgets.idCard + 1)), throwsFormatException);
+    }
+    // Unrelated document classes must retain their original budget.
+    expect(() => SchoolMediaBudgets.enforcePdf('receipt', pdf),
+      throwsFormatException);
+    expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), isNull);
   });
 
   test('logo and opaque school seal use actual compressed <=30 KB bytes', () {
