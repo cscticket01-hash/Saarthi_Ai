@@ -157,8 +157,28 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     typeof manifest.sha256==='string'&&operationPattern.test(manifest.sha256)&&
     typeof manifest.uploadKey==='string'&&
     await digest(JSON.stringify([school,manifest.uploadKey]))===id,'Staged file manifest incomplete',412);
+  // Drive identity is independently signed, scoped and durable even after
+  // the 24h verified-only byte purge. Archive-only proof may survive a purge;
+  // cloud staging proof MUST NOT survive without its original bytes.
+  const result=current.response?((JSON.parse(current.response) as Json).result as Json):null;
+  const driveVerified=current.state==='completed'&&current.verified_at>0&&
+    result?.success===true&&result.schoolId===school&&
+    result.uploadResumableVersion===1&&result.uploadKey===manifest.uploadKey&&
+    result.sha256===manifest.sha256&&result.sizeBytes===size&&
+    result.committed===true&&result.offset===size&&
+    typeof result.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId);
   const chunks=storage.sql.exec<{offset:number;size:number;body:ArrayBuffer}>(
     'SELECT offset,size,body FROM edge_chunks ORDER BY offset').toArray();
+  const purged=chunks.length===1&&chunks[0].offset===0&&
+    chunks[0].size===size&&chunks[0].body.byteLength===0&&
+    current.purge_due===0&&current.verified_at>0;
+  if(purged){
+   demand(b.requireDrive===true&&driveVerified,
+     'Temporary Cloudflare bytes expired; signed Drive proof required',412);
+   return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+     sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:false,
+     driveVerified:true,fileId:result!.fileId};
+  }
   demand(chunks.length===1&&chunks[0].offset===0&&chunks[0].size===size&&
     chunks[0].body.byteLength===size,'Staged file bytes unavailable',412);
   const bytes=new Uint8Array(chunks[0].body);
@@ -182,15 +202,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
       new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(4,true)+8===size,
       'Staged WebP is incomplete',412);
   }else demand(false,'Unsupported atomic bundle media type',412);
-  // The file upload owner keeps a separate immutable Drive receipt. No
-  // "completed" label alone may be used as archive proof.
-  const result=current.response?((JSON.parse(current.response) as Json).result as Json):null;
-  const driveVerified=current.state==='completed'&&current.verified_at>0&&
-    result?.success===true&&result.schoolId===school&&
-    result.uploadResumableVersion===1&&result.uploadKey===manifest.uploadKey&&
-    result.sha256===manifest.sha256&&result.sizeBytes===size&&
-    result.committed===true&&result.offset===size&&
-    typeof result.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId);
+  // No "completed" label alone can stand in for a verified Drive receipt.
   if(b.requireDrive===true)demand(driveVerified,'Google Drive verified media receipt required',412);
   return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
     sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true,
