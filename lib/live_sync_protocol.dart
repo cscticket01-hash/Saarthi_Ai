@@ -51,8 +51,38 @@ class LiveSyncPage {
           !(entry['record']['_syncRevision'] as String).startsWith('live-')) {
         throw StateError('Live replay record differs; cursor retained.');
       }
+      final grouped=entry.containsKey('bundleId') ||
+          entry.containsKey('bundleSize') || entry.containsKey('bundleIndex');
+      if(grouped && (entry['bundleId'] is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(entry['bundleId'] as String) ||
+          entry['bundleSize'] is! int ||
+          (entry['bundleSize'] as int)<2 || (entry['bundleSize'] as int)>5 ||
+          entry['bundleIndex'] is! int ||
+          (entry['bundleIndex'] as int)<0 ||
+          (entry['bundleIndex'] as int)>=(entry['bundleSize'] as int) ||
+          entry['retired']==true)) {
+        throw StateError('Atomic replay metadata is invalid; cursor retained.');
+      }
       events.add(Map<String, dynamic>.from(entry));
       expected++;
+    }
+    // A single incomplete bundle must never advance the local checkpoint.
+    for(var i=0;i<events.length;) {
+      final first=events[i];
+      if(!first.containsKey('bundleId')) {i++;continue;}
+      final count=first['bundleSize'] as int;
+      if(first['bundleIndex']!=0||i+count>events.length) {
+        throw StateError('Atomic replay page is incomplete; cursor retained.');
+      }
+      for(var j=0;j<count;j++) {
+        final member=events[i+j];
+        if(member['bundleId']!=first['bundleId'] ||
+           member['bundleSize']!=count || member['bundleIndex']!=j ||
+           member['sequence']!=(first['sequence'] as int)+j) {
+          throw StateError('Atomic replay group differs; cursor retained.');
+        }
+      }
+      i+=count;
     }
     if (cursor != expected - 1 || raw.isEmpty && head != after) {
       throw StateError('Live replay gap; cursor retained.');

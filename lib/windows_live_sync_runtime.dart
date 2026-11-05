@@ -7,9 +7,12 @@ import 'windows_local_firestore.dart';
 
 /// Retained delivery hints are not canonical business records or upload ACKs.
 class WindowsLiveIncoming {
-  const WindowsLiveIncoming(this.key, this.sequence, this.collection, this.id);
+  const WindowsLiveIncoming(this.key, this.sequence, this.collection, this.id,
+      {this.bundleId, this.bundleSize=0, this.bundleIndex=-1});
   final String key, collection, id;
   final int sequence;
+  final String? bundleId;
+  final int bundleSize, bundleIndex;
 }
 
 abstract interface class WindowsLiveRuntimeStore implements LiveSyncStore {
@@ -64,11 +67,47 @@ class WindowsLiveRuntimeLocalStore implements WindowsLiveRuntimeStore {
       LiveSyncPage.parse({'success': true, 'liveProtocol': 1, 'schoolId': school,
         'cursor': sequence, 'head': sequence, 'more': false, 'events': [event]},
         school, sequence - 1);
+      final bundleId=value['bundleId'];
+      if(bundleId!=null &&
+          (bundleId is! String ||
+           !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId) ||
+           value['bundleSize'] is! int || value['bundleIndex'] is! int)) {
+        throw StateError('Retained atomic bundle identity invalid.');
+      }
+      if(bundleId==null &&
+          (value.containsKey('bundleSize') || value.containsKey('bundleIndex'))) {
+        throw StateError('Orphaned atomic bundle metadata.');
+      }
       incoming.add(WindowsLiveIncoming(row.id, sequence,
-          value['collection'] as String, value['id'] as String));
+          value['collection'] as String, value['id'] as String,
+          bundleId:bundleId as String?,
+          bundleSize:bundleId==null?0:value['bundleSize'] as int,
+          bundleIndex:bundleId==null?-1:value['bundleIndex'] as int));
     }
     incoming.sort((a, b) => a.sequence.compareTo(b.sequence));
-    return incoming.take(100).toList();
+    // Keep every member of a retained group together when batching work.
+    final safe=<WindowsLiveIncoming>[];
+    for(var i=0;i<incoming.length;) {
+      final first=incoming[i];
+      if(first.bundleId==null) {
+        if(first.bundleSize!=0||first.bundleIndex!=-1)
+          throw StateError('Orphaned incoming bundle metadata.');
+        if(safe.length>=100)break;
+        safe.add(first);i++;continue;
+      }
+      final count=first.bundleSize;
+      if(count<2||count>5||first.bundleIndex!=0||i+count>incoming.length)
+        throw StateError('Atomic bundle incomplete in durable inbox.');
+      for(var j=0;j<count;j++) {
+        final member=incoming[i+j];
+        if(member.bundleId!=first.bundleId||member.bundleSize!=count||
+           member.bundleIndex!=j||member.sequence!=first.sequence+j)
+          throw StateError('Retained atomic bundle sequence changed.');
+      }
+      if(safe.isNotEmpty&&safe.length+count>100)break;
+      safe.addAll(incoming.sublist(i,i+count));i+=count;
+    }
+    return safe;
   }
   @override Future<void> replaceCheckpoint(int expectedCursor, int nextCursor,
       [Set<String>? verifiedCollections]) async {

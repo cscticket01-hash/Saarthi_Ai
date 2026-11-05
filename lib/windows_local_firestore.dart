@@ -304,6 +304,10 @@ class FirebaseFirestore {
         data:{'schoolId':page.schoolId,'sequence':event['sequence'],
           'collection':event['collection'],'id':event['id'],
           'record':jsonDecode(jsonEncode(event['record'])),'state':'retained',
+          // Persist immutable bundle boundaries across Windows restart.
+          if(event['bundleId']!=null)...{
+            'bundleId':event['bundleId'],'bundleSize':event['bundleSize'],
+            'bundleIndex':event['bundleIndex']},
           if(event['retired']==true)...{'retired':true,'source':'drive',
             'recordAuthority':'school-drive'}}),
       _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
