@@ -506,7 +506,7 @@ test('one existing school file owner proves exact 30 KiB receipts and 150 KiB ma
      method:'POST',headers:{
        'content-type':'application/json','x-vidya-time':time,
        'x-vidya-signature':createHmac('sha256',key)
-         .update(time+'\\n'+raw).digest('hex'),
+         .update(time+'\n'+raw).digest('hex'),
      },body:raw,
    });
    return {status:response.status,...await response.json()};
