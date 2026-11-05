@@ -420,6 +420,12 @@ class FirebaseFirestore {
     final role=collection=='teachers_directory'?'teacher':'student';
     final media=documentCloud['bundleMedia'];
     final fileId=documentCloud['fileId'];
+    final parentSource=source is Map?
+      (source['photoBase64'] is String&&
+        (source['photoBase64'] as String).trim().isNotEmpty?
+          source['photoBase64']:source['photoUrl']):null;
+    final hasOriginalPhoto=parentSource is String&&parentSource.trim().isNotEmpty;
+    final portrait=parentCloud['atomicPortrait'];
     if(activeProfileIdentity['schoolSyncId']!=school||
        !{'students_directory','teachers_directory'}.contains(collection)||
        personId is! String||personOp is! String||cardOp is! String||
@@ -446,6 +452,102 @@ class FirebaseFirestore {
        documentCloud['contentHash']!=cardSha256||
        media is! List||media.isEmpty||media.first is! Map||
        (media.first as Map)['sha256']!=cardSha256||
+       (media.length==2)!=hasOriginalPhoto||
+       (hasOriginalPhoto&&(
+         media[1] is! Map || portrait is! Map ||
+         (media[1] as Map)['kind']!='photo' ||
+         (media[1] as Map)['sha256']!=portrait['sha256'] ||
+         (media[1] as Map)['id']!=portrait['id'] ||
+         (media[1] as Map)['mime']!=portrait['mime'] ||
+         (media[1] as Map)['sizeBytes']!=portrait['sizeBytes'] ||
+         portrait['bundleId']!=bundleId||
+         portrait['documentId']!=documentId||
+         portrait['role']!=role||
+         (media[1] as Map)['fileId'] is! String||
+         !RegExp(r'^[A-Za-z0-9_-]{1,200}
+       !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId)||
+       verifiedBackups.length!=2)
+      throw StateError('Atomic Person and ID Card archive identity differs.');
+    final originalOps=[personOp,cardOp],
+      originalCollections=[collection,'documents'],originalIds=[personId,documentId],
+      cloudRecords=[parentCloud,documentCloud];
+    for(var i=0;i<2;i++){
+      final backup=verifiedBackups[i];
+      if(backup['operationId']!=originalOps[i]||
+         backup['collection']!=originalCollections[i]||
+         backup['id']!=originalIds[i]||
+         backup['backupState']!='verified'||
+         backup['driveVerified']!=true||
+         backup['recordRevision']!=cloudRecords[i]['_syncRevision']||
+         backup['driveRevision'] is! String||
+         (backup['driveRevision'] as String).isEmpty||
+         (backup['driveRevision'] as String).startsWith('live-')||
+         (backup['driveRevision'] as String).startsWith('cf-'))
+        throw StateError('Both original Drive backup ACKs required.');
+    }
+    if(parentBefore['atomicCloudRevision']!=parentCloud['_syncRevision']||
+       documentBefore['atomicCloudRevision']!=documentCloud['_syncRevision'])
+      throw StateError('Original atomic Cloudflare revisions differ.');
+    final observedProfile=activeProfileId;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final documentLocal={...documentLocalBefore,
+      'cloudRevision':verifiedBackups[1]['driveRevision'],
+      'baseCloudRevision':verifiedBackups[1]['driveRevision'],
+      'cloudFileUrl':'https://drive.google.com/file/d/$fileId/view',
+      'cloudUploadedAt':now,'atomicBundleId':bundleId,'syncState':'Synced'};
+    // Keep original local photo available offline, without copying it to a
+    // new sync queue or claiming Drive before its exact media file receipt.
+    final localPerson=<String,dynamic>{...parentCloud,
+      if(hasOriginalPhoto)...{
+        'photoUrl':'https://drive.google.com/file/d/${(media[1] as Map)['fileId']}/view',
+        'photoFileId':(media[1] as Map)['fileId'],
+        'photoBase64':parentSource,
+      },
+    };
+    if(activeProfileId!=observedProfile||
+       activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before original queue retirement.');
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations([
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_firebase_outbox',documentId:parentQueueId,
+          data:parentBefore,acknowledgedRevision:parentCloud['_syncRevision'] as String,
+          canonicalRecord:parentCloud),
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_document_outbox',documentId:documentId,
+          data:documentBefore),
+        _WriteOperation._(type:_WriteType.set,
+          collection:collection as String,documentId:personId,data:localPerson),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'documents',documentId:documentId,data:documentCloud),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_local_student_documents',
+          documentId:documentId,data:documentLocal),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_sync_receipts',
+          documentId:'document-$documentId-$cardOp',data:{
+            'schoolId':school,'operationId':cardOp,'collection':'documents',
+            'documentId':documentId,'recordRevision':documentCloud['_syncRevision'],
+            'driveRevision':verifiedBackups[1]['driveRevision'],
+            'contentHash':cardSha256,'bundleId':bundleId,
+            'verification':'original Drive backup and signed live readback',
+            'acknowledgedAt':now,
+          }),
+      ],expected:{
+        '_windows_firebase_outbox':{parentQueueId:_encodeMap(parentBefore)},
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+        collection as String:{personId:_encodeMap(parentLocalBefore)},
+        '_local_student_documents':{documentId:_encodeMap(documentLocalBefore)},
+      }));
+  }
+
+
+  /// TEST-only original fee/exam transaction reservation. The two existing
+  /// record queues and the original document queue are reserved in one CAS.
+).hasMatch(
+           (media[1] as Map)['fileId'] as String)
+       ))||
+       (!hasOriginalPhoto&&portrait!=null)||
        fileId is! String||
        !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId)||
        verifiedBackups.length!=2)
