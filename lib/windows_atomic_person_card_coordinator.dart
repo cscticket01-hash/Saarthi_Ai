@@ -182,7 +182,7 @@ class WindowsAtomicPersonCardCoordinator {
         final photoSource=inlinePortraitSource(parent['data'] as Map);
         final prepared=await WindowsFirebaseRemote.prepareQueuedRecord(
           parentRef.reference,parent,school,
-          if(photoSource!=null)prepareData:(source) async {
+          prepareData:photoSource==null?null:(source) async {
             // Reuse the original immutable outbox wire binding and the usual
             // non-photo media owner. Never Drive-upload the portrait before
             // the Cloudflare-first Person + Photo + Card transaction.
