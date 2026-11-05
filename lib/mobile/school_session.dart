@@ -16,6 +16,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'atomic_card_delivery.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -1582,6 +1583,33 @@ class SchoolSession {
 
   /// Fetch the exact school-published PDF, never independently render an ID.
   Future<Uint8List?> publishedIdCard() async {
+    final atomic=dashboard['atomicIdCardBundle'];
+    if(atomic is Map && link?.managed==true) {
+      // A photo-less PDF is still stored at the school, but the student
+      // preview remains hidden per the school ID-card policy.
+      if(atomic['noPhoto']==true)return null;
+      final revision='atomic-${atomic['bundleId']}';
+      if(cachedPdfVersion('idCard')==revision) {
+        final existing=await cachedPdf('idCard');
+        if(existing!=null)return existing;
+      }
+      final generation=_generation,school=link!.schoolId;
+      final result=await schoolCall('mobile_atomic_idcard',{});
+      if(generation!=_generation || link?.schoolId!=school)
+        throw SchoolAccessDenied('School session changed.');
+      final bytes=AtomicCardDelivery.verify(school,atomic,result);
+      bool current(){
+        final latest=dashboard['atomicIdCardBundle'];
+        return generation==_generation && link?.schoolId==school &&
+          latest is Map && latest['bundleId']==atomic['bundleId'] &&
+          latest['id']==atomic['id'] && latest['sha256']==atomic['sha256'] &&
+          latest['noPhoto']!=true;
+      }
+      await cachePdf('idCard',revision,bytes,
+        expectedHash:atomic['sha256'] as String,accept:current);
+      if(!current())throw StateError('Published ID changed during download.');
+      return bytes;
+    }
     final manifest = dashboard['idCardPackage'];
     if (manifest is! Map)
       return dashboard.containsKey('idCardPackage')
