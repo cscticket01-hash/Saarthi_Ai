@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'managed_school_session.dart';
+import 'atomic_portrait_preflight.dart';
 
 typedef AtomicBundleRequest = Future<Map<String,dynamic>> Function(
   String action, Map<String,dynamic> body);
@@ -54,6 +55,11 @@ class AtomicBundlePilot {
             .toList()).contains('%%EOF'))
         throw StateError('Unverified ID PDF envelope.');
     }
+    if (kind == 'photo') {
+      // Keep an invalid/mislabeled photo out of the original Cloudflare lane.
+      // The existing 40 KiB portrait compressor is the sole preparation owner.
+      AtomicPortraitPreflight.verifyStagedBytes(bytes, mime);
+    }
     final hash=sha256.convert(bytes).toString(),
       id=sha256.convert(utf8.encode(jsonEncode([school,uploadKey]))).toString();
     final call=request??(action,body)=>
@@ -72,6 +78,28 @@ class AtomicBundlePilot {
        proof['mime']!=mime||proof['sizeBytes']!=bytes.length)
       throw StateError('School Cloudflare staging proof is incomplete.');
     return Map<String,dynamic>.from(proof);
+  }
+
+  /// TEST-only direct photo admission using the existing quality-safe portrait
+  /// compressor. Does not touch or ACK the Windows durable outboxes. The
+  /// Person+Photo+ID coordinator still requires its own 3-media gate.
+  static Future<Map<String,dynamic>> stagePortrait({
+    required String school,
+    required String uploadKey,
+    required String name,
+    required Uint8List original,
+    AtomicBundleRequest? request,
+    bool isolatedTest=false,
+  }) async {
+    if ((!buildEnabled && request == null) || !isolatedTest) {
+      throw StateError('Atomic portrait preflight is TEST-only.');
+    }
+    final prepared = AtomicPortraitPreflight.prepare(original);
+    return stage(
+      school: school, kind: 'photo', uploadKey: uploadKey,
+      name: name, mime: prepared.mime, bytes: prepared.bytes,
+      request: request, isolatedTest: isolatedTest,
+    );
   }
 
   static Future<Map<String,dynamic>> publish({
