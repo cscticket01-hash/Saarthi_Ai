@@ -60,6 +60,18 @@ class WindowsAtomicPersonCardCoordinator {
     return true;
   }
 
+  static bool photoFreeWire(Object? wire) {
+    if(wire==null)return true;
+    if(wire is! Map||hasUnstagedInlineMedia(wire))return false;
+    for(final key in const [
+      'photoUrl','photoBase64','photoFileId','atomicPortrait']) {
+      final value=wire[key];
+      if(value!=null&&(value is! String||value.trim().isNotEmpty))
+        return false;
+    }
+    return true;
+  }
+
   static Uint8List originalPortraitBytes(String source) {
     if(source.length>12*1024*1024)
       throw const FormatException('School portrait source is too large.');
@@ -115,7 +127,7 @@ class WindowsAtomicPersonCardCoordinator {
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(parent['operationId']) &&
       data is Map && data['schoolId']==school &&
       canStageOriginalPortrait(data) &&
-      !hasUnstagedInlineMedia(parent['wireData']) &&
+      photoFreeWire(parent['wireData']) &&
       data['mobileStableId'] is String &&
       (role=='student'
         ? RegExp(r'^p-[a-f0-9]{32,64}$').hasMatch(data['mobileStableId'])
@@ -234,7 +246,7 @@ class WindowsAtomicPersonCardCoordinator {
           Map<String,dynamic>.from(parent['wireData'] as Map):
           Map<String,dynamic>.from(parent['data'] as Map);
       if(personData['schoolId']!=school||personData['mobileStableId']!=originalParent['mobileStableId']||
-         personData['_syncFieldPatch']!=null||hasUnstagedInlineMedia(personData))
+         personData['_syncFieldPatch']!=null||!photoFreeWire(personData))
         throw StateError('Original Person wire snapshot is not an atomic create.');
       final childData=<String,dynamic>{
         'schoolId':school,'studentId':id,
