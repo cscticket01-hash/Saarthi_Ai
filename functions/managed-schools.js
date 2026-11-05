@@ -739,6 +739,36 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
      fail(502,'Atomic media readiness proof unavailable');
    return {success:true,schoolId:m.schoolId,...proof};
   }
+  if(operation==='bundle-publish'){
+   // TEST-only opt-in protocol: no legacy/partially migrated person cohort.
+   // Keep both person and document owners fenced before the atomic DO call.
+   if(b.confirmIsolatedBundleTest!==true||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      !Array.isArray(b.operations)||b.operations.length!==2||
+      JSON.stringify(b).length>256000)
+    fail(400,'Invalid isolated atomic bundle publish');
+   const [person,document]=b.operations;
+   if(!person||!['students_directory','teachers_directory'].includes(person.collection)||
+      !document||document.collection!=='documents')
+    fail(400,'Person and document bundle required');
+   if((await liveMigration.state(m.schoolId,person.collection))!=='active'||
+      (await liveMigration.state(m.schoolId,'documents'))!=='active')
+    fail(503,'Verified person/document cohort is not active; local work retained',
+      'LIVE_MIGRATION_NOT_ACTIVE');
+   const operations=b.operations.map(item=>({...item,data:clean(item.data)}));
+   const result=await liveMigration.live(m.schoolId,person.collection,
+     ()=>liveSync.command(m.schoolId,{command:'bundlePublish',bundleId:b.bundleId,
+       operations,media:b.media,mediaManifestHash:b.mediaManifestHash}),
+     {action:'managed_records',operation:'write',collection:person.collection,
+       id:person.id,operationId:person.operationId,expectedRecordRevision:person.expectedRevision});
+   if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||
+      result.cloudState!=='committed'||result.archiveReady!==true||
+      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==2)
+    fail(502,'Verified atomic bundle receipt unavailable');
+   return {success:true,schoolId:m.schoolId,...result};
+  }
   if(operation==='reconcile')return reconcileAdmission(m,25);
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
