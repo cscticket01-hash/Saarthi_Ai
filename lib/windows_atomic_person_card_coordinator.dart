@@ -94,6 +94,7 @@ class WindowsAtomicPersonCardCoordinator {
       if(parent['atomicState']==null){
         // The normal outbox preparation owner binds the same immutable
         // Person snapshot; do not use an unprepared or changed wire request.
+        if(canAdmit?.call()==false)return completed;
         final prepared=await WindowsFirebaseRemote.prepareQueuedRecord(
           parentRef.reference,parent,school);
         scope();
@@ -158,6 +159,7 @@ class WindowsAtomicPersonCardCoordinator {
       if(currentCard==null||currentCard['atomicBundleId']!=boundId||
          currentCard['documentRevision']!=cardOp)
         throw StateError('Atomic ID generation changed during stage.');
+      if(canAdmit?.call()==false)return completed;
       var receipt=await AtomicBundlePilot.receipt(
         school:school,bundleId:boundId,operations:ops,media:media,
         isolatedTest:true);
@@ -165,6 +167,7 @@ class WindowsAtomicPersonCardCoordinator {
       if(receipt['found']==false){
         // This is the only media staging owner. A retry with an existing
         // receipt does not stage or independently upload the same PDF.
+        if(canAdmit?.call()==false)return completed;
         final staged=await AtomicBundlePilot.stage(
           school:school,kind:'idCard',uploadKey:key,
           name:childData['fileName'] as String,mime:'application/pdf',
@@ -172,6 +175,7 @@ class WindowsAtomicPersonCardCoordinator {
         if(staged['sha256']!=media.first['sha256']||
            staged['id']!=media.first['id'])
           throw StateError('Atomic staged PDF identity changed.');
+        if(canAdmit?.call()==false)return completed;
         final published=await AtomicBundlePilot.publish(
           school:school,bundleId:boundId,operations:ops,
           media:media,isolatedTest:true);
@@ -208,6 +212,7 @@ class WindowsAtomicPersonCardCoordinator {
         }
       }
       if(receipt['driveVerified']!=true)continue;
+      if(canAdmit?.call()==false)return completed;
       final remote=<Map<String,dynamic>>[];
       for(final op in ops){
         final answer=await ManagedSchoolSession.callForSchool(school,'managed/live/read',{
