@@ -5,6 +5,18 @@ import 'package:crypto/crypto.dart';
 /// Strict client-side verification of a school-bound, published ID PDF.
 /// An ACK, file name or network success cannot substitute for the byte hash.
 class AtomicCardDelivery {
+  /// Cloudflare keeps published bytes temporarily; a matching, signed Drive
+  /// card is the only permitted fallback after verified edge retention ends.
+  static bool canUseArchivedCard(Map atomic, Object? archive) {
+    if(archive is! Map || atomic['sha256'] is! String ||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(atomic['sha256'] as String))
+      return false;
+    return archive['contentHash']==atomic['sha256'] &&
+      archive['documentRevision'] is String &&
+      (archive['documentRevision'] as String).isNotEmpty &&
+      archive['documentId'] is String &&
+      (archive['documentId'] as String).isNotEmpty;
+  }
   static Uint8List verify(String school, Map pointer, Map response) {
     final bundle=pointer['bundleId'],id=pointer['id'],sha=pointer['sha256'];
     if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) ||
