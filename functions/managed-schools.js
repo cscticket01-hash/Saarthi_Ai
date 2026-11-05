@@ -814,6 +814,52 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      fail(400,'Invalid published atomic media lookup');
    return publishedBundleBytes(m.schoolId,b.bundleId,b.kind,b.id);
   }
+  if(operation==='bundle-stage'){
+   // TEST-only outbound Windows file lane. The original school Durable Object
+   // retains the bytes and independently schedules Drive; no second uploader.
+   // A Cloudflare stage receipt is never a Google Drive ACK.
+   if(!atomicBundleTestSchools.includes(m.schoolId)||!edgeEnabled(m.schoolId))
+     fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const kind=b.kind,mime=b.mime;
+   if(!['idCard','photo'].includes(kind)||
+      !(kind==='idCard'?mime==='application/pdf':
+        ['image/jpeg','image/png','image/webp'].includes(mime))||
+      typeof b.uploadKey!=='string'||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey)||
+      typeof b.name!=='string'||b.name.length<1||b.name.length>200||
+      /[/\\]/.test(b.name)||typeof b.base64!=='string'||
+      b.base64.length<1||b.base64.length>120000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      typeof b.sha256!=='string'||!/^[a-f0-9]{64}$/.test(b.sha256)||
+      !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+      b.sizeBytes>(kind==='photo'?40*1024:85*1024))
+     fail(400,'Invalid isolated atomic file stage');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(bytes.length!==b.sizeBytes||bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.sha256)fail(409,'Atomic file bytes differ from manifest');
+   const provider=await cachedRead(uploadCapabilities,m.schoolId,
+      ()=>signedRequest(m,{action:'managed_health'}),300000);
+   if(provider?.success!==true||provider.storageReady!==true||
+      provider.schoolId!==m.schoolId||provider.uploadResumableVersion!==1)
+     fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+   const upload=await edgeDelivery.wholeFile(m.schoolId,{
+      uploadKey:b.uploadKey,name:b.name,mime,base64:b.base64});
+   if(upload?.success!==true||upload.schoolId!==m.schoolId||
+      upload.cloudflareAccepted!==true)
+     fail(502,'Atomic Cloudflare staging acknowledgement missing');
+   const id=hash(JSON.stringify([m.schoolId,b.uploadKey]));
+   const proof=await cloudflareSync.rpc(m.schoolId,'file-'+id,{
+      command:'bundleProof',id,requireDrive:false});
+   if(proof?.version!==1||proof.schoolId!==m.schoolId||proof.id!==id||
+      proof.uploadKey!==b.uploadKey||proof.sha256!==b.sha256||
+      proof.sizeBytes!==b.sizeBytes||proof.mime!==mime||
+      proof.staged!==true)
+     fail(502,'Atomic file Durable Object proof unavailable');
+   return {success:true,schoolId:m.schoolId,bundleProtocol:1,
+      mediaReady:true,cloudflareAccepted:true,driveVerified:proof.driveVerified===true,
+      media:{kind,id,uploadKey:b.uploadKey,sha256:b.sha256,
+        sizeBytes:b.sizeBytes,mime},
+      ...(proof.driveVerified===true?{fileId:proof.fileId}:{})};
+  }
   if(operation==='bundle-preflight'){
    // Existing authenticated school broker, not a new storage or sync owner.
    // Read-only preparation does NOT mean the person/card bundle committed.
