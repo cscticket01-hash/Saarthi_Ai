@@ -328,7 +328,7 @@ void main(){
     identity:{'schoolId':school,'schoolSyncId':school});
   const bundle='atomic-original-photo-bundle-0001';
   const generation='p-99999999999999999999999999999999';
-  const photoId='a'*64,photoHash='b'*64;
+  final photoId='a'*64,photoHash='b'*64;
   final person={'schoolId':school,'mobileStableId':generation,
    'name':'Atomic Student','_syncRevision':'live-photo-parent',
    'atomicPortrait':{'bundleId':bundle,'documentId':'original-card',
