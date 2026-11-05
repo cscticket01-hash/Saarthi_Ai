@@ -164,6 +164,10 @@ void main(){
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
        {...parent,'data':{...(parent['data'] as Map),'photoBase64':''}},doc),isTrue,
        reason:'An empty optional photo must not block a photo-free ID card');
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...parent,'wireData':{'schoolId':school,'mobileStableId':'p-'+'8'*32,
+       'photoBase64':'YWJjZA=='}},doc),isFalse,
+       reason:'A pre-bound wire photo cannot be silently omitted from the bundle');
    final key=WindowsAtomicPersonCardCoordinator.uploadKey(
       school,doc['documentRevision'] as String);
    final bundle=WindowsAtomicPersonCardCoordinator.bundleId(
