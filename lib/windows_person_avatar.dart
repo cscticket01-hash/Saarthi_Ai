@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'windows_connect/school_drive_images.dart';
 import 'windows_profile_image_policy.dart';
+import 'windows_connect/atomic_person_portrait_delivery.dart';
 
 /// Uses the existing school-scoped image transport, including private Drive.
 class WindowsPersonAvatar extends StatelessWidget {
@@ -52,18 +53,32 @@ class WindowsPersonAvatar extends StatelessWidget {
       }
     }
 
+    Widget fromAtomicPhoto() {
+      if(school||person['atomicPortrait'] is! Map)return fromBase64();
+      if((person['photoBase64']?.toString().trim()??'').isNotEmpty)
+        return fromBase64();
+      return FutureBuilder(
+        future:AtomicPersonPortraitDelivery.cachedBytes(person),
+        builder:(context,snapshot) {
+          final bytes=snapshot.data;
+          if(bytes==null||bytes.isEmpty)return fallback();
+          return Image.memory(bytes,fit:BoxFit.cover,
+            errorBuilder:(_,__,___)=>fallback());
+        });
+    }
+
     return SizedBox(
       width: radius * 2,
       height: radius * 2,
       child: ClipOval(
         child: source.isEmpty
-            ? fromBase64()
+            ? fromAtomicPhoto()
             : schoolNetworkImage(
                 source,
                 width: radius * 2,
                 height: radius * 2,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => fromBase64(),
+                errorBuilder: (_, __, ___) => fromAtomicPhoto(),
               ),
       ),
     );
