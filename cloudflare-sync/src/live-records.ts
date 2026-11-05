@@ -163,6 +163,11 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   return storage.transactionSync(()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);return JSON.parse(prior.receipt) as Json;}
+   // A previously committed single-record operation must never be relabeled
+   // as a new atomic bundle: peers could already have seen it independently.
+   for(const id of operationIds)demand(
+    sql.exec<{operation_id:string}>('SELECT operation_id FROM live_operations WHERE operation_id=?',id).toArray().length===0,
+    'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map(item=>
     liveCommand(storage,school,{...item,command:'commit'},now,true));
    const receipt={bundleProtocol:1,liveProtocol:1,schoolId:school,bundleId:b.bundleId,
