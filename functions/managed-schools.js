@@ -145,7 +145,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       pointer.bundleId!==bundleId||pointer.id!==id||
       pointer.kind!==kind||!/^[a-f0-9]{64}$/.test(pointer.sha256||'')||
       !Number.isSafeInteger(pointer.sizeBytes)||pointer.sizeBytes<1||
-      pointer.sizeBytes>(kind==='photo'?40*1024:85*1024))
+      pointer.sizeBytes>(kind==='photo'?40*1024:kind==='receipt'?30*1024:kind==='marksheet'?150*1024:85*1024))
       fail(502,'Unverified published atomic media identity');
    const fileLane='file-'+id;
    const proof=await cloudflareSync.rpc(schoolId,fileLane,{
@@ -809,7 +809,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    if(!atomicBundleTestSchools.includes(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
-      !['idCard','photo'].includes(b.kind)||
+      !['idCard','photo','receipt','marksheet'].includes(b.kind)||
       !/^[a-f0-9]{64}$/.test(b.id||''))
      fail(400,'Invalid published atomic media lookup');
    return publishedBundleBytes(m.schoolId,b.bundleId,b.kind,b.id);
@@ -821,7 +821,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
       !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
-      !Array.isArray(b.operations)||b.operations.length!==2||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
       !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
       JSON.stringify(b).length>256000)
      fail(400,'Invalid immutable atomic receipt lookup');
@@ -833,7 +833,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      bundleProtocol:1,found:false};
    if(result?.found!==true||result.schoolId!==m.schoolId||
       result.bundleProtocol!==1||result.receipt?.bundleId!==b.bundleId||
-      !Array.isArray(result.backups)||result.backups.length!==2)
+      !Array.isArray(result.backups)||result.backups.length!==b.operations.length)
      fail(502,'Atomic bundle receipt cannot be verified');
    return {success:true,schoolId:m.schoolId,...result};
   }
@@ -947,27 +947,35 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       !/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
       !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
       !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
-      !Array.isArray(b.operations)||b.operations.length!==2||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
       JSON.stringify(b).length>256000)
     fail(400,'Invalid isolated atomic bundle publish');
-   const [person,document]=b.operations;
-   if(!person||!['students_directory','teachers_directory'].includes(person.collection)||
-      !document||document.collection!=='documents')
-    fail(400,'Person and document bundle required');
-   if((await liveMigration.state(m.schoolId,person.collection))!=='active'||
-      (await liveMigration.state(m.schoolId,'documents'))!=='active')
-    fail(503,'Verified person/document cohort is not active; local work retained',
-      'LIVE_MIGRATION_NOT_ACTIVE');
+   const [first,...rest]=b.operations;
+   const last=rest[rest.length-1],type=b.media[0]?.kind;
+   const person=['students_directory','teachers_directory'].includes(first?.collection);
+   const fee=first?.collection==='fee_payments'&&b.operations.length===3&&
+     b.operations[1]?.collection==='fee_ledger'&&type==='receipt';
+   const exam=first?.collection==='exam_results'&&b.operations.length===2&&
+     type==='marksheet';
+   if(!last||last.collection!=='documents'||
+      !(person&&b.operations.length===2&&type==='idCard'||fee||exam))
+    fail(400,'Original school records and PDF bundle do not match');
+   // Every original member must be migration-fenced before one DO commit.
+   const collections=[...new Set(b.operations.map(op=>op.collection))];
+   for(const name of collections)if(
+       (await liveMigration.state(m.schoolId,name))!=='active')
+     fail(503,'Every atomic collection must have verified TEST baseline',
+       'LIVE_MIGRATION_NOT_ACTIVE');
    const operations=b.operations.map(item=>({...item,data:clean(item.data)}));
-   const result=await liveMigration.live(m.schoolId,person.collection,
+   const result=await liveMigration.live(m.schoolId,first.collection,
      ()=>liveSync.command(m.schoolId,{command:'bundlePublish',bundleId:b.bundleId,
        operations,media:b.media,mediaManifestHash:b.mediaManifestHash}),
-     {action:'managed_records',operation:'write',collection:person.collection,
-       id:person.id,operationId:person.operationId,expectedRecordRevision:person.expectedRevision});
+     {action:'managed_records',operation:'write',collection:first.collection,
+       id:first.id,operationId:first.operationId,expectedRecordRevision:first.expectedRevision});
    if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||
       result.cloudState!=='committed'||result.mediaReady!==true||
       typeof result.archiveReady!=='boolean'||
-      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==2)
+      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==b.operations.length)
     fail(502,'Verified atomic bundle receipt unavailable');
    return {success:true,schoolId:m.schoolId,...result};
   }
