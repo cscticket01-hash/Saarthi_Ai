@@ -348,3 +348,59 @@ test('TEST atomic portrait rejects forged JPEG and MIME before starting a school
  await rejectsPhoto(oversized,'image/jpeg','face.jpg');
  assert.equal(calls.length,0,'Rejected photo never reaches Cloudflare');
 });
+
+
+test('isolated receipt/marksheet stage has independent 30/150 KiB PDF limits and authentic proof',async()=>{
+ const {createHash}=require('node:crypto');
+ const health=async(_url,opt)=>{
+   const outer=JSON.parse(opt.body);
+   return {ok:true,status:200,text:async()=>JSON.stringify({
+     success:true,schoolId:outer.schoolId,storageReady:true,
+     uploadResumableVersion:1,
+   })};
+ };
+ for(const [kind,max] of [['receipt',30*1024],['marksheet',150*1024]]){
+   const bytes=Buffer.alloc(max,32);
+   bytes.write('%PDF-1.7',0,'ascii');
+   bytes.write('%%EOF',max-5,'ascii');
+   const sha256=createHash('sha256').update(bytes).digest('hex');
+   const uploadKey='test-atomic-'+kind+'-pdf-boundary-0001';
+   const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+   const calls=[];
+   const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+     calls.push(b.command);
+     if(b.command==='putSmall')return {id,state:'pending',
+       manifest:{...b.manifest,received:bytes.length},response:null};
+     if(b.command==='bundleProof')return {version:1,schoolId:s,id,uploadKey,
+       sha256,sizeBytes:bytes.length,mime:'application/pdf',
+       staged:true,driveVerified:false};
+     throw Error('Unexpected TEST file operation '+b.command);
+   }};
+   const f=fixture(health,{cloudflareSync:edge,liveSyncSchools:[A],
+     atomicBundleTestSchools:[A],cloudflareAllDataEnabled:true,
+     cloudflareAtomicSmallFiles:true});
+   const request={action:'managed/live/bundle-stage',liveProtocol:1,
+     schoolId:A,kind,mime:'application/pdf',name:kind+'.pdf',uploadKey,
+     sha256,sizeBytes:bytes.length,base64:bytes.toString('base64')};
+   const receipt=await f.call(request);
+   assert.equal(receipt.success,true);
+   assert.equal(receipt.media.kind,kind);
+   assert.equal(receipt.media.sizeBytes,max);
+   assert.equal(receipt.media.sha256,sha256);
+   assert.equal(receipt.driveVerified,false);
+   assert.equal(receipt.fileId,undefined);
+   assert.deepEqual(calls,['putSmall','bundleProof']);
+   const oversized=Buffer.alloc(max+1,32);
+   oversized.write('%PDF-1.7',0,'ascii');
+   oversized.write('%%EOF',max-4,'ascii');
+   const larger={...request,base64:oversized.toString('base64'),
+     sizeBytes:oversized.length,
+     sha256:createHash('sha256').update(oversized).digest('hex')};
+   await assert.rejects(f.call(larger),e=>e.status===400);
+   await assert.rejects(f.call({...request,name:'bad.png'}),e=>e.status===400);
+   await assert.rejects(f.call({...request,kind:'idCard'}),e=>e.status===400);
+   await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
+   assert.deepEqual(calls,['putSmall','bundleProof'],
+     'Rejected PDF must never stage an unverified Cloudflare file');
+ }
+});
