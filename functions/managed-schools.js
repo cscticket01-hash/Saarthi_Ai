@@ -160,7 +160,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      command:'readPart',id,offset:0});
    if(part?.offset!==0||part.sizeBytes!==pointer.sizeBytes||
       part.sha256!==pointer.sha256||typeof part.base64!=='string'||
-      part.base64.length>120000||
+      part.base64.length>210000||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64))
       fail(502,'Atomic media bytes unavailable');
    const bytes=Buffer.from(part.base64,'base64');
