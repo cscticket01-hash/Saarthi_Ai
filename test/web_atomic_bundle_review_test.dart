@@ -25,6 +25,45 @@ void main(){
    expect(r.length,1);expect(r.single.personId,'person');
    expect(r.single.documentId,'card');expect(r.single.cardSha256,'d'*64);
  });
+ test('TEST Web accepts original photo only with same person and document SHA',(){
+   final withPhoto=group.map((e)=>Map<String,dynamic>.from(e)).toList();
+   const photoId='f'*64,photoSha='e'*64;
+   withPhoto[0]['record']={
+     ...(withPhoto[0]['record'] as Map),
+     'atomicPortrait':{
+       'bundleId':bundle,'documentId':'card','role':'student',
+       'id':photoId,'sha256':photoSha,'mime':'image/jpeg',
+       'sizeBytes':4096,
+     },
+   };
+   withPhoto[1]['record']={
+     ...(withPhoto[1]['record'] as Map),
+     'bundleMedia':[
+       {'kind':'idCard','sha256':'d'*64},
+       {'kind':'photo','id':photoId,'sha256':photoSha,
+        'mime':'image/jpeg','sizeBytes':4096},
+     ],
+   };
+   expect(verifyWebAtomicBundles(school,[parse(withPhoto)]),hasLength(1));
+   final mismatch=withPhoto.map((e)=>Map<String,dynamic>.from(e)).toList();
+   mismatch[1]['record']={
+     ...(mismatch[1]['record'] as Map),
+     'bundleMedia':[
+       {'kind':'idCard','sha256':'d'*64},
+       {'kind':'photo','id':photoId,'sha256':'a'*64,
+        'mime':'image/jpeg','sizeBytes':4096},
+     ],
+   };
+   expect(()=>verifyWebAtomicBundles(school,[parse(mismatch)]),
+     throwsStateError);
+   final missing=withPhoto.map((e)=>Map<String,dynamic>.from(e)).toList();
+   missing[1]['record']={
+     ...(missing[1]['record'] as Map),
+     'bundleMedia':[{'kind':'idCard','sha256':'d'*64}],
+   };
+   expect(()=>verifyWebAtomicBundles(school,[parse(missing)]),
+     throwsStateError);
+ });
  test('TEST Web never accepts partial, mismatched or foreign group',(){
    expect(()=>parse(group.sublist(0,1)),throwsStateError);
    final forged=[...group.map((e)=>Map<String,dynamic>.from(e))];
