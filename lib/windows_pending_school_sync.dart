@@ -98,6 +98,8 @@ class WindowsPendingSchoolSync {
       final item = row.data(),
           state = item['syncState'],
           category = item['failureCategory'];
+      // Only the exact atomic bundle owner can repair this reserved operation.
+      if(item['atomicBundleId']!=null)continue;
       // Existing unknown notices must not be stuck forever. Probe only the
       // original same-school DELETE; no automatic replay without readback.
       final unknownNoticeDelete = state == 'needsAttention' &&

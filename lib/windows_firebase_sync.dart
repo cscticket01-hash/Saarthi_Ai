@@ -503,7 +503,8 @@ class WindowsFirebaseRemote {
             'students_directory',
             'teachers_directory',
           }.contains(r.data()['collection']) &&
-          {'pending', 'retry'}.contains(r.data()['syncState']),
+          {'pending', 'retry'}.contains(r.data()['syncState']) &&
+          r.data()['atomicBundleId']==null,
     ))
       return {};
     final healthRef = db.collection('_windows_sync_status').doc('managed-batch-window');
@@ -552,6 +553,7 @@ class WindowsFirebaseRemote {
         throw StateError('School changed before batch preparation.');
       final item = row.data();
       if (item['schoolId'] != school ||
+          item['atomicBundleId']!=null ||
           !{'pending', 'retry'}.contains(item['syncState']) ||
           item['operation'] != 'set' ||
           {
