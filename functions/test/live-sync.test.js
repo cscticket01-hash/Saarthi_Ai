@@ -461,3 +461,41 @@ test('mobile financial PDF only reaches exact signed student generation and docu
  blocked.docs.get('school_entitlements/'+A).blocked=true;
  await assert.rejects(blocked.call(request),e=>e.status===403);
 });
+
+
+test('signed 150 KiB published marksheet is read in full, not truncated by old 120k base64 cap',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.alloc(150*1024,32);
+ bytes.write('%PDF-1.7',0,'ascii');
+ bytes.write('%%EOF',bytes.length-5,'ascii');
+ const sha256=createHash('sha256').update(bytes).digest('hex');
+ const bundleId='full-marksheet-signed-original-0001';
+ const id='f'.repeat(64),documentId='SHEET-original-full-0001';
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   if(b.command==='ownerFinancialBundle')return{
+     bundleProtocol:1,schoolId:s,found:true,bundleId,documentId,
+     kind:'marksheet',id,sha256,mime:'application/pdf',
+     sizeBytes:bytes.length};
+   if(b.command==='bundleMedia')return{
+     bundleProtocol:1,schoolId:s,bundleId,kind:'marksheet',
+     id,sha256,sizeBytes:bytes.length,mime:'application/pdf',
+     ownerRole:'marksheet',personId:'verified-pupil'};
+   if(b.command==='bundleProof')return{
+     version:1,schoolId:s,staged:true,id,sha256,
+     mime:'application/pdf',sizeBytes:bytes.length};
+   if(b.command==='readPart')return{
+     offset:0,sizeBytes:bytes.length,sha256,base64:bytes.toString('base64')};
+   throw Error('Unexpected original school file action: '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const result=await f.call({action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_document',kind:'marksheet',documentId,
+     sessionToken:'s'.repeat(64),deviceId:'original-student-device-0001'}});
+ assert.equal(result.success,true);
+ assert.equal(result.available,true);
+ assert.equal(result.contentHash,sha256);
+ assert.equal(result.sizeBytes,150*1024);
+ assert.equal(result.base64.length,204800);
+ assert.equal(Buffer.from(result.base64,'base64').compare(bytes),0);
+});
