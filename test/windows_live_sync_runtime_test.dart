@@ -200,4 +200,45 @@ void main(){
   await store.replaceCheckpoint(1,5);expect(await store.cursor(school),5);
   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],pending['operationId']);
  });
+
+ test('durable inbox applies only whole bundles across the 100-record batching boundary',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('runtime-atomic-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  final ordinary=<Map<String,dynamic>>[
+    for(var i=1;i<=99;i++)
+      {'sequence':i,'collection':'school_expenses','id':'expense-$i',
+       'record':{'schoolId':school,'_syncRevision':'live-$i'}}
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':99,'head':101,'more':true,'events':ordinary,
+  },school,0));
+  final bundle=<Map<String,dynamic>>[
+    {'sequence':100,'collection':'students_directory','id':'person-one',
+     'bundleId':'atomic-person-card-0000001','bundleSize':2,'bundleIndex':0,
+     'record':{'schoolId':school,'_syncRevision':'live-100'}},
+    {'sequence':101,'collection':'documents','id':'id-card-one',
+     'bundleId':'atomic-person-card-0000001','bundleSize':2,'bundleIndex':1,
+     'record':{'schoolId':school,'_syncRevision':'live-101'}},
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':101,'head':101,'more':false,'events':bundle,
+  },school,99));
+  final first=await store.pending();
+  expect(first.length,99,'a 2-record bundle cannot be split by the 100 cap');
+  expect(first.every((entry)=>entry.bundleId==null),isTrue);
+  await store.applied(first);
+  final second=await store.pending();
+  expect(second.map((e)=>e.collection).toList(),['students_directory','documents']);
+  expect(second.map((e)=>e.bundleIndex).toList(),[0,1]);
+  await db.collection('_windows_live_incoming').doc('$school-101').delete();
+  await expectLater(store.pending(),throwsStateError,
+    reason:'a lost card event must retain the parent for recovery');
+ });
+
 }

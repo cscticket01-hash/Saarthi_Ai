@@ -54,3 +54,12 @@
 - An unchanged replay uses the stored bundle receipt; mutated operation or media manifests are rejected. Proof stays within existing school security/retention isolation. Added worker and broker tests for preflight, malformed image, Drive receipt, transaction rollback, replay and school/migration gates.
 
 **Important limitation:** This Phase 3 path is **archive-first** (wait for file Drive receipt before publishing). That is safe, but does **not** satisfy the requested 2–5 second Cloudflare-first delivery. It also does not yet connect the Windows durable person/card outbox, Android/Web receivers, no-photo preview hiding, one-operation universal Receipt/Marksheet path, real 1/2/5 physical PCs or production GS/Drive p95 tests. Do not claim those gates PASS and **do not merge/deploy** this Draft PR merely on worker CI PASS. The next protocol needs immediate durable Cloudflare-byte availability to authorized receivers, with independently verified Drive promotion and no premature deletion.
+
+## Phase 4: replay and Windows crash/restart group boundaries (TEST-only)
+
+- Cloudflare SQLite events now keep `bundle_id`, `bundle_size` and `bundle_index` within the existing school Durable Object journal. This is a non-destructive migration of existing event history.
+- `changes` emits complete 2–5 record bundles even at the 100-event and 300-KiB page limits. A request to resume from the middle of a bundle fails closed (409); a verified snapshot is required.
+- No-op or duplicate individual commits cannot be packaged as a successful group, and a person-generation replacement with unbounded cascade tombstones is refused by this bounded atomic path.
+- Windows replay parser checks exact group completeness, order and identity before durable cursor advancement. The existing local inbox retains those group markers through restart and will not reconcile a partial group when a local 100-event batch would split it.
+- New worker and Dart regressions cover byte-boundary split, partial/mid-bundle cursor, metadata tamper, legacy compatibility and local durable batching/lost-event fail-closed behavior.
+- **Not yet achieved:** atomic Windows business-data apply (the reconciler must validate the whole group in one local transaction), Android/Web receiver migration, Windows outbound bundle publish, Cloudflare-first prearchive delivery, real Drive readback/p95 and physical 1/2/5-PC certification. This draft still must not be merged/deployed.
