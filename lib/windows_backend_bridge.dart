@@ -872,6 +872,16 @@ class WindowsBackendBridge {
         if (FirebaseFirestore.instance.activeProfileId != origin)
           throw StateError('School changed during document sync.');
         final record = queued.data();
+        // Stage, publish and Drive readback are handled by the SAME original
+        // atomic queue owner. Uploading here would duplicate the ID PDF.
+        if(record['atomicBundleId']!=null){
+          if(record['atomicBundleId'] is! String||
+              !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(record['atomicBundleId'])||
+              !{'reserved','committed'}.contains(record['atomicState'])||
+              record['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
+            throw StateError('Invalid same-school atomic document reservation.');
+          continue;
+        }
         if (admitRow?.call(queued.id, record) == false) continue;
         if (respectBackoff && admitRow == null && (record['retryAtMillis'] as num? ?? 0) > DateTime.now().millisecondsSinceEpoch) continue;
         void report(String stage, {String? category, DateTime? retryAt}) {

@@ -494,6 +494,16 @@ class WindowsPendingSchoolSync {
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
       if (canAdmit?.call() == false) break;
       var item = queued.data();
+      // This exact original operation belongs to the isolated atomic
+      // Person/Card recovery owner. Never issue a second independent upload.
+      if(item['atomicBundleId']!=null) {
+        if(item['atomicBundleId'] is! String ||
+            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['atomicBundleId']) ||
+            !{'reserved','committed'}.contains(item['atomicState']) ||
+            item['schoolId']!=db.activeProfileIdentity['schoolSyncId'])
+          throw StateError('Atomic outbox reservation requires school review.');
+        continue;
+      }
       if (sendVersioned != null &&
           item['schoolId'] != null &&
           item['schoolId'] != db.activeProfileIdentity['schoolSyncId']) {
