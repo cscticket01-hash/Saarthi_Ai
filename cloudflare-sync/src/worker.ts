@@ -30,7 +30,7 @@ export class SyncLane extends DurableObject<Env>{
    if(b.command==='bundlePrepare'){
     // Read-only preflight on the existing per-file DOs. No new file queue,
     // no new record authority and, crucially, NO bundle commit/visible ACK.
-    demand(operationPattern.test(String(b.bundleId||''))&&Array.isArray(b.media)&&
+    demand(/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))&&Array.isArray(b.media)&&
       b.media.length>=1&&b.media.length<=2,'Invalid media bundle manifest');
     const media=b.media as Json[],seen=new Set<string>(),ids=new Set<string>(),proofs:Json[]=[];
     for(const item of media){
