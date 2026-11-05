@@ -47,3 +47,29 @@ test('stream grants have distinct signing domain, short expiry and no token in t
  assert.equal(g.endpoint.includes('grant'),false);
  const claims=JSON.parse(Buffer.from(g.protocols[1].slice(6).split('.')[0],'base64url').toString());assert.equal(claims.schoolId,A);assert.equal(claims.uid,'admin');
 });
+
+test('TEST school media preflight is licensed and does not create a live bundle or a Drive ACK',async()=>{
+ const calls=[],digest='a'.repeat(64),fileId='b'.repeat(64);
+ const media=[{kind:'idCard',id:fileId,uploadKey:'test-card-001',sha256:digest,
+   sizeBytes:85*1024,mime:'application/pdf'}];
+ const proof={bundleProtocol:1,schoolId:A,bundleId:'test-media-bundle-operation-0001',
+   mediaReady:true,manifestHash:'c'.repeat(64),proofs:[{...media[0]}]};
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{calls.push({s,l,b});return proof;}};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ const request={action:'managed/live/bundle-preflight',liveProtocol:1,
+   bundleId:proof.bundleId,media};
+ const result=await f.call(request);
+ assert.equal(result.schoolId,A);assert.equal(result.mediaReady,true);
+ assert.equal(result.manifestHash,proof.manifestHash);
+ assert.equal(calls.length,1);
+ assert.deepEqual(calls[0],{s:A,l:'live',b:{command:'bundlePrepare',bundleId:proof.bundleId,media}});
+ for(const mutation of [{liveProtocol:0},{bundleId:'x'},{media:[]},{media:[...media,...media,...media]}]){
+  await assert.rejects(f.call({...request,...mutation}),e=>e.status===400||e.status===412);
+ }
+ assert.equal(calls.length,1,'invalid requests must not reach the Cloudflare owner');
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ assert.equal(calls.length,1,'foreign school cannot inspect another school staging');
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ assert.equal(calls.length,1,'revoked school never receives a staged media proof');
+});
