@@ -650,7 +650,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_atomic_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
   if(b.request.action==='mobile_atomic_idcard'){
@@ -677,6 +677,42 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    return {...file,projectId:b.schoolId,mobileAtomicIdCard:true,available:true,
      documentRevision:'atomic-'+bundle.bundleId,contentHash:file.sha256,
      noPhoto:bundle.noPhoto===true,...cardContext};
+  }
+  if(b.request.action==='mobile_atomic_document'){
+   // TEST-only mobile document viewer; exact original document and signed
+   // student generation. No arbitrary school document ID can cross tenants.
+   if(!atomicBundleTestSchools.includes(b.schoolId)||!liveSync.enabled(b.schoolId))
+     fail(412,'Atomic school documents are not enabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const kind=b.request.kind,documentId=b.request.documentId;
+   if(!['receipt','marksheet'].includes(kind)||
+      typeof documentId!=='string'||documentId.length<1||
+      documentId.length>200||documentId.includes('/')||
+      ['.','..','__proto__','constructor','prototype'].includes(documentId))
+     fail(400,'Invalid student financial document request');
+   const session=await signed(m,{action:'managed_mobile',
+     request:{action:'mobile_session_verify',sessionToken:b.request.sessionToken},
+     lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+   if(session?.success!==true||session.schoolId!==b.schoolId||
+      session.role!=='student'||typeof session.personId!=='string'||
+      session.personId.length<1)
+     fail(403,'Student session does not own requested financial document');
+   const role=kind==='receipt'?'feeReceipt':'marksheet';
+   const bundle=await liveSync.command(b.schoolId,{command:'ownerFinancialBundle',
+     role,personId:session.personId,documentId});
+   if(bundle?.found!==true)
+     return {success:true,schoolId:b.schoolId,projectId:b.schoolId,
+       mobileAtomicDocument:true,available:false,...cardContext};
+   if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+      bundle.documentId!==documentId||bundle.kind!==kind||
+      bundle.mime!=='application/pdf'||!/^[a-f0-9]{64}$/.test(bundle.sha256||''))
+     fail(502,'Authenticated financial document pointer invalid');
+   const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,kind,bundle.id);
+   if(file.ownerRole!==role||file.personId!==session.personId||
+      file.sha256!==bundle.sha256||file.id!==bundle.id)
+     fail(403,'Another student financial document is not accessible');
+   return {...file,projectId:b.schoolId,mobileAtomicDocument:true,
+     available:true,documentId,documentRevision:'atomic-'+bundle.bundleId,
+     contentHash:file.sha256,...cardContext};
   }
   if(['mobile_complaint','mobile_complaints'].includes(b.request.action)){
    const result=await require('./mobile-complaints').createMobileComplaints({db,now,fail,verify:async details=>signed(m,{action:'managed_mobile',request:{...b.request,action:details?'mobile_dashboard':'mobile_session_verify',afterSignal:true},lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}})})(b.schoolId,b.request);
