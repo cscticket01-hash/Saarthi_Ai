@@ -117,6 +117,8 @@ class AtomicBundlePilot {
     AtomicBundleRequest? request,bool isolatedTest=false,
   })async{
     if((!buildEnabled&&request==null)||!isolatedTest||operations.length!=2||
+       media.isEmpty||media.length>2||media.first['kind']!='idCard'||
+       (media.length==2&&media[1]['kind']!='photo')||
        !['students_directory','teachers_directory'].contains(operations[0]['collection'])||
        operations[1]['collection']!='documents'||
        operations.any((op)=>op['operation']!='write'||op['data'] is! Map||
@@ -156,6 +158,8 @@ class AtomicBundlePilot {
   }) async {
     if((!buildEnabled&&request==null)||!isolatedTest||
        operations.length!=2 || media.isEmpty || media.length>2 ||
+       media.first['kind']!='idCard' ||
+       (media.length==2&&media[1]['kind']!='photo') ||
        !['students_directory','teachers_directory'].contains(operations[0]['collection']) ||
        operations[1]['collection']!='documents' ||
        operations.any((op)=>op['operationId'] is! String ||
