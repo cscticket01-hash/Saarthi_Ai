@@ -39,6 +39,7 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_events_bundle ON live_events(bundle_id) WHERE bundle_id IS NOT NULL');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_operations(operation_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_bundles(bundle_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
+ storage.sql.exec("CREATE INDEX IF NOT EXISTS live_bundles_mobile_owner ON live_bundles(json_extract(receipt,'$.owner.role'),json_extract(receipt,'$.owner.personId'))");
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='accepted_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN accepted_at INTEGER NOT NULL DEFAULT 0');
@@ -145,6 +146,28 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
+ if(command==='ownerBundle'){
+  // Internal only; the broker first verifies the student's own signed school
+  // session. Query only the original school Durable Object's published receipts.
+  demand(['student','teacher'].includes(String(b.role))&&
+    typeof b.personId==='string'&&validId(b.personId),
+    'Invalid mobile bundle owner',400);
+  const row=sql.exec<{receipt:string}>(
+   "SELECT receipt FROM live_bundles WHERE json_extract(receipt,'$.owner.role')=? AND json_extract(receipt,'$.owner.personId')=? ORDER BY rowid DESC LIMIT 1",
+   String(b.role),String(b.personId)).toArray()[0];
+  if(!row)return {bundleProtocol:1,schoolId:school,found:false};
+  const saved=JSON.parse(row.receipt) as Json,files=saved.files as Json[];
+  demand(saved.cloudState==='committed'&&saved.mediaReady===true&&
+    saved.owner&&Array.isArray(files),'Published mobile bundle unavailable',412);
+  const card=files.filter(f=>f.kind==='idCard');
+  demand(card.length===1&&typeof card[0].id==='string'&&
+    /^[a-f0-9]{64}$/.test(card[0].id),'Published ID card proof unavailable',412);
+  return {bundleProtocol:1,schoolId:school,found:true,
+    bundleId:saved.bundleId,id:card[0].id,sha256:card[0].sha256,
+    sizeBytes:card[0].sizeBytes,mime:card[0].mime,
+    archiveReady:saved.archiveReady===true,
+    noPhoto:!files.some(f=>f.kind==='photo')};
+ }
  if(command==='bundleMedia'){
   // The published atomic group is the sole capability to retrieve the
   // original school-scoped Cloudflare bytes. Unpublished/staged files are
@@ -168,6 +191,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     id:b.id,kind:b.kind,sha256:found[0].sha256,
     sizeBytes:found[0].sizeBytes,mime:found[0].mime,
     archiveReady:receipt.archiveReady===true,
+    ownerRole:(receipt.owner as Json)?.role,personId:(receipt.owner as Json)?.personId,
     ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
  }
  if(command==='bundleReceipt'){
@@ -200,7 +224,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
   const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','documents']):
    new Set(['school_notices','school_calendar','school_settings','school_expenses']);
-  let archiveFiles:Json[]=[];
+  let archiveFiles:Json[]=[],bundleOwner:Json|undefined;
   if(verifiedMedia){
    const ops=b.operations as Json[];
    demand(ops.length===2&&personCollections.has(String(ops[0].collection))&&
@@ -222,6 +246,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256))&&
      (proofs.length===1||proofs[1].kind==='photo'),
      'Complete verified Drive files required',412);
+   bundleOwner={role:teacher?'teacher':'student',personId:generation};
    archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,fileId:p.fileId,
      sha256:p.sha256,sizeBytes:p.sizeBytes,mime:p.mime}));
    demand(child.fileId===undefined||child.fileId===proofs[0].fileId,
@@ -260,7 +285,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     cloudState:'committed',backupState:acknowledgements.every(r=>r.backupState==='verified')?'verified':'pending',
     cursor:head(),manifestHash:fingerprint,
     ...(verifiedMedia?{mediaReady:true,archiveReady:true,mediaManifestHash:b.mediaManifestHash,
-      files:archiveFiles}:{}),
+      files:archiveFiles,owner:bundleOwner}:{}),
     acknowledgements:acknowledgements.map(r=>({operationId:r.operationId,
       recordRevision:r.recordRevision,cloudState:r.cloudState,backupState:r.backupState,
       cursor:r.cursor,unchanged:r.unchanged===true}))};
