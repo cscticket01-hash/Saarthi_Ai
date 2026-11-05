@@ -334,8 +334,9 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
        proofs.length===1&&proofs[0].mime==='application/pdf'),
      'Original media proof does not match bundle type',412);
    if(personKind){
-     demand(personCollections.has(String(first.collection)),
-       'Person and ID document must commit as one pair',412);
+     demand(personCollections.has(String(first.collection))&&
+       !Object.hasOwn(head,'atomicPortrait'),
+       'Person and ID document must commit as one verified pair',412);
      const teacher=first.collection==='teachers_directory';
      const generation=String(head.mobileStableId||first.id);
      demand(child.personId===generation&&child.ownerRole===(teacher?'teacher':'student')&&
@@ -410,6 +411,13 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
+     ...(verifiedMedia&&personKind&&index===0&&archiveFiles.length===2?{
+       data:{...(item.data as Json),atomicPortrait:{
+         bundleId:b.bundleId,documentId:(b.operations as Json[])[1].id,
+         id:archiveFiles[1].id,sha256:archiveFiles[1].sha256,
+         mime:archiveFiles[1].mime,sizeBytes:archiveFiles[1].sizeBytes,
+       }}
+     }:{}),
      ...(verifiedMedia&&index===(b.operations as Json[]).length-1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
        bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,
        ...(archiveFiles[0].fileId?{fileId:archiveFiles[0].fileId}:{})}}:{})},
