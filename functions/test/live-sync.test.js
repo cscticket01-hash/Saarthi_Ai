@@ -453,6 +453,11 @@ test('mobile financial PDF only reaches exact signed student generation and docu
  await assert.rejects(f.call({...request,request:{...request.request,
    kind:'receipt',documentId:'../foreign'}}),e=>e.status===400);
  assert.equal(calls.length,callsBefore,'Rejected identities never fetch file bytes');
- f.docs.get('school_entitlements/'+A).blocked=true;
- await assert.rejects(f.call(request),e=>e.status===403);
+ // Use a fresh broker cache for the revoked entitlement rather than
+ // relying on a previously granted in-memory session/lease to expire.
+ kind='receipt';documentId='FEE-own';fileOwner='verified-pupil';
+ const blocked=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ blocked.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(blocked.call(request),e=>e.status===403);
 });
