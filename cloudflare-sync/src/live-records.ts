@@ -145,6 +145,31 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
+ if(command==='bundleMedia'){
+  // The published atomic group is the sole capability to retrieve the
+  // original school-scoped Cloudflare bytes. Unpublished/staged files are
+  // never addressable by guessing an upload ID.
+  demand(opId(b.bundleId)&&['idCard','photo'].includes(String(b.kind))&&
+    typeof b.id==='string'&&/^[a-f0-9]{64}$/.test(b.id),
+    'Invalid atomic media lookup',400);
+  const row=sql.exec<{receipt:string}>(
+    'SELECT receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
+  demand(row,'Atomic media bundle is not published',404);
+  const receipt=JSON.parse(row.receipt) as Json;
+  demand(receipt.schoolId===school&&receipt.cloudState==='committed'&&
+    receipt.mediaReady===true&&Array.isArray(receipt.files),
+    'Atomic media bundle is unavailable',412);
+  const found=(receipt.files as Json[]).filter(f=>f.id===b.id&&f.kind===b.kind);
+  demand(found.length===1&&/^[a-f0-9]{64}$/.test(String(found[0].sha256||''))&&
+    Number.isSafeInteger(found[0].sizeBytes)&&Number(found[0].sizeBytes)>0&&
+    Number(found[0].sizeBytes)<=(b.kind==='photo'?40*1024:85*1024),
+    'Requested media is not part of the published atomic group',403);
+  return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+    id:b.id,kind:b.kind,sha256:found[0].sha256,
+    sizeBytes:found[0].sizeBytes,mime:found[0].mime,
+    archiveReady:receipt.archiveReady===true,
+    ...(typeof found[0].fileId==='string'?{fileId:found[0].fileId}:{})};
+ }
  if(command==='bundleReceipt'){
   demand(opId(b.bundleId)&&Array.isArray(b.operations)&&Array.isArray(b.media)&&
     typeof b.mediaManifestHash==='string','Invalid bundle replay identity');

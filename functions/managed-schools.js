@@ -722,6 +722,50 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='bundle-media'){
+   // Authenticated school membership+licence has already been checked.
+   // No public file URL, no speculative cross-school or unpublished access.
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+     fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !['idCard','photo'].includes(b.kind)||
+      !/^[a-f0-9]{64}$/.test(b.id||''))
+     fail(400,'Invalid published atomic media lookup');
+   const pointer=await liveSync.command(m.schoolId,{
+     command:'bundleMedia',bundleId:b.bundleId,kind:b.kind,id:b.id});
+   if(pointer?.bundleProtocol!==1||pointer.schoolId!==m.schoolId||
+      pointer.bundleId!==b.bundleId||pointer.id!==b.id||
+      pointer.kind!==b.kind||!/^[a-f0-9]{64}$/.test(pointer.sha256||'')||
+      !Number.isSafeInteger(pointer.sizeBytes)||pointer.sizeBytes<1||
+      pointer.sizeBytes>(b.kind==='photo'?40*1024:85*1024))
+      fail(502,'Unverified published atomic media identity');
+   const fileLane='file-'+b.id;
+   const proof=await cloudflareSync.rpc(m.schoolId,fileLane,{
+      command:'bundleProof',id:b.id,requireDrive:false});
+   if(proof?.version!==1||proof.schoolId!==m.schoolId||
+      proof.staged!==true||proof.id!==b.id||
+      proof.sha256!==pointer.sha256||
+      proof.sizeBytes!==pointer.sizeBytes||
+      proof.mime!==pointer.mime)
+      fail(502,'Published media proof changed');
+   const part=await cloudflareSync.rpc(m.schoolId,fileLane,{
+     command:'readPart',id:b.id,offset:0});
+   if(part?.offset!==0||part.sizeBytes!==pointer.sizeBytes||
+      part.sha256!==pointer.sha256||typeof part.base64!=='string'||
+      part.base64.length>120000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64))
+      fail(502,'Atomic media bytes unavailable');
+   const bytes=Buffer.from(part.base64,'base64');
+   if(bytes.length!==pointer.sizeBytes||
+      bytes.toString('base64')!==part.base64||
+      hash(bytes)!==pointer.sha256)
+      fail(502,'Atomic media bytes failed SHA-256 readback');
+   return {success:true,schoolId:m.schoolId,bundleProtocol:1,
+     bundleId:b.bundleId,id:b.id,kind:b.kind,mime:pointer.mime,
+     sizeBytes:bytes.length,sha256:pointer.sha256,base64:part.base64,
+     archiveReady:pointer.archiveReady===true,
+     ...(pointer.fileId?{fileId:pointer.fileId}:{})};
+  }
   if(operation==='bundle-preflight'){
    // Existing authenticated school broker, not a new storage or sync owner.
    // Read-only preparation does NOT mean the person/card bundle committed.

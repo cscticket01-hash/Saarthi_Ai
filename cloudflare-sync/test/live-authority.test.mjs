@@ -366,6 +366,12 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  const saved=(await rpc({command:'read',collection:'documents',id:document.id})).value.record;
  assert.equal(saved.bundleMedia[0].fileId,fileId);
  assert.equal(saved.bundleManifestHash,mediaManifestHash);
+ const mediaCapability=await rpc({command:'bundleMedia',bundleId,kind:'idCard',id});
+ assert.equal(mediaCapability.status,200);
+ assert.equal(mediaCapability.value.sha256,sha256);
+ assert.equal(mediaCapability.value.fileId,fileId);
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',id})).status,403);
+ assert.equal((await rpc({command:'bundleMedia',bundleId:'missing-published-bundle-0001',kind:'idCard',id})).status,404);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);
  assert.deepEqual((await rpc(request)).value,first.value,'immutable replay does not need a new Drive write');
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);

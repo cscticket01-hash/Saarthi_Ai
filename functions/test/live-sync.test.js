@@ -108,3 +108,46 @@ test('atomic person publish refuses unapproved, foreign and unmigrated school be
  await assert.rejects(f.call(request),e=>e.status===403);
  assert.equal(calls.length,0);
 });
+
+test('published atomic media read is TEST-scoped, licensed and checks original Cloudflare byte hashes',async()=>{
+ const bytes=Buffer.from('%PDF-1.7\\nA synthetic ID card\\n%%EOF','utf8');
+ const id='b'.repeat(64),sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const bundleId='media-read-published-test-0001',calls=[];
+ const rpc=async(s,l,body)=>{
+   calls.push({s,l,command:body.command});
+   if(l==='live')return {bundleProtocol:1,schoolId:s,bundleId,
+     kind:'idCard',id,sha256:sha,mime:'application/pdf',
+     sizeBytes:bytes.length,archiveReady:true,fileId:'verified-drive-file-0001'};
+   if(body.command==='bundleProof')return {version:1,schoolId:s,
+     id,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length,staged:true};
+   if(body.command==='readPart')return {offset:0,sha256:sha,sizeBytes:bytes.length,
+     base64:bytes.toString('base64')};
+   throw Error('Unexpected media operation');
+ };
+ const edge={enabled:()=>true,rpc};
+ const request={action:'managed/live/bundle-media',liveProtocol:1,bundleId,
+   id,kind:'idCard'};
+ const disabled=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(disabled.call(request),e=>e.status===412);
+ assert.equal(calls.length,0);
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const delivered=await f.call(request);
+ assert.equal(delivered.bundleProtocol,1);
+ assert.equal(Buffer.from(delivered.base64,'base64').toString(),bytes.toString());
+ assert.equal(delivered.archiveReady,true);
+ assert.deepEqual(calls.map(c=>c.command),['bundleMedia','bundleProof','readPart']);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...request,id:'bad'}),e=>e.status===400);
+ assert.equal(calls.length,3);
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ assert.equal(calls.length,3);
+ const corrupted=fixture(null,{cloudflareSync:{enabled:()=>true,rpc:async(s,l,body)=>
+   body.command==='bundleMedia'?await rpc(s,l,body):
+   body.command==='bundleProof'?await rpc(s,l,body):
+   {offset:0,sizeBytes:bytes.length,sha256:sha,
+     base64:Buffer.from('changed payload').toString('base64')}
+ },liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ await assert.rejects(corrupted.call(request),e=>e.status===502);
+});
