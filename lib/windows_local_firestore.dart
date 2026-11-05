@@ -285,6 +285,51 @@ class FirebaseFirestore {
       ()=>_database.applyOperations(operations));
   }
 
+  /// Apply one verified live event bundle using the existing serialized
+  /// local database transaction. Any pending edit/restore in *any* member
+  /// rejects the whole group; no partial parent/card visibility is possible.
+  /// This never generates a new outgoing operation or acknowledges Drive.
+  Future<void> applyVerifiedLiveBundle(String school,
+      List<Map<String,dynamic>> events) {
+    final profile=activeProfileId;
+    if(activeProfileIdentity['schoolSyncId']!=school ||
+        events.length<2 || events.length>5) {
+      throw StateError('Invalid atomic download school or group size.');
+    }
+    final group=events.first['bundleId'];
+    if(group is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(group)) {
+      throw StateError('Atomic bundle identity unavailable.');
+    }
+    final seen=<String>{}, operations=<_WriteOperation>[];
+    for(var i=0;i<events.length;i++) {
+      final row=events[i],collection=row['collection'],id=row['id'];
+      final data=row['record'];
+      if(row['bundleId']!=group || row['bundleSize']!=events.length ||
+          row['bundleIndex']!=i || collection is! String ||
+          !liveSyncCollections.contains(collection) || id is! String ||
+          id.isEmpty || id.length>200 || id.contains('/') ||
+          data is! Map || data['schoolId']!=school ||
+          data['_syncDeleted']==true ||
+          data['_syncRevision'] is! String ||
+          !(data['_syncRevision'] as String).startsWith('live-') ||
+          !seen.add('$collection/$id')) {
+        throw StateError('Atomic download member did not verify.');
+      }
+      final ref=this.collection(collection).doc(id);
+      ref.requireOriginProfile();
+      operations.add(_WriteOperation._(type:_WriteType.set,
+        collection:collection,documentId:id,
+        data:Map<String,dynamic>.from(data),preservePending:true));
+    }
+    if(activeProfileId!=profile ||
+        activeProfileIdentity['schoolSyncId']!=school) {
+      throw StateError('Atomic download changed school profile.');
+    }
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,rejectBlockedDownload:true));
+  }
+
   /// Retain a complete live page and its cursor in the same serialized disk
   /// transaction. These are incoming records, never upload or Drive receipts.
   Future<void> retainLiveSyncPage(LiveSyncPage page) async {
@@ -1256,7 +1301,8 @@ class _LocalSchoolDatabase {
 
   Future<void> applyOperations(
     List<_WriteOperation> operations,
-    {Map<String, Map<String, Map<String, dynamic>?>> expected = const {}}
+    {Map<String, Map<String, Map<String, dynamic>?>> expected = const {},
+      bool rejectBlockedDownload = false}
   ) {
     if (operations.isEmpty) {
       return Future<void>.value();
@@ -1338,6 +1384,29 @@ class _LocalSchoolDatabase {
           }
         }
 
+        // The ordinary replay path may skip a locally edited record, but a
+        // bundled Person + Document must never skip only one member. Check
+        // every guard inside the single serialized disk-write owner first.
+        if(rejectBlockedDownload) {
+          if(!downloadOnly || operations.length<2 || operations.length>5)
+            throw StateError('Atomic download requires a verified bounded group.');
+          final pending=collections['_windows_firebase_outbox'];
+          final restores=collections['_windows_recycle_requests'];
+          for(final operation in operations) {
+            if(pending is Map && pending.values.any((item)=>
+                item is Map && item['collection']==operation.collection &&
+                item['documentId']==operation.documentId)) {
+              throw StateError('Atomic incoming group held by a local unsent edit.');
+            }
+            if(restores is Map && restores.values.any((item)=>
+                item is Map && item['schoolId']==_activeIdentity['schoolSyncId'] &&
+                item['collection']==operation.collection &&
+                item['documentId']==operation.documentId &&
+                item['localRestore']==true && item['state']!='verified')) {
+              throw StateError('Atomic incoming group held by an active restore.');
+            }
+          }
+        }
         final touched = <String>{};
         var trackedMutation = false;
 

@@ -109,6 +109,63 @@ class WindowsLiveRuntimeLocalStore implements WindowsLiveRuntimeStore {
     }
     return safe;
   }
+  /// Only the signed school gateway can supply current authoritative rows.
+  /// Retained snapshots are identities, not business truth or Drive ACKs.
+  Future<bool> reconcileBundle(List<WindowsLiveIncoming> group,
+      LiveSyncCall call) async {
+    _check();
+    if(group.length<2 || group.length>5 ||
+        group.first.bundleId==null) {
+      throw StateError('Atomic incoming group identity invalid.');
+    }
+    final rows=<Map<String,dynamic>>[];
+    for(var i=0;i<group.length;i++) {
+      final entry=group[i];
+      if(entry.bundleId!=group.first.bundleId ||
+          entry.bundleSize!=group.length || entry.bundleIndex!=i) {
+        throw StateError('Atomic incoming group is incomplete.');
+      }
+      final stored=(await db.collection('_windows_live_incoming')
+          .doc(entry.key).get()).data();
+      _check();
+      if(stored==null || stored['schoolId']!=school ||
+          stored['sequence']!=entry.sequence ||
+          stored['collection']!=entry.collection || stored['id']!=entry.id ||
+          stored['bundleId']!=entry.bundleId ||
+          stored['bundleIndex']!=i || stored['bundleSize']!=group.length ||
+          stored['record'] is! Map) {
+        throw StateError('Retained atomic bundle changed during verification.');
+      }
+      final verified=await call('managed/live/read',{
+        'liveProtocol':1,'schoolId':school,
+        'collection':entry.collection,'id':entry.id,
+      });
+      _check();
+      final record=verified['record'];
+      if(verified['success']!=true || verified['schoolId']!=school ||
+          verified['liveProtocol']!=1 || record is! Map ||
+          record['schoolId']!=school ||
+          verified['recordRevision']!=stored['record']['_syncRevision'] ||
+          record['_syncRevision']!=verified['recordRevision']) {
+        // A newer version or a missing Drive readback is not the original
+        // group. Keep the durable inbox for ordinary version recovery.
+        return false;
+      }
+      rows.add({'bundleId':entry.bundleId,'bundleSize':group.length,
+        'bundleIndex':i,'collection':entry.collection,'id':entry.id,
+        'record':Map<String,dynamic>.from(record)});
+    }
+    try {
+      await db.applyVerifiedLiveBundle(school,rows);
+    } on StateError catch(error) {
+      if(error.toString().contains('held by a local unsent edit') ||
+          error.toString().contains('held by an active restore'))return false;
+      rethrow;
+    }
+    _check();
+    return true;
+  }
+
   @override Future<void> replaceCheckpoint(int expectedCursor, int nextCursor,
       [Set<String>? verifiedCollections]) async {
     _check();
@@ -153,7 +210,7 @@ class WindowsLiveSyncRuntime {
     required String deviceId, required this.store, required LiveSyncCall call,
     required this.currentSchool, required this.currentProfile,
     required this.canRun, required this.onWork, required this.reconcile,
-    this.recoverSnapshot}) {
+    this.reconcileBundle, this.recoverSnapshot}) {
     _deviceId=deviceId;
     _call = (action, body) async {
       _check(); final result = await call(action, body); _check(); return result;
@@ -167,6 +224,7 @@ class WindowsLiveSyncRuntime {
   final bool Function() canRun;
   final void Function() onWork;
   final Future<bool> Function(Map<String, Set<String>> targets) reconcile;
+  final Future<bool> Function(List<WindowsLiveIncoming>)? reconcileBundle;
   final Future<bool> Function(Set<String> collections)? recoverSnapshot;
   late final String _deviceId;
   late final LiveSyncCall _call;
@@ -202,17 +260,41 @@ class WindowsLiveSyncRuntime {
       _check();
       if (entries.isEmpty) { _needsRun = false; return; }
       final targets = <String, Set<String>>{};
-      for (final entry in entries) {
-        if (!liveSyncCollections.contains(entry.collection)) {
+      final groups=<List<WindowsLiveIncoming>>[];
+      for(var i=0;i<entries.length;) {
+        final first=entries[i];
+        if(!liveSyncCollections.contains(first.collection))
           throw StateError('Live incoming collection is not admitted.');
+        if(first.bundleId==null) {
+          (targets[first.collection] ??= <String>{}).add(first.id);
+          i++;continue;
         }
-        (targets[entry.collection] ??= <String>{}).add(entry.id);
+        final count=first.bundleSize;
+        if(count<2||count>5||first.bundleIndex!=0||i+count>entries.length)
+          throw StateError('Incoming atomic bundle was split.');
+        final members=entries.sublist(i,i+count);
+        for(var j=0;j<members.length;j++) {
+          final member=members[j];
+          if(member.bundleId!=first.bundleId||member.bundleSize!=count||
+             member.bundleIndex!=j||member.sequence!=first.sequence+j)
+            throw StateError('Incoming bundle membership changed.');
+        }
+        groups.add(members);i+=count;
       }
-      final verified = await reconcile(targets);
-      _check();
-      // An unsent newer edit can legitimately block remote apply. Keep the
-      // retained incoming hint; its delivery cursor is never an upload ACK.
-      if (!verified) { _needsRun=false; return; }
+      if(targets.isNotEmpty) {
+        final verified=await reconcile(targets);
+        _check();
+        if(!verified){_needsRun=false;return;}
+      }
+      for(final group in groups) {
+        final apply=reconcileBundle;
+        // Never fall back to the ordinary per-collection reconciler for
+        // grouped events: that could expose Person without ID Card.
+        if(apply==null || !await apply(group)) {
+          _check();_needsRun=false;return;
+        }
+        _check();
+      }
       await store.applied(entries);
       _check();
       await Future<void>.delayed(Duration.zero);

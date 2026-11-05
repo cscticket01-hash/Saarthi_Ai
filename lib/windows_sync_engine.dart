@@ -392,6 +392,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       canRun:()=>!isPaused&&!_resetPaused,
       call:(action,body)=>ManagedSchoolSession.callForSchool(school,action,body),
       onWork:(){if(automaticScheduleExpected){if(_syncing)_rerunRequested=true;scheduleSoon();}},
+      reconcileBundle:(entries) async {
+        final active=_liveRuntime;
+        if(active==null || _activeProfileId!=profile ||
+            _activeSchoolSyncId!=school || isPaused)return false;
+        final store=active.store;
+        if(store is! WindowsLiveRuntimeLocalStore)return false;
+        return store.reconcileBundle(entries,
+          (action,body)=>ManagedSchoolSession.callForSchool(school,action,body));
+      },
       reconcile:(targets)async {
         final generation=_remoteChangeGeneration;
         await _pullManagedChanges(schoolOverride:school,verifyInventory:false,
