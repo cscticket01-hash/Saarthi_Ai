@@ -241,4 +241,83 @@ void main(){
     reason:'a lost card event must retain the parent for recovery');
  });
 
+
+ test('Windows applies verified Person + ID Card together without producing uploads',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-success-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  const bundle='atomic-receiver-bundle-0001';
+  final parent=<String,dynamic>{'schoolId':school,'name':'Verified Student',
+    'mobileStableId':'p-verified-student-one','_syncRevision':'live-parent-one'};
+  final card=<String,dynamic>{'schoolId':school,'studentId':'person-1',
+    'personId':'p-verified-student-one','ownerRole':'student',
+    'bundleManifestHash':'a'*64,'_syncRevision':'live-card-one'};
+  final events=<Map<String,dynamic>>[
+   {'sequence':1,'collection':'students_directory','id':'person-1','record':parent,
+    'bundleId':bundle,'bundleSize':2,'bundleIndex':0},
+   {'sequence':2,'collection':'documents','id':'card-1','record':card,
+    'bundleId':bundle,'bundleSize':2,'bundleIndex':1},
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':2,'head':2,'more':false,'events':events,
+  },school,0));
+  final entries=await store.pending();expect(entries.length,2);
+  var reads=0;
+  final done=await store.reconcileBundle(entries,(action,body)async{
+    expect(action,'managed/live/read');
+    reads++;
+    final record=body['collection']=='students_directory'?parent:card;
+    return {'success':true,'liveProtocol':1,'schoolId':school,
+      'recordRevision':record['_syncRevision'],'record':record};
+  });
+  expect(done,isTrue);expect(reads,2);
+  expect((await db.collection('students_directory').doc('person-1').get()).data()?['name'],'Verified Student');
+  expect((await db.collection('documents').doc('card-1').get()).data()?['studentId'],'person-1');
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  await store.applied(entries);
+  expect((await store.pending()).isEmpty,isTrue);
+ });
+ test('pending local card edit blocks the entire incoming Person/Card transaction',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-blocked-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  await db.collection('documents').doc('card-blocked').set({
+    'schoolId':school,'name':'Unsynced card local edit'});
+  final old=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  const bundle='atomic-blocked-bundle-0001';
+  final person={'schoolId':school,'name':'Server student',
+    '_syncRevision':'live-server-parent'};
+  final card={'schoolId':school,'name':'Server card',
+    '_syncRevision':'live-server-card'};
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,'cursor':2,'head':2,
+    'more':false,'events':[
+      {'sequence':1,'collection':'students_directory','id':'person-blocked',
+       'bundleId':bundle,'bundleSize':2,'bundleIndex':0,'record':person},
+      {'sequence':2,'collection':'documents','id':'card-blocked',
+       'bundleId':bundle,'bundleSize':2,'bundleIndex':1,'record':card},
+    ],
+  },school,0));
+  final entries=await store.pending();
+  final applied=await store.reconcileBundle(entries,(action,body)async {
+    final value=body['collection']=='students_directory'?person:card;
+    return {'success':true,'liveProtocol':1,'schoolId':school,
+      'recordRevision':value['_syncRevision'],'record':value};
+  });
+  expect(applied,isFalse);
+  expect((await db.collection('students_directory').doc('person-blocked').get()).data(),isNull);
+  expect((await db.collection('documents').doc('card-blocked').get()).data()?['name'],
+    'Unsynced card local edit');
+  expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],
+    old['operationId']);
+  expect((await store.pending()).length,2);
+ });
+
 }
