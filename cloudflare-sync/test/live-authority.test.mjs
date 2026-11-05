@@ -328,10 +328,10 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  const operations=[
   {collection:'students_directory',id:'student-stage-first',operation:'write',
    operationId:'sync3-stage-parent-operation-0001',expectedRevision:'',
-   data:{schoolId:A,mobileStableId:'p-stage-first-0001',name:'Staged only'}},
+   data:{schoolId:A,mobileStableId:'p-'+'8'.repeat(32),name:'Staged only'}},
   {collection:'documents',id:'card-stage-first',operation:'write',
    operationId:'sync3-stage-card-operation-0001',expectedRevision:'',
-   data:{schoolId:A,personId:'p-stage-first-0001',studentId:'student-stage-first',
+   data:{schoolId:A,personId:'p-'+'8'.repeat(32),studentId:'student-stage-first',
     ownerRole:'student',documentKind:'idCard',contentHash:sha256}},
  ];
  const mediaManifestHash=createHash('sha256').update(canonical({schoolId:A,bundleId,media})).digest('hex');
@@ -364,7 +364,7 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'idCard',id})).status,409,
    'A deleted ID card cannot keep its old media capability');
  assert.equal((await rpc({command:'ownerBundle',role:'student',
-   personId:'p-stage-first-0001'})).value.found,false);
+   personId:'p-'+'8'.repeat(32)})).value.found,false);
 });
 
 test('Sync3 archived person and document publish as one Ready transaction, never a partial peer event',async()=>{

@@ -13,8 +13,6 @@ export interface DomainCandidate {
  readOwner:(collection:string,id:string)=>Json|null;
 }
 function reject(code:string,status=409):never {
- // Fixed diagnostic category only; never log record contents or identifiers.
- console.warn('DOMAIN_POLICY_REJECT_'+code);
  throw Object.assign(new Error('Domain lifecycle validation failed; original work retained.'),{status,code});
 }
 function boundedJson(value:unknown,depth=0,budget={left:10000}):void {
