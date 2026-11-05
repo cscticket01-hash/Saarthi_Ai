@@ -199,6 +199,12 @@ test('Sync3 metadata bundle commits all records atomically, replays without dupl
  assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
  assert.equal((await rpc({...request,operations:[operation('bundle-a','',999),operation('bundle-b')]})).status,409);
  assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
+ // Once a record operation was visible alone, it cannot be falsely declared
+ // part of a later all-or-nothing bundle, even with an otherwise valid hash.
+ const repack={...request,bundleId:'sync3-repackage-group-test-0001',
+  operations:[operation('bundle-a'),operation('repack-new')]};
+ assert.equal((await rpc(repack)).status,409);
+ assert.equal((await rpc({command:'read',collection:'school_expenses',id:'repack-new'})).value.source,'missing');
 
  const foreign={...request,bundleId:'sync3-foreign-group-test-0001',
   operations:[operation('foreign-bundle-a'),{...operation('foreign-bundle-b'),data:{schoolId:B,amount:8}}]};
