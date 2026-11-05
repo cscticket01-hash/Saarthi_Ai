@@ -18,6 +18,25 @@ typedef AtomicPortraitRequest = Future<Map<String,dynamic>> Function(
 class AtomicPersonPortraitDelivery {
   const AtomicPersonPortraitDelivery._();
 
+  // UI-only bounded read-through cache; this is not another sync storage or
+  // upload owner. Incorrect or unavailable reads are discarded for retry.
+  static final Map<String,Future<Uint8List?>> _displayReads={};
+  static Future<Uint8List?> cachedBytes(Map<String,dynamic> person) {
+    final pointer=person['atomicPortrait'];
+    if(pointer is! Map)return Future<Uint8List?>.value(null);
+    final key=jsonEncode([person['schoolId'],person['mobileStableId'],
+      pointer['bundleId'],pointer['id'],pointer['sha256']]);
+    final old=_displayReads[key];
+    if(old!=null)return old;
+    if(_displayReads.length>=128)_displayReads.remove(_displayReads.keys.first);
+    final read=bytes(person).catchError((Object _) {
+      _displayReads.remove(key);
+      return null;
+    });
+    _displayReads[key]=read;
+    return read;
+  }
+
   static Future<Uint8List?> bytes(Map<String,dynamic> person, {
     AtomicPortraitRequest? request,
     Future<Uint8List?> Function(String url)? driveImage,
