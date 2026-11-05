@@ -143,23 +143,25 @@ void main(){
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
      {...parent,'createIntent':false},doc),isFalse,
      reason:'Only first-time Person creation may be bundled with an original ID');
-   expect(WindowsAtomicPersonCardCoordinator.matches(school,
-     {...parent,'data':{...(parent['data'] as Map),
-       'photoUrl':'data:image/jpeg;base64,YWJj'}},doc),isFalse,
-     reason:'A portrait must not trigger hidden Drive-first upload in the atomic pilot');
-   // Bare base64, already-uploaded URLs, and local source paths also imply
-   // portrait media. The safe legacy owner must retain these until an exact
-   // original 40-KiB photo is staged with the complete atomic bundle.
-   for(final rawPortrait in <Map<String,dynamic>>[
+   // Original inline photo is staged with the same original Person+Card
+   // operations, without a second queue or a premature Drive upload.
+   for(final original in <Map<String,dynamic>>[
+     {'photoUrl':'data:image/jpeg;base64,YWJjZA=='},
      {'photoBase64':'YWJjZA=='},
+   ]){
+     expect(WindowsAtomicPersonCardCoordinator.matches(school,
+       {...parent,'data':{...(parent['data'] as Map),...original}},doc),isTrue);
+   }
+   for(final unsupported in <Map<String,dynamic>>[
      {'photoUrl':'https://drive.google.com/file/d/existing-photo/view'},
      {'photoPath':'C:/school/retained/student.jpg'},
      {'portraitBase64':'YWJjZA=='},
      {'nested':{'photoBase64':'YWJjZA=='}},
+     {'photoBase64':'YWJjZA==','photoUrl':'data:image/jpeg;base64,eHl6'},
    ]){
      expect(WindowsAtomicPersonCardCoordinator.matches(school,
-       {...parent,'data':{...(parent['data'] as Map),...rawPortrait}},doc),isFalse,
-       reason:'Unstaged original photo must not enter the no-photo TEST bundle');
+       {...parent,'data':{...(parent['data'] as Map),...unsupported}},doc),isFalse,
+       reason:'Unsupported or ambiguous original media stays with its legacy owner');
    }
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
        {...parent,'data':{...(parent['data'] as Map),'photoBase64':''}},doc),isTrue,
@@ -178,6 +180,15 @@ void main(){
      parent['operationId'] as String,doc['documentRevision'] as String));
    expect(bundle,isNot(WindowsAtomicPersonCardCoordinator.bundleId(
      school,parent['operationId'] as String,'changed-card-revision-0002')));
+   final photoKey=WindowsAtomicPersonCardCoordinator.photoUploadKey(
+     school,parent['operationId'] as String,doc['documentRevision'] as String);
+   expect(photoKey,startsWith('photo-'));
+   expect(photoKey,isNot(WindowsAtomicPersonCardCoordinator.photoUploadKey(
+     school,parent['operationId'] as String,'changed-card-revision-0002')));
+   expect(WindowsAtomicPersonCardCoordinator.originalPortraitBytes(
+     'data:image/jpeg;base64,YWJjZA=='),utf8.encode('abcd'));
+   expect(WindowsAtomicPersonCardCoordinator.originalPortraitBytes(
+     'YWJjZA=='),utf8.encode('abcd'));
  });
 
  test('receipt and marksheet reuse TEST cloud stage with exact printable PDF ceilings',() async {
