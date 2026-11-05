@@ -220,11 +220,11 @@ void main() {
        documentBefore:queuedDocument,documentLocalBefore:before??originalLocal,
        bundleId:bundleId,parentCloud:cloudParent,documentCloud:cloudDoc,
        verifiedBackups:backup,cardSha256:hash);
-   await expectLater(finish(hash:'f'*64),throwsStateError);
+   await expectLater(Future<void>.sync(()=>finish(hash:'f'*64)),throwsStateError);
    expect((await parentQueueRef.get()).data(),isNotNull);
    expect((await documentQueueRef.get()).data(),isNotNull);
    await documentRef.set({...originalLocal,'documentRevision':'newer-local-card-edit'});
-   await expectLater(finish(),throwsStateError);
+   await expectLater(Future<void>.sync(()=>finish()),throwsStateError);
    expect((await parentQueueRef.get()).data(),isNotNull);
    expect((await documentQueueRef.get()).data(),isNotNull);
    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
