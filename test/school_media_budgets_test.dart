@@ -32,7 +32,7 @@ void main() {
   });
 
   test('ID, report card, fee and expenses have exact binary KB budgets', () {
-    expect(SchoolMediaBudgets.idCard, 256 * 1024);
+    expect(SchoolMediaBudgets.idCard, 85 * 1024);
     expect(SchoolMediaBudgets.reportCard, 150 * 1024);
     expect(SchoolMediaBudgets.receipt, 30 * 1024);
     expect(SchoolMediaBudgets.branding, 30 * 1024);
@@ -48,27 +48,29 @@ void main() {
     expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), null);
   });
 
-  test('141.5 KB real-size ID card keeps complete print bytes for preview and publish', () {
-    // Regression: student preview previously threw above the arbitrary 85 KiB
-    // cap even though this size is safe for the atomic Cloudflare file path.
-    final pdf = Uint8List(141 * 1024 + 512);
-    pdf.setRange(0, 8, utf8.encode('%PDF-1.7'));
-    pdf.setRange(pdf.length - 5, pdf.length, utf8.encode('%%EOF'));
-    final original = Uint8List.fromList(pdf);
-    final valid = SchoolMediaBudgets.verifyGeneratedPdf('idCard', pdf);
-    expect(identical(valid, pdf), isTrue);
-    expect(valid.length, 144896);
-    expect(valid, original, reason: 'never truncate or degrade a printed PDF');
-
-    for (final kind in ['studentId', 'teacherId', 'otherStaffId', 'idCard']) {
-      expect(SchoolMediaBudgets.enforcePdf(kind, pdf), same(pdf));
-      expect(() => SchoolMediaBudgets.enforcePdf(kind,
-        Uint8List(SchoolMediaBudgets.idCard + 1)), throwsFormatException);
+  test('strict 85 KiB card boundary retains complete bytes and rejects oversized print', () {
+    // Existing 256 KiB release violated the owner contract. Never silently
+    // accept a 141.5 KiB PDF even when Cloudflare can carry that file.
+    Uint8List fakePdf(int size) {
+      final pdf = Uint8List(size);
+      pdf.setRange(0, 8, utf8.encode('%PDF-1.7'));
+      pdf.setRange(pdf.length - 5, pdf.length, utf8.encode('%%EOF'));
+      return pdf;
     }
-    // Unrelated document classes must retain their original budget.
-    expect(() => SchoolMediaBudgets.enforcePdf('receipt', pdf),
-      throwsFormatException);
+
+    final accepted = fakePdf(85 * 1024);
+    final copy = Uint8List.fromList(accepted);
+    for (final kind in ['studentId', 'teacherId', 'otherStaffId', 'idCard']) {
+      expect(identical(SchoolMediaBudgets.verifyGeneratedPdf(kind, accepted), accepted), isTrue);
+      expect(accepted, copy, reason: 'PDF is never truncated or degraded');
+      expect(() => SchoolMediaBudgets.verifyGeneratedPdf(kind, fakePdf(85 * 1024 + 1)),
+        throwsFormatException);
+      expect(() => SchoolMediaBudgets.verifyGeneratedPdf(kind, fakePdf(141 * 1024 + 512)),
+        throwsFormatException);
+    }
     expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), isNull);
+    expect(SchoolMediaBudgets.pdfLimit('reportCard'), 150 * 1024);
+    expect(SchoolMediaBudgets.pdfLimit('receipt'), 30 * 1024);
   });
 
   test('logo and opaque school seal use actual compressed <=30 KB bytes', () {
