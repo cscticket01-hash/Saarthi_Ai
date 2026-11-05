@@ -180,7 +180,9 @@ test('Android atomic ID PDF only reaches the mobile session owner of its publish
  assert.equal(Buffer.from(answer.base64,'base64').toString(),bytes.toString());
  identity='another-student';
  await assert.rejects(f.call(request),e=>e.status===403);
- await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...request,schoolId:B}),
+   e=>e.status===412||e.status===403,
+   'another school is denied by the pilot fence before any media read');
  f.docs.get('school_entitlements/'+A).blocked=true;
  await assert.rejects(f.call(request),e=>e.status===403);
  const off=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
