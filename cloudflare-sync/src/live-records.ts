@@ -316,7 +316,9 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }else{
      demand(head.studentId!==undefined&&typeof head.studentId==='string'&&
        head.studentId.length>0&&head.studentId.length<=200&&
-       child.studentId===head.studentId&&child.ownerRole==='student'&&
+       typeof head.personId==='string'&&head.personId.length>0&&
+       child.studentId===head.studentId&&child.personId===head.personId&&
+       child.ownerRole==='student'&&
        child.contentHash===proofs[0].sha256&&
        child.mimeType==='application/pdf',
        'School receipt/marksheet has no matching student or byte hash',409);
@@ -326,9 +328,15 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
          head.paymentId===first.id&&head.receiptDocumentId===last.id&&
          child.documentKind==='feeReceipt'&&
          ledger&&ledger.schoolId===school&&
-         ledger.studentId===head.studentId&&
+         ledger.studentId===head.studentId&&ledger.personId===head.personId&&
          ledger.lastPaymentId===first.id&&ledger.month===head.month&&
          typeof head.month==='string'&&head.month.length>0&&
+         typeof head.totalPaid==='number'&&Number.isFinite(head.totalPaid)&&
+         typeof head.expectedAmount==='number'&&Number.isFinite(head.expectedAmount)&&
+         typeof head.installmentAmount==='number'&&Number.isFinite(head.installmentAmount)&&
+         head.installmentAmount>0&&head.totalPaid<=head.expectedAmount&&
+         ledger.totalPaid===head.totalPaid&&
+         ledger.expectedAmount===head.expectedAmount&&
          !Object.hasOwn(ledger,'bundleMedia')&&!Object.hasOwn(ledger,'bundleId'),
          'Fee ledger, original payment and receipt must agree',409);
      }else{
