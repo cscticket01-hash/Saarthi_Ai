@@ -411,7 +411,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
-     ...(verifiedMedia&&personKind&&index===0&&archiveFiles.length===2?{
+     ...(verifiedMedia&&['students_directory','teachers_directory'].includes(String((b.operations as Json[])[0].collection))&&index===0&&archiveFiles.length===2?{
        data:{...(item.data as Json),atomicPortrait:{
          bundleId:b.bundleId,documentId:(b.operations as Json[])[1].id,
          id:archiveFiles[1].id,sha256:archiveFiles[1].sha256,
