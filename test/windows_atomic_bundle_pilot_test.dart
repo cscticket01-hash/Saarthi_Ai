@@ -147,6 +147,23 @@ void main(){
      {...parent,'data':{...(parent['data'] as Map),
        'photoUrl':'data:image/jpeg;base64,YWJj'}},doc),isFalse,
      reason:'A portrait must not trigger hidden Drive-first upload in the atomic pilot');
+   // Bare base64, already-uploaded URLs, and local source paths also imply
+   // portrait media. The safe legacy owner must retain these until an exact
+   // original 40-KiB photo is staged with the complete atomic bundle.
+   for(final rawPortrait in <Map<String,dynamic>>[
+     {'photoBase64':'YWJjZA=='},
+     {'photoUrl':'https://drive.google.com/file/d/existing-photo/view'},
+     {'photoPath':'C:/school/retained/student.jpg'},
+     {'portraitBase64':'YWJjZA=='},
+     {'nested':{'photoBase64':'YWJjZA=='}},
+   ]){
+     expect(WindowsAtomicPersonCardCoordinator.matches(school,
+       {...parent,'data':{...(parent['data'] as Map),...rawPortrait}},doc),isFalse,
+       reason:'Unstaged original photo must not enter the no-photo TEST bundle');
+   }
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+       {...parent,'data':{...(parent['data'] as Map),'photoBase64':''}},doc),isTrue,
+       reason:'An empty optional photo must not block a photo-free ID card');
    final key=WindowsAtomicPersonCardCoordinator.uploadKey(
       school,doc['documentRevision'] as String);
    final bundle=WindowsAtomicPersonCardCoordinator.bundleId(
