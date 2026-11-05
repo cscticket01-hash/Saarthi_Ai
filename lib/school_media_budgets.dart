@@ -6,7 +6,11 @@ import 'dart:typed_data';
 class SchoolMediaBudgets {
   SchoolMediaBudgets._();
 
-  static const int idCard = 85 * 1024;
+  // A photo-bearing, two-sided CR80 card can exceed 85 KB even after safe
+  // 280-DPI JPEG and font optimizations. Keep the complete print-quality PDF:
+  // <=256 KiB is supported by the Cloudflare atomic small-file lane.
+  // Other document budgets remain unchanged; never truncate an oversized PDF.
+  static const int idCard = 256 * 1024;
   static const int reportCard = 150 * 1024;
   static const int receipt = 30 * 1024;
   static const int branding = 30 * 1024;
