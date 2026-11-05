@@ -535,12 +535,18 @@ test('one existing school file owner proves exact 30 KiB receipts and 150 KiB ma
    assert.equal(proof.value.sizeBytes,size);
    assert.equal(proof.value.driveVerified,false);
    assert.equal(proof.value.fileId,undefined);
-   const forbidden=await rpc({command:'bundlePrepare',
-     bundleId:'isolated-'+kind+'-not-publishable-0001',
-     media:[{kind,id,uploadKey,sha256,sizeBytes:size,mime:'application/pdf'}],
-   });
-   assert.notEqual(forbidden.status,200,
-     'Staging a document alone must never make a business receipt/marksheet publishable');
+   const bundleId='isolated-'+kind+'-preflight-only-0001';
+   const media=[{kind,id,uploadKey,sha256,sizeBytes:size,mime:'application/pdf'}];
+   const prepared=await rpc({command:'bundlePrepare',bundleId,media});
+   assert.equal(prepared.status,200,JSON.stringify(prepared));
+   assert.equal(prepared.value.mediaReady,true);
+   assert.equal(prepared.value.archiveReady,false);
+   const refused=await rpc({command:'bundlePublish',bundleId,media,
+     mediaManifestHash:prepared.value.manifestHash,operations:[]});
+   assert.notEqual(refused.status,200,
+     'One staged school PDF alone cannot publish any business history');
+   assert.equal((await rpc({command:'head'})).value.cursor,before,
+     'Read-only preflight and refused publish cannot create a live record');
  }
  assert.equal((await rpc({command:'head'})).value.cursor,before,
    'Temporary Cloudflare file staging cannot create a live record or Drive ACK');
