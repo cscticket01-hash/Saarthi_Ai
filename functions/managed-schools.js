@@ -722,6 +722,20 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='bundle-preflight'){
+   // Existing authenticated school broker, not a new storage or sync owner.
+   // Read-only preparation does NOT mean the person/card bundle committed.
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2)
+     fail(400,'Invalid atomic media preflight request');
+   const proof=await liveSync.command(m.schoolId,{command:'bundlePrepare',
+     bundleId:b.bundleId,media:b.media});
+   if(proof?.schoolId!==m.schoolId||proof.mediaReady!==true||
+      proof.bundleProtocol!==1||!/^[a-f0-9]{64}$/.test(proof.manifestHash||'')||
+      !Array.isArray(proof.proofs)||proof.proofs.length!==b.media.length)
+     fail(502,'Atomic media readiness proof unavailable');
+   return {success:true,schoolId:m.schoolId,...proof};
+  }
   if(operation==='reconcile')return reconcileAdmission(m,25);
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
