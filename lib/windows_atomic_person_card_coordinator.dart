@@ -2,11 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
 
 import 'windows_local_firestore.dart';
 import 'windows_firebase_sync.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/atomic_bundle_pilot.dart';
+import 'windows_connect/atomic_portrait_preflight.dart';
+import 'windows_connect/managed_record_media.dart';
 
 /// Routes *existing* durable parent and PDF queues through one TEST-only
 /// atomic publication owner. It never creates another outbox, modifies source
@@ -20,10 +23,55 @@ class WindowsAtomicPersonCardCoordinator {
   static String uploadKey(String school,String cardOp) =>
     'pdf-${sha256.convert(utf8.encode(jsonEncode([school,cardOp])))}';
 
-  /// Inline portraits must remain with the existing verified Drive uploader
-  /// until a dedicated original-photo atomic bundle and receiver is deployed.
-  /// Otherwise prepareQueuedRecord would upload photo to Drive BEFORE the
-  /// supposed Cloudflare-first Person/Card atomic commit.
+  static String photoUploadKey(String school,String parentOp,String cardOp) =>
+    'photo-${sha256.convert(utf8.encode(jsonEncode([school,parentOp,cardOp])))}';
+
+  /// An unmodified, self-contained photo source can use the *same* original
+  /// school file Durable Object as the card. Remote URLs, local paths and
+  /// already bound Drive uploads remain on the existing safe legacy owner.
+  static String? inlinePortraitSource(Map data) {
+    final b=data['photoBase64'],u=data['photoUrl'];
+    if(b is String&&b.trim().isNotEmpty)return b.trim();
+    if(u is String&&u.trim().startsWith('data:image/'))return u.trim();
+    return null;
+  }
+
+  static bool canStageOriginalPortrait(Map data) {
+    final raw=inlinePortraitSource(data),b=data['photoBase64'],u=data['photoUrl'];
+    if(b!=null&&b is! String||u!=null&&u is! String)return false;
+    if(b is String&&b.trim().isNotEmpty&&
+       u is String&&u.trim().isNotEmpty&&b.trim()!=u.trim())return false;
+    if(u is String&&u.trim().isNotEmpty&&!u.trim().startsWith('data:image/'))
+      return false;
+    for(final key in const [
+      'photoFileId','photoPath','photoUri','portraitBase64','portraitUrl',
+      'portraitPath','imageBase64']) {
+      final value=data[key];
+      if(value!=null&&(value is! String||value.trim().isNotEmpty))return false;
+    }
+    // Do not accidentally omit embedded person images outside the one
+    // original top-level photo field.
+    for(final entry in data.entries) {
+      if(const ['photoUrl','photoBase64','photoMimeType'].contains(entry.key))
+        continue;
+      if(hasUnstagedInlineMedia(entry.value))return false;
+    }
+    if(raw!=null&&raw.length>12*1024*1024)return false;
+    return true;
+  }
+
+  static Uint8List originalPortraitBytes(String source) {
+    if(source.length>12*1024*1024)
+      throw const FormatException('School portrait source is too large.');
+    final bytes=source.startsWith('data:image/')
+      ? Uint8List.fromList(UriData.parse(source).contentAsBytes())
+      : Uint8List.fromList(base64Decode(source));
+    if(bytes.isEmpty||bytes.length>8*1024*1024)
+      throw const FormatException('School portrait original is too large.');
+    return bytes;
+  }
+
+  /// Non-photo nested media must never be hidden inside a record bundle.
   static bool hasUnstagedInlineMedia(Object? input,[int depth=0]){
     if(depth>12)return true;
     if(input is String)return input.trimLeft().startsWith('data:image/');
@@ -66,7 +114,7 @@ class WindowsAtomicPersonCardCoordinator {
       parent['operationId'] is String &&
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(parent['operationId']) &&
       data is Map && data['schoolId']==school &&
-      !hasUnstagedInlineMedia(data) &&
+      canStageOriginalPortrait(data) &&
       !hasUnstagedInlineMedia(parent['wireData']) &&
       data['mobileStableId'] is String &&
       (role=='student'
@@ -120,7 +168,9 @@ class WindowsAtomicPersonCardCoordinator {
           .doc(cardRef.id).get()).data();
       scope();
       if(originalParent==null||originalCard==null||
-         hasUnstagedInlineMedia(originalParent)||
+         !canStageOriginalPortrait(originalParent)||
+         inlinePortraitSource(originalParent)!=
+           inlinePortraitSource(parent['data'] as Map)||
          originalCard['documentRevision']!=card['documentRevision']||
          originalCard['localPath']!=card['localPath']||
          originalParent['mobileStableId']!=(parent['data'] as Map)['mobileStableId'])
@@ -129,8 +179,20 @@ class WindowsAtomicPersonCardCoordinator {
         // The normal outbox preparation owner binds the same immutable
         // Person snapshot; do not use an unprepared or changed wire request.
         if(canAdmit?.call()==false)return completed;
+        final photoSource=inlinePortraitSource(parent['data'] as Map);
         final prepared=await WindowsFirebaseRemote.prepareQueuedRecord(
-          parentRef.reference,parent,school);
+          parentRef.reference,parent,school,
+          if(photoSource!=null)prepareData:(source) async {
+            // Reuse the original immutable outbox wire binding and the usual
+            // non-photo media owner. Never Drive-upload the portrait before
+            // the Cloudflare-first Person + Photo + Card transaction.
+            final safe=Map<String,dynamic>.from(source)
+              ..remove('photoBase64')
+              ..remove('photoUrl')
+              ..remove('photoMimeType');
+            return prepareManagedRecord(safe,school,(action,body)=>
+              ManagedSchoolSession.callForSchool(school,action,body));
+          });
         scope();
         if(prepared==null)continue; // A verified cloud conflict owns it.
         parent=prepared;
@@ -153,16 +215,26 @@ class WindowsAtomicPersonCardCoordinator {
       if(card['contentHash'] is String&&card['contentHash']!=pdfHash)
         throw StateError('Original queued ID PDF changed before staging.');
       final key=uploadKey(school,cardOp);
-      final media=[{
+      final source=inlinePortraitSource(parent['data'] as Map);
+      final portrait=source==null?null:await compute(
+        AtomicPortraitPreflight.prepare,originalPortraitBytes(source));
+      scope();
+      final photoKey=portrait==null?null:photoUploadKey(school,parentOp,cardOp);
+      final media=<Map<String,dynamic>>[{
         'kind':'idCard','id':sha256.convert(utf8.encode(jsonEncode([school,key]))).toString(),
         'uploadKey':key,'sha256':pdfHash,'sizeBytes':bytes.length,
         'mime':'application/pdf',
+      },if(portrait!=null){
+        'kind':'photo',
+        'id':sha256.convert(utf8.encode(jsonEncode([school,photoKey]))).toString(),
+        'uploadKey':photoKey,'sha256':portrait.sha256,
+        'sizeBytes':portrait.bytes.length,'mime':portrait.mime,
       }];
       final personData=parent['wireData'] is Map?
           Map<String,dynamic>.from(parent['wireData'] as Map):
           Map<String,dynamic>.from(parent['data'] as Map);
       if(personData['schoolId']!=school||personData['mobileStableId']!=originalParent['mobileStableId']||
-         personData['_syncFieldPatch']!=null)
+         personData['_syncFieldPatch']!=null||hasUnstagedInlineMedia(personData))
         throw StateError('Original Person wire snapshot is not an atomic create.');
       final childData=<String,dynamic>{
         'schoolId':school,'studentId':id,
@@ -209,6 +281,18 @@ class WindowsAtomicPersonCardCoordinator {
         if(staged['sha256']!=media.first['sha256']||
            staged['id']!=media.first['id'])
           throw StateError('Atomic staged PDF identity changed.');
+        if(portrait!=null) {
+          if(canAdmit?.call()==false)return completed;
+          final stagedPhoto=await AtomicBundlePilot.stage(
+            school:school,kind:'photo',uploadKey:photoKey!,
+            name:'photo_${portrait.sha256}.${portrait.mime=='image/png'?'png':portrait.mime=='image/webp'?'webp':'jpg'}',
+            mime:portrait.mime,bytes:portrait.bytes,isolatedTest:true);
+          scope();
+          if(stagedPhoto['sha256']!=media[1]['sha256']||
+             stagedPhoto['id']!=media[1]['id']||
+             stagedPhoto['sizeBytes']!=media[1]['sizeBytes'])
+            throw StateError('Original portrait Cloudflare staging proof differs.');
+        }
         if(canAdmit?.call()==false)return completed;
         final published=await AtomicBundlePilot.publish(
           school:school,bundleId:boundId,operations:ops,
