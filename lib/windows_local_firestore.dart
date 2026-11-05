@@ -624,7 +624,7 @@ class FirebaseFirestore {
       throw StateError('Signed financial PDF Drive identity differs.');
     final ops=<_WriteOperation>[];
     final expectedParents=<String,Map<String,dynamic>>{};
-    final localExpected=<String,Map<String,dynamic>>{};
+    final localExpected=<String,Map<String,Map<String,dynamic>>>{};
     for(var i=0;i<count;i++){
       final entry=parents[i],prior=entry['before'],queueId=entry['queueId'];
       final local=parentLocalBefore[i],cloud=cloudRecords[i],backup=verifiedBackups[i];
@@ -644,7 +644,7 @@ class FirebaseFirestore {
          expectedParents.containsKey(queueId))
         throw StateError('Financial record lacks original signed Drive ACK.');
       expectedParents[queueId]=_encodeMap(prior);
-      (localExpected[names[i]]??=<String,dynamic>{})[
+      (localExpected[names[i]]??=<String,Map<String,dynamic>>{})[
         prior['documentId'] as String]=_encodeMap(local);
       ops.add(_WriteOperation._(type:_WriteType.delete,
         collection:'_windows_firebase_outbox',documentId:queueId,
