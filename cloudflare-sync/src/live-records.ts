@@ -32,6 +32,7 @@ export function initLive(storage:DurableObjectStorage){
  }
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,operation_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_operations(operation_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
+ storage.sql.exec('CREATE TABLE IF NOT EXISTS live_bundles(bundle_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='accepted_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN accepted_at INTEGER NOT NULL DEFAULT 0');
@@ -93,7 +94,7 @@ function retireChildren(storage:DurableObjectStorage,school:string,col:string,id
  }
  return predecessors;
 }
-export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now()):Json{
+export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
@@ -138,6 +139,42 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
   const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
+ if(command==='bundleCommit'){
+  // First safe increment of the existing live authority: atomic *record*
+  // groups. Uploaded photo/PDF bytes are not in this transaction, so media
+  // collections and people/financial lifecycles remain closed until a signed
+  // cross-lane staged-file manifest owner has been verified. No new queue.
+  demand(!withinBundle,'Nested bundle rejected');
+  demand(opId(b.bundleId)&&Array.isArray(b.operations)&&b.operations.length>=2&&b.operations.length<=5,'Invalid atomic bundle');
+  demand(b.media===undefined&&b.files===undefined&&b.fileReferences===undefined,'Media bundle staging not yet verified',412);
+  demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
+  const allowed=new Set(['school_notices','school_calendar','school_settings','school_expenses']);
+  const operationIds=new Set<string>(),recordKeys=new Set<string>();
+  for(const item of b.operations as Json[]){
+   demand(item&&typeof item==='object'&&!Array.isArray(item),'Invalid bundled record');
+   demand(Object.keys(item).every(k=>['collection','id','operation','operationId','expectedRevision','data','createIntent','deleteEverywhereVersion'].includes(k)),'Unknown bundle operation field');
+   demand(typeof item.collection==='string'&&allowed.has(item.collection),'Unverified person, document or financial bundle',412);
+   demand(validId(item.id)&&opId(item.operationId)&&typeof item.expectedRevision==='string'&&['write','delete','patch'].includes(String(item.operation)),'Invalid bundled operation');
+   const key=item.collection+'/'+item.id;
+   demand(!recordKeys.has(key)&&!operationIds.has(item.operationId),'Duplicate bundle record/operation',409);
+   recordKeys.add(key);operationIds.add(String(item.operationId));
+  }
+  const fingerprint=hash({schoolId:school,bundleId:b.bundleId,operations:b.operations});
+  return storage.transactionSync(()=>{
+   const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
+   if(prior){demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);return JSON.parse(prior.receipt) as Json;}
+   const acknowledgements=(b.operations as Json[]).map(item=>
+    liveCommand(storage,school,{...item,command:'commit'},now,true));
+   const receipt={bundleProtocol:1,liveProtocol:1,schoolId:school,bundleId:b.bundleId,
+    cloudState:'committed',backupState:acknowledgements.every(r=>r.backupState==='verified')?'verified':'pending',
+    cursor:head(),manifestHash:fingerprint,
+    acknowledgements:acknowledgements.map(r=>({operationId:r.operationId,
+      recordRevision:r.recordRevision,cloudState:r.cloudState,backupState:r.backupState,
+      cursor:r.cursor,unchanged:r.unchanged===true}))};
+   sql.exec('INSERT INTO live_bundles VALUES(?,?,?)',String(b.bundleId),fingerprint,JSON.stringify(receipt));
+   return receipt;
+  });
+ }
  if(command==='commit'){
   demand(col!=='school_settings'||b.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   collection();demand(state()?.state==='active','Verified baseline required',412);
@@ -145,7 +182,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   clean(b.data);demand(byteLength(JSON.stringify(b))<=256000,'Live record too large',413);
   demand(b.createIntent===undefined||typeof b.createIntent==='boolean','Invalid create intent');
   const fingerprint=hash({collection:col,id:b.id,operation:b.operation,operationId:b.operationId,expectedRevision:b.expectedRevision,data:b.data??null,...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(b.createIntent===true?{createIntent:true}:{})});
-  return storage.transactionSync(()=>{
+  const commitOne=()=>{
    const prior=sql.exec<{fingerprint:string;receipt:string}>('SELECT fingerprint,receipt FROM live_operations WHERE operation_id=?',String(b.operationId)).toArray()[0];
    if(prior){demand(prior.fingerprint===fingerprint,'Sync operation ID conflict',409);return JSON.parse(prior.receipt) as Json;}
    const current=row(String(b.id));
@@ -204,7 +241,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     if(owner){const parent=sql.exec<{seq:number}>("SELECT seq FROM live_backup WHERE collection=? AND id=? AND state!='verified' ORDER BY seq DESC LIMIT 1",ownerCol,String(owner.id)).toArray()[0];if(parent)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,parent.seq);}
    }
    return appended.receipt;
-  });
+  };
+  return withinBundle?commitOne():storage.transactionSync(commitOne);
  }
  if(command==='changes'){
   demand(Number.isSafeInteger(b.after)&&Number(b.after)>=0&&Number(b.after)<=head(),'Invalid cursor; snapshot required',409);
