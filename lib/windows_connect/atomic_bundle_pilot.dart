@@ -110,4 +110,75 @@ class AtomicBundlePilot {
     // A cloud receipt is NOT a Drive ACK, nor a local outbox deletion.
     return Map<String,dynamic>.from(result);
   }
+  /// Retry-safe, exact wire operation proof after transport timeout.
+  /// The original outbox remains authoritative until a local CAS transition.
+  static Future<Map<String,dynamic>> receipt({
+    required String school,required String bundleId,
+    required List<Map<String,dynamic>> operations,
+    required List<Map<String,dynamic>> media,
+    AtomicBundleRequest? request,bool isolatedTest=false,
+  }) async {
+    if((!buildEnabled&&request==null)||!isolatedTest||
+       operations.length!=2 || media.isEmpty || media.length>2 ||
+       !['students_directory','teachers_directory'].contains(operations[0]['collection']) ||
+       operations[1]['collection']!='documents' ||
+       operations.any((op)=>op['operationId'] is! String ||
+        op['id'] is! String || op['expectedRevision'] is! String ||
+        op['data'] is! Map || (op['data'] as Map)['schoolId']!=school)) {
+      throw StateError('Invalid isolated atomic receipt identity.');
+    }
+    final proof=manifest(school,bundleId,media);
+    final call=request??(action,body)=>
+      ManagedSchoolSession.callForSchool(school,action,body);
+    final response=await call('managed/live/bundle-receipt',{
+      'liveProtocol':1,'bundleId':bundleId,
+      'operations':operations,'media':media,
+      'mediaManifestHash':proof['mediaManifestHash'],
+    });
+    if(response['success']!=true||response['schoolId']!=school||
+       response['bundleProtocol']!=1 ||
+       response['found'] is! bool) {
+      throw StateError('Atomic replay receipt did not authenticate.');
+    }
+    if(response['found']==false){
+      return {'found':false,'schoolId':school,'bundleProtocol':1};
+    }
+    final receipt=response['receipt'],backups=response['backups'];
+    if(receipt is! Map || backups is! List ||
+       receipt['schoolId']!=school || receipt['bundleId']!=bundleId ||
+       receipt['cloudState']!='committed' ||
+       receipt['mediaManifestHash']!=proof['mediaManifestHash'] ||
+       receipt['mediaReady']!=true ||
+       receipt['acknowledgements'] is! List ||
+       (receipt['acknowledgements'] as List).length!=2 ||
+       backups.length!=2 || response['driveVerified'] is! bool ||
+       response['cloudState']!='committed' ||
+       response['mediaReady']!=true){
+      throw StateError('Atomic receipt does not match published records.');
+    }
+    for(var i=0;i<operations.length;i++){
+      final ack=(receipt['acknowledgements'] as List)[i],backup=backups[i];
+      if(ack is! Map || backup is! Map ||
+         ack['operationId']!=operations[i]['operationId'] ||
+         backup['operationId']!=operations[i]['operationId'] ||
+         backup['id']!=operations[i]['id'] ||
+         backup['collection']!=operations[i]['collection'] ||
+         backup['recordRevision']!=ack['recordRevision'] ||
+         ack['recordRevision'] is! String ||
+         !(ack['recordRevision'] as String).startsWith('live-') ||
+         backup['driveVerified'] is! bool ||
+         (backup['driveVerified']==true &&
+          (backup['backupState']!='verified' ||
+           backup['driveRevision'] is! String ||
+           (backup['driveRevision'] as String).isEmpty))){
+        throw StateError('Atomic receipt operation proof differs.');
+      }
+    }
+    if(response['driveVerified']==true &&
+       backups.any((item)=>item is! Map || item['driveVerified']!=true)) {
+      throw StateError('Drive backup status cannot advance partially.');
+    }
+    return Map<String,dynamic>.from(response);
+  }
+
 }

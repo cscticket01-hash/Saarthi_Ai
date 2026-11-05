@@ -275,3 +275,40 @@ test('isolated Windows file stage verifies SHA, same-school file owner and retai
  const off=fixture(health,{cloudflareSync:edge,liveSyncSchools:[A]});
  await assert.rejects(off.call(request),e=>e.status===412);
 });
+
+test('atomic bundle receipt is scoped to the school and original wire fingerprint',async()=>{
+ const bundleId='atomic-receipt-exact-wire-0001',operationId='original-atomic-receipt-operation-0001';
+ const operations=[
+  {collection:'students_directory',id:'student-1',operation:'write',
+   operationId,expectedRevision:'',data:{schoolId:A,mobileStableId:'p-'+ '8'.repeat(32)}},
+  {collection:'documents',id:'id-1',operation:'write',
+   operationId:'original-atomic-card-operation-0001',expectedRevision:'',
+   data:{schoolId:A,studentId:'student-1',personId:'p-'+ '8'.repeat(32)}}];
+ const media=[{kind:'idCard',id:'b'.repeat(64),sha256:'a'.repeat(64),
+   uploadKey:'original-card-stage-0001',sizeBytes:512,mime:'application/pdf'}];
+ const backed=operations.map(op=>({collection:op.collection,id:op.id,
+   operationId:op.operationId,recordRevision:'live-1',
+   backupState:'pending',driveVerified:false}));
+ let rpcCount=0;
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   assert.equal(s,A);assert.equal(l,'live');
+   assert.equal(b.command,'bundleReceipt');rpcCount++;
+   return {found:true,bundleProtocol:1,schoolId:s,cloudState:'committed',
+     mediaReady:true,driveVerified:false,backups:backed,
+     receipt:{schoolId:s,bundleId,cloudState:'committed',mediaReady:true,
+       acknowledgements:backed.map(x=>({operationId:x.operationId,recordRevision:x.recordRevision}))}};
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const request={action:'managed/live/bundle-receipt',liveProtocol:1,
+   bundleId,media,operations,mediaManifestHash:'f'.repeat(64)};
+ const res=await f.call(request);
+ assert.equal(res.success,true);assert.equal(res.found,true);
+ assert.equal(res.driveVerified,false);assert.equal(rpcCount,1);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403||e.status===412);
+ await assert.rejects(f.call({...request,bundleId:'bad'}),e=>e.status===400);
+ assert.equal(rpcCount,1);
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ assert.equal(rpcCount,1);
+});

@@ -68,4 +68,46 @@ void main(){
       'bundleProtocol':1,'mediaReady':true,'cloudflareAccepted':true,
       'media':media}),throwsStateError);
  });
+
+ test('exact immutable replay receipt keeps Cloudflare and Drive status separate',() async {
+   final manifest=AtomicBundlePilot.manifest(school,bundle,[media]);
+   final response={
+     'success':true,'schoolId':school,'bundleProtocol':1,'found':true,
+     'cloudState':'committed','mediaReady':true,'driveVerified':false,
+     'receipt':{
+       'schoolId':school,'bundleId':bundle,'cloudState':'committed',
+       'mediaReady':true,'mediaManifestHash':manifest['mediaManifestHash'],
+       'acknowledgements':[
+         for(final op in operations)
+          {'operationId':op['operationId'],'recordRevision':'live-123'}],
+     },
+     'backups':[
+       for(final op in operations)
+       {'operationId':op['operationId'],'collection':op['collection'],
+        'id':op['id'],'recordRevision':'live-123',
+        'backupState':'pending','driveVerified':false}],
+   };
+   final recorded=<String>[];
+   final result=await AtomicBundlePilot.receipt(
+     school:school,bundleId:bundle,operations:operations,media:[media],
+     isolatedTest:true,request:(action,body)async{
+       recorded.add(action);
+       expect(body['mediaManifestHash'],manifest['mediaManifestHash']);
+       return response;
+     });
+   expect(result['driveVerified'],false);
+   expect(recorded,['managed/live/bundle-receipt']);
+   final wrong={...response,'backups':[
+     {...(response['backups'] as List).first as Map,'id':'foreign-card'},
+     (response['backups'] as List).last,
+   ]};
+   await expectLater(AtomicBundlePilot.receipt(
+     school:school,bundleId:bundle,operations:operations,media:[media],
+     isolatedTest:true,request:(a,b)async=>wrong),throwsStateError);
+   final falseDrive={...response,'driveVerified':true};
+   await expectLater(AtomicBundlePilot.receipt(
+     school:school,bundleId:bundle,operations:operations,media:[media],
+     isolatedTest:true,request:(a,b)async=>falseDrive),throwsStateError);
+ });
+
 }
