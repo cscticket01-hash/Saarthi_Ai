@@ -544,8 +544,18 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    sql.exec("UPDATE live_backup SET state='verified',drive_revision=?,claim='',claim_until=0,due=?,verified_at=? WHERE seq=?",b.driveRevision,Number.MAX_SAFE_INTEGER,now,job.seq);
    sql.exec('UPDATE live_records SET drive_revision=? WHERE collection=? AND id=?',b.driveRevision,job.collection,job.id);
-   const reference={...receipt,backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,payloadHash:payloadHash(finalBody),reconcileRequired:true,retainedUntil:now+cloudflareVerifiedRetentionMs};
+   const reference={...receipt,
+    ...(b.archiveFiles!==undefined?{record:finalBody}:{}),
+    backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,
+    payloadHash:payloadHash(finalBody),reconcileRequired:true,
+    retainedUntil:now+cloudflareVerifiedRetentionMs};
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(reference),job.seq);
+   if(b.archiveFiles!==undefined){
+    // A verified archive enriches the original immutable operation's media
+    // pointer. Otherwise the receipt would expose old bytes with a new hash.
+    sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.record',json(?)) WHERE json_extract(receipt,'$.recordRevision')=?",
+      canonical(finalBody),String(receipt.recordRevision));
+   }
    sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),now+cloudflareVerifiedRetentionMs,String(receipt.recordRevision));
    const metadata=JSON.parse((job as Job&{request_metadata:string}).request_metadata||'{}');
    if(job.operation==='delete'&&metadata.deleteEverywhereVersion===1){
