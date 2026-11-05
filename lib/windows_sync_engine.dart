@@ -10,6 +10,7 @@ import 'windows_school_identity.dart';
 import 'windows_person_card_sync.dart';
 import 'windows_connect/atomic_bundle_pilot.dart';
 import 'windows_atomic_person_card_coordinator.dart';
+import 'windows_atomic_financial_coordinator.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_sync_inbox.dart';
 import 'sync_latency_statistics.dart';
@@ -2373,6 +2374,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             _admitBatch();
             await _measure('atomicPersonCardStage',()=>
               WindowsAtomicPersonCardCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Reuse the same saved fee/ledger/receipt outboxes; only the
+            // isolated TEST owner can reserve or retire a complete triple.
+            _admitBatch();
+            await _measure('atomicFinancialStage',()=>
+              WindowsAtomicFinancialCoordinator.run(
                 _activeSchoolSyncId,canAdmit:()=>!isPaused));
           }
           await _measure('recordUploadStage', () => _pushManagedOutbox());
