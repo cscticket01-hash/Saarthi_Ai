@@ -31,7 +31,8 @@ export class SyncLane extends DurableObject<Env>{
     // Read-only preflight on the existing per-file DOs. No new file queue,
     // no new record authority and, crucially, NO bundle commit/visible ACK.
     demand(/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))&&Array.isArray(b.media)&&
-      b.media.length>=1&&b.media.length<=2,'Invalid media bundle manifest');
+      b.media.length>=1&&b.media.length<=2&&
+      (b.requireDrive===undefined||typeof b.requireDrive==='boolean'),'Invalid media bundle manifest');
     const media=b.media as Json[],seen=new Set<string>(),ids=new Set<string>(),proofs:Json[]=[];
     for(const item of media){
      demand(item&&typeof item==='object'&&!Array.isArray(item)&&
@@ -50,17 +51,21 @@ export class SyncLane extends DurableObject<Env>{
        !ids.has(id),'Media size, kind or digest rejected',413);
      seen.add(kind);ids.add(id);
      const proof=await this.env.LANES.getByName(school+'/file-'+id)
-       .command(school,'file-'+id,{command:'bundleProof',id}) as Json;
+       .command(school,'file-'+id,{command:'bundleProof',id,requireDrive:b.requireDrive===true}) as Json;
      demand(proof.staged===true&&proof.version===1&&proof.schoolId===school&&
        proof.id===id&&proof.uploadKey===item.uploadKey&&
        proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
-       proof.mime===item.mime,'Staged file bytes do not match bundle manifest',409);
-     proofs.push({kind,id,sha256:proof.sha256,sizeBytes:proof.sizeBytes,mime:proof.mime});
+       proof.mime===item.mime&&
+       (b.requireDrive!==true||proof.driveVerified===true&&
+        typeof proof.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(proof.fileId)),
+       'Staged file bytes or Drive receipt do not match bundle manifest',409);
+     proofs.push({kind,id,sha256:proof.sha256,sizeBytes:proof.sizeBytes,mime:proof.mime,
+       driveVerified:proof.driveVerified===true,...(proof.driveVerified===true?{fileId:proof.fileId}:{})});
     }
     demand(seen.has('idCard'),'An ID card PDF is required for person bundle',412);
     const manifestHash=await digest(canonical({schoolId:school,bundleId:b.bundleId,media:media}));
     return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
-      mediaReady:true,manifestHash,proofs};
+      mediaReady:true,archiveReady:b.requireDrive===true,manifestHash,proofs};
    }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b);
