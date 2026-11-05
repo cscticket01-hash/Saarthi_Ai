@@ -635,3 +635,30 @@ test('fee payment, ledger and PDF share one original school DO commit; exam resu
     mediaManifestHash},B)).status,412,'Another school cannot borrow this staged PDF');
  }
 });
+
+
+test('financial school PDF cannot be read after its original document is deleted',async()=>{
+ const bundleId='financial-school-atomic-receipt-0001';
+ const documentId='FEE-finance-atomic-001';
+ const role='feeReceipt',personId='p-'+'8'.repeat(32);
+ const before=await rpc({command:'ownerFinancialBundle',role,personId,documentId});
+ assert.equal(before.status,200,JSON.stringify(before));
+ assert.equal(before.value.found,true);
+ assert.equal(before.value.kind,'receipt');
+ const foreign=await rpc({command:'ownerFinancialBundle',role,
+   personId:'p-'+'9'.repeat(32),documentId});
+ assert.equal(foreign.status,200);
+ assert.equal(foreign.value.found,false);
+ const doc=(await rpc({command:'read',collection:'documents',id:documentId})).value.record;
+ assert.equal(doc.bundleId,bundleId);
+ const deleted=await rpc({command:'commit',collection:'documents',id:documentId,
+   operation:'delete',operationId:'financial-school-receipt-delete-0001',
+   expectedRevision:doc._syncRevision});
+ assert.equal(deleted.status,200,JSON.stringify(deleted));
+ const retired=await rpc({command:'ownerFinancialBundle',role,personId,documentId});
+ assert.equal(retired.status,200);
+ assert.equal(retired.value.found,false);
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'receipt',
+   id:before.value.id})).status,409,
+   'Deleted original cannot authorize stale Cloudflare PDF bytes');
+});
