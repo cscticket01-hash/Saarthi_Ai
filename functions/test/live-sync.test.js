@@ -312,3 +312,39 @@ test('atomic bundle receipt is scoped to the school and original wire fingerprin
  await assert.rejects(f.call(request),e=>e.status===403);
  assert.equal(rpcCount,1);
 });
+
+test('TEST atomic portrait rejects forged JPEG and MIME before starting a school upload',async()=>{
+ const {createHash}=require('node:crypto');
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push({s,l,command:b.command});
+   return {};
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A],cloudflareAllDataEnabled:true,
+   cloudflareAtomicSmallFiles:true});
+ async function rejectsPhoto(bytes,mime,name,expected=400){
+   const request={
+     action:'managed/live/bundle-stage',liveProtocol:1,schoolId:A,
+     kind:'photo',uploadKey:'atomic-photo-invalid-container-0001',
+     name,mime,sizeBytes:bytes.length,
+     sha256:createHash('sha256').update(bytes).digest('hex'),
+     base64:bytes.toString('base64'),
+   };
+   await assert.rejects(f.call(request),e=>e.status===expected);
+ }
+ await rejectsPhoto(Buffer.alloc(64,11),'image/jpeg','face.jpg');
+ const abbreviated=Buffer.alloc(64,0);
+ abbreviated.set([0xff,0xd8,0xff,0xe1],0);
+ await rejectsPhoto(abbreviated,'image/jpeg','face.jpg');
+ const basic=Buffer.alloc(64,0);
+ basic.set([0xff,0xd8,0xff,0xe1],0);
+ basic.set([0xff,0xd9],basic.length-2);
+ await rejectsPhoto(basic,'image/jpeg','face.png');
+ await rejectsPhoto(basic,'image/png','face.png');
+ const oversized=Buffer.alloc(40*1024+1,0);
+ oversized.set([0xff,0xd8,0xff,0xe1],0);
+ oversized.set([0xff,0xd9],oversized.length-2);
+ await rejectsPhoto(oversized,'image/jpeg','face.jpg');
+ assert.equal(calls.length,0,'Rejected photo never reaches Cloudflare');
+});
