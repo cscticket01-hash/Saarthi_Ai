@@ -345,6 +345,8 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.equal(commit.value.mediaReady,true);
  assert.equal(commit.value.archiveReady,false);
  assert.equal(commit.value.backupState,'pending');
+ assert.equal((await rpc({command:'bundleArchive',bundleId})).status,412,
+  'Drive metadata backup must wait for the actual file-lane Drive proof');
  assert.equal(commit.value.cursor,before+2);
  const doc=(await rpc({command:'read',collection:'documents',id:'card-stage-first'})).value.record;
  assert.equal(doc.bundleId,bundleId);
@@ -423,6 +425,11 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  assert.equal(mediaCapability.status,200);
  assert.equal(mediaCapability.value.sha256,sha256);
  assert.equal(mediaCapability.value.fileId,fileId);
+ const archiveHandoff=await rpc({command:'bundleArchive',bundleId});
+ assert.equal(archiveHandoff.status,200,JSON.stringify(archiveHandoff));
+ assert.equal(archiveHandoff.value.archiveReady,true);
+ assert.equal(archiveHandoff.value.files[0].fileId,fileId);
+ assert.equal(archiveHandoff.value.mediaManifestHash,mediaManifestHash);
  const owner=await rpc({command:'ownerBundle',role:'student',personId:generation});
  assert.equal(owner.status,200);
  assert.equal(owner.value.found,true);

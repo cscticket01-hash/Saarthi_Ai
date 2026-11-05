@@ -188,3 +188,45 @@ test('Android atomic ID PDF only reaches the mobile session owner of its publish
  const off=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
  await assert.rejects(off.call(request),e=>e.status===412);
 });
+
+test('atomic document Drive backup waits for every staged file proof and enriches only after verification',async()=>{
+ const sha='d'.repeat(64),id='b'.repeat(64),bundleId='atomic-document-drive-barrier-0001';
+ const media=[{kind:'idCard',id,sha256:sha,sizeBytes:1024,mime:'application/pdf'}];
+ const data={schoolId:A,studentId:'p1',personId:'p-stable',
+   ownerRole:'student',bundleId,bundleManifestHash:'f'.repeat(64),
+   bundleMedia:media,documentKind:'idCard'};
+ let archived=false,delivered=0;
+ const finishes=[],rpc=async(s,l,request)=>{
+  if(request.command==='backupClaim')return {job:{seq:1,claim:'claim-once',
+    request:{action:'managed_records',collection:'documents',id:'card-1',
+      operation:'write',operationId:'atomic-card-backup-0001',syncProtocol:2,
+      expectedRecordRevision:'',data:{...data,bundleMedia:media.map(f=>({...f}))}}}};
+  if(request.command==='bundleArchive'){
+   if(!archived)throw Object.assign(Error('Drive media unverified'),{status:412});
+   return {bundleProtocol:1,schoolId:A,bundleId,
+     mediaManifestHash:data.bundleManifestHash,archiveReady:true,
+     files:[{...media[0],fileId:'drive-original-file-1'}]};
+  }
+  if(request.command==='backupFinish'){finishes.push(request);return {accepted:true};}
+  throw Error('unexpected '+request.command);
+ };
+ const live=createLiveSync({edge:{enabled:()=>true,rpc},schools:[A],now:()=>100000});
+ const deliver=async request=>{
+  delivered++;
+  assert.equal(request.data.fileId,'drive-original-file-1');
+  assert.equal(request.data.bundleMedia[0].sha256,sha);
+  return {success:true,schoolId:A,syncProtocol:2,recordRevision:'real-drive-revision',
+   record:{...request.data,_syncOperationId:request.operationId,
+     _syncRevision:'real-drive-revision'}};
+ };
+ assert.equal((await live.drain(A,deliver)).processed,0);
+ assert.equal(delivered,0,'Never send unarchived file IDs to school Script');
+ assert.equal(finishes.at(-1).verified,false);
+ assert.equal(finishes.at(-1).review,false);
+ archived=true;
+ assert.equal((await live.drain(A,deliver)).processed,1);
+ assert.equal(delivered,1);
+ assert.equal(finishes.at(-1).verified,true);
+ assert.equal(finishes.at(-1).archiveFiles[0].fileId,'drive-original-file-1');
+ assert.equal(finishes.at(-1).driveRevision,'real-drive-revision');
+});
