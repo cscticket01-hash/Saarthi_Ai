@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'windows_local_firestore.dart';
@@ -167,7 +168,7 @@ class WindowsAtomicPersonCardCoordinator {
         final staged=await AtomicBundlePilot.stage(
           school:school,kind:'idCard',uploadKey:key,
           name:childData['fileName'] as String,mime:'application/pdf',
-          bytes:bytes,isolatedTest:true);
+          bytes:Uint8List.fromList(bytes),isolatedTest:true);
         if(staged['sha256']!=media.first['sha256']||
            staged['id']!=media.first['id'])
           throw StateError('Atomic staged PDF identity changed.');
