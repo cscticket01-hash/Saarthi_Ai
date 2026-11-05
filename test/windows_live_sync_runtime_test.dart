@@ -230,7 +230,7 @@ void main(){
     'cursor':101,'head':101,'more':false,'events':bundle,
   },school,99));
   final first=await store.pending();
-  expect(first.length,99,'a 2-record bundle cannot be split by the 100 cap');
+  expect(first.length,99,reason:'a 2-record bundle cannot be split by the 100 cap');
   expect(first.every((entry)=>entry.bundleId==null),isTrue);
   await store.applied(first);
   final second=await store.pending();
