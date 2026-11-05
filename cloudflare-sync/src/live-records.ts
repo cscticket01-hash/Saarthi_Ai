@@ -525,7 +525,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      demand(old[i].kind===next[i].kind&&old[i].id===next[i].id&&
        old[i].sha256===next[i].sha256&&old[i].sizeBytes===next[i].sizeBytes&&
        old[i].mime===next[i].mime&&
-       typeof next[i].fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(next[i].fileId)&&
+       typeof next[i].fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(String(next[i].fileId))&&
        (old[i].fileId===undefined||old[i].fileId===next[i].fileId),
        'Archive cannot replace staged bytes or original Drive identity',409);
     }
