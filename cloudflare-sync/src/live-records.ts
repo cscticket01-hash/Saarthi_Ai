@@ -208,7 +208,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      'Person and ID document must commit as one ordered pair',412);
    const person=ops[0],document=ops[1],parent=person.data as Json,child=document.data as Json;
    demand(parent&&child&&parent.schoolId===school&&child.schoolId===school&&
-     !Object.hasOwn(parent,'bundleMedia')&&!Object.hasOwn(child,'bundleMedia'),
+     !Object.hasOwn(parent,'bundleMedia')&&!Object.hasOwn(child,'bundleMedia')&&
+     !Object.hasOwn(parent,'bundleId')&&!Object.hasOwn(child,'bundleId'),
      'Client cannot supply verified media metadata',403);
    const teacher=person.collection==='teachers_directory';
    const generation=String(parent.mobileStableId||person.id);
@@ -249,7 +250,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
      ...(verifiedMedia&&index===1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
-       bundleManifestHash:b.mediaManifestHash,fileId:archiveFiles[0].fileId}}:{})},
+       bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,fileId:archiveFiles[0].fileId}}:{})},
        now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));
    // A no-op or offline duplicate can produce no event. It must never
    // count towards the number of visible records promised by a bundle.

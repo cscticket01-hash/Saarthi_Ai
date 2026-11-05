@@ -366,6 +366,7 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  const saved=(await rpc({command:'read',collection:'documents',id:document.id})).value.record;
  assert.equal(saved.bundleMedia[0].fileId,fileId);
  assert.equal(saved.bundleManifestHash,mediaManifestHash);
+ assert.equal(saved.bundleId,bundleId,'document keeps the server-attested bundle lookup identity');
  const mediaCapability=await rpc({command:'bundleMedia',bundleId,kind:'idCard',id});
  assert.equal(mediaCapability.status,200);
  assert.equal(mediaCapability.value.sha256,sha256);
