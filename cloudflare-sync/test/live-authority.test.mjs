@@ -256,7 +256,7 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
  assert.equal(pair.status,200,JSON.stringify(pair));
  assert.equal(pair.value.proofs.length,2);
  assert.equal((await rpc({...body,media:[photo]})).status,412,'photo-only is never a card bundle');
- assert.equal((await rpc({...body,media:[card,card]})).status,400,'duplicate card is rejected');
+ assert.equal((await rpc({...body,media:[card,card]})).status,409,'duplicate card is rejected');
  assert.equal((await rpc({...body,media:[card,{...photo,sha256:'a'.repeat(64)}]})).status,409,
   'forged digest cannot authorize staged media');
  assert.equal((await rpc({...body,media:[{...card,sizeBytes:85*1024+1}]})).status,413);
