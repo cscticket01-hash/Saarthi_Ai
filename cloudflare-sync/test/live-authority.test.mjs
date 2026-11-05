@@ -496,3 +496,52 @@ test('atomic replay pages never split a bundle at their byte budget or deliver a
  assert.deepEqual((await rpc(group)).value,receipt.value,'replay does not create new events');
  assert.equal((await rpc({command:'head'})).value.cursor,before+3);
 });
+
+
+test('one existing school file owner proves exact 30 KiB receipts and 150 KiB marksheets without visible bundles',async()=>{
+ async function fileCall(lane,body){
+   const raw=JSON.stringify({...body,schoolId:A,lane});
+   const time=String(Date.now());
+   const response=await mf.dispatchFetch('https://worker.invalid/internal',{
+     method:'POST',headers:{
+       'content-type':'application/json','x-vidya-time':time,
+       'x-vidya-signature':createHmac('sha256',key)
+         .update(time+'\\n'+raw).digest('hex'),
+     },body:raw,
+   });
+   return {status:response.status,...await response.json()};
+ }
+ const before=(await rpc({command:'head'})).value.cursor;
+ for(const [kind,size] of [['receipt',30*1024],['marksheet',150*1024]]){
+   const bytes=Buffer.alloc(size,32);
+   bytes.write('%PDF-1.7',0,'ascii');
+   bytes.write('%%EOF',size-5,'ascii');
+   const uploadKey='isolated-'+kind+'-stage-original-0001';
+   const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+   const sha256=createHash('sha256').update(bytes).digest('hex');
+   const staged=await fileCall('file-'+id,{
+     command:'putSmall',id,manifest:{
+       uploadKey,sha256,sizeBytes:size,name:kind+'.pdf',
+       mime:'application/pdf',
+     },base64:bytes.toString('base64'),
+   });
+   assert.equal(staged.status,200,JSON.stringify(staged));
+   const proof=await fileCall('file-'+id,{
+     command:'bundleProof',id,requireDrive:false,
+   });
+   assert.equal(proof.status,200,JSON.stringify(proof));
+   assert.equal(proof.value.staged,true);
+   assert.equal(proof.value.sha256,sha256);
+   assert.equal(proof.value.sizeBytes,size);
+   assert.equal(proof.value.driveVerified,false);
+   assert.equal(proof.value.fileId,undefined);
+   const forbidden=await rpc({command:'bundlePrepare',
+     bundleId:'isolated-'+kind+'-not-publishable-0001',
+     media:[{kind,id,uploadKey,sha256,sizeBytes:size,mime:'application/pdf'}],
+   });
+   assert.notEqual(forbidden.status,200,
+     'Staging a document alone must never make a business receipt/marksheet publishable');
+ }
+ assert.equal((await rpc({command:'head'})).value.cursor,before,
+   'Temporary Cloudflare file staging cannot create a live record or Drive ACK');
+});
