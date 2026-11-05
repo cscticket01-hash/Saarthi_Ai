@@ -27,6 +27,41 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
+   if(b.command==='bundlePrepare'){
+    // Read-only preflight on the existing per-file DOs. No new file queue,
+    // no new record authority and, crucially, NO bundle commit/visible ACK.
+    demand(operationPattern.test(String(b.bundleId||''))&&Array.isArray(b.media)&&
+      b.media.length>=1&&b.media.length<=2,'Invalid media bundle manifest');
+    const media=b.media as Json[],seen=new Set<string>(),ids=new Set<string>(),proofs:Json[]=[];
+    for(const item of media){
+     demand(item&&typeof item==='object'&&!Array.isArray(item)&&
+       Object.keys(item).every(k=>['kind','id','uploadKey','sha256','sizeBytes','mime'].includes(k)),
+       'Invalid media proof request');
+     const kind=String(item.kind||''),id=String(item.id||'');
+     demand(['idCard','photo'].includes(kind)&&!seen.has(kind)&&
+       operationPattern.test(id)&&typeof item.uploadKey==='string'&&
+       /^[A-Za-z0-9_-]{1,150}$/.test(item.uploadKey)&&
+       id===await digest(JSON.stringify([school,item.uploadKey])),'Untrusted staged file identity',409);
+     const allowed=kind==='idCard'?item.mime==='application/pdf'&&
+       Number.isSafeInteger(item.sizeBytes)&&Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=85*1024:
+       ['image/jpeg','image/png','image/webp'].includes(String(item.mime))&&
+       Number.isSafeInteger(item.sizeBytes)&&Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=40*1024;
+     demand(allowed&&typeof item.sha256==='string'&&operationPattern.test(item.sha256)&&
+       !ids.has(id),'Media size, kind or digest rejected',413);
+     seen.add(kind);ids.add(id);
+     const proof=await this.env.LANES.getByName(school+'/file-'+id)
+       .command(school,'file-'+id,{command:'bundleProof',id}) as Json;
+     demand(proof.staged===true&&proof.version===1&&proof.schoolId===school&&
+       proof.id===id&&proof.uploadKey===item.uploadKey&&
+       proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
+       proof.mime===item.mime,'Staged file bytes do not match bundle manifest',409);
+     proofs.push({kind,id,sha256:proof.sha256,sizeBytes:proof.sizeBytes,mime:proof.mime});
+    }
+    demand(seen.has('idCard'),'An ID card PDF is required for person bundle',412);
+    const manifestHash=await digest(canonical({schoolId:school,bundleId:b.bundleId,media:media}));
+    return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+      mediaReady:true,manifestHash,proofs};
+   }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b);
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
