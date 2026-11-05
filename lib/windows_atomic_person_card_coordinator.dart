@@ -50,7 +50,7 @@ class WindowsAtomicPersonCardCoordinator {
       card['documentRevision']!=parent['operationId'] &&
       (card['optimizedMimeType']??card['mimeType'])=='application/pdf' &&
       (card['optimizedPath']??card['localPath']) is String &&
-      (card['optimizedPath']??card['localPath'] as String).toString().isNotEmpty;
+      ((card['optimizedPath']??card['localPath']) as String).isNotEmpty;
   }
 
   static Future<int> run(String school,{bool Function()? canAdmit}) async {

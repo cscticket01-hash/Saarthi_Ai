@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_connect/atomic_bundle_pilot.dart';
+import '../lib/windows_atomic_person_card_coordinator.dart';
 
 void main(){
  const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -108,6 +109,46 @@ void main(){
    await expectLater(AtomicBundlePilot.receipt(
      school:school,bundleId:bundle,operations:operations,media:[media],
      isolatedTest:true,request:(a,b)async=>falseDrive),throwsStateError);
+ });
+
+
+ test('isolated outbox selector admits only exact same-school Person + ID Card creates',(){
+   final parent={'schoolId':school,'collection':'students_directory',
+     'operation':'set','documentId':'student-one',
+     'operationId':'original-person-operation-0001','baseCloudRevision':'',
+     'syncState':'pending',
+     'data':{'schoolId':school,'mobileStableId':'p-'+'8'*32}};
+   final doc={'schoolId':school,'documentId':'card-one',
+     'documentRevision':'original-card-revision-0001',
+     'documentKind':'idCard','deleted':false,'baseCloudRevision':'',
+     'ownerRole':'student','personId':'p-'+'8'*32,
+     'studentId':'student-one','optimizedMimeType':'application/pdf',
+     'optimizedPath':'/isolated/student-card.pdf'};
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,parent,doc),isTrue);
+   for(final bad in <Map<String,dynamic>>[
+     {...doc,'schoolId':'vs-'+'f'*32},
+     {...doc,'documentKind':'feeReceipt'},
+     {...doc,'personId':'p-'+'9'*32},
+     {...doc,'studentId':'other'},
+     {...doc,'deleted':true},
+     {...doc,'baseCloudRevision':'already-in-drive'},
+     {...doc,'optimizedMimeType':'image/jpeg'},
+     {...doc,'optimizedPath':''},
+   ]){
+     expect(WindowsAtomicPersonCardCoordinator.matches(school,parent,bad),isFalse);
+   }
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...parent,'baseCloudRevision':'existing'},doc),isFalse);
+   final key=WindowsAtomicPersonCardCoordinator.uploadKey(
+      school,doc['documentRevision'] as String);
+   final bundle=WindowsAtomicPersonCardCoordinator.bundleId(
+      school,parent['operationId'] as String,doc['documentRevision'] as String);
+   expect(RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundle),isTrue);
+   expect(RegExp(r'^[A-Za-z0-9_-]{1,150}$').hasMatch(key),isTrue);
+   expect(bundle,WindowsAtomicPersonCardCoordinator.bundleId(school,
+     parent['operationId'] as String,doc['documentRevision'] as String));
+   expect(bundle,isNot(WindowsAtomicPersonCardCoordinator.bundleId(
+     school,parent['operationId'] as String,'changed-card-revision-0002')));
  });
 
 }
