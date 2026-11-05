@@ -371,6 +371,15 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  assert.equal(mediaCapability.status,200);
  assert.equal(mediaCapability.value.sha256,sha256);
  assert.equal(mediaCapability.value.fileId,fileId);
+ const owner=await rpc({command:'ownerBundle',role:'student',personId:generation});
+ assert.equal(owner.status,200);
+ assert.equal(owner.value.found,true);
+ assert.equal(owner.value.bundleId,bundleId);
+ assert.equal(owner.value.sha256,sha256);
+ assert.equal(owner.value.noPhoto,true);
+ assert.equal((await rpc({command:'ownerBundle',role:'teacher',personId:generation})).value.found,false);
+ assert.equal(mediaCapability.value.ownerRole,'student');
+ assert.equal(mediaCapability.value.personId,generation);
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',id})).status,403);
  assert.equal((await rpc({command:'bundleMedia',bundleId:'missing-published-bundle-0001',kind:'idCard',id})).status,404);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);

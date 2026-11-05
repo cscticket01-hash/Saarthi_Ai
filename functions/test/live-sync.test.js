@@ -151,3 +151,38 @@ test('published atomic media read is TEST-scoped, licensed and checks original C
  },liveSyncSchools:[A],atomicBundleTestSchools:[A]});
  await assert.rejects(corrupted.call(request),e=>e.status===502);
 });
+
+test('Android atomic ID PDF only reaches the mobile session owner of its published bundle',async()=>{
+ const bytes=Buffer.from('%PDF-1.7\\nOwn ID only\\n%%EOF','utf8');
+ const sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const bundleId='mobile-owner-bundle-00000001',id='d'.repeat(64);
+ let identity='verified-pupil';
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  if(b.command==='ownerBundle')return {bundleProtocol:1,schoolId:s,found:true,
+    bundleId,id,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length};
+  if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+    bundleId,id,kind:'idCard',sha256:sha,mime:'application/pdf',
+    sizeBytes:bytes.length,ownerRole:'student',personId:identity,archiveReady:true};
+  if(b.command==='bundleProof')return {version:1,schoolId:s,
+    id,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length,staged:true};
+  if(b.command==='readPart')return {offset:0,sizeBytes:bytes.length,
+    sha256:sha,base64:bytes.toString('base64')};
+  throw Error('unexpected call: '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ const request={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_idcard',sessionToken:'s'.repeat(64),
+      deviceId:'device-for-valid-mobile-session-0001'}};
+ const answer=await f.call(request);
+ assert.equal(answer.available,true);
+ assert.equal(answer.contentHash,sha);
+ assert.equal(answer.documentRevision,'atomic-'+bundleId);
+ assert.equal(Buffer.from(answer.base64,'base64').toString(),bytes.toString());
+ identity='another-student';
+ await assert.rejects(f.call(request),e=>e.status===403);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ const off=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(off.call(request),e=>e.status===412);
+});
