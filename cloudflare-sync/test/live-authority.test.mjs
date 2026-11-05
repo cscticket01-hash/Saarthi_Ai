@@ -373,3 +373,34 @@ test('Sync3 archived person and document publish as one Ready transaction, never
   {...document,data:{...document.data,name:'forged change'}}]})).status,409);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);
 });
+
+
+test('atomic replay pages never split a bundle at their byte budget or deliver a partial cursor',async()=>{
+ const before=(await rpc({command:'head'})).value.cursor;
+ const large={command:'commit',collection:'school_expenses',id:'budget-previous-record',
+  operation:'write',operationId:'budget-previous-write-00001',expectedRevision:'',
+  data:{schoolId:A,amount:1,description:'p'.repeat(220000)}};
+ assert.equal((await rpc(large)).status,200);
+ const op=id=>({collection:'school_expenses',id,operation:'write',
+  operationId:'budget-atomic-'+id+'-0001',expectedRevision:'',
+  data:{schoolId:A,amount:2,description:'q'.repeat(55000)}});
+ const group={command:'bundleCommit',bundleId:'budget-atomic-bundle-id-0001',
+  operations:[op('budget-bundle-first'),op('budget-bundle-second')]};
+ const receipt=await rpc(group);
+ assert.equal(receipt.status,200,JSON.stringify(receipt));
+ assert.equal(receipt.value.cursor,before+3);
+ const first=(await rpc({command:'changes',after:before})).value;
+ assert.equal(first.events.length,1,'first page must stop before the entire 2-record bundle');
+ assert.equal(first.cursor,before+1);
+ assert.equal(first.more,true);
+ const next=(await rpc({command:'changes',after:first.cursor})).value;
+ assert.deepEqual(next.events.map(e=>e.id),['budget-bundle-first','budget-bundle-second']);
+ assert.deepEqual(next.events.map(e=>e.bundleIndex),[0,1]);
+ assert.deepEqual(next.events.map(e=>e.bundleSize),[2,2]);
+ assert.ok(next.events.every(e=>e.bundleId===group.bundleId));
+ assert.equal(next.cursor,before+3);
+ assert.equal((await rpc({command:'changes',after:before+2})).status,409,
+  'a previously broken peer cursor may not resume in the middle of a bundle');
+ assert.deepEqual((await rpc(group)).value,receipt.value,'replay does not create new events');
+ assert.equal((await rpc({command:'head'})).value.cursor,before+3);
+});

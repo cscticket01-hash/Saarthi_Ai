@@ -31,6 +31,12 @@ export function initLive(storage:DurableObjectStorage){
   for(const row of storage.sql.exec<Row>("SELECT * FROM live_records WHERE body!=''").toArray())storage.sql.exec('UPDATE live_records SET payload_hash=? WHERE collection=? AND id=?',payloadHash(JSON.parse(row.body)),row.collection,row.id);
  }
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,operation_id TEXT UNIQUE NOT NULL,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
+ // Existing replicas get the new event boundary columns without dropping any history.
+ for(const [name,definition] of [['bundle_id','TEXT'],['bundle_size','INTEGER NOT NULL DEFAULT 0'],['bundle_index','INTEGER NOT NULL DEFAULT -1']] as const){
+  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_events)').toArray().some(c=>c.name===name))
+   storage.sql.exec('ALTER TABLE live_events ADD COLUMN '+name+' '+definition);
+ }
+ storage.sql.exec('CREATE INDEX IF NOT EXISTS live_events_bundle ON live_events(bundle_id) WHERE bundle_id IS NOT NULL');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_operations(operation_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_bundles(bundle_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,receipt TEXT NOT NULL)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
@@ -54,11 +60,11 @@ function findOwner(storage:DurableObjectStorage,col:string,id:string):Json|null 
  const matches=storage.sql.exec<{body:string}>("SELECT body FROM live_record_owners WHERE collection=? AND (json_extract(body,'$.mobileStableId')=? OR json_extract(body,'$.teacherId')=? OR json_extract(body,'$._syncDeletedOwner')=?) LIMIT 2",col,id,id,id).toArray();
  demand(matches.length<=1,'Ambiguous parent identity',409);return matches.length?JSON.parse(matches[0].body) as Json:null;
 }
-function appendLive(storage:DurableObjectStorage,school:string,col:string,id:string,operationId:string,operation:string,data:Json,now:number,fingerprint:string,metadata:Json={}){
+function appendLive(storage:DurableObjectStorage,school:string,col:string,id:string,operationId:string,operation:string,data:Json,now:number,fingerprint:string,metadata:Json={},bundleId:string|null=null,bundleSize=0,bundleIndex=-1){
  const sql=storage.sql,current=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',col,id).toArray()[0];
  const revision='live-'+randomUUID(),lifecycle=Object.fromEntries(Object.entries(data).filter(([key])=>['_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations'].includes(key)));
  data={...business(data),...lifecycle,...(operation==='delete'?{_syncDeleted:true}:{}),schoolId:school,_syncRevision:revision,_syncOperationId:operationId};const body=canonical(data);
- sql.exec('INSERT INTO live_events(collection,id,body,operation_id,fingerprint,receipt) VALUES(?,?,?,?,?,?)',col,id,body,operationId,fingerprint,'');
+ sql.exec('INSERT INTO live_events(collection,id,body,operation_id,fingerprint,receipt,bundle_id,bundle_size,bundle_index) VALUES(?,?,?,?,?,?,?,?,?)',col,id,body,operationId,fingerprint,'',bundleId,bundleSize,bundleIndex);
  const seq=sql.exec<{n:number}>("SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='live_events'),0) AS n").toArray()[0].n;
  const receipt={liveProtocol:1,schoolId:school,cloudState:'committed',backupState:'pending',recordRevision:revision,operationId,cursor:seq,record:data};
  sql.exec('INSERT INTO live_collection_cursors VALUES(?,?) ON CONFLICT(collection) DO UPDATE SET cursor=excluded.cursor',col,seq);
@@ -94,7 +100,7 @@ function retireChildren(storage:DurableObjectStorage,school:string,col:string,id
  }
  return predecessors;
 }
-export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json):Json{
+export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,now=Date.now(),withinBundle=false,verifiedMedia?:Json,bundleId?:string,bundleSize=0,bundleIndex=-1):Json{
  demand(schoolPattern.test(school),'Invalid school');
  const sql=storage.sql,command=b.command,col=String(b.collection||'');
  const collection=()=>demand(liveCollections.has(col),'Collection not admitted to live authority',412);
@@ -218,7 +224,12 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
      ...(verifiedMedia&&index===1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
-       bundleManifestHash:b.mediaManifestHash,fileId:archiveFiles[0].fileId}}:{})},now,true));
+       bundleManifestHash:b.mediaManifestHash,fileId:archiveFiles[0].fileId}}:{})},
+       now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));
+   // A no-op or offline duplicate can produce no event. It must never
+   // count towards the number of visible records promised by a bundle.
+   demand(acknowledgements.every(r=>r.unchanged!==true&&r.duplicate!==true),
+     'Atomic bundle contains a no-op or duplicate; reconcile before publishing',409);
    const receipt={bundleProtocol:1,liveProtocol:1,schoolId:school,bundleId:b.bundleId,
     cloudState:'committed',backupState:acknowledgements.every(r=>r.backupState==='verified')?'verified':'pending',
     cursor:head(),manifestHash:fingerprint,
@@ -279,6 +290,12 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_events').toArray()[0].n<1000000,'Live history capacity reached; retain local work',503);
    const parentGeneration=String(old.mobileStableId||old.teacherId||b.id),nextGeneration=String(data.mobileStableId||data.teacherId||b.id);
+   // Generation replacement can emit thousands of cascade tombstones.
+   // Keep it outside the bounded 2–5-record bundle until its full dependency
+   // graph is represented by one immutable manifest.
+   if(withinBundle&&personCollections.has(col)&&current)
+    demand(nextGeneration===parentGeneration,
+      'Person generation replacement requires separate lifecycle repair',412);
    const retiring=personCollections.has(col)&&current&&(b.operation==='delete'||nextGeneration!==parentGeneration);
    const dependencies=retiring?retireChildren(storage,school,col,String(b.id),old,String(b.operationId),now):[];
    if(personCollections.has(col)){
@@ -286,7 +303,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     const retired=new Set(Array.isArray(old[retiredKey])?old[retiredKey] as string[]:[]);if(retiring)retired.add(parentGeneration);
     if(retired.size)data[retiredKey]=[...retired];if(b.operation==='delete'){data._syncDeletedOwner=parentGeneration;if(col==='teachers_directory')data._syncRetiredTeacherId=old.teacherId||b.id;}
    }
-   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})});
+   const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
    for(const predecessor of dependencies)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,predecessor);
    // Parent registration must be durably handed to Drive before its dependent
    // child can reach the old lifecycle engine. Acceptance at the edge is atomic.
@@ -303,9 +320,32 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  if(command==='changes'){
   demand(Number.isSafeInteger(b.after)&&Number(b.after)>=0&&Number(b.after)<=head(),'Invalid cursor; snapshot required',409);
   demand(Number(b.after)>=sql.exec<{floor:number}>('SELECT floor FROM live_retention WHERE id=1').toArray()[0].floor,'Replay history compacted; snapshot required',409);
+  // Only emit complete bundle boundaries. Legacy receivers can reconcile each
+  // ordinary event, but a person/document bundle must never be split by a
+  // 100-event or 300-KiB replay page. Five lookahead rows are enough because
+  // the maximum bundle size is five.
+  const rows=sql.exec<{seq:number;collection:string;id:string;body:string;bundle_id:string|null;bundle_size:number;bundle_index:number}>(
+   'SELECT seq,collection,id,body,bundle_id,bundle_size,bundle_index FROM live_events WHERE seq>? ORDER BY seq LIMIT 105',Number(b.after)).toArray();
   const events:Json[]=[];let bytes=0;
-  for(const r of sql.exec<{seq:number;collection:string;id:string;body:string}>('SELECT seq,collection,id,body FROM live_events WHERE seq>? ORDER BY seq LIMIT 100',Number(b.after))){
-   const size=byteLength(r.body);if(bytes+size>300000&&events.length)break;bytes+=size;events.push({sequence:r.seq,collection:r.collection,id:r.id,...(r.body?{record:JSON.parse(r.body)}:{source:'drive',record:null})});
+  for(let i=0;i<rows.length;){
+   const first=rows[i],count=first.bundle_id?first.bundle_size:1;
+   demand(Number.isSafeInteger(count)&&count>=1&&count<=5&&
+     (!first.bundle_id||first.bundle_index===0)&&i+count<=rows.length,
+     'Atomic replay boundary invalid; recover a verified snapshot',409);
+   const group=rows.slice(i,i+count);
+   if(first.bundle_id)for(let j=0;j<count;j++)
+    demand(group[j].bundle_id===first.bundle_id&&
+      group[j].bundle_size===count&&group[j].bundle_index===j&&
+      group[j].seq===first.seq+j,
+      'Atomic replay group incomplete; recover a verified snapshot',409);
+   const groupBytes=group.reduce((total,r)=>total+byteLength(r.body),0);
+   demand(groupBytes<=300000,'Atomic replay group exceeds the delivery budget',413);
+   if(events.length&&(events.length+count>100||bytes+groupBytes>300000))break;
+   bytes+=groupBytes;
+   for(const r of group)events.push({sequence:r.seq,collection:r.collection,id:r.id,
+    ...(r.bundle_id?{bundleId:r.bundle_id,bundleSize:r.bundle_size,bundleIndex:r.bundle_index}:{}),
+    ...(r.body?{record:JSON.parse(r.body)}:{source:'drive',record:null})});
+   i+=count;
   }
   const cursor=events.length?Number(events[events.length-1].sequence):Number(b.after);return {liveProtocol:1,schoolId:school,events,cursor,head:head(),more:cursor<head()};
  }
