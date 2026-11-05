@@ -116,6 +116,7 @@ void main(){
    final parent={'schoolId':school,'collection':'students_directory',
      'operation':'set','documentId':'student-one',
      'operationId':'original-person-operation-0001','baseCloudRevision':'',
+     'createIntent':true,
      'syncState':'pending',
      'data':{'schoolId':school,'mobileStableId':'p-'+'8'*32}};
    final doc={'schoolId':school,'documentId':'card-one',
@@ -139,6 +140,9 @@ void main(){
    }
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
      {...parent,'baseCloudRevision':'existing'},doc),isFalse);
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...parent,'createIntent':false},doc),isFalse,
+     reason:'Only first-time Person creation may be bundled with an original ID');
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
      {...parent,'data':{...(parent['data'] as Map),
        'photoUrl':'data:image/jpeg;base64,YWJj'}},doc),isFalse,

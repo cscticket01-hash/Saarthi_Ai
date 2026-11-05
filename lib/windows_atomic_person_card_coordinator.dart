@@ -42,6 +42,7 @@ class WindowsAtomicPersonCardCoordinator {
     return RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) &&
       {'students_directory','teachers_directory'}.contains(collection) &&
       parent['schoolId']==school && parent['operation']=='set' &&
+      parent['createIntent']==true &&
       parent['baseCloudRevision']=='' && parent['priorDeletion']==null &&
       parent['fieldPatch']==null &&
       !{'conflict','needsAttention'}.contains(parent['syncState']) &&
@@ -57,7 +58,7 @@ class WindowsAtomicPersonCardCoordinator {
       card['schoolId']==school &&
       card['documentKind']=='idCard' && card['deleted']!=true &&
       card['baseCloudRevision']=='' &&
-      !{'conflict','needsAttention'}.contains(card['syncState']) &&
+      !{'conflict','needsAttention','Synced'}.contains(card['syncState']) &&
       card['ownerRole']==role &&
       card['studentId']==id && card['personId']==data['mobileStableId'] &&
       card['documentRevision'] is String &&
