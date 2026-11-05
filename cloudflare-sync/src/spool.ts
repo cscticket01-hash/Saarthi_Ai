@@ -145,6 +145,34 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  demand(operationPattern.test(id),'Invalid receipt ID');const row=get(id);demand(row,'Delivery receipt unavailable',404);
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
+ if(action==='bundleProof'){
+  // The existing file Durable Object is the only authority for its bytes.
+  // This signed internal proof never claims a Google Drive ACK.
+  demand(lane==='file-'+id,'File proof requires the original file owner',400);
+  await seal(id);
+  const current=get(id),manifest=JSON.parse(current.payload) as Json;
+  demand(['pending','retry','processing','completed'].includes(current.state),'Staged file is not durable',412);
+  const size=Number(manifest.sizeBytes);
+  demand(Number.isSafeInteger(size)&&size>0&&size<=85*1024&&manifest.received===size&&
+    typeof manifest.sha256==='string'&&operationPattern.test(manifest.sha256)&&
+    typeof manifest.uploadKey==='string'&&
+    await digest(JSON.stringify([school,manifest.uploadKey]))===id,'Staged file manifest incomplete',412);
+  const chunks=storage.sql.exec<{offset:number;size:number;body:ArrayBuffer}>(
+    'SELECT offset,size,body FROM edge_chunks ORDER BY offset').toArray();
+  demand(chunks.length===1&&chunks[0].offset===0&&chunks[0].size===size&&
+    chunks[0].body.byteLength===size,'Staged file bytes unavailable',412);
+  const bytes=new Uint8Array(chunks[0].body);
+  const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))]
+    .map(x=>x.toString(16).padStart(2,'0')).join('');
+  demand(actual===manifest.sha256,'Staged file SHA-256 mismatch',409);
+  if(manifest.mime==='application/pdf'){
+    demand(bytes.length>=16&&[0x25,0x50,0x44,0x46,0x2d].every((v,i)=>bytes[i]===v)&&
+      Buffer.from(bytes.subarray(Math.max(0,bytes.length-2048))).toString('latin1').includes('%%EOF'),
+      'Staged ID PDF is incomplete',412);
+  }
+  return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+    sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true};
+ }
  if(action==='projection'){
   demand(lane==='records','Record projection unavailable',400);
   const saved=row.response?JSON.parse(row.response):{};
