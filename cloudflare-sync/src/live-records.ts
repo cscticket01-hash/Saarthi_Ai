@@ -345,8 +345,9 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }else{
      demand(head.studentId!==undefined&&typeof head.studentId==='string'&&
        head.studentId.length>0&&head.studentId.length<=200&&
-       typeof head.personId==='string'&&head.personId.length>0&&
-       child.studentId===head.studentId&&child.personId===head.personId&&
+       typeof child.personId==='string'&&child.personId.length>0&&
+       (head.personId===undefined||head.personId===child.personId)&&
+       child.studentId===head.studentId&&
        child.ownerRole==='student'&&
        child.contentHash===proofs[0].sha256&&
        child.mimeType==='application/pdf',
@@ -357,7 +358,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
          head.paymentId===first.id&&head.receiptDocumentId===last.id&&
          child.documentKind==='feeReceipt'&&
          ledger&&ledger.schoolId===school&&
-         ledger.studentId===head.studentId&&ledger.personId===head.personId&&
+         ledger.studentId===head.studentId&&
+         (ledger.personId===undefined||ledger.personId===child.personId)&&
          ledger.lastPaymentId===first.id&&ledger.month===head.month&&
          typeof head.month==='string'&&head.month.length>0&&
          typeof head.totalPaid==='number'&&Number.isFinite(head.totalPaid)&&
@@ -377,7 +379,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
          'Exam result and original marksheet must agree',409);
      }
      // These financial owners must not appear as a student ID-card owner.
-     bundleOwner={role:feeKind?'feeReceipt':'marksheet',personId:head.personId};
+     bundleOwner={role:feeKind?'feeReceipt':'marksheet',personId:child.personId};
    }
    archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,
      ...(p.driveVerified===true?{fileId:p.fileId}:{}),
