@@ -345,6 +345,15 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.equal(commit.value.mediaReady,true);
  assert.equal(commit.value.archiveReady,false);
  assert.equal(commit.value.backupState,'pending');
+ const savedStatus=await rpc({command:'bundleReceipt',bundleId,media,
+    operations,mediaManifestHash});
+ assert.equal(savedStatus.status,200,JSON.stringify(savedStatus));
+ assert.equal(savedStatus.value.found,true);
+ assert.equal(savedStatus.value.cloudState,'committed');
+ assert.equal(savedStatus.value.driveVerified,false);
+ assert.deepEqual(savedStatus.value.backups.map(x=>x.backupState),['pending','pending']);
+ assert.deepEqual(savedStatus.value.backups.map(x=>x.operationId),
+    operations.map(x=>x.operationId));
  assert.equal((await rpc({command:'bundleArchive',bundleId})).status,412,
   'Drive metadata backup must wait for the actual file-lane Drive proof');
  assert.equal(commit.value.cursor,before+2);

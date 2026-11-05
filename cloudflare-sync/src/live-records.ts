@@ -232,9 +232,31 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     media:b.media,mediaManifestHash:b.mediaManifestHash});
   const prior=sql.exec<{fingerprint:string;receipt:string}>(
     'SELECT fingerprint,receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
-  if(!prior)return {found:false};
+  if(!prior)return {found:false,bundleProtocol:1,schoolId:school};
   demand(prior.fingerprint===fingerprint,'Atomic bundle replay changed',409);
-  return {found:true,receipt:JSON.parse(prior.receipt) as Json};
+  const receipt=JSON.parse(prior.receipt) as Json;
+  const listed=receipt.acknowledgements as Json[];
+  demand(Array.isArray(listed)&&listed.length===(b.operations as Json[]).length,
+    'Atomic receipt lost operation boundary',412);
+  const states=listed.map((ack,index)=>{
+   const expected=(b.operations as Json[])[index];
+   demand(ack.operationId===expected.operationId&&
+     typeof ack.recordRevision==='string','Atomic operation identity changed',409);
+   const backup=sql.exec<{state:string;drive_revision:string|null;verified_at:number}>(
+     'SELECT state,drive_revision,verified_at FROM live_backup WHERE operation_id=? AND collection=? AND id=? ORDER BY seq DESC LIMIT 1',
+     String(expected.operationId),String(expected.collection),String(expected.id)).toArray()[0];
+   demand(backup,'Atomic operation has no durable backup job',412);
+   return {operationId:expected.operationId,
+     recordRevision:ack.recordRevision,collection:expected.collection,id:expected.id,
+     backupState:backup.state,
+     driveVerified:backup.state==='verified'&&
+       typeof backup.drive_revision==='string'&&backup.drive_revision.length>0,
+     ...(backup.state==='verified'&&typeof backup.drive_revision==='string'?
+       {driveRevision:backup.drive_revision,verifiedAt:backup.verified_at}:{})};
+  });
+  return {found:true,bundleProtocol:1,schoolId:school,
+    receipt,backups:states,driveVerified:states.every(r=>r.driveVerified===true),
+    cloudState:receipt.cloudState,mediaReady:receipt.mediaReady===true};
  }
  if(command==='bundleCommit'){
   // First safe increment of the existing live authority: atomic *record*

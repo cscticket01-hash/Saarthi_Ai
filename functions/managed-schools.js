@@ -814,6 +814,29 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      fail(400,'Invalid published atomic media lookup');
    return publishedBundleBytes(m.schoolId,b.bundleId,b.kind,b.id);
   }
+  if(operation==='bundle-receipt'){
+   // Recover a lost publish ACK using the exact original wire operations.
+   // Matching an opaque bundle ID alone is never authorization or proof.
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+     fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
+      !Array.isArray(b.operations)||b.operations.length!==2||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      JSON.stringify(b).length>256000)
+     fail(400,'Invalid immutable atomic receipt lookup');
+   const result=await liveSync.command(m.schoolId,{
+     command:'bundleReceipt',bundleId:b.bundleId,
+     operations:b.operations.map(item=>({...item,data:clean(item.data)})),
+     media:b.media,mediaManifestHash:b.mediaManifestHash});
+   if(result?.found===false)return {success:true,schoolId:m.schoolId,
+     bundleProtocol:1,found:false};
+   if(result?.found!==true||result.schoolId!==m.schoolId||
+      result.bundleProtocol!==1||result.receipt?.bundleId!==b.bundleId||
+      !Array.isArray(result.backups)||result.backups.length!==2)
+     fail(502,'Atomic bundle receipt cannot be verified');
+   return {success:true,schoolId:m.schoolId,...result};
+  }
   if(operation==='bundle-stage'){
    // TEST-only outbound Windows file lane. The original school Durable Object
    // retains the bytes and independently schedules Drive; no second uploader.
