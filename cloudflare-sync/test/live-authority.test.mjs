@@ -587,7 +587,7 @@ test('fee payment, ledger and PDF share one original school DO commit; exam resu
     data:{...data,marksheetDocumentId:docId,score:98}};
   const ledger={collection:'fee_ledger',id:'ledger-finance-001',operation:'write',
     operationId:'finance-original-ledger-operation-0001',expectedRevision:'',
-    data:{...data,month:'2026-11',lastPaymentId:parentId,totalPaid:50}};
+    data:{...data,month:'2026-11',lastPaymentId:parentId,totalPaid:50,expectedAmount:100}};
   const doc={collection:'documents',id:docId,operation:'write',
     operationId:fee?'finance-original-receipt-operation-0001':'finance-original-marksheet-op-0001',
     expectedRevision:'',data:{...data,ownerRole:'student',
