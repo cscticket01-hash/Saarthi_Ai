@@ -168,6 +168,21 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     archiveReady:saved.archiveReady===true,
     noPhoto:!files.some(f=>f.kind==='photo')};
  }
+ if(command==='bundleArchiveManifest'){
+  // Internal immutable publication identity for the backup delivery worker.
+  demand(opId(b.bundleId),'Invalid bundle archive identity',400);
+  const saved=sql.exec<{receipt:string}>(
+    'SELECT receipt FROM live_bundles WHERE bundle_id=?',String(b.bundleId)).toArray()[0];
+  demand(saved,'Published bundle required before archive handoff',404);
+  const receipt=JSON.parse(saved.receipt) as Json;
+  demand(receipt.schoolId===school&&receipt.cloudState==='committed'&&
+    receipt.mediaReady===true&&Array.isArray(receipt.files)&&
+    (receipt.files as Json[]).length>=1,'Invalid published archive manifest',412);
+  return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+    mediaManifestHash:receipt.mediaManifestHash,
+    files:(receipt.files as Json[]).map(f=>({kind:f.kind,id:f.id,
+      sha256:f.sha256,sizeBytes:f.sizeBytes,mime:f.mime}))};
+ }
  if(command==='bundleMedia'){
   // The published atomic group is the sole capability to retrieve the
   // original school-scoped Cloudflare bytes. Unpublished/staged files are
@@ -492,11 +507,44 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   if(!job||job.state!=='processing'||job.claim!==b.claim||job.claim_until<=now)return {accepted:false};
   if(b.verified===true){
    demand(typeof b.driveRevision==='string'&&b.driveRevision.length>0&&b.driveRevision.length<=100&&!b.driveRevision.startsWith('live-')&&!b.driveRevision.startsWith('cf-'),'Unverified backup revision');
+   const event=sql.exec<{receipt:string}>('SELECT receipt FROM live_events WHERE seq=?',job.seq).toArray()[0];
+   demand(event&&event.receipt,'Live backup event receipt missing',412);
+   const receipt=JSON.parse(event.receipt) as Json;
+   let finalBody=JSON.parse(job.body) as Json;
+   if(b.archiveFiles!==undefined){
+    // A signed broker has independently verified every staged file's immutable
+    // Drive ACK. Only fileId enrichment is allowed; business fields, version,
+    // parent owner and manifest hash cannot be changed by the archive.
+    demand(job.collection==='documents'&&job.operation==='write'&&
+      Array.isArray(b.archiveFiles)&&Array.isArray(finalBody.bundleMedia),
+      'Archive applies only to a staged document',412);
+    const old=finalBody.bundleMedia as Json[],next=b.archiveFiles as Json[];
+    demand(old.length===next.length&&old.length>=1&&old.length<=2,
+      'Published file set differs from Drive receipt',409);
+    for(let i=0;i<old.length;i++){
+     demand(old[i].kind===next[i].kind&&old[i].id===next[i].id&&
+       old[i].sha256===next[i].sha256&&old[i].sizeBytes===next[i].sizeBytes&&
+       old[i].mime===next[i].mime&&
+       typeof next[i].fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(next[i].fileId)&&
+       (old[i].fileId===undefined||old[i].fileId===next[i].fileId),
+       'Archive cannot replace staged bytes or original Drive identity',409);
+    }
+    demand(finalBody.fileId===undefined||finalBody.fileId===next[0].fileId,
+      'Archive card ID differs from original staging',409);
+    finalBody={...finalBody,bundleMedia:next,fileId:next[0].fileId};
+    // Only the exact same live revision gets enriched. A newer user edit,
+    // unlike this immutable archive result, must never be overwritten.
+    sql.exec('UPDATE live_records SET body=?,payload_hash=? WHERE collection=? AND id=? AND revision=?',
+      canonical(finalBody),payloadHash(finalBody),job.collection,job.id,receipt.recordRevision);
+    sql.exec('UPDATE live_backup SET body=? WHERE seq=?',canonical(finalBody),job.seq);
+   }else{
+    demand(!Array.isArray(finalBody.bundleMedia)||
+      (finalBody.bundleMedia as Json[]).every(f=>typeof f.fileId==='string'),
+      'Unarchived media cannot be marked Drive verified',412);
+   }
    sql.exec("UPDATE live_backup SET state='verified',drive_revision=?,claim='',claim_until=0,due=?,verified_at=? WHERE seq=?",b.driveRevision,Number.MAX_SAFE_INTEGER,now,job.seq);
    sql.exec('UPDATE live_records SET drive_revision=? WHERE collection=? AND id=?',b.driveRevision,job.collection,job.id);
-   const event=sql.exec<{receipt:string}>('SELECT receipt FROM live_events WHERE seq=?',job.seq).toArray()[0];
-   const receipt=JSON.parse(event.receipt) as Json;
-   const reference={...receipt,backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,payloadHash:payloadHash(JSON.parse(job.body)),reconcileRequired:true,retainedUntil:now+cloudflareVerifiedRetentionMs};
+   const reference={...receipt,backupState:'verified',source:'cloudflare',driveRevision:b.driveRevision,payloadHash:payloadHash(finalBody),reconcileRequired:true,retainedUntil:now+cloudflareVerifiedRetentionMs};
    sql.exec('UPDATE live_events SET receipt=? WHERE seq=?',JSON.stringify(reference),job.seq);
    sql.exec("UPDATE live_operations SET receipt=json_set(receipt,'$.backupState','verified','$.driveRevision',?,'$.payloadHash',?,'$.retainedUntil',?,'$.reconcileRequired',json('true')) WHERE json_extract(receipt,'$.recordRevision')=?",String(b.driveRevision),String(reference.payloadHash),now+cloudflareVerifiedRetentionMs,String(receipt.recordRevision));
    const metadata=JSON.parse((job as Job&{request_metadata:string}).request_metadata||'{}');

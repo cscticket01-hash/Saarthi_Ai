@@ -72,6 +72,29 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   const {job}=await command(school,{command:'backupClaim'});if(!job)return {processed:0};
   const finish=values=>command(school,{command:'backupFinish',sequence:job.seq,claim:job.claim,...values});
   try{
+   let archiveFiles;
+   const document=job.request.collection==='documents'&&
+     job.request.operation==='write'?job.request.data:null;
+   if(document?.bundleId!==undefined){
+    if(typeof document.bundleId!=='string'||
+       !Array.isArray(document.bundleMedia)||
+       typeof document.bundleManifestHash!=='string')refuse(409,'LIVE_BUNDLE_ARCHIVE_INVALID');
+    const archive=await command(school,{command:'bundleArchive',bundleId:document.bundleId});
+    if(archive?.bundleProtocol!==1||archive.schoolId!==school||
+       archive.bundleId!==document.bundleId||archive.archiveReady!==true||
+       archive.mediaManifestHash!==document.bundleManifestHash||
+       !Array.isArray(archive.files)||archive.files.length!==document.bundleMedia.length)
+       refuse(503,'LIVE_MEDIA_ARCHIVE_PENDING');
+    for(let i=0;i<archive.files.length;i++){
+     const previous=document.bundleMedia[i],next=archive.files[i];
+     if(next.kind!==previous.kind||next.id!==previous.id||
+        next.sha256!==previous.sha256||next.sizeBytes!==previous.sizeBytes||
+        next.mime!==previous.mime||typeof next.fileId!=='string'||
+        !/^[A-Za-z0-9_-]{1,200}$/.test(next.fileId))refuse(409,'LIVE_MEDIA_ARCHIVE_MISMATCH');
+    }
+    archiveFiles=archive.files;
+    job.request.data={...document,bundleMedia:archiveFiles,fileId:archiveFiles[0].fileId};
+   }
    const ack=await deliver(job.request);
    const record=ack?.record;
    if(ack?.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision||/^(live-|cf-)/.test(ack.recordRevision)||
@@ -86,7 +109,7 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    const expected=job.request.operation==='delete'?{schoolId:school,_syncDeleted:true}:job.request.data;
    const savedRecord={...proof};if(!Object.hasOwn(expected,'id')&&savedRecord.id===job.request.id)delete savedRecord.id;
    if(payloadHash(savedRecord)!==payloadHash(expected))refuse(502,'LIVE_BACKUP_CONTENT_UNVERIFIED');
-   const saved=await finish({verified:true,driveRevision:ack.recordRevision});return {processed:saved.accepted?1:0};
+   const saved=await finish({verified:true,driveRevision:ack.recordRevision,...(archiveFiles?{archiveFiles}:{})});return {processed:saved.accepted?1:0};
   }catch(error){
    const review=[400,401,403,409,422].includes(error.status);
    await finish({verified:false,review,retryAt:now()+Math.max(5000,Math.min(86400000,Number(error.retryAfterMs)||0))});return {processed:0};

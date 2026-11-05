@@ -67,6 +67,28 @@ export class SyncLane extends DurableObject<Env>{
     return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
       mediaReady:true,archiveReady:proofs.every(p=>p.driveVerified===true),manifestHash,proofs};
    }
+   if(b.command==='bundleArchive'){
+    // Internal backup barrier: staged bytes can be delivered instantly to
+    // peers, but the document must never claim a Drive backup until every
+    // original file-lane reports its matching verified Drive receipt.
+    const manifest=liveCommand(this.ctx.storage,school,
+      {command:'bundleArchiveManifest',bundleId:b.bundleId}) as Json;
+    const archived:Json[]=[];
+    for(const item of manifest.files as Json[]){
+      const id=String(item.id);
+      const proof=await this.env.LANES.getByName(school+'/file-'+id)
+        .command(school,'file-'+id,{command:'bundleProof',id,requireDrive:true}) as Json;
+      demand(proof.schoolId===school&&proof.version===1&&proof.staged===true&&
+        proof.driveVerified===true&&proof.id===item.id&&
+        proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
+        proof.mime===item.mime&&typeof proof.fileId==='string'&&
+        /^[A-Za-z0-9_-]{1,200}$/.test(proof.fileId),
+        'Archive has no matching immutable Drive file receipt',412);
+      archived.push({...item,fileId:proof.fileId});
+    }
+    return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+      mediaManifestHash:manifest.mediaManifestHash,archiveReady:true,files:archived};
+   }
    let verifiedMedia:Json|undefined;
    if(b.command==='bundlePublish'){
     // Only signed, hash-verified staged bytes can authorize peer visibility.
