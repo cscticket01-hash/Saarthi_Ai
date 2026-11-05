@@ -514,6 +514,75 @@ class FirebaseFirestore {
       }));
   }
 
+
+  /// TEST-only original fee/exam transaction reservation. The two existing
+  /// record queues and the original document queue are reserved in one CAS.
+  Future<void> markAtomicFinancialOutbox({
+    required String school,required String bundleId,
+    required List<Map<String,dynamic>> parents,required String documentId,
+    required Map<String,dynamic> documentBefore,required String state,
+    List<String>? cloudRevisions,
+  }) {
+    final kind=parents.length==2?'feeReceipt':'marksheet';
+    final names=parents.length==2?['fee_payments','fee_ledger']:['exam_results'];
+    if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
+       activeProfileIdentity['schoolSyncId']!=school||
+       !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       !(parents.length==1||parents.length==2)||
+       !{'reserved','committed'}.contains(state)||
+       documentBefore['documentId']!=documentId||
+       documentBefore['schoolId']!=school||
+       documentBefore['documentKind']!=kind||
+       documentBefore['documentRevision'] is! String||
+       documentBefore['deleted']==true||
+       documentBefore['baseCloudRevision']!=''||
+       (state=='committed'&&
+         (cloudRevisions==null||cloudRevisions.length!=parents.length+1||
+          cloudRevisions.any((r)=>!r.startsWith('live-'))))
+      )throw StateError('Financial atomic queue reservation rejected.');
+    final ops=<_WriteOperation>[],existing=<String,Map<String,dynamic>>{};
+    final used=<String>{documentBefore['documentRevision'] as String};
+    for(var i=0;i<parents.length;i++){
+      final entry=parents[i],id=entry['queueId'],prior=entry['before'];
+      if(id is! String||id.isEmpty||prior is! Map<String,dynamic>||
+         existing.containsKey(id)||prior['schoolId']!=school||
+         prior['collection']!=names[i]||prior['operation']!='set'||
+         prior['data'] is! Map||(prior['data'] as Map)['schoolId']!=school||
+         prior['documentId'] is! String||prior['operationId'] is! String||
+         !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(prior['operationId'])||
+         !used.add(prior['operationId'] as String)||
+         prior['fieldPatch']!=null||prior['priorDeletion']!=null||
+         (prior['atomicBundleId']!=null&&prior['atomicBundleId']!=bundleId)||
+         (prior['atomicState']!=null&&
+          !{'reserved','committed'}.contains(prior['atomicState']))||
+         (state=='reserved'&&prior['atomicState']=='committed'))
+        throw StateError('Original financial queue changed.');
+      existing[id]=_encodeMap(prior);
+      ops.add(_WriteOperation._(type:_WriteType.set,
+        collection:'_windows_firebase_outbox',documentId:id,
+        data:{...prior,'atomicBundleId':bundleId,'atomicState':state,
+          'atomicOperationId':prior['operationId'],
+          if(state=='committed')'atomicCloudRevision':cloudRevisions![i]}));
+    }
+    if(documentBefore['atomicBundleId']!=null&&
+         documentBefore['atomicBundleId']!=bundleId||
+       documentBefore['atomicState']!=null&&
+         !{'reserved','committed'}.contains(documentBefore['atomicState'])||
+       state=='reserved'&&documentBefore['atomicState']=='committed')
+      throw StateError('Original financial PDF queue changed.');
+    ops.add(_WriteOperation._(type:_WriteType.set,
+      collection:'_windows_document_outbox',documentId:documentId,
+      data:{...documentBefore,'atomicBundleId':bundleId,'atomicState':state,
+        'atomicOperationId':documentBefore['documentRevision'],
+        if(state=='committed')'atomicCloudRevision':cloudRevisions!.last}));
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(ops,expected:{
+        '_windows_firebase_outbox':existing,
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+      }));
+  }
+
   /// Retain a complete live page and its cursor in the same serialized disk
   /// transaction. These are incoming records, never upload or Drive receipts.
   Future<void> retainLiveSyncPage(LiveSyncPage page) async {
