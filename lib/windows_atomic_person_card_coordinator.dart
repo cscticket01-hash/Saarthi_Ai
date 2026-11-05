@@ -67,6 +67,7 @@ class WindowsAtomicPersonCardCoordinator {
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(parent['operationId']) &&
       data is Map && data['schoolId']==school &&
       !hasUnstagedInlineMedia(data) &&
+      !hasUnstagedInlineMedia(parent['wireData']) &&
       data['mobileStableId'] is String &&
       (role=='student'
         ? RegExp(r'^p-[a-f0-9]{32,64}$').hasMatch(data['mobileStableId'])
@@ -119,6 +120,7 @@ class WindowsAtomicPersonCardCoordinator {
           .doc(cardRef.id).get()).data();
       scope();
       if(originalParent==null||originalCard==null||
+         hasUnstagedInlineMedia(originalParent)||
          originalCard['documentRevision']!=card['documentRevision']||
          originalCard['localPath']!=card['localPath']||
          originalParent['mobileStableId']!=(parent['data'] as Map)['mobileStableId'])
