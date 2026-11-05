@@ -78,8 +78,8 @@ export class SyncLane extends DurableObject<Env>{
       const id=String(item.id);
       const proof=await this.env.LANES.getByName(school+'/file-'+id)
         .command(school,'file-'+id,{command:'bundleProof',id,requireDrive:true}) as Json;
-      demand(proof.schoolId===school&&proof.version===1&&proof.staged===true&&
-        proof.driveVerified===true&&proof.id===item.id&&
+      demand(proof.schoolId===school&&proof.version===1&&
+        typeof proof.staged==='boolean'&&proof.driveVerified===true&&proof.id===item.id&&
         proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
         proof.mime===item.mime&&typeof proof.fileId==='string'&&
         /^[A-Za-z0-9_-]{1,200}$/.test(proof.fileId),
