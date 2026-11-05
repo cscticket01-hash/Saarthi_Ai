@@ -168,3 +168,48 @@ test('offline duplicate after cleanup retains Drive original without a new write
  assert.equal((await live.command(A,{command:'head'})).cursor,before);
  assert.ok((await live.command(A,{command:'stats'})).payloadCopies.records>0);
 });
+
+test('Sync3 metadata bundle commits all records atomically, replays without duplicates and never admits unverified PDF/media',async()=>{
+ const operation=(id,revision='',amount=42)=>({
+  collection:'school_expenses',id,operation:'write',
+  operationId:'sync3-bundle-'+id+'-operation-0001',expectedRevision:revision,
+  data:{schoolId:A,amount,description:'Synthetic isolated atomic bundle proof'}
+ });
+ const base={command:'bundleCommit',bundleId:'sync3-atomic-group-test-0001',
+  operations:[operation('bundle-a'),operation('bundle-b','live-stale-revision')]};
+ const headBefore=(await rpc({command:'head'})).value.cursor;
+ // The second invalid CAS must roll back the first insert, event, job and receipt.
+ assert.equal((await rpc(base)).status,409);
+ assert.equal((await rpc({command:'head'})).value.cursor,headBefore);
+ assert.equal((await rpc({command:'read',collection:'school_expenses',id:'bundle-a'})).value.source,'missing');
+ assert.equal((await rpc({command:'operationReceipt',operationId:base.operations[0].operationId})).value.found,false);
+
+ const request={...base,operations:[operation('bundle-a'),operation('bundle-b')]};
+ const first=await rpc(request);
+ assert.equal(first.status,200);
+ assert.equal(first.value.cloudState,'committed');
+ assert.equal(first.value.backupState,'pending');
+ assert.equal(first.value.bundleProtocol,1);
+ assert.equal(first.value.schoolId,A);
+ assert.equal(first.value.acknowledgements.length,2);
+ assert.ok(first.value.acknowledgements.every(v=>/^live-/.test(v.recordRevision)));
+ assert.match(first.value.manifestHash,/^[a-f0-9]{64}$/);
+ assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
+ assert.deepEqual((await rpc(request)).value,first.value,'exact original bundle replay');
+ assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
+ assert.equal((await rpc({...request,operations:[operation('bundle-a','',999),operation('bundle-b')]})).status,409);
+ assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
+
+ const foreign={...request,bundleId:'sync3-foreign-group-test-0001',
+  operations:[operation('foreign-bundle-a'),{...operation('foreign-bundle-b'),data:{schoolId:B,amount:8}}]};
+ assert.equal((await rpc(foreign)).status,403);
+ assert.equal((await rpc({command:'read',collection:'school_expenses',id:'foreign-bundle-a'})).value.source,'missing');
+ const missingFileStage={...request,bundleId:'sync3-media-group-test-0001',
+  media:[{kind:'idCard',sizeBytes:85*1024,sha256:'a'.repeat(64)}]};
+ assert.equal((await rpc(missingFileStage)).status,412);
+ assert.equal((await rpc({...request,bundleId:'sync3-person-group-test-0001',
+  operations:[{...operation('bundle-student-a'),collection:'students_directory'},operation('bundle-student-b')]})).status,412);
+ assert.equal((await rpc({...request,bundleId:'sync3-payment-group-test-0001',
+  operations:[{...operation('bundle-payment-a'),collection:'fee_payments'},operation('bundle-payment-b')]})).status,412);
+ assert.equal((await rpc({command:'head'})).value.cursor,headBefore+2);
+});
