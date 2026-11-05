@@ -37,6 +37,7 @@ on:
       - 'lib/sync_review_school_console.dart'
       - 'test/web_atomic_bundle_review_test.dart'
       - 'lib/windows_connect/atomic_bundle_pilot.dart'
+      - 'lib/windows_connect/atomic_portrait_preflight.dart'
       - 'lib/windows_atomic_person_card_coordinator.dart'
       - 'lib/windows_sync_engine.dart'
       - 'lib/windows_pending_school_sync.dart'
@@ -44,6 +45,7 @@ on:
       - 'lib/windows_local_firestore.dart'
       - 'test/windows_person_card_sync_test.dart'
       - 'test/windows_atomic_bundle_pilot_test.dart'
+      - 'test/atomic_portrait_preflight_test.dart'
       - 'test/live_sync_atomic_page_test.dart'
       - 'test/windows_live_sync_store_test.dart'
       - 'test/live_sync_receipt_test.dart'
@@ -102,7 +104,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Verify 40 KB portrait size and retained quality
-        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart
+        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart test/atomic_portrait_preflight_test.dart
       - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
         env:
           APPDATA: ${{ runner.temp }}/live-five-pc-queues
