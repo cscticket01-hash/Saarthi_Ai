@@ -156,7 +156,9 @@ class WindowsBackendBridge {
     }, owningBatch: batch);
     scope();
     batch.set(paymentRef, payment);
-    batch.set(ledgerRef, ledger, const SetOptions(merge: true));
+    // The existing fee ledger belongs to this exact school. Retain the
+    // original local batch; make its owner explicit for atomic Cloudflare CAS.
+    batch.set(ledgerRef, {...ledger,'schoolId':school}, const SetOptions(merge: true));
     await batch.commit();
     // A callback failure cannot turn a committed financial intent into a failed save.
     try {

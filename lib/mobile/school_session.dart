@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'atomic_card_delivery.dart';
+import 'atomic_financial_delivery.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -1579,6 +1580,28 @@ class SchoolSession {
     if (generation != _generation)
       throw SchoolAccessDenied('School session changed.');
     return dashboard;
+  }
+
+  /// TEST financial download is scoped to the same signed student session
+  /// and original document ID. The broker verifies the generation before any
+  /// Cloudflare bytes are returned. A response hash is checked again here.
+  Future<Uint8List?> publishedAtomicFinancialDocument(
+      String kind,String documentId) async {
+    final current=link;
+    if(current==null||!current.managed||current.role!='student')return null;
+    if(!{'receipt','marksheet'}.contains(kind)||
+       documentId.isEmpty||documentId.length>200||documentId.contains('/'))
+      throw StateError('Invalid original school document identity.');
+    final generation=_generation,school=current.schoolId;
+    final reply=await schoolCall('mobile_atomic_document',{
+      'kind':kind,'documentId':documentId,
+    });
+    if(generation!=_generation||!identical(current,link))
+      throw SchoolAccessDenied('School session changed during document delivery.');
+    if(reply['available']==false&&reply['success']==true&&
+       reply['schoolId']==school&&reply['mobileAtomicDocument']==true)
+      return null;
+    return AtomicFinancialDelivery.verify(school,kind,documentId,reply);
   }
 
   /// Fetch the exact school-published PDF, never independently render an ID.

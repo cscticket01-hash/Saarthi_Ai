@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show compute;
 
 import 'managed_school_session.dart';
+import 'atomic_portrait_preflight.dart';
+import '../school_media_budgets.dart';
 
 typedef AtomicBundleRequest = Future<Map<String,dynamic>> Function(
   String action, Map<String,dynamic> body);
@@ -38,21 +41,30 @@ class AtomicBundlePilot {
     required Uint8List bytes,AtomicBundleRequest? request,
     bool isolatedTest=false,
   })async{
+    final pdfLimit=SchoolMediaBudgets.pdfLimit(kind);
+    final photo=kind=='photo';
     if((!buildEnabled&&request==null)||!isolatedTest||
        !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
        !RegExp(r'^[A-Za-z0-9_-]{1,150}$').hasMatch(uploadKey)||
        name.isEmpty||name.length>200||name.contains('/')||name.contains('\\')||
-       !['idCard','photo'].contains(kind)||
-       (kind=='idCard'?mime!='application/pdf':
-        !['image/jpeg','image/png','image/webp'].contains(mime))||
-       bytes.isEmpty||bytes.length>(kind=='idCard'?85*1024:40*1024))
+       !['idCard','photo','receipt','marksheet'].contains(kind)||
+       (photo?!['image/jpeg','image/png','image/webp'].contains(mime):
+         mime!='application/pdf')||
+       bytes.isEmpty||bytes.length>(photo?40*1024:pdfLimit??0))
       throw StateError('TEST atomic staging is not admitted.');
-    if(kind=='idCard'){
+    if(!photo){
       if(bytes.length<16||
          !String.fromCharCodes(bytes.take(5)).startsWith('%PDF-')||
          !latin1.decode(bytes.skip(bytes.length>2048?bytes.length-2048:0)
             .toList()).contains('%%EOF'))
-        throw StateError('Unverified ID PDF envelope.');
+        throw StateError('Unverified school PDF envelope.');
+    }
+    if (photo) {
+      // Reject forged/truncated photo bytes before any Cloudflare upload.
+      AtomicPortraitPreflight.verifyStagedBytes(bytes, mime);
+    } else {
+      // The shared school PDF budget applies to every document class.
+      SchoolMediaBudgets.verifyGeneratedPdf(kind, bytes);
     }
     final hash=sha256.convert(bytes).toString(),
       id=sha256.convert(utf8.encode(jsonEncode([school,uploadKey]))).toString();
@@ -74,19 +86,63 @@ class AtomicBundlePilot {
     return Map<String,dynamic>.from(proof);
   }
 
+  /// TEST-only staging: reuses the existing quality-safe portrait optimizer.
+  /// It neither owns nor ACKs a Windows queue; full Person+Photo+ID remains
+  /// a separate release gate.
+  static Future<Map<String,dynamic>> stagePortrait({
+    required String school, required String uploadKey,
+    required String name, required Uint8List original,
+    AtomicBundleRequest? request, bool isolatedTest=false,
+  }) async {
+    if ((!buildEnabled && request == null) || !isolatedTest) {
+      throw StateError('Atomic portrait preflight is TEST-only.');
+    }
+    final prepared = await compute(AtomicPortraitPreflight.prepare, original);
+    // The normalized container may differ from the retained original.
+    final stem = name.replaceFirst(
+      RegExp(r'\.(jpe?g|png|webp)$', caseSensitive: false), '');
+    final extension = prepared.mime == 'image/png' ? 'png'
+        : prepared.mime == 'image/webp' ? 'webp' : 'jpg';
+    return stage(
+      school: school, kind: 'photo', uploadKey: uploadKey,
+      name: '$stem.$extension', mime: prepared.mime, bytes: prepared.bytes,
+      request: request, isolatedTest: isolatedTest,
+    );
+  }
+
+  /// One atomic TEST manifest for the original immutable business records.
+  /// Person+ID may contain a photo; Fee+Ledger+Receipt and Exam+Marksheet
+  /// must contain precisely their own single original PDF.
+  static bool _matchesBusinessBundle(String school,
+      List<Map<String,dynamic>> operations,List<Map<String,dynamic>> media) {
+    if(operations.length<2||operations.length>3||
+       media.isEmpty||media.length>2||
+       media.any((m)=>m['sha256'] is! String||
+         !RegExp(r'^[a-f0-9]{64}$').hasMatch(m['sha256'] as String)||
+         m['id'] is! String||m['uploadKey'] is! String))return false;
+    final kind=media.first['kind'],first=operations.first['collection'];
+    final person={'students_directory','teachers_directory'}.contains(first)&&
+      operations.length==2&&kind=='idCard'&&
+      (media.length==1||media[1]['kind']=='photo');
+    final fee=first=='fee_payments'&&operations.length==3&&
+      operations[1]['collection']=='fee_ledger'&&kind=='receipt'&&media.length==1;
+    final exam=first=='exam_results'&&operations.length==2&&
+      kind=='marksheet'&&media.length==1;
+    if(!(person||fee||exam)||operations.last['collection']!='documents')return false;
+    return operations.every((op)=>op['operation']=='write'&&
+      op['id'] is String&&op['operationId'] is String&&
+      op['expectedRevision'] is String&&op['data'] is Map&&
+      (op['data'] as Map)['schoolId']==school);
+  }
+
   static Future<Map<String,dynamic>> publish({
     required String school,required String bundleId,
     required List<Map<String,dynamic>> operations,
     required List<Map<String,dynamic>> media,
     AtomicBundleRequest? request,bool isolatedTest=false,
   })async{
-    if((!buildEnabled&&request==null)||!isolatedTest||operations.length!=2||
-       !['students_directory','teachers_directory'].contains(operations[0]['collection'])||
-       operations[1]['collection']!='documents'||
-       operations.any((op)=>op['operation']!='write'||op['data'] is! Map||
-        (op['data'] as Map)['schoolId']!=school||
-        op['id'] is! String || op['operationId'] is! String||
-        op['expectedRevision'] is! String))
+    if((!buildEnabled&&request==null)||!isolatedTest||
+       !_matchesBusinessBundle(school,operations,media))
       throw StateError('Unverified Person/Card TEST bundle.');
     final proof=manifest(school,bundleId,media);
     final call=request??(action,body)=>
@@ -119,12 +175,7 @@ class AtomicBundlePilot {
     AtomicBundleRequest? request,bool isolatedTest=false,
   }) async {
     if((!buildEnabled&&request==null)||!isolatedTest||
-       operations.length!=2 || media.isEmpty || media.length>2 ||
-       !['students_directory','teachers_directory'].contains(operations[0]['collection']) ||
-       operations[1]['collection']!='documents' ||
-       operations.any((op)=>op['operationId'] is! String ||
-        op['id'] is! String || op['expectedRevision'] is! String ||
-        op['data'] is! Map || (op['data'] as Map)['schoolId']!=school)) {
+       !_matchesBusinessBundle(school,operations,media)) {
       throw StateError('Invalid isolated atomic receipt identity.');
     }
     final proof=manifest(school,bundleId,media);
@@ -150,8 +201,8 @@ class AtomicBundlePilot {
        receipt['mediaManifestHash']!=proof['mediaManifestHash'] ||
        receipt['mediaReady']!=true ||
        receipt['acknowledgements'] is! List ||
-       (receipt['acknowledgements'] as List).length!=2 ||
-       backups.length!=2 || response['driveVerified'] is! bool ||
+       (receipt['acknowledgements'] as List).length!=operations.length ||
+       backups.length!=operations.length || response['driveVerified'] is! bool ||
        response['cloudState']!='committed' ||
        response['mediaReady']!=true){
       throw StateError('Atomic receipt does not match published records.');

@@ -312,3 +312,190 @@ test('atomic bundle receipt is scoped to the school and original wire fingerprin
  await assert.rejects(f.call(request),e=>e.status===403);
  assert.equal(rpcCount,1);
 });
+
+test('TEST atomic portrait rejects forged JPEG and MIME before starting a school upload',async()=>{
+ const {createHash}=require('node:crypto');
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push({s,l,command:b.command});
+   return {};
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A],cloudflareAllDataEnabled:true,
+   cloudflareAtomicSmallFiles:true});
+ async function rejectsPhoto(bytes,mime,name,expected=400){
+   const request={
+     action:'managed/live/bundle-stage',liveProtocol:1,schoolId:A,
+     kind:'photo',uploadKey:'atomic-photo-invalid-container-0001',
+     name,mime,sizeBytes:bytes.length,
+     sha256:createHash('sha256').update(bytes).digest('hex'),
+     base64:bytes.toString('base64'),
+   };
+   await assert.rejects(f.call(request),e=>e.status===expected);
+ }
+ await rejectsPhoto(Buffer.alloc(64,11),'image/jpeg','face.jpg');
+ const abbreviated=Buffer.alloc(64,0);
+ abbreviated.set([0xff,0xd8,0xff,0xe1],0);
+ await rejectsPhoto(abbreviated,'image/jpeg','face.jpg');
+ const basic=Buffer.alloc(64,0);
+ basic.set([0xff,0xd8,0xff,0xe1],0);
+ basic.set([0xff,0xd9],basic.length-2);
+ await rejectsPhoto(basic,'image/jpeg','face.png');
+ await rejectsPhoto(basic,'image/png','face.png');
+ const oversized=Buffer.alloc(40*1024+1,0);
+ oversized.set([0xff,0xd8,0xff,0xe1],0);
+ oversized.set([0xff,0xd9],oversized.length-2);
+ await rejectsPhoto(oversized,'image/jpeg','face.jpg');
+ assert.equal(calls.length,0,'Rejected photo never reaches Cloudflare');
+});
+
+
+test('isolated receipt/marksheet stage has independent 30/150 KiB PDF limits and authentic proof',async()=>{
+ const {createHash}=require('node:crypto');
+ const health=async(_url,opt)=>{
+   const outer=JSON.parse(opt.body);
+   return {ok:true,status:200,text:async()=>JSON.stringify({
+     success:true,schoolId:outer.schoolId,storageReady:true,
+     uploadResumableVersion:1,
+   })};
+ };
+ for(const [kind,max] of [['receipt',30*1024],['marksheet',150*1024]]){
+   const bytes=Buffer.alloc(max,32);
+   bytes.write('%PDF-1.7',0,'ascii');
+   bytes.write('%%EOF',max-5,'ascii');
+   const sha256=createHash('sha256').update(bytes).digest('hex');
+   const uploadKey='test-atomic-'+kind+'-pdf-boundary-0001';
+   const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+   const calls=[];
+   const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+     calls.push(b.command);
+     if(b.command==='putSmall')return {id,state:'pending',
+       manifest:{...b.manifest,received:bytes.length},response:null};
+     if(b.command==='bundleProof')return {version:1,schoolId:s,id,uploadKey,
+       sha256,sizeBytes:bytes.length,mime:'application/pdf',
+       staged:true,driveVerified:false};
+     throw Error('Unexpected TEST file operation '+b.command);
+   }};
+   const f=fixture(health,{cloudflareSync:edge,liveSyncSchools:[A],
+     atomicBundleTestSchools:[A],cloudflareAllDataEnabled:true,
+     cloudflareAtomicSmallFiles:true});
+   const request={action:'managed/live/bundle-stage',liveProtocol:1,
+     schoolId:A,kind,mime:'application/pdf',name:kind+'.pdf',uploadKey,
+     sha256,sizeBytes:bytes.length,base64:bytes.toString('base64')};
+   const receipt=await f.call(request);
+   assert.equal(receipt.success,true);
+   assert.equal(receipt.media.kind,kind);
+   assert.equal(receipt.media.sizeBytes,max);
+   assert.equal(receipt.media.sha256,sha256);
+   assert.equal(receipt.driveVerified,false);
+   assert.equal(receipt.fileId,undefined);
+   assert.deepEqual(calls,['putSmall','bundleProof']);
+   const oversized=Buffer.alloc(max+1,32);
+   oversized.write('%PDF-1.7',0,'ascii');
+   oversized.write('%%EOF',max-4,'ascii');
+   const larger={...request,base64:oversized.toString('base64'),
+     sizeBytes:oversized.length,
+     sha256:createHash('sha256').update(oversized).digest('hex')};
+   await assert.rejects(f.call(larger),e=>e.status===400);
+   await assert.rejects(f.call({...request,name:'bad.png'}),e=>e.status===400);
+   await assert.rejects(f.call({...request,kind:'photo'}),e=>e.status===400);
+   await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
+   assert.deepEqual(calls,['putSmall','bundleProof'],
+     'Rejected PDF must never stage an unverified Cloudflare file');
+ }
+});
+
+
+test('mobile financial PDF only reaches exact signed student generation and document ID',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.from('%PDF-1.7\nOriginal student financial PDF\n%%EOF');
+ const sha=createHash('sha256').update(bytes).digest('hex');
+ const bundleId='mobile-financial-own-verified-bundle-0001',id='e'.repeat(64);
+ let fileOwner='verified-pupil',kind='receipt',documentId='FEE-own';
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push(b.command);
+   if(b.command==='ownerFinancialBundle'){
+     assert.equal(b.role,kind==='receipt'?'feeReceipt':'marksheet');
+     assert.equal(b.documentId,documentId);
+     return {bundleProtocol:1,schoolId:s,found:true,
+       documentId,bundleId,id,kind,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length};
+   }
+   if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+     bundleId,id,kind,sha256:sha,mime:'application/pdf',
+     sizeBytes:bytes.length,ownerRole:kind==='receipt'?'feeReceipt':'marksheet',
+     personId:fileOwner,archiveReady:false};
+   if(b.command==='bundleProof')return {version:1,schoolId:s,
+     id,sha256:sha,mime:'application/pdf',sizeBytes:bytes.length,staged:true};
+   if(b.command==='readPart')return {offset:0,sizeBytes:bytes.length,
+     sha256:sha,base64:bytes.toString('base64')};
+   throw Error('Unexpected financial media operation '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const request={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_document',sessionToken:'s'.repeat(64),
+     deviceId:'mobile-financial-session-device-0001',kind,documentId}};
+ const result=await f.call(request);
+ assert.equal(result.available,true);assert.equal(result.mobileAtomicDocument,true);
+ assert.equal(result.documentId,documentId);assert.equal(result.contentHash,sha);
+ assert.equal(result.documentRevision,'atomic-'+bundleId);
+ assert.equal(Buffer.from(result.base64,'base64').toString(),bytes.toString());
+ kind='marksheet';documentId='SHEET-own';
+ const marksheet=await f.call({...request,request:{...request.request,kind,documentId}});
+ assert.equal(marksheet.kind,'marksheet');
+ assert.equal(marksheet.contentHash,sha);
+ fileOwner='foreign-generation';
+ await assert.rejects(f.call({...request,request:{...request.request,kind,documentId}}),
+   e=>e.status===403);
+ const callsBefore=calls.length;
+ await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
+ await assert.rejects(f.call({...request,request:{...request.request,
+   kind:'receipt',documentId:'../foreign'}}),e=>e.status===400);
+ assert.equal(calls.length,callsBefore,'Rejected identities never fetch file bytes');
+ // Use a fresh broker cache for the revoked entitlement rather than
+ // relying on a previously granted in-memory session/lease to expire.
+ kind='receipt';documentId='FEE-own';fileOwner='verified-pupil';
+ const blocked=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ blocked.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(blocked.call(request),e=>e.status===403);
+});
+
+
+test('signed 150 KiB published marksheet is read in full, not truncated by old 120k base64 cap',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.alloc(150*1024,32);
+ bytes.write('%PDF-1.7',0,'ascii');
+ bytes.write('%%EOF',bytes.length-5,'ascii');
+ const sha256=createHash('sha256').update(bytes).digest('hex');
+ const bundleId='full-marksheet-signed-original-0001';
+ const id='f'.repeat(64),documentId='SHEET-original-full-0001';
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   if(b.command==='ownerFinancialBundle')return{
+     bundleProtocol:1,schoolId:s,found:true,bundleId,documentId,
+     kind:'marksheet',id,sha256,mime:'application/pdf',
+     sizeBytes:bytes.length};
+   if(b.command==='bundleMedia')return{
+     bundleProtocol:1,schoolId:s,bundleId,kind:'marksheet',
+     id,sha256,sizeBytes:bytes.length,mime:'application/pdf',
+     ownerRole:'marksheet',personId:'verified-pupil'};
+   if(b.command==='bundleProof')return{
+     version:1,schoolId:s,staged:true,id,sha256,
+     mime:'application/pdf',sizeBytes:bytes.length};
+   if(b.command==='readPart')return{
+     offset:0,sizeBytes:bytes.length,sha256,base64:bytes.toString('base64')};
+   throw Error('Unexpected original school file action: '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const result=await f.call({action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_document',kind:'marksheet',documentId,
+     sessionToken:'s'.repeat(64),deviceId:'original-student-device-0001'}});
+ assert.equal(result.success,true);
+ assert.equal(result.available,true);
+ assert.equal(result.contentHash,sha256);
+ assert.equal(result.sizeBytes,150*1024);
+ assert.equal(result.base64.length,204800);
+ assert.equal(Buffer.from(result.base64,'base64').compare(bytes),0);
+});

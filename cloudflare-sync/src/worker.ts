@@ -34,19 +34,27 @@ export class SyncLane extends DurableObject<Env>{
       b.media.length>=1&&b.media.length<=2&&
       (b.requireDrive===undefined||typeof b.requireDrive==='boolean'),'Invalid media bundle manifest');
     const media=b.media as Json[],seen=new Set<string>(),ids=new Set<string>(),proofs:Json[]=[];
+    // One existing file lane per PDF. Fee receipts and marksheets cannot
+    // masquerade as an ID card or attach an unrelated portrait.
+    const primary=String(media[0]?.kind||'');
+    demand(['idCard','receipt','marksheet'].includes(primary)&&
+      (primary==='idCard'||media.length===1),
+      'Only an ID with optional photo, or one original financial PDF is allowed',412);
     for(const item of media){
      demand(item&&typeof item==='object'&&!Array.isArray(item)&&
        Object.keys(item).every(k=>['kind','id','uploadKey','sha256','sizeBytes','mime'].includes(k)),
        'Invalid media proof request');
      const kind=String(item.kind||''),id=String(item.id||'');
-     demand(['idCard','photo'].includes(kind)&&!seen.has(kind)&&
+     demand((kind===primary||(primary==='idCard'&&kind==='photo'))&&!seen.has(kind)&&
        operationPattern.test(id)&&typeof item.uploadKey==='string'&&
        /^[A-Za-z0-9_-]{1,150}$/.test(item.uploadKey)&&
        id===await digest(JSON.stringify([school,item.uploadKey])),'Untrusted staged file identity',409);
-     const allowed=kind==='idCard'?item.mime==='application/pdf'&&
-       Number.isSafeInteger(item.sizeBytes)&&Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=85*1024:
-       ['image/jpeg','image/png','image/webp'].includes(String(item.mime))&&
-       Number.isSafeInteger(item.sizeBytes)&&Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=40*1024;
+     const limit=kind==='idCard'?85*1024:kind==='receipt'?30*1024:
+       kind==='marksheet'?150*1024:40*1024;
+     const allowed=(kind==='photo'?
+       ['image/jpeg','image/png','image/webp'].includes(String(item.mime)):
+       item.mime==='application/pdf')&&Number.isSafeInteger(item.sizeBytes)&&
+       Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=limit;
      demand(allowed&&typeof item.sha256==='string'&&operationPattern.test(item.sha256)&&
        !ids.has(id),'Media size, kind or digest rejected',413);
      seen.add(kind);ids.add(id);
@@ -62,7 +70,7 @@ export class SyncLane extends DurableObject<Env>{
      proofs.push({kind,id,sha256:proof.sha256,sizeBytes:proof.sizeBytes,mime:proof.mime,
        driveVerified:proof.driveVerified===true,...(proof.driveVerified===true?{fileId:proof.fileId}:{})});
     }
-    demand(seen.has('idCard'),'An ID card PDF is required for person bundle',412);
+    demand(seen.has(primary),'Original PDF proof is required for atomic bundle',412);
     const manifestHash=await digest(canonical({schoolId:school,bundleId:b.bundleId,media:media}));
     return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
       mediaReady:true,archiveReady:proofs.every(p=>p.driveVerified===true),manifestHash,proofs};

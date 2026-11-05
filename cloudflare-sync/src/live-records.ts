@@ -150,12 +150,15 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  // revision remains the current non-deleted school record. A later delete or
  // replacement must instantly retire the old Cloudflare read authority.
  const currentBundleDocument=(receipt:Json,bundleId:string):boolean=>{
-  const refs=sql.exec<{id:string;revision:string;body:string}>(
-   "SELECT r.id,r.revision,r.body FROM live_events e JOIN live_records r ON r.collection=e.collection AND r.id=e.id WHERE e.bundle_id=? AND e.bundle_index=1 AND e.collection='documents' LIMIT 2",
+  const refs=sql.exec<{id:string;revision:string;body:string;bundle_index:number}>(
+   "SELECT r.id,r.revision,r.body,e.bundle_index FROM live_events e JOIN live_records r ON r.collection=e.collection AND r.id=e.id WHERE e.bundle_id=? AND e.collection='documents' LIMIT 2",
    bundleId).toArray();
   const a=receipt.acknowledgements;
-  return refs.length===1&&Array.isArray(a)&&a.length===2&&
-   refs[0].revision===(a[1] as Json).recordRevision&&
+  // Financial receipts have three original records (payment, ledger, PDF).
+  // The current document must still be the *last* verified bundle member.
+  return refs.length===1&&Array.isArray(a)&&a.length>=2&&a.length<=3&&
+   refs[0].bundle_index===a.length-1&&
+   refs[0].revision===(a[a.length-1] as Json).recordRevision&&
    (!refs[0].body||JSON.parse(refs[0].body)._syncDeleted!==true);
  };
  if(command==='ownerBundle'){
@@ -182,6 +185,35 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     archiveReady:saved.archiveReady===true,
     noPhoto:!files.some(f=>f.kind==='photo')};
  }
+ if(command==='ownerFinancialBundle'){
+  // Internal school DO lookup. The broker MUST first verify the student's
+  // signed session. A document ID alone is never sufficient authorization.
+  demand(['feeReceipt','marksheet'].includes(String(b.role))&&
+    typeof b.personId==='string'&&validId(b.personId)&&
+    typeof b.documentId==='string'&&validId(b.documentId),
+    'Invalid authenticated financial document identity',400);
+  const row=sql.exec<{receipt:string}>(
+   "SELECT b.receipt FROM live_bundles b JOIN live_events e ON e.bundle_id=b.bundle_id WHERE json_extract(b.receipt,'$.owner.role')=? AND json_extract(b.receipt,'$.owner.personId')=? AND e.collection='documents' AND e.id=? ORDER BY b.rowid DESC LIMIT 1",
+   String(b.role),String(b.personId),String(b.documentId)).toArray()[0];
+  if(!row)return {bundleProtocol:1,schoolId:school,found:false};
+  const saved=JSON.parse(row.receipt) as Json,files=saved.files as Json[];
+  if(saved.schoolId!==school||saved.cloudState!=='committed'||
+     saved.mediaReady!==true||!Array.isArray(files)||
+     !currentBundleDocument(saved,String(saved.bundleId)))
+    return {bundleProtocol:1,schoolId:school,found:false};
+  const kind=b.role==='feeReceipt'?'receipt':'marksheet';
+  const pdf=files.filter(f=>f.kind===kind);
+  demand(pdf.length===1&&pdf[0].mime==='application/pdf'&&
+    typeof pdf[0].id==='string'&&/^[a-f0-9]{64}$/.test(pdf[0].id as string)&&
+    typeof pdf[0].sha256==='string'&&/^[a-f0-9]{64}$/.test(pdf[0].sha256 as string)&&
+    Number.isSafeInteger(pdf[0].sizeBytes)&&Number(pdf[0].sizeBytes)>0&&
+    Number(pdf[0].sizeBytes)<=(kind==='receipt'?30*1024:150*1024),
+    'Authenticated financial PDF proof unavailable',412);
+  return {bundleProtocol:1,schoolId:school,found:true,
+    bundleId:saved.bundleId,documentId:b.documentId,kind,id:pdf[0].id,
+    sha256:pdf[0].sha256,sizeBytes:pdf[0].sizeBytes,mime:pdf[0].mime,
+    archiveReady:saved.archiveReady===true};
+ }
  if(command==='bundleArchiveManifest'){
   // Internal immutable publication identity for the backup delivery worker.
   demand(opId(b.bundleId),'Invalid bundle archive identity',400);
@@ -201,7 +233,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   // The published atomic group is the sole capability to retrieve the
   // original school-scoped Cloudflare bytes. Unpublished/staged files are
   // never addressable by guessing an upload ID.
-  demand(opId(b.bundleId)&&['idCard','photo'].includes(String(b.kind))&&
+  demand(opId(b.bundleId)&&['idCard','photo','receipt','marksheet'].includes(String(b.kind))&&
     typeof b.id==='string'&&/^[a-f0-9]{64}$/.test(b.id),
     'Invalid atomic media lookup',400);
   const row=sql.exec<{receipt:string}>(
@@ -216,7 +248,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   const found=(receipt.files as Json[]).filter(f=>f.id===b.id&&f.kind===b.kind);
   demand(found.length===1&&/^[a-f0-9]{64}$/.test(String(found[0].sha256||''))&&
     Number.isSafeInteger(found[0].sizeBytes)&&Number(found[0].sizeBytes)>0&&
-    Number(found[0].sizeBytes)<=(b.kind==='photo'?40*1024:85*1024),
+    Number(found[0].sizeBytes)<=(b.kind==='photo'?40*1024:
+      b.kind==='receipt'?30*1024:b.kind==='marksheet'?150*1024:85*1024),
     'Requested media is not part of the published atomic group',403);
   return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
     id:b.id,kind:b.kind,sha256:found[0].sha256,
@@ -275,38 +308,85 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
     'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
-  const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','documents']):
+  const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','fee_payments','fee_ledger','exam_results','documents']):
    new Set(['school_notices','school_calendar','school_settings','school_expenses']);
   let archiveFiles:Json[]=[],bundleOwner:Json|undefined;
   if(verifiedMedia){
    const ops=b.operations as Json[];
-   demand(ops.length===2&&personCollections.has(String(ops[0].collection))&&
-     ops[1].collection==='documents'&&ops.every(op=>op.operation==='write'),
-     'Person and ID document must commit as one ordered pair',412);
-   const person=ops[0],document=ops[1],parent=person.data as Json,child=document.data as Json;
-   demand(parent&&child&&parent.schoolId===school&&child.schoolId===school&&
-     !Object.hasOwn(parent,'bundleMedia')&&!Object.hasOwn(child,'bundleMedia')&&
-     !Object.hasOwn(parent,'bundleId')&&!Object.hasOwn(child,'bundleId'),
+   const kind=String((verifiedMedia.proofs as Json[])[0]?.kind||'');
+   const personKind=kind==='idCard',feeKind=kind==='receipt',examKind=kind==='marksheet';
+   const count=feeKind?3:2;
+   demand((personKind||feeKind||examKind)&&ops.length===count&&
+     ops.every(op=>op.operation==='write')&&
+     ops[count-1].collection==='documents',
+     'Original business record and PDF must commit in one complete group',412);
+   const first=ops[0],last=ops[count-1],head=first.data as Json,
+     child=last.data as Json;
+   demand(head&&child&&head.schoolId===school&&child.schoolId===school&&
+     [head,child].every(d=>!Object.hasOwn(d,'bundleMedia')&&!Object.hasOwn(d,'bundleId')),
      'Client cannot supply verified media metadata',403);
-   const teacher=person.collection==='teachers_directory';
-   const generation=String(parent.mobileStableId||person.id);
-   demand(child.personId===generation&&child.ownerRole===(teacher?'teacher':'student')&&
-     (teacher?child.teacherId===person.id:child.studentId===person.id),
-     'Document must belong to the exact person generation',409);
    const proofs=verifiedMedia.proofs as Json[];
-   demand(proofs[0].kind==='idCard'&&proofs.every(p=>
+   demand(proofs[0].kind===kind&&proofs.every(p=>
      typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256)&&
      (p.driveVerified!==true ||
        typeof p.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(p.fileId)))&&
-     (proofs.length===1||proofs[1].kind==='photo'),
-     'Complete verified Drive files required',412);
-   bundleOwner={role:teacher?'teacher':'student',personId:generation};
+     (personKind?(proofs.length===1||proofs.length===2&&proofs[1].kind==='photo'):
+       proofs.length===1&&proofs[0].mime==='application/pdf'),
+     'Original media proof does not match bundle type',412);
+   if(personKind){
+     demand(personCollections.has(String(first.collection)),
+       'Person and ID document must commit as one pair',412);
+     const teacher=first.collection==='teachers_directory';
+     const generation=String(head.mobileStableId||first.id);
+     demand(child.personId===generation&&child.ownerRole===(teacher?'teacher':'student')&&
+       (teacher?child.teacherId===first.id:child.studentId===first.id),
+       'ID document belongs to a different person generation',409);
+     bundleOwner={role:teacher?'teacher':'student',personId:generation};
+   }else{
+     demand(head.studentId!==undefined&&typeof head.studentId==='string'&&
+       head.studentId.length>0&&head.studentId.length<=200&&
+       typeof child.personId==='string'&&child.personId.length>0&&
+       (head.personId===undefined||head.personId===child.personId)&&
+       child.studentId===head.studentId&&
+       child.ownerRole==='student'&&
+       child.contentHash===proofs[0].sha256&&
+       child.mimeType==='application/pdf',
+       'School receipt/marksheet has no matching student or byte hash',409);
+     if(feeKind){
+       const ledger=ops[1].data as Json;
+       demand(first.collection==='fee_payments'&&ops[1].collection==='fee_ledger'&&
+         head.paymentId===first.id&&head.receiptDocumentId===last.id&&
+         child.documentKind==='feeReceipt'&&
+         ledger&&ledger.schoolId===school&&
+         ledger.studentId===head.studentId&&
+         (ledger.personId===undefined||ledger.personId===child.personId)&&
+         ledger.lastPaymentId===first.id&&ledger.month===head.month&&
+         typeof head.month==='string'&&head.month.length>0&&
+         typeof head.totalPaid==='number'&&Number.isFinite(head.totalPaid)&&
+         typeof head.expectedAmount==='number'&&Number.isFinite(head.expectedAmount)&&
+         typeof head.installmentAmount==='number'&&Number.isFinite(head.installmentAmount)&&
+         head.installmentAmount>0&&head.totalPaid<=head.expectedAmount&&
+         ledger.totalPaid===head.totalPaid&&
+         ledger.expectedAmount===head.expectedAmount&&
+         !Object.hasOwn(ledger,'bundleMedia')&&!Object.hasOwn(ledger,'bundleId'),
+         'Fee ledger, original payment and receipt must agree',409);
+     }else{
+       demand(first.collection==='exam_results'&&
+         child.documentKind==='marksheet'&&
+         (child.examResultId===first.id||head.marksheetDocumentId===last.id)&&
+         typeof first.id==='string'&&
+         first.id.length>0,
+         'Exam result and original marksheet must agree',409);
+     }
+     // These financial owners must not appear as a student ID-card owner.
+     bundleOwner={role:feeKind?'feeReceipt':'marksheet',personId:child.personId};
+   }
    archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,
      ...(p.driveVerified===true?{fileId:p.fileId}:{}),
      sha256:p.sha256,sizeBytes:p.sizeBytes,mime:p.mime}));
    demand(child.fileId===undefined||
      (proofs[0].driveVerified===true&&child.fileId===proofs[0].fileId),
-     'Document file identity differs from verified Drive receipt',409);
+     'Original PDF fileId cannot be invented before Drive ACK',409);
   }
   const operationIds=new Set<string>(),recordKeys=new Set<string>();
   for(const item of b.operations as Json[]){
@@ -330,7 +410,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     'An existing operation cannot be repackaged as an atomic bundle',409);
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
-     ...(verifiedMedia&&index===1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
+     ...(verifiedMedia&&index===(b.operations as Json[]).length-1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
        bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,
        ...(archiveFiles[0].fileId?{fileId:archiveFiles[0].fileId}:{})}}:{})},
        now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));

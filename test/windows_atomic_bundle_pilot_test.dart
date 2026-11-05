@@ -159,4 +159,90 @@ void main(){
      school,parent['operationId'] as String,'changed-card-revision-0002')));
  });
 
+ test('receipt and marksheet reuse TEST cloud stage with exact printable PDF ceilings',() async {
+   Uint8List document(int size) {
+     final bytes=Uint8List(size);
+     bytes.setRange(0,8,latin1.encode('%PDF-1.7'));
+     bytes.setRange(size-5,size,latin1.encode('%%EOF'));
+     return bytes;
+   }
+   for(final entry in <(String,int)>[
+     ('receipt',30*1024),('marksheet',150*1024)
+   ]){
+     final kind=entry.$1,limit=entry.$2;
+     final bytes=document(limit);
+     final key='test-school-pdf-$kind-0001';
+     final id=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+     final sha=sha256.convert(bytes).toString();
+     final received=<Map<String,dynamic>>[];
+     final result=await AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'application/pdf',bytes:bytes,isolatedTest:true,
+       request:(action,body)async{
+         expect(action,'managed/live/bundle-stage');
+         expect(body['sizeBytes'],limit);
+         expect(body['sha256'],sha);
+         expect(base64Decode(body['base64'] as String),bytes);
+         received.add(body);
+         return {'success':true,'schoolId':school,'bundleProtocol':1,
+           'mediaReady':true,'cloudflareAccepted':true,'driveVerified':false,
+           'media':{'kind':kind,'id':id,'uploadKey':key,
+             'sha256':sha,'sizeBytes':limit,'mime':'application/pdf'}};
+       });
+     expect(result['sha256'],sha);
+     expect(result.containsKey('fileId'),isFalse);
+     expect(received.length,1);
+     await expectLater(AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'application/pdf',bytes:document(limit+1),isolatedTest:true,
+       request:(action,body)async{fail('Oversized PDF entered cloud');}),
+       throwsStateError);
+     await expectLater(AtomicBundlePilot.stage(
+       school:school,kind:kind,uploadKey:key,name:'$kind.pdf',
+       mime:'image/png',bytes:bytes,isolatedTest:true,
+       request:(action,body)async{fail('Invalid PDF MIME entered cloud');}),
+       throwsStateError);
+   }
+ });
+
+ test('finance and exam originals publish only complete typed TEST bundles',()async{
+   for(final receipt in [true,false]){
+     final type=receipt?'receipt':'marksheet';
+     final bundleId='typed-financial-original-'+type+'-0001';
+     final file={'kind':type,'id':id,'uploadKey':uploadKey,
+       'sha256':sha,'sizeBytes':bytes.length,'mime':'application/pdf'};
+     final first={'collection':receipt?'fee_payments':'exam_results',
+       'id':receipt?'pay1':'result1','operation':'write',
+       'operationId':'typed-financial-parent-'+type+'-0001',
+       'expectedRevision':'','data':{'schoolId':school,'studentId':'s1'}};
+     final ledger={'collection':'fee_ledger','id':'ledger1',
+       'operation':'write','operationId':'typed-ledger-operation-0001',
+       'expectedRevision':'','data':{'schoolId':school,'studentId':'s1'}};
+     final doc={'collection':'documents','id':'financialDoc',
+       'operation':'write','operationId':'typed-document-'+type+'-0001',
+       'expectedRevision':'','data':{'schoolId':school,'studentId':'s1',
+         'contentHash':sha}};
+     final ops=<Map<String,dynamic>>[first,if(receipt)ledger,doc];
+     final result=await AtomicBundlePilot.publish(
+       school:school,bundleId:bundleId,operations:ops,media:[file],
+       isolatedTest:true,request:(action,body)async{
+         expect(action,'managed/live/bundle-publish');
+         expect(body['operations'],ops);
+         expect(body['mediaManifestHash'],
+           AtomicBundlePilot.manifest(school,bundleId,[file])['mediaManifestHash']);
+         return {'success':true,'schoolId':school,'bundleProtocol':1,
+           'bundleId':bundleId,'cloudState':'committed','mediaReady':true,
+           'archiveReady':false,'acknowledgements':[
+             for(final op in ops){'operationId':op['operationId'],
+               'cloudState':'committed'}]};
+       });
+     expect(result['archiveReady'],false);
+     await expectLater(AtomicBundlePilot.publish(
+       school:school,bundleId:bundleId,operations:ops.sublist(0,ops.length-1),
+       media:[file],isolatedTest:true,
+       request:(action,body)async{fail('Partial TEST bundle must not publish');}),
+       throwsStateError);
+   }
+ });
+
 }

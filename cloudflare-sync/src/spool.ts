@@ -153,7 +153,11 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const current=get(id),manifest=JSON.parse(current.payload) as Json;
   demand(['pending','retry','processing','completed'].includes(current.state),'Staged file is not durable',412);
   const size=Number(manifest.sizeBytes);
-  demand(Number.isSafeInteger(size)&&size>0&&size<=85*1024&&manifest.received===size&&
+  // PDF proof can also certify a <=150 KiB TEST marksheet. ID/photo limits
+  // remain independently enforced by the verified-media bundle preflight.
+  const mediaMax=manifest.mime==='application/pdf'?150*1024:
+    ['image/jpeg','image/png','image/webp'].includes(String(manifest.mime))?40*1024:0;
+  demand(Number.isSafeInteger(size)&&size>0&&size<=mediaMax&&manifest.received===size&&
     typeof manifest.sha256==='string'&&operationPattern.test(manifest.sha256)&&
     typeof manifest.uploadKey==='string'&&
     await digest(JSON.stringify([school,manifest.uploadKey]))===id,'Staged file manifest incomplete',412);

@@ -145,7 +145,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       pointer.bundleId!==bundleId||pointer.id!==id||
       pointer.kind!==kind||!/^[a-f0-9]{64}$/.test(pointer.sha256||'')||
       !Number.isSafeInteger(pointer.sizeBytes)||pointer.sizeBytes<1||
-      pointer.sizeBytes>(kind==='photo'?40*1024:85*1024))
+      pointer.sizeBytes>(kind==='photo'?40*1024:kind==='receipt'?30*1024:kind==='marksheet'?150*1024:85*1024))
       fail(502,'Unverified published atomic media identity');
    const fileLane='file-'+id;
    const proof=await cloudflareSync.rpc(schoolId,fileLane,{
@@ -160,7 +160,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      command:'readPart',id,offset:0});
    if(part?.offset!==0||part.sizeBytes!==pointer.sizeBytes||
       part.sha256!==pointer.sha256||typeof part.base64!=='string'||
-      part.base64.length>120000||
+      part.base64.length>210000||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64))
       fail(502,'Atomic media bytes unavailable');
    const bytes=Buffer.from(part.base64,'base64');
@@ -650,7 +650,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_atomic_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
   if(b.request.action==='mobile_atomic_idcard'){
@@ -677,6 +677,42 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    return {...file,projectId:b.schoolId,mobileAtomicIdCard:true,available:true,
      documentRevision:'atomic-'+bundle.bundleId,contentHash:file.sha256,
      noPhoto:bundle.noPhoto===true,...cardContext};
+  }
+  if(b.request.action==='mobile_atomic_document'){
+   // TEST-only mobile document viewer; exact original document and signed
+   // student generation. No arbitrary school document ID can cross tenants.
+   if(!atomicBundleTestSchools.includes(b.schoolId)||!liveSync.enabled(b.schoolId))
+     fail(412,'Atomic school documents are not enabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const kind=b.request.kind,documentId=b.request.documentId;
+   if(!['receipt','marksheet'].includes(kind)||
+      typeof documentId!=='string'||documentId.length<1||
+      documentId.length>200||documentId.includes('/')||
+      ['.','..','__proto__','constructor','prototype'].includes(documentId))
+     fail(400,'Invalid student financial document request');
+   const session=await signed(m,{action:'managed_mobile',
+     request:{action:'mobile_session_verify',sessionToken:b.request.sessionToken},
+     lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+   if(session?.success!==true||session.schoolId!==b.schoolId||
+      session.role!=='student'||typeof session.personId!=='string'||
+      session.personId.length<1)
+     fail(403,'Student session does not own requested financial document');
+   const role=kind==='receipt'?'feeReceipt':'marksheet';
+   const bundle=await liveSync.command(b.schoolId,{command:'ownerFinancialBundle',
+     role,personId:session.personId,documentId});
+   if(bundle?.found!==true)
+     return {success:true,schoolId:b.schoolId,projectId:b.schoolId,
+       mobileAtomicDocument:true,available:false,...cardContext};
+   if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+      bundle.documentId!==documentId||bundle.kind!==kind||
+      bundle.mime!=='application/pdf'||!/^[a-f0-9]{64}$/.test(bundle.sha256||''))
+     fail(502,'Authenticated financial document pointer invalid');
+   const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,kind,bundle.id);
+   if(file.ownerRole!==role||file.personId!==session.personId||
+      file.sha256!==bundle.sha256||file.id!==bundle.id)
+     fail(403,'Another student financial document is not accessible');
+   return {...file,projectId:b.schoolId,mobileAtomicDocument:true,
+     available:true,documentId,documentRevision:'atomic-'+bundle.bundleId,
+     contentHash:file.sha256,...cardContext};
   }
   if(['mobile_complaint','mobile_complaints'].includes(b.request.action)){
    const result=await require('./mobile-complaints').createMobileComplaints({db,now,fail,verify:async details=>signed(m,{action:'managed_mobile',request:{...b.request,action:details?'mobile_dashboard':'mobile_session_verify',afterSignal:true},lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}})})(b.schoolId,b.request);
@@ -809,7 +845,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    if(!atomicBundleTestSchools.includes(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
-      !['idCard','photo'].includes(b.kind)||
+      !['idCard','photo','receipt','marksheet'].includes(b.kind)||
       !/^[a-f0-9]{64}$/.test(b.id||''))
      fail(400,'Invalid published atomic media lookup');
    return publishedBundleBytes(m.schoolId,b.bundleId,b.kind,b.id);
@@ -821,7 +857,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
       !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
-      !Array.isArray(b.operations)||b.operations.length!==2||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
       !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
       JSON.stringify(b).length>256000)
      fail(400,'Invalid immutable atomic receipt lookup');
@@ -833,7 +869,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      bundleProtocol:1,found:false};
    if(result?.found!==true||result.schoolId!==m.schoolId||
       result.bundleProtocol!==1||result.receipt?.bundleId!==b.bundleId||
-      !Array.isArray(result.backups)||result.backups.length!==2)
+      !Array.isArray(result.backups)||result.backups.length!==b.operations.length)
      fail(502,'Atomic bundle receipt cannot be verified');
    return {success:true,schoolId:m.schoolId,...result};
   }
@@ -844,21 +880,58 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    if(!atomicBundleTestSchools.includes(m.schoolId)||!edgeEnabled(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    const kind=b.kind,mime=b.mime;
-   if(!['idCard','photo'].includes(kind)||
-      !(kind==='idCard'?mime==='application/pdf':
-        ['image/jpeg','image/png','image/webp'].includes(mime))||
+   const pdfLimits={idCard:85*1024,receipt:30*1024,marksheet:150*1024};
+   const limit=kind==='photo'?40*1024:pdfLimits[kind];
+   if(!['idCard','photo','receipt','marksheet'].includes(kind)||
+      !(kind==='photo'?['image/jpeg','image/png','image/webp'].includes(mime):
+        mime==='application/pdf')||
       typeof b.uploadKey!=='string'||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey)||
       typeof b.name!=='string'||b.name.length<1||b.name.length>200||
       /[/\\]/.test(b.name)||typeof b.base64!=='string'||
-      b.base64.length<1||b.base64.length>120000||
+      b.base64.length<1||b.base64.length>210000||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
       typeof b.sha256!=='string'||!/^[a-f0-9]{64}$/.test(b.sha256)||
       !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
-      b.sizeBytes>(kind==='photo'?40*1024:85*1024))
+      b.sizeBytes>limit)
      fail(400,'Invalid isolated atomic file stage');
    const bytes=Buffer.from(b.base64,'base64');
    if(bytes.length!==b.sizeBytes||bytes.toString('base64')!==b.base64||
       hash(bytes)!==b.sha256)fail(409,'Atomic file bytes differ from manifest');
+   if(kind!=='photo'){
+    // Receipt and marksheet PDFs follow the same immutable Cloudflare file
+    // owner but use their own existing print size limits. Publishing these
+    // kinds in an atomic business transaction is deliberately gated later.
+    if(!b.name.toLowerCase().endsWith('.pdf')||bytes.length<16||
+       bytes.subarray(0,5).toString('ascii')!=='%PDF-'||
+       !bytes.subarray(Math.max(0,bytes.length-2048))
+         .toString('latin1').includes('%%EOF'))
+      fail(400,'Invalid TEST school PDF container');
+   }
+   if(kind==='photo'){
+    // Isolated TEST photo admission: reject wrong MIME, truncated containers
+    // and filenames that lie about the encoded format before any Drive job.
+    // A signature is only a preflight; the original file DO and client still
+    // require immutable SHA-256 and a decodable image.
+    const suffix=b.name.toLowerCase();
+    const jpeg=mime==='image/jpeg'&&/\.(jpg|jpeg)$/.test(suffix)&&
+      bytes.length>=32&&bytes[0]===0xff&&bytes[1]===0xd8&&
+      bytes[2]===0xff&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9;
+    const png=mime==='image/png'&&suffix.endsWith('.png')&&bytes.length>=57&&
+      bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&
+      bytes.toString('ascii',12,16)==='IHDR'&&
+      bytes.readUInt32BE(8)===13&&bytes.readUInt32BE(16)>0&&
+      bytes.readUInt32BE(20)>0&&
+      bytes.readUInt32BE(16)*bytes.readUInt32BE(20)<=20000000&&
+      bytes.readUInt32BE(bytes.length-12)===0&&
+      bytes.toString('ascii',bytes.length-8,bytes.length-4)==='IEND';
+    const webp=mime==='image/webp'&&suffix.endsWith('.webp')&&bytes.length>=20&&
+      bytes.toString('ascii',0,4)==='RIFF'&&
+      bytes.toString('ascii',8,12)==='WEBP'&&
+      ['VP8 ','VP8L','VP8X'].includes(bytes.toString('ascii',12,16))&&
+      bytes.readUInt32LE(4)+8===bytes.length;
+    if(!jpeg&&!png&&!webp)
+      fail(400,'Invalid TEST atomic photo container or MIME');
+   }
    const provider=await cachedRead(uploadCapabilities,m.schoolId,
       ()=>signedRequest(m,{action:'managed_health'}),300000);
    if(provider?.success!==true||provider.storageReady!==true||
@@ -910,27 +983,35 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       !/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
       !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
       !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
-      !Array.isArray(b.operations)||b.operations.length!==2||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
       JSON.stringify(b).length>256000)
     fail(400,'Invalid isolated atomic bundle publish');
-   const [person,document]=b.operations;
-   if(!person||!['students_directory','teachers_directory'].includes(person.collection)||
-      !document||document.collection!=='documents')
-    fail(400,'Person and document bundle required');
-   if((await liveMigration.state(m.schoolId,person.collection))!=='active'||
-      (await liveMigration.state(m.schoolId,'documents'))!=='active')
-    fail(503,'Verified person/document cohort is not active; local work retained',
-      'LIVE_MIGRATION_NOT_ACTIVE');
+   const [first,...rest]=b.operations;
+   const last=rest[rest.length-1],type=b.media[0]?.kind;
+   const person=['students_directory','teachers_directory'].includes(first?.collection);
+   const fee=first?.collection==='fee_payments'&&b.operations.length===3&&
+     b.operations[1]?.collection==='fee_ledger'&&type==='receipt';
+   const exam=first?.collection==='exam_results'&&b.operations.length===2&&
+     type==='marksheet';
+   if(!last||last.collection!=='documents'||
+      !(person&&b.operations.length===2&&type==='idCard'||fee||exam))
+    fail(400,'Original school records and PDF bundle do not match');
+   // Every original member must be migration-fenced before one DO commit.
+   const collections=[...new Set(b.operations.map(op=>op.collection))];
+   for(const name of collections)if(
+       (await liveMigration.state(m.schoolId,name))!=='active')
+     fail(503,'Every atomic collection must have verified TEST baseline',
+       'LIVE_MIGRATION_NOT_ACTIVE');
    const operations=b.operations.map(item=>({...item,data:clean(item.data)}));
-   const result=await liveMigration.live(m.schoolId,person.collection,
+   const result=await liveMigration.live(m.schoolId,first.collection,
      ()=>liveSync.command(m.schoolId,{command:'bundlePublish',bundleId:b.bundleId,
        operations,media:b.media,mediaManifestHash:b.mediaManifestHash}),
-     {action:'managed_records',operation:'write',collection:person.collection,
-       id:person.id,operationId:person.operationId,expectedRecordRevision:person.expectedRevision});
+     {action:'managed_records',operation:'write',collection:first.collection,
+       id:first.id,operationId:first.operationId,expectedRecordRevision:first.expectedRevision});
    if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||
       result.cloudState!=='committed'||result.mediaReady!==true||
       typeof result.archiveReady!=='boolean'||
-      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==2)
+      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==b.operations.length)
     fail(502,'Verified atomic bundle receipt unavailable');
    return {success:true,schoolId:m.schoolId,...result};
   }
