@@ -309,7 +309,7 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
   const raw=JSON.stringify({...body,schoolId:A,lane}),time=String(Date.now());
   const r=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{
    'content-type':'application/json','x-vidya-time':time,
-   'x-vidya-signature':createHmac('sha256',key).update(time+'\\n'+raw).digest('hex')},body:raw});
+   'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+raw).digest('hex')},body:raw});
   return {status:r.status,...await r.json()};
  }
  await seed('students_directory');await seed('documents');
