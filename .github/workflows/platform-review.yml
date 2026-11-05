@@ -150,9 +150,13 @@ jobs:
     - name: Build isolated full Windows theme preview
       run: python3 .github/scripts/build_windows_theme_preview.py
     - name: Prepare local-only Windows preview browser checks
+      timeout-minutes: 10
       run: |
-        npm install --no-save playwright@1.58.2
-        npx playwright install --with-deps chromium
+        # GitHub Ubuntu runners already include Chromium's shared libraries.
+        # Avoid a new unbounded apt mirror update at every preview build.
+        npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.58.2
+        npx playwright install chromium
+        node -e "require('playwright').chromium.launch({headless:true}).then(b=>b.close())"
     - name: Verify real Windows pages in isolated browser preview
       run: node .github/scripts/test_windows_theme_preview.cjs
     - uses: actions/upload-artifact@v4
