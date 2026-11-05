@@ -62,14 +62,20 @@ test('TEST school media preflight is licensed and does not create a live bundle 
  assert.equal(result.schoolId,A);assert.equal(result.mediaReady,true);
  assert.equal(result.manifestHash,proof.manifestHash);
  assert.equal(calls.length,1);
- assert.deepEqual(calls[0],{s:A,l:'live',b:{command:'bundlePrepare',bundleId:proof.bundleId,media}});
+ assert.deepEqual(calls[0],{s:A,l:'live',b:{command:'bundlePrepare',bundleId:proof.bundleId,media,requireDrive:false}});
+ await assert.rejects(f.call({...request,requireDrive:true}),e=>e.status===502);
+ assert.equal(calls[1].b.requireDrive,true,'archive verification cannot be skipped at broker');
+ const verifiedEdge={enabled:()=>true,rpc:async(s,l,b)=>({...proof,archiveReady:true,
+   proofs:proof.proofs.map(item=>({...item,driveVerified:true,fileId:'verified-drive-card-0001'}))})};
+ const verified=fixture(null,{cloudflareSync:verifiedEdge,liveSyncSchools:[A]});
+ assert.equal((await verified.call({...request,requireDrive:true})).archiveReady,true);
  for(const mutation of [{liveProtocol:0},{bundleId:'x'},{media:[]},{media:[...media,...media,...media]}]){
   await assert.rejects(f.call({...request,...mutation}),e=>e.status===400||e.status===412);
  }
- assert.equal(calls.length,1,'invalid requests must not reach the Cloudflare owner');
+ assert.equal(calls.length,2,'invalid requests must not reach the Cloudflare owner');
  await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
- assert.equal(calls.length,1,'foreign school cannot inspect another school staging');
+ assert.equal(calls.length,2,'foreign school cannot inspect another school staging');
  f.docs.get('school_entitlements/'+A).blocked=true;
  await assert.rejects(f.call(request),e=>e.status===403);
- assert.equal(calls.length,1,'revoked school never receives a staged media proof');
+ assert.equal(calls.length,2,'revoked school never receives a staged media proof');
 });
