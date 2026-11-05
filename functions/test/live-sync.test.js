@@ -230,3 +230,48 @@ test('atomic document Drive backup waits for every staged file proof and enriche
  assert.equal(finishes.at(-1).archiveFiles[0].fileId,'drive-original-file-1');
  assert.equal(finishes.at(-1).driveRevision,'real-drive-revision');
 });
+
+test('isolated Windows file stage verifies SHA, same-school file owner and retains Drive as pending',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.from('%PDF-1.7\\nOriginal test card\\n%%EOF','utf8');
+ const sha256=createHash('sha256').update(bytes).digest('hex');
+ const uploadKey='atomic-windows-test-card-0001';
+ const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+ const calls=[],edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  calls.push({s,l,b});
+  if(b.command==='putSmall')return {id,state:'pending',
+    manifest:{...b.manifest,received:bytes.length},response:null};
+  if(b.command==='bundleProof')return {version:1,schoolId:s,id,uploadKey,
+    sha256,sizeBytes:bytes.length,mime:'application/pdf',
+    staged:true,driveVerified:false};
+  throw Error('Unexpected edge operation '+b.command);
+ }};
+ const health=async(_url,opt)=>{
+  const outer=JSON.parse(opt.body);
+  return {ok:true,status:200,text:async()=>JSON.stringify({
+    success:true,schoolId:outer.schoolId,storageReady:true,
+    uploadResumableVersion:1,
+  })};
+ };
+ const f=fixture(health,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A],cloudflareAllDataEnabled:true,
+   cloudflareAtomicSmallFiles:true});
+ const request={action:'managed/live/bundle-stage',liveProtocol:1,
+   schoolId:A,kind:'idCard',mime:'application/pdf',name:'id.pdf',uploadKey,
+   sha256,sizeBytes:bytes.length,base64:bytes.toString('base64')};
+ const result=await f.call(request);
+ assert.equal(result.success,true);assert.equal(result.cloudflareAccepted,true);
+ assert.equal(result.mediaReady,true);assert.equal(result.driveVerified,false);
+ assert.equal(result.media.id,id);assert.equal(result.media.sha256,sha256);
+ assert.equal(result.fileId,undefined,'No fake Drive ID');
+ assert.deepEqual(calls.map(x=>x.b.command),['putSmall','bundleProof']);
+ await assert.rejects(f.call({...request,schoolId:B}),e=>[403,412].includes(e.status));
+ const number=calls.length;
+ await assert.rejects(f.call({...request,sha256:'f'.repeat(64)}),e=>e.status===409);
+ await assert.rejects(f.call({...request,name:'../bad.pdf'}),e=>e.status===400);
+ assert.equal(calls.length,number,'Rejected manifests never reach Cloudflare');
+ f.docs.get('school_entitlements/'+A).blocked=true;
+ await assert.rejects(f.call(request),e=>e.status===403);
+ const off=fixture(health,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(off.call(request),e=>e.status===412);
+});
