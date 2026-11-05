@@ -108,4 +108,60 @@ void main() {
     expect(documentAcknowledgementFromWrite(payload, {...ack, 'driveState': 'pending'}), isNull);
     expect(documentAcknowledgementFromWrite(payload, {...ack, 'recordRevision': 'cf-only'}), isNull);
   });
+
+ test('atomic pilot reserves both existing outboxes in one local CAS without claiming Drive ACK',()async{
+   const stable='p-88888888888888888888888888888888';
+   final parent={
+     'schoolId':school,'collection':'students_directory',
+     'documentId':'person-1','operation':'set',
+     'operationId':'original-person-operation-0001','baseCloudRevision':'',
+     'syncState':'pending',
+     'data':{'schoolId':school,'name':'Student One','mobileStableId':stable},
+   };
+   final card={
+     'schoolId':school,'documentId':'card-1',
+     'documentRevision':'original-idcard-revision-0001',
+     'documentKind':'idCard','deleted':false,'baseCloudRevision':'',
+     'ownerRole':'student','studentId':'person-1','personId':stable,
+     'optimizedMimeType':'application/pdf','syncState':'Pending',
+   };
+   final parentRef=db.collection('_windows_firebase_outbox').doc('queue-person-1');
+   final cardRef=db.collection('_windows_document_outbox').doc('card-1');
+   await parentRef.set(parent);
+   await cardRef.set(card);
+   const bundleId='atomic-outbox-original-pair-0001';
+   await db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parent,
+     documentId:cardRef.id,documentBefore:card,
+     bundleId:bundleId,state:'reserved');
+   final parentReserved=(await parentRef.get()).data()!;
+   final cardReserved=(await cardRef.get()).data()!;
+   expect(parentReserved['atomicBundleId'],bundleId);
+   expect(cardReserved['atomicBundleId'],bundleId);
+   expect(parentReserved['atomicState'],'reserved');
+   expect(cardReserved['atomicState'],'reserved');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty,
+     reason:'Cloudflare reservation is not a Drive receipt');
+   final changed={...cardReserved,'documentRevision':'new-local-save-0001'};
+   await cardRef.set(changed);
+   await expectLater(db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parentReserved,
+     documentId:cardRef.id,documentBefore:cardReserved,
+     bundleId:bundleId,state:'committed',
+     parentCloudRevision:'live-parent-one',documentCloudRevision:'live-card-one'),
+     throwsStateError);
+   expect((await parentRef.get()).data()?['atomicState'],'reserved');
+   expect((await cardRef.get()).data()?['documentRevision'],'new-local-save-0001');
+   await cardRef.set(cardReserved);
+   await db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parentReserved,
+     documentId:cardRef.id,documentBefore:cardReserved,
+     bundleId:bundleId,state:'committed',
+     parentCloudRevision:'live-parent-one',documentCloudRevision:'live-card-one');
+   expect((await parentRef.get()).data()?['atomicCloudRevision'],'live-parent-one');
+   expect((await cardRef.get()).data()?['atomicCloudRevision'],'live-card-one');
+   expect((await parentRef.get()).data()?['atomicState'],'committed');
+   expect((await cardRef.get()).data()?['atomicState'],'committed');
+ });
+
 }
