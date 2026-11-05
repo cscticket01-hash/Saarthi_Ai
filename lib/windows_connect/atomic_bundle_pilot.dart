@@ -56,8 +56,7 @@ class AtomicBundlePilot {
         throw StateError('Unverified ID PDF envelope.');
     }
     if (kind == 'photo') {
-      // Keep an invalid/mislabeled photo out of the original Cloudflare lane.
-      // The existing 40 KiB portrait compressor is the sole preparation owner.
+      // Reject forged/truncated photo bytes before any Cloudflare upload.
       AtomicPortraitPreflight.verifyStagedBytes(bytes, mime);
     }
     final hash=sha256.convert(bytes).toString(),
@@ -80,142 +79,26 @@ class AtomicBundlePilot {
     return Map<String,dynamic>.from(proof);
   }
 
-  /// TEST-only direct photo admission using the existing quality-safe portrait
-  /// compressor. Does not touch or ACK the Windows durable outboxes. The
-  /// Person+Photo+ID coordinator still requires its own 3-media gate.
+  /// TEST-only staging: reuses the existing quality-safe portrait optimizer.
+  /// It neither owns nor ACKs a Windows queue; full Person+Photo+ID remains
+  /// a separate release gate.
   static Future<Map<String,dynamic>> stagePortrait({
-    required String school,
-    required String uploadKey,
-    required String name,
-    required Uint8List original,
-    AtomicBundleRequest? request,
-    bool isolatedTest=false,
+    required String school, required String uploadKey,
+    required String name, required Uint8List original,
+    AtomicBundleRequest? request, bool isolatedTest=false,
   }) async {
     if ((!buildEnabled && request == null) || !isolatedTest) {
       throw StateError('Atomic portrait preflight is TEST-only.');
     }
     final prepared = AtomicPortraitPreflight.prepare(original);
-    // The optimized container can differ from the source; advertise the
-    // actual extension without modifying the original school file.
-    final stem = name.replaceFirst(RegExp(r'\\.(jpe?g|png|webp)\      request: request, isolatedTest: isolatedTest,
-    );
-  }
-
-  static Future<Map<String,dynamic>> publish({
-    required String school,required String bundleId,
-    required List<Map<String,dynamic>> operations,
-    required List<Map<String,dynamic>> media,
-    AtomicBundleRequest? request,bool isolatedTest=false,
-  })async{
-    if((!buildEnabled&&request==null)||!isolatedTest||operations.length!=2||
-       !['students_directory','teachers_directory'].contains(operations[0]['collection'])||
-       operations[1]['collection']!='documents'||
-       operations.any((op)=>op['operation']!='write'||op['data'] is! Map||
-        (op['data'] as Map)['schoolId']!=school||
-        op['id'] is! String || op['operationId'] is! String||
-        op['expectedRevision'] is! String))
-      throw StateError('Unverified Person/Card TEST bundle.');
-    final proof=manifest(school,bundleId,media);
-    final call=request??(action,body)=>
-      ManagedSchoolSession.callForSchool(school,action,body);
-    final result=await call('managed/live/bundle-publish',{
-      'liveProtocol':1,'confirmIsolatedBundleTest':true,
-      'bundleId':bundleId,'media':proof['media'],
-      'mediaManifestHash':proof['mediaManifestHash'],
-      'operations':operations,
-    });
-    final acks=result['acknowledgements'];
-    if(result['success']!=true||result['schoolId']!=school||
-       result['bundleProtocol']!=1||result['bundleId']!=bundleId||
-       result['cloudState']!='committed'||result['mediaReady']!=true||
-       result['archiveReady'] is! bool||acks is! List||
-       acks.length!=operations.length||
-       acks.asMap().entries.any((entry)=>entry.value is! Map||
-        (entry.value as Map)['operationId']!=operations[entry.key]['operationId']||
-        (entry.value as Map)['cloudState']!='committed'))
-      throw StateError('No verified atomic Cloudflare commit receipt.');
-    // A cloud receipt is NOT a Drive ACK, nor a local outbox deletion.
-    return Map<String,dynamic>.from(result);
-  }
-  /// Retry-safe, exact wire operation proof after transport timeout.
-  /// The original outbox remains authoritative until a local CAS transition.
-  static Future<Map<String,dynamic>> receipt({
-    required String school,required String bundleId,
-    required List<Map<String,dynamic>> operations,
-    required List<Map<String,dynamic>> media,
-    AtomicBundleRequest? request,bool isolatedTest=false,
-  }) async {
-    if((!buildEnabled&&request==null)||!isolatedTest||
-       operations.length!=2 || media.isEmpty || media.length>2 ||
-       !['students_directory','teachers_directory'].contains(operations[0]['collection']) ||
-       operations[1]['collection']!='documents' ||
-       operations.any((op)=>op['operationId'] is! String ||
-        op['id'] is! String || op['expectedRevision'] is! String ||
-        op['data'] is! Map || (op['data'] as Map)['schoolId']!=school)) {
-      throw StateError('Invalid isolated atomic receipt identity.');
-    }
-    final proof=manifest(school,bundleId,media);
-    final call=request??(action,body)=>
-      ManagedSchoolSession.callForSchool(school,action,body);
-    final response=await call('managed/live/bundle-receipt',{
-      'liveProtocol':1,'bundleId':bundleId,
-      'operations':operations,'media':media,
-      'mediaManifestHash':proof['mediaManifestHash'],
-    });
-    if(response['success']!=true||response['schoolId']!=school||
-       response['bundleProtocol']!=1 ||
-       response['found'] is! bool) {
-      throw StateError('Atomic replay receipt did not authenticate.');
-    }
-    if(response['found']==false){
-      return {'found':false,'schoolId':school,'bundleProtocol':1};
-    }
-    final receipt=response['receipt'],backups=response['backups'];
-    if(receipt is! Map || backups is! List ||
-       receipt['schoolId']!=school || receipt['bundleId']!=bundleId ||
-       receipt['cloudState']!='committed' ||
-       receipt['mediaManifestHash']!=proof['mediaManifestHash'] ||
-       receipt['mediaReady']!=true ||
-       receipt['acknowledgements'] is! List ||
-       (receipt['acknowledgements'] as List).length!=2 ||
-       backups.length!=2 || response['driveVerified'] is! bool ||
-       response['cloudState']!='committed' ||
-       response['mediaReady']!=true){
-      throw StateError('Atomic receipt does not match published records.');
-    }
-    for(var i=0;i<operations.length;i++){
-      final ack=(receipt['acknowledgements'] as List)[i],backup=backups[i];
-      if(ack is! Map || backup is! Map ||
-         ack['operationId']!=operations[i]['operationId'] ||
-         backup['operationId']!=operations[i]['operationId'] ||
-         backup['id']!=operations[i]['id'] ||
-         backup['collection']!=operations[i]['collection'] ||
-         backup['recordRevision']!=ack['recordRevision'] ||
-         ack['recordRevision'] is! String ||
-         !(ack['recordRevision'] as String).startsWith('live-') ||
-         backup['driveVerified'] is! bool ||
-         (backup['driveVerified']==true &&
-          (backup['backupState']!='verified' ||
-           backup['driveRevision'] is! String ||
-           (backup['driveRevision'] as String).isEmpty))){
-        throw StateError('Atomic receipt operation proof differs.');
-      }
-    }
-    if(response['driveVerified']==true &&
-       backups.any((item)=>item is! Map || item['driveVerified']!=true)) {
-      throw StateError('Drive backup status cannot advance partially.');
-    }
-    return Map<String,dynamic>.from(response);
-  }
-
-}
-, caseSensitive: false), '');
+    // The normalized container may differ from the retained original.
+    final stem = name.replaceFirst(
+      RegExp(r'\.(jpe?g|png|webp)$', caseSensitive: false), '');
     final extension = prepared.mime == 'image/png' ? 'png'
         : prepared.mime == 'image/webp' ? 'webp' : 'jpg';
-    final stagedName = '\$stem.\$extension';
     return stage(
       school: school, kind: 'photo', uploadKey: uploadKey,
-      name: stagedName, mime: prepared.mime, bytes: prepared.bytes,
+      name: '$stem.$extension', mime: prepared.mime, bytes: prepared.bytes,
       request: request, isolatedTest: isolatedTest,
     );
   }
