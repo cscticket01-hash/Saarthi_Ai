@@ -243,6 +243,10 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
  const before=(await rpc({command:'head'})).value.cursor;
  const first=await rpc(body);assert.equal(first.status,200,JSON.stringify(first));
  assert.equal(first.value.mediaReady,true);
+ assert.equal(first.value.archiveReady,false);
+ assert.equal(first.value.proofs[0].driveVerified,false);
+ assert.equal((await rpc({...body,requireDrive:true})).status,412,
+  'Cloudflare bytes cannot masquerade as a verified Google Drive upload');
  assert.equal(first.value.schoolId,A);
  assert.equal(first.value.proofs.length,1);
  assert.equal(first.value.proofs[0].sizeBytes,85*1024);
@@ -251,10 +255,15 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
  assert.equal((await rpc({command:'head'})).value.cursor,before,'preflight never publishes a record');
 
  const portrait=Buffer.alloc(40*1024,32);
+ portrait.set([0xff,0xd8,0xff,0xe0],0);portrait.set([0xff,0xd9],portrait.length-2);
  const photo={kind:'photo',...await stage('sync3-atomic-photo-exact-40k-v1','image/jpeg',portrait)};
  const pair=await rpc({...body,media:[card,photo]});
  assert.equal(pair.status,200,JSON.stringify(pair));
  assert.equal(pair.value.proofs.length,2);
+ assert.equal(pair.value.archiveReady,false);
+ const corruptPhoto=await stage('sync3-invalid-jpeg-envelope-v1','image/jpeg',Buffer.alloc(80,32));
+ assert.equal((await rpc({...body,media:[card,{kind:'photo',...corruptPhoto}]})).status,412,
+  'Digest match alone cannot certify an invalid JPEG');
  assert.equal((await rpc({...body,media:[photo]})).status,412,'photo-only is never a card bundle');
  assert.equal((await rpc({...body,media:[card,card]})).status,409,'duplicate card is rejected');
  assert.equal((await rpc({...body,media:[card,{...photo,sha256:'a'.repeat(64)}]})).status,409,
@@ -275,5 +284,22 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
    {collection:'school_expenses',id:'not-committed-b',operation:'write',
    operationId:'sync3-block-partial-b-0001',expectedRevision:'',data:{schoolId:A,amount:3}}],
   media:[card]})).status,412,'readiness is not an atomic person/file commit');
+ // The original file lane is the sole Drive receipt owner. A matching,
+ // verified completion is required before an archive-ready proof exists.
+ const claim='sync3-drive-file-claim-0001';
+ assert.equal((await fileCommand(A,'file-'+card.id,{command:'claim',id:card.id,
+  claim,expires:Date.now()+120000})).value,true);
+ const drive={success:true,schoolId:A,uploadResumableVersion:1,uploadKey:card.uploadKey,
+  sha256:card.sha256,sizeBytes:card.sizeBytes,fileId:'synthetic-drive-id-card-0001',
+  offset:card.sizeBytes,committed:true};
+ assert.equal((await fileCommand(A,'file-'+card.id,{command:'finish',id:card.id,claim,
+  values:{state:'completed',nextAttemptAt:0,result:drive}})).value,true);
+ const archived=await rpc({...body,requireDrive:true});
+ assert.equal(archived.status,200,JSON.stringify(archived));
+ assert.equal(archived.value.archiveReady,true);
+ assert.equal(archived.value.proofs[0].driveVerified,true);
+ assert.equal(archived.value.proofs[0].fileId,drive.fileId);
+ assert.equal((await rpc({...body,media:[card,photo],requireDrive:true})).status,412,
+  'Unverified optional photo prevents a complete archive-ready bundle');
  assert.equal((await rpc({command:'head'})).value.cursor,before,'no partial bundle may reach peers');
 });
