@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show compute;
 
 import 'managed_school_session.dart';
 import 'atomic_portrait_preflight.dart';
+import '../school_media_budgets.dart';
 
 typedef AtomicBundleRequest = Future<Map<String,dynamic>> Function(
   String action, Map<String,dynamic> body);
@@ -40,25 +41,30 @@ class AtomicBundlePilot {
     required Uint8List bytes,AtomicBundleRequest? request,
     bool isolatedTest=false,
   })async{
+    final pdfLimit=SchoolMediaBudgets.pdfLimit(kind);
+    final photo=kind=='photo';
     if((!buildEnabled&&request==null)||!isolatedTest||
        !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
        !RegExp(r'^[A-Za-z0-9_-]{1,150}$').hasMatch(uploadKey)||
        name.isEmpty||name.length>200||name.contains('/')||name.contains('\\')||
-       !['idCard','photo'].contains(kind)||
-       (kind=='idCard'?mime!='application/pdf':
-        !['image/jpeg','image/png','image/webp'].contains(mime))||
-       bytes.isEmpty||bytes.length>(kind=='idCard'?85*1024:40*1024))
+       !['idCard','photo','receipt','marksheet'].contains(kind)||
+       (photo?!['image/jpeg','image/png','image/webp'].contains(mime):
+         mime!='application/pdf')||
+       bytes.isEmpty||bytes.length>(photo?40*1024:pdfLimit??0))
       throw StateError('TEST atomic staging is not admitted.');
-    if(kind=='idCard'){
+    if(!photo){
       if(bytes.length<16||
          !String.fromCharCodes(bytes.take(5)).startsWith('%PDF-')||
          !latin1.decode(bytes.skip(bytes.length>2048?bytes.length-2048:0)
             .toList()).contains('%%EOF'))
-        throw StateError('Unverified ID PDF envelope.');
+        throw StateError('Unverified school PDF envelope.');
     }
-    if (kind == 'photo') {
+    if (photo) {
       // Reject forged/truncated photo bytes before any Cloudflare upload.
       AtomicPortraitPreflight.verifyStagedBytes(bytes, mime);
+    } else {
+      // The shared school PDF budget applies to every document class.
+      SchoolMediaBudgets.verifyGeneratedPdf(kind, bytes);
     }
     final hash=sha256.convert(bytes).toString(),
       id=sha256.convert(utf8.encode(jsonEncode([school,uploadKey]))).toString();
