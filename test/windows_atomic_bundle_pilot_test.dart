@@ -139,6 +139,10 @@ void main(){
    }
    expect(WindowsAtomicPersonCardCoordinator.matches(school,
      {...parent,'baseCloudRevision':'existing'},doc),isFalse);
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...parent,'data':{...(parent['data'] as Map),
+       'photoUrl':'data:image/jpeg;base64,YWJj'}},doc),isFalse,
+     reason:'A portrait must not trigger hidden Drive-first upload in the atomic pilot');
    final key=WindowsAtomicPersonCardCoordinator.uploadKey(
       school,doc['documentRevision'] as String);
    final bundle=WindowsAtomicPersonCardCoordinator.bundleId(

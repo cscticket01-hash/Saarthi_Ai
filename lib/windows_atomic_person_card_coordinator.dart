@@ -20,6 +20,20 @@ class WindowsAtomicPersonCardCoordinator {
   static String uploadKey(String school,String cardOp) =>
     'pdf-${sha256.convert(utf8.encode(jsonEncode([school,cardOp])))}';
 
+  /// Inline portraits must remain with the existing verified Drive uploader
+  /// until a dedicated original-photo atomic bundle and receiver is deployed.
+  /// Otherwise prepareQueuedRecord would upload photo to Drive BEFORE the
+  /// supposed Cloudflare-first Person/Card atomic commit.
+  static bool hasUnstagedInlineMedia(Object? input,[int depth=0]){
+    if(depth>12)return true;
+    if(input is String)return input.startsWith('data:image/');
+    if(input is Map)return input.values.any(
+      (value)=>hasUnstagedInlineMedia(value,depth+1));
+    if(input is List)return input.any(
+      (value)=>hasUnstagedInlineMedia(value,depth+1));
+    return false;
+  }
+
   static bool matches(String school,Map<String,dynamic> parent,
       Map<String,dynamic> card) {
     final collection=parent['collection'],id=parent['documentId'];
@@ -35,6 +49,7 @@ class WindowsAtomicPersonCardCoordinator {
       parent['operationId'] is String &&
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(parent['operationId']) &&
       data is Map && data['schoolId']==school &&
+      !hasUnstagedInlineMedia(data) &&
       data['mobileStableId'] is String &&
       (role=='student'
         ? RegExp(r'^p-[a-f0-9]{32,64}$').hasMatch(data['mobileStableId'])
