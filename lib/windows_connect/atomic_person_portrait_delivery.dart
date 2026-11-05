@@ -33,6 +33,7 @@ class AtomicPersonPortraitDelivery {
        !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(pointer['documentId']?.toString()??'')||
        !RegExp(r'^[a-f0-9]{64}$').hasMatch(pointer['id']?.toString()??'')||
        !RegExp(r'^[a-f0-9]{64}$').hasMatch(pointer['sha256']?.toString()??'')||
+       !['student','teacher'].contains(pointer['role'])||
        !['image/jpeg','image/png','image/webp'].contains(pointer['mime'])||
        pointer['sizeBytes'] is! int||
        pointer['sizeBytes']<12||pointer['sizeBytes']>40*1024)
@@ -44,7 +45,7 @@ class AtomicPersonPortraitDelivery {
         throw StateError('School changed during atomic portrait download.');
     }
     scope();
-    final role=person['teacherId']!=null?'teacher':'student';
+    final role=pointer['role'] as String;
     final id=pointer['id'] as String,hash=pointer['sha256'] as String,
       mime=pointer['mime'] as String,size=pointer['sizeBytes'] as int,
       bundle=pointer['bundleId'] as String,
