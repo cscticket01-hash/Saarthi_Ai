@@ -169,9 +169,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     demand(bytes.length>=16&&[0x25,0x50,0x44,0x46,0x2d].every((v,i)=>bytes[i]===v)&&
       Buffer.from(bytes.subarray(Math.max(0,bytes.length-2048))).toString('latin1').includes('%%EOF'),
       'Staged ID PDF is incomplete',412);
-  }
+  }else if(manifest.mime==='image/jpeg'){
+    demand(size>=6&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff&&
+      bytes[size-2]===0xff&&bytes[size-1]===0xd9,'Staged JPEG is incomplete',412);
+  }else if(manifest.mime==='image/png'){
+    demand(size>=20&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v)&&
+      [73,69,78,68,174,66,96,130].every((v,i)=>bytes[size-8+i]===v),
+      'Staged PNG is incomplete',412);
+  }else if(manifest.mime==='image/webp'){
+    demand(size>=20&&Buffer.from(bytes.subarray(0,4)).toString('ascii')==='RIFF'&&
+      Buffer.from(bytes.subarray(8,12)).toString('ascii')==='WEBP'&&
+      new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(4,true)+8===size,
+      'Staged WebP is incomplete',412);
+  }else demand(false,'Unsupported atomic bundle media type',412);
+  // The file upload owner keeps a separate immutable Drive receipt. No
+  // "completed" label alone may be used as archive proof.
+  const result=current.response?((JSON.parse(current.response) as Json).result as Json):null;
+  const driveVerified=current.state==='completed'&&current.verified_at>0&&
+    result?.success===true&&result.schoolId===school&&
+    result.uploadResumableVersion===1&&result.uploadKey===manifest.uploadKey&&
+    result.sha256===manifest.sha256&&result.sizeBytes===size&&
+    result.committed===true&&result.offset===size&&
+    typeof result.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId);
+  if(b.requireDrive===true)demand(driveVerified,'Google Drive verified media receipt required',412);
   return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
-    sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true};
+    sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true,
+    driveVerified, ...(driveVerified?{fileId:result!.fileId}: {})};
  }
  if(action==='projection'){
   demand(lane==='records','Record projection unavailable',400);
