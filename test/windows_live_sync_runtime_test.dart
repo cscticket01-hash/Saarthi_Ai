@@ -320,4 +320,53 @@ void main(){
   expect((await store.pending()).length,2);
  });
 
+ test('Windows refuses incomplete original Person+Photo+ID proof before local CAS',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-photo-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  const bundle='atomic-original-photo-bundle-0001';
+  const generation='p-99999999999999999999999999999999';
+  const photoId='a'*64,photoHash='b'*64;
+  final person={'schoolId':school,'mobileStableId':generation,
+   'name':'Atomic Student','_syncRevision':'live-photo-parent',
+   'atomicPortrait':{'bundleId':bundle,'documentId':'original-card',
+     'role':'student','id':photoId,'sha256':photoHash,
+     'mime':'image/jpeg','sizeBytes':1024}};
+  final doc={'schoolId':school,'studentId':'original-person',
+    'personId':generation,'ownerRole':'student','documentKind':'idCard',
+    'bundleId':bundle,'bundleManifestHash':'c'*64,
+    '_syncRevision':'live-photo-card',
+    'bundleMedia':[
+      {'kind':'idCard','sha256':'d'*64},
+      {'kind':'photo','id':photoId,'sha256':photoHash,
+       'mime':'image/jpeg','sizeBytes':1024},
+    ]};
+  final good=<Map<String,dynamic>>[
+    {'bundleId':bundle,'bundleSize':2,'bundleIndex':0,
+     'collection':'students_directory','id':'original-person','record':person},
+    {'bundleId':bundle,'bundleSize':2,'bundleIndex':1,
+     'collection':'documents','id':'original-card','record':doc},
+  ];
+  await db.applyVerifiedLiveBundle(school,good);
+  expect((await db.collection('students_directory')
+    .doc('original-person').get()).data()?['atomicPortrait'],
+    person['atomicPortrait']);
+  final wrong=[
+    {...good[0],'id':'different-person'},
+    {...good[1],'record':{
+      ...doc,'bundleMedia':[
+        {'kind':'idCard','sha256':'d'*64},
+        {'kind':'photo','id':photoId,'sha256':'f'*64,
+         'mime':'image/jpeg','sizeBytes':1024},
+      ],
+    }},
+  ];
+  await expectLater(db.applyVerifiedLiveBundle(school,wrong),throwsStateError);
+  expect((await db.collection('students_directory')
+    .doc('different-person').get()).data(),isNull,
+    reason:'Bad photo cannot partially create a Person');
+ });
+
 }
