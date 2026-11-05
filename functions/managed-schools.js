@@ -726,13 +726,16 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
    // Existing authenticated school broker, not a new storage or sync owner.
    // Read-only preparation does NOT mean the person/card bundle committed.
    if(!/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))||
-      !Array.isArray(b.media)||b.media.length<1||b.media.length>2)
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      (b.requireDrive!==undefined&&typeof b.requireDrive!=='boolean'))
      fail(400,'Invalid atomic media preflight request');
    const proof=await liveSync.command(m.schoolId,{command:'bundlePrepare',
-     bundleId:b.bundleId,media:b.media});
+     bundleId:b.bundleId,media:b.media,requireDrive:b.requireDrive===true});
    if(proof?.schoolId!==m.schoolId||proof.mediaReady!==true||
       proof.bundleProtocol!==1||!/^[a-f0-9]{64}$/.test(proof.manifestHash||'')||
-      !Array.isArray(proof.proofs)||proof.proofs.length!==b.media.length)
+      !Array.isArray(proof.proofs)||proof.proofs.length!==b.media.length||
+      (b.requireDrive===true&&(proof.archiveReady!==true||
+       !proof.proofs.every(item=>item.driveVerified===true&&/^[A-Za-z0-9_-]{1,200}$/.test(item.fileId||'')))))
      fail(502,'Atomic media readiness proof unavailable');
    return {success:true,schoolId:m.schoolId,...proof};
   }
