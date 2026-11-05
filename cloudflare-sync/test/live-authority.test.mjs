@@ -545,3 +545,87 @@ test('one existing school file owner proves exact 30 KiB receipts and 150 KiB ma
  assert.equal((await rpc({command:'head'})).value.cursor,before,
    'Temporary Cloudflare file staging cannot create a live record or Drive ACK');
 });
+
+test('fee payment, ledger and PDF share one original school DO commit; exam result and marksheet also atomic',async()=>{
+ async function fileCall(lane,body){
+  const raw=JSON.stringify({...body,schoolId:A,lane}),time=String(Date.now());
+  const response=await mf.dispatchFetch('https://worker.invalid/internal',{
+   method:'POST',headers:{'content-type':'application/json','x-vidya-time':time,
+    'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+raw).digest('hex')},body:raw});
+  return {status:response.status,...await response.json()};
+ }
+ await seed('fee_payments');await seed('fee_ledger');await seed('exam_results');
+ const studentId='student-stage-first',personId='p-'+'8'.repeat(32);
+ for(const kind of ['receipt','marksheet']){
+  const fee=kind==='receipt',size=fee?2048:4096;
+  const bytes=Buffer.alloc(size,32);
+  bytes.write('%PDF-1.7',0,'ascii');bytes.write('%%EOF',size-5,'ascii');
+  const uploadKey='finance-atomic-'+kind+'-unique-0001',
+   id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex'),
+   sha256=createHash('sha256').update(bytes).digest('hex');
+  const media=[{kind,id,uploadKey,sha256,sizeBytes:size,mime:'application/pdf'}];
+  const stage=await fileCall('file-'+id,{command:'putSmall',id,
+   manifest:{uploadKey,sha256,sizeBytes:size,mime:'application/pdf',name:kind+'.pdf'},
+   base64:bytes.toString('base64')});
+  assert.equal(stage.status,200,JSON.stringify(stage));
+  const bundleId='financial-school-atomic-'+kind+'-0001';
+  const data={schoolId:A,studentId,personId};
+  const docId=fee?'FEE-finance-atomic-001':'SHEET-exam-atomic-001';
+  const parentId=fee?'finance-atomic-001':'exam-atomic-001';
+  const head=fee?{collection:'fee_payments',id:parentId,operation:'write',
+   operationId:'finance-original-payment-operation-0001',expectedRevision:'',
+   data:{...data,paymentId:parentId,receiptDocumentId:docId,month:'2026-11',
+    installmentAmount:50,totalPaid:50,expectedAmount:100}}:
+   {collection:'exam_results',id:parentId,operation:'write',
+    operationId:'finance-original-exam-operation-00001',expectedRevision:'',
+    data:{...data,marksheetDocumentId:docId,score:98}};
+  const ledger={collection:'fee_ledger',id:'ledger-finance-001',operation:'write',
+    operationId:'finance-original-ledger-operation-0001',expectedRevision:'',
+    data:{...data,month:'2026-11',lastPaymentId:parentId,totalPaid:50}};
+  const doc={collection:'documents',id:docId,operation:'write',
+    operationId:fee?'finance-original-receipt-operation-0001':'finance-original-marksheet-op-0001',
+    expectedRevision:'',data:{...data,ownerRole:'student',
+     documentKind:fee?'feeReceipt':'marksheet',documentId:docId,
+     ...(fee?{}:{examResultId:parentId}),
+     contentHash:sha256,mimeType:'application/pdf'}};
+  const operations=fee?[head,ledger,doc]:[head,doc];
+  const mediaManifestHash=createHash('sha256').update(canonical({
+    schoolId:A,bundleId,media})).digest('hex');
+  const before=(await rpc({command:'head'})).value.cursor;
+  const gate=await rpc({command:'bundlePrepare',bundleId,media});
+  assert.equal(gate.status,200,JSON.stringify(gate));
+  assert.equal(gate.value.mediaReady,true);
+  assert.equal(gate.value.archiveReady,false);
+  const tampered=operations.map((op,i)=>i===operations.length-1?{...op,
+    data:{...op.data,contentHash:'a'.repeat(64)}}:op);
+  assert.equal((await rpc({command:'bundlePublish',bundleId,
+    media,operations:tampered,mediaManifestHash})).status,409,
+    'Wrong original PDF hash must not publish a financial record');
+  assert.equal((await rpc({command:'head'})).value.cursor,before);
+  const request={command:'bundlePublish',bundleId,media,operations,mediaManifestHash};
+  const commit=await rpc(request);
+  assert.equal(commit.status,200,JSON.stringify(commit));
+  assert.equal(commit.value.cloudState,'committed');
+  assert.equal(commit.value.mediaReady,true);
+  assert.equal(commit.value.archiveReady,false);
+  assert.equal(commit.value.acknowledgements.length,operations.length);
+  assert.equal((await rpc({command:'head'})).value.cursor,before+operations.length);
+  const group=(await rpc({command:'changes',after:before})).value.events;
+  assert.deepEqual(group.map(x=>x.bundleIndex),operations.map((_,i)=>i));
+  assert.deepEqual(group.map(x=>x.bundleSize),operations.map(()=>operations.length));
+  const stored=(await rpc({command:'read',collection:'documents',id:docId})).value.record;
+  assert.equal(stored.bundleId,bundleId);
+  assert.equal(stored.bundleMedia[0].sha256,sha256);
+  assert.equal(stored.fileId,undefined,'No fabricated Drive file ID');
+  assert.equal((await rpc({command:'bundleMedia',bundleId,kind,id})).value.sha256,sha256);
+  const recovered=await rpc({command:'bundleReceipt',bundleId,media,
+    operations,mediaManifestHash});
+  assert.equal(recovered.status,200,JSON.stringify(recovered));
+  assert.equal(recovered.value.driveVerified,false);
+  assert.equal(recovered.value.backups.length,operations.length);
+  assert.deepEqual((await rpc(request)).value,commit.value,'Exact replay is immutable');
+  assert.equal((await rpc({...request,operations:tampered})).status,409);
+  assert.equal((await rpc({command:'bundlePublish',bundleId,media,operations,
+    mediaManifestHash},B)).status,412,'Another school cannot borrow this staged PDF');
+ }
+});
