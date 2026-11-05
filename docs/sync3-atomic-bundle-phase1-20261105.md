@@ -36,3 +36,11 @@
 - Fee payments are immutable separate operations; never merge two payments into one logical payment.
 - Cloudflare Accepted ≠ Drive Verified, and media failure ≠ successful record bundle.
 - No cross-school authorization, replay or storage mixing.
+
+## Phase 2: signed media staging preflight (TEST-only, not a publish)
+
+- Reuses the **same existing** school-scoped Cloudflare file Durable Object lane. Added read-only `bundleProof` that verifies the original persisted one-chunk bytes, exact SHA-256, completed staging, original school/upload identity, and nonexpired availability. This is not a new upload owner or background queue.
+- In the existing live Durable Object worker, `bundlePrepare` checks exactly one ID PDF (complete `%PDF-` envelope/EOF and **up to 85 KiB**) plus at most one optional portrait (**up to 40 KiB**). Each immutable file proof must match `uploadKey`, expected school-scoped ID, content SHA-256, size and MIME. Reject missing/receiving/GC-expired bytes, altered manifests, cross-school IDs, duplicate kinds, oversized PDFs and photo-only requests.
+- The existing authenticated/licensed managed-school broker exposes `managed/live/bundle-preflight` behind the already opt-in `liveProtocol: 1` school gate. It is **read-only** and only reports `mediaReady`; it does not mutate a Student/Teacher record, publish to any PC, return a Drive file ID or claim an Atomic Bundle ACK.
+- Added Cloudflare Miniflare proof tests for exact 85 KiB, no-photo, optional 40 KiB photo, corrupted hash, unsupported/oversized file, replay and **no partial visibility**. Added broker school-scope/licence/invalid-request regressions. CI evidence belongs to the final PR head only.
+- **Next required development:** bind a proof to an immutable person+document manifest with a single visible commit *and* a verified file/Drive backup dependency; then integrate the Windows durable outbox and Android/Web receiver. In particular, never pass the current media preflight result off as a committed Student Bundle. No fake 2–5 s acceptance or 1 lakh attendance claim.
