@@ -16,7 +16,7 @@ void main() {
  const bundle='original-person-photo-card-bundle-0001';
  const document='original-person-photo-card-document-0001';
  const generation='p-88888888888888888888888888888888';
- const id='a' * 64;
+ final id='a' * 64;
  final db=FirebaseFirestore.instance;
  late Uint8List photo;
  late String digest;
