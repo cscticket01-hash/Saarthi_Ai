@@ -303,3 +303,73 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
   'Unverified optional photo prevents a complete archive-ready bundle');
  assert.equal((await rpc({command:'head'})).value.cursor,before,'no partial bundle may reach peers');
 });
+
+test('Sync3 archived person and document publish as one Ready transaction, never a partial peer event',async()=>{
+ async function callLane(lane,body){
+  const raw=JSON.stringify({...body,schoolId:A,lane}),time=String(Date.now());
+  const response=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{
+   'content-type':'application/json','x-vidya-time':time,
+   'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+raw).digest('hex')},body:raw});
+  return {status:response.status,...await response.json()};
+ }
+ await seed('students_directory');
+ await seed('documents');
+ const cardBytes=Buffer.alloc(1024,32);
+ cardBytes.write('%PDF-1.7',0,'ascii');cardBytes.write('%%EOF',cardBytes.length-5,'ascii');
+ const uploadKey='sync3-person-archive-idcard-0001';
+ const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+ const sha256=createHash('sha256').update(cardBytes).digest('hex');
+ const card={kind:'idCard',id,uploadKey,sha256,sizeBytes:cardBytes.length,mime:'application/pdf'};
+ const lane='file-'+id;
+ const staged=await callLane(lane,{command:'putSmall',id,
+  manifest:{uploadKey,sha256,sizeBytes:cardBytes.length,mime:'application/pdf',name:'card.pdf'},
+  base64:cardBytes.toString('base64')});
+ assert.equal(staged.status,200,JSON.stringify(staged));
+ const bundleId='sync3-verified-person-document-group-0001';
+ const media=[card],mediaManifestHash=createHash('sha256').update(canonical({
+  schoolId:A,bundleId,media})).digest('hex');
+ const generation='p-'+'7'.repeat(32);
+ const person={collection:'students_directory',id:'student-archive-1',operation:'write',
+  operationId:'sync3-person-archive-write-0001',expectedRevision:'',
+  data:{schoolId:A,mobileStableId:generation,name:'Verified Person'}};
+ const document={collection:'documents',id:'card-archive-1',operation:'write',
+  operationId:'sync3-document-archive-write-0001',expectedRevision:'',
+  data:{schoolId:A,studentId:person.id,personId:generation,ownerRole:'student',
+   type:'idCard',name:'Verified Card'}};
+ const request={command:'bundlePublish',bundleId,mediaManifestHash,media,
+  operations:[person,document]};
+ const before=(await rpc({command:'head'})).value.cursor;
+ assert.equal((await rpc(request)).status,412,'No visibility before Drive file verification');
+ assert.equal((await rpc({command:'head'})).value.cursor,before);
+ const claim='sync3-bundle-verified-drive-claim-0001';
+ assert.equal((await callLane(lane,{command:'claim',id,claim,expires:Date.now()+120000})).value,true);
+ const fileId='verified-idcard-drive-file-0001';
+ const finish=await callLane(lane,{command:'finish',id,claim,
+  values:{state:'completed',nextAttemptAt:0,result:{success:true,schoolId:A,
+   uploadResumableVersion:1,uploadKey,sha256,sizeBytes:cardBytes.length,
+   fileId,committed:true,offset:cardBytes.length}}});
+ assert.equal(finish.status,200,JSON.stringify(finish));
+ assert.equal(finish.value,true);
+ assert.equal((await rpc({...request,mediaManifestHash:'e'.repeat(64)})).status,409);
+ assert.equal((await rpc({command:'head'})).value.cursor,before);
+ // A document CAS conflict rolls back the already inserted person, owner
+ // metadata, event and Drive backup job inside the same SQLite transaction.
+ assert.equal((await rpc({...request,operations:[person,
+  {...document,expectedRevision:'wrong-drive-revision'}]})).status,409);
+ assert.equal((await rpc({command:'read',collection:'students_directory',id:person.id})).value.source,'missing');
+ assert.equal((await rpc({command:'head'})).value.cursor,before);
+ const first=await rpc(request);
+ assert.equal(first.status,200,JSON.stringify(first));
+ assert.equal(first.value.archiveReady,true);
+ assert.equal(first.value.acknowledgements.length,2);
+ assert.equal(first.value.files[0].fileId,fileId);
+ const saved=(await rpc({command:'read',collection:'documents',id:document.id})).value.record;
+ assert.equal(saved.bundleMedia[0].fileId,fileId);
+ assert.equal(saved.bundleManifestHash,mediaManifestHash);
+ assert.equal((await rpc({command:'head'})).value.cursor,before+2);
+ assert.deepEqual((await rpc(request)).value,first.value,'immutable replay does not need a new Drive write');
+ assert.equal((await rpc({command:'head'})).value.cursor,before+2);
+ assert.equal((await rpc({...request,operations:[person,
+  {...document,data:{...document.data,name:'forged change'}}]})).status,409);
+ assert.equal((await rpc({command:'head'})).value.cursor,before+2);
+});
