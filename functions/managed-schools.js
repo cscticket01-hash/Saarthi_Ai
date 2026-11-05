@@ -844,21 +844,33 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    if(!atomicBundleTestSchools.includes(m.schoolId)||!edgeEnabled(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    const kind=b.kind,mime=b.mime;
-   if(!['idCard','photo'].includes(kind)||
-      !(kind==='idCard'?mime==='application/pdf':
-        ['image/jpeg','image/png','image/webp'].includes(mime))||
+   const pdfLimits={idCard:85*1024,receipt:30*1024,marksheet:150*1024};
+   const limit=kind==='photo'?40*1024:pdfLimits[kind];
+   if(!['idCard','photo','receipt','marksheet'].includes(kind)||
+      !(kind==='photo'?['image/jpeg','image/png','image/webp'].includes(mime):
+        mime==='application/pdf')||
       typeof b.uploadKey!=='string'||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey)||
       typeof b.name!=='string'||b.name.length<1||b.name.length>200||
       /[/\\]/.test(b.name)||typeof b.base64!=='string'||
-      b.base64.length<1||b.base64.length>120000||
+      b.base64.length<1||b.base64.length>210000||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
       typeof b.sha256!=='string'||!/^[a-f0-9]{64}$/.test(b.sha256)||
       !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
-      b.sizeBytes>(kind==='photo'?40*1024:85*1024))
+      b.sizeBytes>limit)
      fail(400,'Invalid isolated atomic file stage');
    const bytes=Buffer.from(b.base64,'base64');
    if(bytes.length!==b.sizeBytes||bytes.toString('base64')!==b.base64||
       hash(bytes)!==b.sha256)fail(409,'Atomic file bytes differ from manifest');
+   if(kind!=='photo'){
+    // Receipt and marksheet PDFs follow the same immutable Cloudflare file
+    // owner but use their own existing print size limits. Publishing these
+    // kinds in an atomic business transaction is deliberately gated later.
+    if(!b.name.toLowerCase().endsWith('.pdf')||bytes.length<16||
+       bytes.subarray(0,5).toString('ascii')!=='%PDF-'||
+       !bytes.subarray(Math.max(0,bytes.length-2048))
+         .toString('latin1').includes('%%EOF'))
+      fail(400,'Invalid TEST school PDF container');
+   }
    if(kind==='photo'){
     // Isolated TEST photo admission: reject wrong MIME, truncated containers
     // and filenames that lie about the encoded format before any Drive job.
