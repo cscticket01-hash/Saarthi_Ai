@@ -26,9 +26,25 @@ class WindowsAtomicPersonCardCoordinator {
   /// supposed Cloudflare-first Person/Card atomic commit.
   static bool hasUnstagedInlineMedia(Object? input,[int depth=0]){
     if(depth>12)return true;
-    if(input is String)return input.startsWith('data:image/');
-    if(input is Map)return input.values.any(
-      (value)=>hasUnstagedInlineMedia(value,depth+1));
+    if(input is String)return input.trimLeft().startsWith('data:image/');
+    if(input is Map){
+      // Existing school records may hold raw base64, a Drive/HTTP URL or a
+      // local portrait path instead of a data:image URI. None is proof that
+      // the original photo was SHA-staged in this atomic manifest. Until the
+      // photo owner is integrated, keep these saves on the legacy safe lane.
+      const portraitKeys=<String>{
+        'photobase64','photourl','photofileid','photopath','photouri',
+        'portraitbase64','portraiturl','portraitpath','imagebase64',
+      };
+      for(final entry in input.entries){
+        final key=entry.key.toString().toLowerCase();
+        final value=entry.value;
+        if(portraitKeys.contains(key)&&value!=null&&
+           (value is! String||value.trim().isNotEmpty))return true;
+        if(hasUnstagedInlineMedia(value,depth+1))return true;
+      }
+      return false;
+    }
     if(input is List)return input.any(
       (value)=>hasUnstagedInlineMedia(value,depth+1));
     return false;
