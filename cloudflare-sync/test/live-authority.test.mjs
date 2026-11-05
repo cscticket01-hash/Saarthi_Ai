@@ -324,6 +324,20 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
   base64:bytes.toString('base64')});
  assert.equal(stage.status,200,JSON.stringify(stage));
  assert.equal(stage.value.state,'pending');
+ const photoBytes=Buffer.alloc(4096,32);
+ photoBytes.set([0xff,0xd8,0xff,0xe0],0);
+ photoBytes.set([0xff,0xd9],photoBytes.length-2);
+ const photoUploadKey='sync3-stage-first-original-portrait-0001';
+ const photoId=createHash('sha256').update(JSON.stringify([A,photoUploadKey])).digest('hex');
+ const photoSha=createHash('sha256').update(photoBytes).digest('hex');
+ const photo={kind:'photo',id:photoId,uploadKey:photoUploadKey,sha256:photoSha,
+  sizeBytes:photoBytes.length,mime:'image/jpeg'};
+ const photoStage=await callLane('file-'+photoId,{command:'putSmall',id:photoId,
+  manifest:{uploadKey:photoUploadKey,sha256:photoSha,
+   sizeBytes:photoBytes.length,mime:'image/jpeg',name:'original-photo.jpg'},
+  base64:photoBytes.toString('base64')});
+ assert.equal(photoStage.status,200,JSON.stringify(photoStage));
+ media.push(photo);
  const bundleId='sync3-cloudflare-before-drive-0001';
  const operations=[
   {collection:'students_directory',id:'student-stage-first',operation:'write',
@@ -362,6 +376,20 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.equal(doc.fileId,undefined,'Never invent a Drive fileId before verified ACK');
  assert.equal(doc.bundleMedia[0].sha256,sha256);
  assert.equal(doc.bundleMedia[0].fileId,undefined);
+ assert.equal(doc.bundleMedia[1].sha256,photoSha);
+ assert.equal(doc.bundleMedia[1].fileId,undefined,
+  'Original photo Drive fileId must never be invented');
+ const person=(await rpc({command:'read',collection:'students_directory',
+   id:'student-stage-first'})).value.record;
+ assert.deepEqual(person.atomicPortrait,{
+  bundleId,documentId:'card-stage-first',role:'student',
+  id:photoId,sha256:photoSha,mime:'image/jpeg',
+  sizeBytes:photoBytes.length,
+ },'Person and exact original 40 KiB portrait pointer commit atomically');
+ assert.equal((await rpc({command:'ownerBundle',role:'student',
+  personId:'p-'+'8'.repeat(32)})).value.noPhoto,false);
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',
+  id:photoId})).value.sha256,photoSha);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);
  assert.deepEqual((await rpc({command:'bundlePublish',bundleId,media,
    operations,mediaManifestHash})).value,commit.value,'Retry must not duplicate events');
@@ -372,6 +400,9 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
  assert.equal(deleteCard.status,200,JSON.stringify(deleteCard));
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'idCard',id})).status,409,
    'A deleted ID card cannot keep its old media capability');
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',
+   id:photoId})).status,409,
+   'A deleted ID revokes its original person portrait too');
  assert.equal((await rpc({command:'ownerBundle',role:'student',
    personId:'p-'+'8'.repeat(32)})).value.found,false);
 });
