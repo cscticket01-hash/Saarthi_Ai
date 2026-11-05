@@ -215,10 +215,10 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   demand(b.files===undefined&&b.fileReferences===undefined,'Unverified media references',412);
   if(verifiedMedia){
    demand(Array.isArray(b.media)&&b.media.length>=1&&b.media.length<=2&&
-     verifiedMedia.archiveReady===true&&verifiedMedia.mediaReady===true&&
+     verifiedMedia.mediaReady===true&&
      verifiedMedia.manifestHash===b.mediaManifestHash&&
      Array.isArray(verifiedMedia.proofs)&&verifiedMedia.proofs.length===b.media.length,
-     'Immutable media/Drive proof required',412);
+     'Immutable staged media proof required',412);
   }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
     'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
@@ -241,16 +241,19 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
      (teacher?child.teacherId===person.id:child.studentId===person.id),
      'Document must belong to the exact person generation',409);
    const proofs=verifiedMedia.proofs as Json[];
-   demand(proofs[0].kind==='idCard'&&proofs.every(p=>p.driveVerified===true&&
-     typeof p.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(p.fileId)&&
-     typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256))&&
+   demand(proofs[0].kind==='idCard'&&proofs.every(p=>
+     typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256)&&
+     (p.driveVerified!==true ||
+       typeof p.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(p.fileId)))&&
      (proofs.length===1||proofs[1].kind==='photo'),
      'Complete verified Drive files required',412);
    bundleOwner={role:teacher?'teacher':'student',personId:generation};
-   archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,fileId:p.fileId,
+   archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,
+     ...(p.driveVerified===true?{fileId:p.fileId}:{}),
      sha256:p.sha256,sizeBytes:p.sizeBytes,mime:p.mime}));
-   demand(child.fileId===undefined||child.fileId===proofs[0].fileId,
-     'Document file identity differs from Drive proof',409);
+   demand(child.fileId===undefined||
+     (proofs[0].driveVerified===true&&child.fileId===proofs[0].fileId),
+     'Document file identity differs from verified Drive receipt',409);
   }
   const operationIds=new Set<string>(),recordKeys=new Set<string>();
   for(const item of b.operations as Json[]){
@@ -275,7 +278,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const acknowledgements=(b.operations as Json[]).map((item,index)=>
     liveCommand(storage,school,{...item,command:'commit',
      ...(verifiedMedia&&index===1?{data:{...(item.data as Json),bundleMedia:archiveFiles,
-       bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,fileId:archiveFiles[0].fileId}}:{})},
+       bundleManifestHash:b.mediaManifestHash,bundleId:b.bundleId,
+       ...(archiveFiles[0].fileId?{fileId:archiveFiles[0].fileId}:{})}}:{})},
        now,true,undefined,String(b.bundleId),(b.operations as Json[]).length,index));
    // A no-op or offline duplicate can produce no event. It must never
    // count towards the number of visible records promised by a bundle.
@@ -284,7 +288,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const receipt={bundleProtocol:1,liveProtocol:1,schoolId:school,bundleId:b.bundleId,
     cloudState:'committed',backupState:acknowledgements.every(r=>r.backupState==='verified')?'verified':'pending',
     cursor:head(),manifestHash:fingerprint,
-    ...(verifiedMedia?{mediaReady:true,archiveReady:true,mediaManifestHash:b.mediaManifestHash,
+    ...(verifiedMedia?{mediaReady:true,archiveReady:verifiedMedia.archiveReady===true,mediaManifestHash:b.mediaManifestHash,
       files:archiveFiles,owner:bundleOwner}:{}),
     acknowledgements:acknowledgements.map(r=>({operationId:r.operationId,
       recordRevision:r.recordRevision,cloudState:r.cloudState,backupState:r.backupState,

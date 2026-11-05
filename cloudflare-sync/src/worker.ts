@@ -65,12 +65,12 @@ export class SyncLane extends DurableObject<Env>{
     demand(seen.has('idCard'),'An ID card PDF is required for person bundle',412);
     const manifestHash=await digest(canonical({schoolId:school,bundleId:b.bundleId,media:media}));
     return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
-      mediaReady:true,archiveReady:b.requireDrive===true,manifestHash,proofs};
+      mediaReady:true,archiveReady:proofs.every(p=>p.driveVerified===true),manifestHash,proofs};
    }
    let verifiedMedia:Json|undefined;
    if(b.command==='bundlePublish'){
-    // This is the ONLY path from external staged bytes to a visible person
-    // bundle. Both files must already have their immutable Drive receipt.
+    // Only signed, hash-verified staged bytes can authorize peer visibility.
+    // Drive is an asynchronous backup, never a prerequisite for Cloudflare ACK.
     demand(Object.keys(b).every(k=>['command','schoolId','lane','bundleId',
       'operations','media','mediaManifestHash'].includes(k))&&
       typeof b.mediaManifestHash==='string'&&/^[a-f0-9]{64}$/.test(b.mediaManifestHash),
@@ -80,9 +80,9 @@ export class SyncLane extends DurableObject<Env>{
       mediaManifestHash:b.mediaManifestHash});
     if(prior.found===true)return prior.receipt;
     verifiedMedia=await this.command(school,'live',{command:'bundlePrepare',
-      bundleId:b.bundleId,media:b.media,requireDrive:true}) as Json;
-    demand(verifiedMedia.archiveReady===true&&verifiedMedia.mediaReady===true&&
-      verifiedMedia.manifestHash===b.mediaManifestHash,'Staged archive manifest changed',409);
+      bundleId:b.bundleId,media:b.media,requireDrive:false}) as Json;
+    demand(verifiedMedia.mediaReady===true&&
+      verifiedMedia.manifestHash===b.mediaManifestHash,'Staged media manifest changed',409);
     b={...b,command:'bundleCommit'};
    }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);

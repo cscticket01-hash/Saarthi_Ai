@@ -859,7 +859,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      {action:'managed_records',operation:'write',collection:person.collection,
        id:person.id,operationId:person.operationId,expectedRecordRevision:person.expectedRevision});
    if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||
-      result.cloudState!=='committed'||result.archiveReady!==true||
+      result.cloudState!=='committed'||result.mediaReady!==true||
+      typeof result.archiveReady!=='boolean'||
       !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==2)
     fail(502,'Verified atomic bundle receipt unavailable');
    return {success:true,schoolId:m.schoolId,...result};

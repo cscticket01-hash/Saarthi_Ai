@@ -304,6 +304,59 @@ test('Sync 3 media preflight checks exact staged bytes and never exposes partial
  assert.equal((await rpc({command:'head'})).value.cursor,before,'no partial bundle may reach peers');
 });
 
+test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive upload',async()=>{
+ async function callLane(lane,body){
+  const raw=JSON.stringify({...body,schoolId:A,lane}),time=String(Date.now());
+  const r=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',headers:{
+   'content-type':'application/json','x-vidya-time':time,
+   'x-vidya-signature':createHmac('sha256',key).update(time+'\\n'+raw).digest('hex')},body:raw});
+  return {status:r.status,...await r.json()};
+ }
+ await seed('students_directory');await seed('documents');
+ const bytes=Buffer.alloc(1024,32);
+ bytes.write('%PDF-1.7',0,'ascii');bytes.write('%%EOF',bytes.length-5,'ascii');
+ const uploadKey='sync3-stage-first-idcard-file-0001';
+ const id=createHash('sha256').update(JSON.stringify([A,uploadKey])).digest('hex');
+ const sha256=createHash('sha256').update(bytes).digest('hex');
+ const media=[{kind:'idCard',id,uploadKey,sha256,sizeBytes:bytes.length,mime:'application/pdf'}];
+ const stage=await callLane('file-'+id,{command:'putSmall',id,
+  manifest:{uploadKey,sha256,sizeBytes:bytes.length,mime:'application/pdf',name:'stage-card.pdf'},
+  base64:bytes.toString('base64')});
+ assert.equal(stage.status,200,JSON.stringify(stage));
+ assert.equal(stage.value.state,'pending');
+ const bundleId='sync3-cloudflare-before-drive-0001';
+ const operations=[
+  {collection:'students_directory',id:'student-stage-first',operation:'write',
+   operationId:'sync3-stage-parent-operation-0001',expectedRevision:'',
+   data:{schoolId:A,mobileStableId:'p-stage-first-0001',name:'Staged only'}},
+  {collection:'documents',id:'card-stage-first',operation:'write',
+   operationId:'sync3-stage-card-operation-0001',expectedRevision:'',
+   data:{schoolId:A,personId:'p-stage-first-0001',studentId:'student-stage-first',
+    ownerRole:'student',documentKind:'idCard',contentHash:sha256}},
+ ];
+ const mediaManifestHash=createHash('sha256').update(canonical({schoolId:A,bundleId,media})).digest('hex');
+ const before=(await rpc({command:'head'})).value.cursor;
+ assert.equal((await rpc({command:'bundlePrepare',bundleId,media,requireDrive:true})).status,412,
+  'Unverified Drive must not receive an archive-ready claim');
+ const commit=await rpc({command:'bundlePublish',bundleId,media,
+   operations,mediaManifestHash});
+ assert.equal(commit.status,200,JSON.stringify(commit));
+ assert.equal(commit.value.cloudState,'committed');
+ assert.equal(commit.value.mediaReady,true);
+ assert.equal(commit.value.archiveReady,false);
+ assert.equal(commit.value.backupState,'pending');
+ assert.equal(commit.value.cursor,before+2);
+ const doc=(await rpc({command:'read',collection:'documents',id:'card-stage-first'})).value.record;
+ assert.equal(doc.bundleId,bundleId);
+ assert.equal(doc.fileId,undefined,'Never invent a Drive fileId before verified ACK');
+ assert.equal(doc.bundleMedia[0].sha256,sha256);
+ assert.equal(doc.bundleMedia[0].fileId,undefined);
+ assert.equal((await rpc({command:'head'})).value.cursor,before+2);
+ assert.deepEqual((await rpc({command:'bundlePublish',bundleId,media,
+   operations,mediaManifestHash})).value,commit.value,'Retry must not duplicate events');
+ assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'idCard',id})).value.sha256,sha256);
+});
+
 test('Sync3 archived person and document publish as one Ready transaction, never a partial peer event',async()=>{
  async function callLane(lane,body){
   const raw=JSON.stringify({...body,schoolId:A,lane}),time=String(Date.now());
@@ -339,7 +392,6 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  const request={command:'bundlePublish',bundleId,mediaManifestHash,media,
   operations:[person,document]};
  const before=(await rpc({command:'head'})).value.cursor;
- assert.equal((await rpc(request)).status,412,'No visibility before Drive file verification');
  assert.equal((await rpc({command:'head'})).value.cursor,before);
  const claim='sync3-bundle-verified-drive-claim-0001';
  assert.equal((await callLane(lane,{command:'claim',id,claim,expires:Date.now()+120000})).value,true);
