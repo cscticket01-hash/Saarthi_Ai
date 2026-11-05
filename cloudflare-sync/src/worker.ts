@@ -27,13 +27,13 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
-   if(b.command==='commit'||b.command==='backupFinish')await this.wake(Date.now()+250);
+   if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b);
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
     const head=liveCommand(this.ctx.storage,school,{command:'head'});
     if(Number(head.cursor)>10000)liveCommand(this.ctx.storage,school,{command:'compact',before:Number(head.cursor)-10000});
    }
-   if(b.command==='commit')for(const socket of this.ctx.getWebSockets()){
+   if(b.command==='commit'||b.command==='bundleCommit')for(const socket of this.ctx.getWebSockets()){
     const grant=socket.deserializeAttachment() as LiveSocketGrant;
     try{if(grant.schoolId!==school||grant.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');else socket.send(JSON.stringify({liveProtocol:1,schoolId:school,cursor:result.cursor}));}catch{}
    }
