@@ -185,6 +185,35 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     archiveReady:saved.archiveReady===true,
     noPhoto:!files.some(f=>f.kind==='photo')};
  }
+ if(command==='ownerFinancialBundle'){
+  // Internal school DO lookup. The broker MUST first verify the student's
+  // signed session. A document ID alone is never sufficient authorization.
+  demand(['feeReceipt','marksheet'].includes(String(b.role))&&
+    typeof b.personId==='string'&&validId(b.personId)&&
+    typeof b.documentId==='string'&&validId(b.documentId),
+    'Invalid authenticated financial document identity',400);
+  const row=sql.exec<{receipt:string}>(
+   "SELECT b.receipt FROM live_bundles b JOIN live_events e ON e.bundle_id=b.bundle_id WHERE json_extract(b.receipt,'$.owner.role')=? AND json_extract(b.receipt,'$.owner.personId')=? AND e.collection='documents' AND e.id=? ORDER BY b.rowid DESC LIMIT 1",
+   String(b.role),String(b.personId),String(b.documentId)).toArray()[0];
+  if(!row)return {bundleProtocol:1,schoolId:school,found:false};
+  const saved=JSON.parse(row.receipt) as Json,files=saved.files as Json[];
+  if(saved.schoolId!==school||saved.cloudState!=='committed'||
+     saved.mediaReady!==true||!Array.isArray(files)||
+     !currentBundleDocument(saved,String(saved.bundleId)))
+    return {bundleProtocol:1,schoolId:school,found:false};
+  const kind=b.role==='feeReceipt'?'receipt':'marksheet';
+  const pdf=files.filter(f=>f.kind===kind);
+  demand(pdf.length===1&&pdf[0].mime==='application/pdf'&&
+    typeof pdf[0].id==='string'&&/^[a-f0-9]{64}$/.test(pdf[0].id as string)&&
+    typeof pdf[0].sha256==='string'&&/^[a-f0-9]{64}$/.test(pdf[0].sha256 as string)&&
+    Number.isSafeInteger(pdf[0].sizeBytes)&&Number(pdf[0].sizeBytes)>0&&
+    Number(pdf[0].sizeBytes)<=(kind==='receipt'?30*1024:150*1024),
+    'Authenticated financial PDF proof unavailable',412);
+  return {bundleProtocol:1,schoolId:school,found:true,
+    bundleId:saved.bundleId,documentId:b.documentId,kind,id:pdf[0].id,
+    sha256:pdf[0].sha256,sizeBytes:pdf[0].sizeBytes,mime:pdf[0].mime,
+    archiveReady:saved.archiveReady===true};
+ }
  if(command==='bundleArchiveManifest'){
   // Internal immutable publication identity for the backup delivery worker.
   demand(opId(b.bundleId),'Invalid bundle archive identity',400);
@@ -348,7 +377,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
          'Exam result and original marksheet must agree',409);
      }
      // These financial owners must not appear as a student ID-card owner.
-     bundleOwner={role:feeKind?'feeReceipt':'marksheet',personId:head.studentId};
+     bundleOwner={role:feeKind?'feeReceipt':'marksheet',personId:head.personId};
    }
    archiveFiles=proofs.map(p=>({kind:p.kind,id:p.id,
      ...(p.driveVerified===true?{fileId:p.fileId}:{}),
