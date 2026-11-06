@@ -34,6 +34,7 @@ void main(){
        'managed':true,'schoolId':school,'uid':'school-admin',
        'projectId':platformProjectId,'endpoint':'https://school.example/school-cloud',
        'firebaseRefreshToken':'saved-refresh','email':'school@example.com',
+       'folderId':'managed',
        'storageReady':false,
      }),
    });
