@@ -36,19 +36,78 @@ class IdCardEngine {
   static String decodeFinalRaster(Uint8List bytes) {
     final image = img.decodeImage(bytes);
     if (image == null) throw const FormatException('Invalid final ID raster.');
-    final pixels = Int32List(image.width * image.height);
-    for (final p in image)
-      pixels[p.y * image.width + p.x] =
-          (p.r.toInt() << 16) | (p.g.toInt() << 8) | p.b.toInt();
-    return zx.QRCodeReader()
-        .decode(
-          zx.BinaryBitmap(
-            zx.HybridBinarizer(
-              zx.RGBLuminanceSource(image.width, image.height, pixels),
-            ),
-          ),
-        )
-        .text;
+
+    String? scan(img.Image candidate) {
+      final pixels = Int32List(candidate.width * candidate.height);
+      for (final p in candidate) {
+        pixels[p.y * candidate.width + p.x] =
+            (p.r.toInt() << 16) | (p.g.toInt() << 8) | p.b.toInt();
+      }
+      try {
+        return zx.QRCodeReader()
+            .decode(
+              zx.BinaryBitmap(
+                zx.HybridBinarizer(
+                  zx.RGBLuminanceSource(
+                    candidate.width,
+                    candidate.height,
+                    pixels,
+                  ),
+                ),
+              ),
+            )
+            .text;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // A printed ID contains two composed faces. The full-page finder can
+    // miss a small, otherwise valid QR even when an independent scanner reads
+    // the exact final 300-DPI PDF. Keep the original scan first, then use
+    // bounded, overlapping views of the same decoded raster. Never substitute
+    // source QR data for actual printed pixels.
+    final whole = scan(image);
+    if (whole != null) return whole;
+    final longEdge = image.width > image.height ? image.width : image.height;
+    if (longEdge > 1400) {
+      final reduced = img.copyResize(
+        image,
+        width: (image.width * 1400 / longEdge).round(),
+        height: (image.height * 1400 / longEdge).round(),
+        interpolation: img.Interpolation.nearest,
+      );
+      final result = scan(reduced);
+      if (result != null) return result;
+    }
+    for (final columns in [2, 3]) {
+      for (var column = 0; column < columns; column++) {
+        final marginX = image.width ~/ (columns * 8);
+        final x0 = (column * image.width ~/ columns - marginX)
+            .clamp(0, image.width - 1).toInt();
+        final x1 = ((column + 1) * image.width ~/ columns + marginX)
+            .clamp(x0 + 1, image.width).toInt();
+        for (var row = 0; row < 2; row++) {
+          final marginY = image.height ~/ 16;
+          final y0 = (row * image.height ~/ 2 - marginY)
+              .clamp(0, image.height - 1).toInt();
+          final y1 = ((row + 1) * image.height ~/ 2 + marginY)
+              .clamp(y0 + 1, image.height).toInt();
+          final tile = img.copyCrop(
+            image,
+            x: x0,
+            y: y0,
+            width: x1 - x0,
+            height: y1 - y0,
+          );
+          final result = scan(tile);
+          if (result != null) return result;
+        }
+      }
+    }
+    throw const FormatException(
+      'Final printed ID QR cannot be decoded at 300 DPI.',
+    );
   }
 
   static Future<void> verifyExport(Uint8List pdf, String expected) async {
