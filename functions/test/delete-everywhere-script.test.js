@@ -59,6 +59,43 @@ test('archive inventory omits ordinary media but retains every supported archive
  for(const f of [legacy,audit,marked,record])assert(ids.includes(f.id));
  assert.equal(ids.length,4);
 });
+test('unrelated immutable record-json archives do not consume the five actual-redactions budget',()=>{
+ const s=storage({lifecycle:true});rest(s);
+ const root=s.roots[A],targetId='delete-target-archive-00001';
+ const saved=write(s,'school_notices',targetId,{title:'Sensitive notice'});
+ assert.equal(saved.success,true);
+ const original={
+  schemaVersion:1,backupKind:'sheet_record_revision',schoolId:A,
+  collection:'school_notices',id:targetId,recordRevision:saved.recordRevision,
+  data:{schoolId:A,_syncRevision:saved.recordRevision,title:'Private'}
+ };
+ function put(item){
+  const hash=s.context.VS_layoutHash(item);
+  const file=root.createFile(s.context.VS_layoutHash(item.id)+'_'+hash+'.json',
+    JSON.stringify(item),'application/json');
+  file.setDescription('VIDYA_RECORD_JSON:'+A+':school_notices:'+hash);
+  return file;
+ }
+ const originalArchive=put(original),others=[];
+ for(let i=0;i<125;i++){
+  const item={...original,id:'other-archive-'+i,recordRevision:'other-revision-'+i,
+   data:{schoolId:A,_syncRevision:'other-revision-'+i,title:'Unrelated'}};
+  others.push(put(item));
+ }
+ const req=deletion(targetId,saved.recordRevision,'school_notices');
+ let ack,tries=0;
+ do{
+  ack=s.call(req);tries++;
+  if(ack.success)break;
+  assert.equal(ack.code,'SCRIPT_DELETE_EVERYWHERE_PENDING',JSON.stringify(ack));
+  assert(tries<12,'Unrelated archives must not spend one redaction slot each');
+ }while(true);
+ assert.equal(ack.driveDeletionComplete,true);
+ assert(tries<12,'Only actual archive rewrites consume the five-redaction budget');
+ assert(!s.all.has(originalArchive.id),'Original private revision must be permanently erased');
+ assert(others.every(file=>s.all.has(file.id)),'Unrelated archive originals must be preserved');
+});
+
 test('large school root resumes 2,500 ordinary files and 300 folders without deleting unrelated media',()=>{
  const s=storage({lifecycle:true});rest(s);
  const unrelated=[];
