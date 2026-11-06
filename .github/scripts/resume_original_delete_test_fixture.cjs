@@ -25,6 +25,21 @@ function account(){
  if(v.project_id!==PROJECT||v.type!=='service_account'||!v.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com')||!v.private_key)throw Error('TEST Firestore admin credentials not scoped to expected Firebase project');
  return v;
 }
+async function verifyFirestoreIam(){
+ const fromFunctions=require('node:module').createRequire(require('node:path').resolve(__dirname,'../../functions/package.json'));
+ const {GoogleAuth}=fromFunctions('google-auth-library');
+ const auth=new GoogleAuth({credentials:account(),scopes:['https://www.googleapis.com/auth/cloud-platform']});
+ const client=await auth.getClient();
+ const response=await client.request({url:'https://cloudresourcemanager.googleapis.com/v1/projects/'+PROJECT+':testIamPermissions',
+  method:'POST',data:{permissions:['datastore.databases.get','datastore.entities.get',
+   'datastore.entities.create','datastore.entities.update','datastore.entities.delete']}});
+ const granted=new Set(response.data?.permissions||[]);
+ report.firestoreIamPermissions={databaseRead:granted.has('datastore.databases.get'),
+  entityRead:granted.has('datastore.entities.get'),entityCreate:granted.has('datastore.entities.create'),
+  entityUpdate:granted.has('datastore.entities.update'),entityDelete:granted.has('datastore.entities.delete')};
+ console.log('FIRESTORE_IAM_CHECK '+JSON.stringify(report.firestoreIamPermissions));
+ return report.firestoreIamPermissions;
+}
 async function firestore() {
  const fromFunctions=require('node:module').createRequire(require('node:path').resolve(__dirname,'../../functions/package.json'));
  const {initializeApp,cert,deleteApp}=fromFunctions('firebase-admin/app');
@@ -96,6 +111,7 @@ async function main(){
  if(health.adminCredentialFingerprint!==sha(account().client_email))
   throw Error('Render and GitHub TEST Firebase Admin service-account identities differ; refuse deletion');
  report.firebaseCredentialIdentityMatch=true;
+ await verifyFirestoreIam();
  const login=await send(LOGIN,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  if(login.status!==200||!login.data.idToken)throw Error('TEST owner auth failed');
  const token=login.data.idToken;
