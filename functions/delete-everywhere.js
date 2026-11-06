@@ -7,6 +7,15 @@ const fail=code=>{throw Object.assign(Error('Verified cloud deletion is pending;
  * and device registries are deliberately outside this namespace and allowlist.
  * The caller must retain its original delivery job until this promise resolves.
  */
+function rethrowFirestorePermission(error,stage) {
+ if([7,'7','PERMISSION_DENIED','permission-denied'].includes(error?.code)) {
+  console.info(JSON.stringify({event:'delete_everywhere_firebase_failure',
+    stage,code:'PERMISSION_DENIED'}));
+  throw Object.assign(Error('Firebase delete permission denied; original operation retained.'),
+    {status:503,code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED',publicMessage:true});
+ }
+ throw error;
+}
 function createDeleteEverywhere({db}) {
  async function finish(school,request,result) {
   if(request.deleteEverywhereVersion!==1)return result;
@@ -62,11 +71,13 @@ function createDeleteEverywhere({db}) {
       fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
     }
   let deleted=0;
+  const refs=[];
   // Exact deterministic paths make retries after any partial success idempotent.
   // A transaction rechecks ownership/generation immediately before deletion;
   // a replacement pupil using the same class/roll slot is never erased.
   for(const target of targets){
    const ref=db.doc('schools/'+school+'/'+target.collection+'/'+target.id);
+   refs.push(ref);
    let removed;
    try{removed=await db.runTransaction(async tx=>{
     const snapshot=await tx.get(ref);if(!snapshot.exists)return false;
@@ -88,18 +99,26 @@ function createDeleteEverywhere({db}) {
     if(typeof tx.delete!=='function')throw Object.assign(Error('Atomic Firebase delete is unavailable.'),{status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
     tx.delete(ref);return true;
    });}catch(error){
-    // A real Firestore IAM denial is not a signed Delete ACK. Retain the
-    // original operation for review; never leak provider messages or secrets.
-    if([7,'7','PERMISSION_DENIED','permission-denied'].includes(error?.code)) {
-     console.info(JSON.stringify({event:'delete_everywhere_firebase_failure',
-       stage:'transaction',code:'PERMISSION_DENIED'}));
-     throw Object.assign(Error('Firebase delete permission denied; original operation retained.'),
-       {status:503,code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED',
-        publicMessage:true});
-    }
-    throw error;
+    rethrowFirestorePermission(error,'transaction');
    }
    if(removed)deleted++;
+  }
+  // Firestore transaction commits alone are not a final Delete Everywhere
+  // readback. Re-read every exact school-scoped target, including absent rows,
+  // before acknowledging the original immutable operation.
+  for(let i=0;i<refs.length;i+=100){
+   const batch=refs.slice(i,i+100);
+   let snapshots;
+   try{
+    snapshots=typeof db.getAll==='function'
+      ?await db.getAll(...batch)
+      :await Promise.all(batch.map(ref=>ref.get()));
+   }catch(error){
+    rethrowFirestorePermission(error,'readback');
+   }
+   if(!Array.isArray(snapshots)||snapshots.length!==batch.length||
+      snapshots.some(row=>row?.exists!==false))
+    fail('DELETE_EVERYWHERE_FIREBASE_READBACK_UNVERIFIED');
   }
   return {...result,firebaseDeletionComplete:true,firebaseDeletedRecords:deleted};
  }
