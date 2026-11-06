@@ -130,7 +130,9 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    at,JSON.stringify(response),id);
   const reopened=get(id);
   demand(reopened.state==='retry'&&reopened.payload===row.payload&&
-   reopened.fingerprint===row.fingerprint&&JSON.parse(reopened.response||'{}').reviewRetryCount===1,
+   reopened.fingerprint===row.fingerprint&&
+   JSON.parse(reopened.response||'{}').reviewRetryCount===retryCount+1&&
+   JSON.parse(reopened.response||'{}').reviewCredentialFingerprint===credentialFingerprint,
    'Original delete review retry was not durably committed',409);
   await wake(at+250);
   return receipt(reopened);
