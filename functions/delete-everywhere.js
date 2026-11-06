@@ -35,8 +35,9 @@ function createDeleteEverywhere({db}) {
   if(!keys.has(request.collection+'/'+request.id))fail('DELETE_EVERYWHERE_TARGET_UNVERIFIED');
   const root=targets.find(target=>target.collection===request.collection&&target.id===request.id);
   if(root?.revision!==result.recordRevision||
-     // This plan must be the same plan that the Google provider completed.
-     canonical._syncErasePlan.targets?.length!==targets.length)
+     // A signed Google plan, not an arbitrary response list, must determine
+     // every Firebase path. Byte-for-byte target identity is required.
+     JSON.stringify(canonical._syncErasePlan.targets)!==JSON.stringify(targets))
     fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
   let deleted=0;
   // Exact deterministic paths make retries after any partial success idempotent.
