@@ -1,0 +1,26 @@
+name: TEST read-only original Delete retry fence diagnosis
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/diagnose_original_delete_receipt.cjs'
+      - '.github/workflows/diagnose-original-delete-receipt.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-immutable-review-diagnosis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: node --check .github/scripts/diagnose_original_delete_receipt.cjs
+      - name: Read exact original TEST delete review metadata without mutation
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/diagnose_original_delete_receipt.cjs
