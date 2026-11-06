@@ -24,7 +24,7 @@ async function main(){
    &&process.env.VS_DELETE_EVERYWHERE_TEST===SCHOOL,'strict isolated TEST-only opt-in');
  ensure(/^[a-f0-9]{40}$/.test(process.env.VS_EXPECTED_TEST_RUNTIME||''),'reviewed commit pin');
  ensure(Boolean(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD),'isolated TEST-only credentials exist');
- const health=await http('https://saarthi-sync-v2-test.onrender.com/healthz');
+ const health=await http('https://saarthi-sync-v2-test.onrender.com/school-cloud/healthz');
  ensure(health.http===200&&health.data.ready===true&&health.data.projectId==='saarthi-ai-df12b'&&
    health.data.runtimeCommit===process.env.VS_EXPECTED_TEST_RUNTIME,'actual deployed TEST Render source matches reviewed commit');
  report.verifiedRuntime=health.data.runtimeCommit;
