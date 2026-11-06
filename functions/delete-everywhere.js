@@ -24,7 +24,24 @@ function createDeleteEverywhere({db}) {
      canonical._syncOperationId!==request.operationId||
      canonical._syncErasePlan?.complete!==true||
      !Array.isArray(result.deletionTargets)||result.deletionTargets.length<1||result.deletionTargets.length>5000)
-   fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
+   {
+    // Diagnostic flags only: no school IDs, paths, records, tokens or values.
+    // A real provider rejection must be distinguished from archive progress.
+    console.info(JSON.stringify({event:'delete_everywhere_ack_fence',
+      schoolOk:SCHOOL.test(school),requestDelete:request.operation==='delete',
+      protocolOk:request.syncProtocol===2,collectionOk:COLLECTIONS.has(request.collection),
+      idOk:validId(request.id),operationIdOk:typeof request.operationId==='string'&&!!request.operationId,
+      providerSuccess:result?.success===true,providerSchoolOk:result?.schoolId===school,
+      providerProtocolOk:result?.syncProtocol===2,versionOk:result?.deleteEverywhereVersion===1,
+      driveComplete:result?.driveDeletionComplete===true,revisionOk:typeof result?.recordRevision==='string'&&!!result.recordRevision,
+      canonicalPresent:!!canonical,canonicalSchoolOk:canonical?.schoolId===school,
+      canonicalIdOk:canonical?.id===request.id,canonicalDeleted:canonical?._syncDeleted===true,
+      canonicalRevisionOk:canonical?._syncRevision===result?.recordRevision,
+      canonicalOperationOk:canonical?._syncOperationId===request.operationId,
+      canonicalPlanComplete:canonical?._syncErasePlan?.complete===true,
+      targetsOk:Array.isArray(result?.deletionTargets)&&result.deletionTargets.length>=1&&result.deletionTargets.length<=5000}));
+    fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
+   }
   const targets=result.deletionTargets,keys=new Set();
   for(const target of targets){
    if(!target||!COLLECTIONS.has(target.collection)||!validId(target.id)||
@@ -38,7 +55,12 @@ function createDeleteEverywhere({db}) {
      // A signed Google plan, not an arbitrary response list, must determine
      // every Firebase path. Byte-for-byte target identity is required.
      JSON.stringify(canonical._syncErasePlan.targets)!==JSON.stringify(targets))
-    fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
+    {
+      console.info(JSON.stringify({event:'delete_everywhere_target_fence',
+       rootRevisionMatches:root?.revision===result.recordRevision,
+       exactSignedPlanMatches:JSON.stringify(canonical._syncErasePlan.targets)===JSON.stringify(targets)}));
+      fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
+    }
   let deleted=0;
   // Exact deterministic paths make retries after any partial success idempotent.
   // A transaction rechecks ownership/generation immediately before deletion;
