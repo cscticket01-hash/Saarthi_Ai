@@ -46,6 +46,14 @@ test('backup identity is verified and a fake cloud revision never becomes Drive 
  assert.equal((await live.drain(A,async()=>ack)).processed,0,
    'ACK containing a record cannot substitute for a Drive read');
  assert.equal(finished.at(-1).verified,false);
+ const falseRead=async b=>{
+   if(b.operation==='read')return {success:true,schoolId:A,syncProtocol:2,
+     pointRead:true,records:{one:{...ack.record,title:'Other school edit'}}};
+   return ack;
+ };
+ assert.equal((await live.drain(A,falseRead)).processed,0,
+   'A valid ACK with different signed Drive content stays pending');
+ assert.equal(finished.at(-1).verified,false);
  const deliver=async b=>{
    if(b.operation==='read'){
      pointReads++;
