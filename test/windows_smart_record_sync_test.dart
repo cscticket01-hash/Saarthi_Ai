@@ -131,6 +131,66 @@ void main(){
    expect(networkRecoveryCandidate({'syncState':'needsAttention','failureCategory':category}),false);
   }
  });
+ test('offline document reconnect cannot overwrite a newer Save, ACK or conflict',()async{
+  final queue=db.collection('_windows_document_outbox'),ref=queue.doc('card-original');
+  final original={'schoolId':school,'documentRevision':'original-001',
+   'operationId':'original-document-operation-00001',
+   'syncState':'needsAttention','failureCategory':'timeout','retryCount':8,
+   'retryAtMillis':9999999999999,'localPath':'old-original.pdf'};
+  await ref.set(original);
+  final stale=(await ref.get()).data()!;
+  // A later local Save owns the row. The old reconnect snapshot may not
+  // replace the PDF path, revision, operation ID, or review metadata.
+  await ref.update({'documentRevision':'newer-002','localPath':'new-original.pdf',
+    'operationId':'newer-document-operation-00002','syncState':'pending'});
+  final resumed=await db.resumeDocumentOutboxAfterReconnect(
+    ref,stale,schoolId:school,retryAtMillis:123456789);
+  expect(resumed,false);
+  final latest=(await ref.get()).data()!;
+  expect(latest['documentRevision'],'newer-002');
+  expect(latest['operationId'],'newer-document-operation-00002');
+  expect(latest['localPath'],'new-original.pdf');
+  expect(latest['syncState'],'pending');
+  // An ACK can retire a document while the reconnect caller is waiting.
+  await ref.delete();
+  expect(await db.resumeDocumentOutboxAfterReconnect(
+    ref,stale,schoolId:school,retryAtMillis:123456790),false);
+  expect((await ref.get()).exists,false);
+  await ref.set({...original,'syncState':'conflict','failureCategory':'conflict'});
+  final reviewed=(await ref.get()).data()!;
+  expect(await db.resumeDocumentOutboxAfterReconnect(
+    ref,reviewed,schoolId:school,retryAtMillis:123456791),false);
+  expect((await ref.get()).data()?['syncState'],'conflict');
+ });
+ test('document reconnect CAS persists original retry identity across restart',()async{
+  final ref=db.collection('_windows_document_outbox').doc('offline-verified-reconnect');
+  final original={'schoolId':school,'documentRevision':'pdf-revision-001',
+    'operationId':'original-retry-operation-0000001','syncState':'needsAttention',
+    'failureCategory':'networkPath','retryCount':9,'retryAtMillis':9999999999999,
+    'localPath':'original-document.pdf'};
+  await ref.set(original);
+  final previous=(await ref.get()).data()!;
+  expect(await db.resumeDocumentOutboxAfterReconnect(
+    ref,previous,schoolId:school,retryAtMillis:123456789),true);
+  final profile=db.activeProfileId;
+  await db.resetVolatileSession();
+  await db.switchProfile(profile,identity:{'schoolId':school,'schoolSyncId':school});
+  final saved=(await db.collection('_windows_document_outbox')
+    .doc('offline-verified-reconnect').get()).data()!;
+  expect(saved['operationId'],original['operationId']);
+  expect(saved['documentRevision'],original['documentRevision']);
+  expect(saved['localPath'],original['localPath']);
+  expect(saved['syncState'],'retry');
+  expect(saved['retryCount'],0);
+  expect(saved['retryAtMillis'],123456789);
+  // A repeated reconnect from before the restart must never reset newer
+  // retry evidence or create a second queue row.
+  expect(await db.resumeDocumentOutboxAfterReconnect(
+    db.collection('_windows_document_outbox').doc('offline-verified-reconnect'),
+    previous,schoolId:school,retryAtMillis:123456790),false);
+  expect((await db.collection('_windows_document_outbox').get()).docs,hasLength(1));
+ });
+
  test('verified reconnect recovery is per-school and bounded, without quota bypass',(){
    final now=DateTime.utc(2026,11,2,2,15);
    bool due({String? failed=school,String? previousSchool,
