@@ -54,6 +54,9 @@ on:
       - 'test/windows_atomic_bundle_pilot_test.dart'
       - 'test/atomic_portrait_preflight_test.dart'
       - 'test/windows_atomic_financial_coordinator_test.dart'
+      - 'test/windows_atomic_exam_local_save_test.dart'
+      - 'lib/windows_exam_service.dart'
+      - 'lib/windows_exam_history_screen.dart'
       - 'test/mobile_atomic_financial_delivery_test.dart'
       - 'test/live_sync_atomic_page_test.dart'
       - 'test/windows_live_sync_store_test.dart'
@@ -177,6 +180,10 @@ jobs:
       - env:
           APPDATA: ${{ runner.temp }}/live-protocol-recovery
         run: flutter test --concurrency=1 test/pdf_media_dedup_test.dart test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_atomic_page_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart test/mobile_atomic_card_delivery_test.dart test/mobile_atomic_financial_delivery_test.dart test/web_atomic_bundle_review_test.dart test/windows_atomic_bundle_pilot_test.dart test/atomic_person_portrait_delivery_test.dart test/windows_atomic_financial_coordinator_test.dart test/windows_fee_collection_flow_test.dart
+      - name: Verify actual original Exam + Marksheet local Save (isolated TEST only)
+        env:
+          APPDATA: ${{ runner.temp }}/atomic-exam-school
+        run: flutter test --dart-define=SAARTHI_ATOMIC_BUNDLE_TEST=true --concurrency=1 --timeout 120s test/windows_atomic_exam_local_save_test.dart
       - name: Verify existing offline duplicate self-repair on independent SQLite devices
         env:
           APPDATA: ${{ runner.temp }}/live-duplicate-recovery
