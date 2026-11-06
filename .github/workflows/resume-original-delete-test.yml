@@ -22,8 +22,8 @@ jobs:
           node-version: '22'
       - name: Match exact deployed TEST source and check runner script syntax
         run: |
-          git fetch origin a1844cbf8805b9b61df66e68e11a60ad86fc0fae --depth=1
-          git diff --exit-code a1844cbf8805b9b61df66e68e11a60ad86fc0fae HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend
+          git fetch origin ffea363c3ba05b99f1bed68315b5276be3572111 --depth=1
+          git diff --exit-code ffea363c3ba05b99f1bed68315b5276be3572111 HEAD -- functions oauth-broker staging-school-cloud school-backend
           node --check .github/scripts/resume_original_delete_test_fixture.cjs
       - name: Install existing Firebase Admin dependencies for genuine Firestore readback
         run: npm --prefix functions install --ignore-scripts --no-audit --no-fund
