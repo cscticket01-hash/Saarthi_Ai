@@ -24,11 +24,13 @@ bool pendingRecordBackoffDue(
   DateTime now, {
   bool explicitRetry = false,
 }) {
-  final deadline = item['retryAtMillis'];
-  return explicitRetry ||
-      item['syncState'] != 'retry' ||
-      deadline is! int ||
-      deadline <= now.millisecondsSinceEpoch;
+  // A failed transport may be retained as needsAttention. Its stored
+  // provider deadline still applies after process restart/reconnect.
+  // Sync Now may probe a non-quota record, but never bypass a quota minimum.
+  if(!{'retry','needsAttention'}.contains(item['syncState']))return true;
+  final deadline=item['retryAtMillis'];
+  if(deadline is! int||deadline<=now.millisecondsSinceEpoch)return true;
+  return explicitRetry&&item['failureCategory']!='quota';
 }
 
 /// An unclassified failed notice delete can be retried only after an
