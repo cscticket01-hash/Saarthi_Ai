@@ -995,7 +995,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    const person=['students_directory','teachers_directory'].includes(first?.collection);
    const fee=first?.collection==='fee_payments'&&b.operations.length===3&&
      b.operations[1]?.collection==='fee_ledger'&&type==='receipt';
-   const exam=first?.collection==='exam_results'&&b.operations.length===2&&
+   const exam=['exam_results','exam_center_results'].includes(first?.collection)&&
+     b.operations.length===2&&
      type==='marksheet';
    if(!last||last.collection!=='documents'||
       !(person&&b.operations.length===2&&type==='idCard'||fee||exam))
