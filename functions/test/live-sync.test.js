@@ -268,6 +268,53 @@ test('atomic document Drive backup waits for every staged file proof and enriche
  assert.equal(finishes.at(-1).driveRevision,'real-drive-revision');
 });
 
+test('Drive file readback refuses forged ACK, mismatched PDF bytes or another school without deleting original queue',async()=>{
+ const bytes=Buffer.alloc(4096,32);
+ bytes.write('%PDF-1.7',0,'ascii');
+ bytes.write('%%EOF',bytes.length-5,'ascii');
+ const sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const bundleId='archive-reject-unverified-original-0001';
+ const media=[{kind:'marksheet',id:'c'.repeat(64),sha256:sha,
+   mime:'application/pdf',sizeBytes:bytes.length}];
+ const document={schoolId:A,documentId:'SHEET-review-1',documentKind:'marksheet',
+   bundleId,bundleManifestHash:'a'.repeat(64),bundleMedia:media,
+   contentHash:sha,studentId:'student-1',personId:'p-stable',
+   ownerRole:'student',examResultId:'exam-1'};
+ for(const alteration of ['absent-reader','foreign-school','wrong-mime','wrong-hash','truncated','bad-base64']){
+  const finishes=[],calls=[];
+  const rpc=async(s,l,b)=>{
+   if(b.command==='backupClaim')return {job:{seq:17,claim:'original-review-claim',
+      request:{action:'managed_records',collection:'documents',operation:'write',
+        id:'SHEET-review-1',operationId:'exam-original-revision-0001',
+        syncProtocol:2,expectedRecordRevision:'',data:{...document}}}};
+   if(b.command==='bundleArchive')return {schoolId:A,bundleProtocol:1,
+     bundleId,archiveReady:true,mediaManifestHash:document.bundleManifestHash,
+     files:[{...media[0],fileId:'school-drive-mark-1'}]};
+   if(b.command==='backupFinish'){finishes.push(b);return {accepted:true};}
+   throw Error('Unexpected command: '+b.command);
+  };
+  const live=createLiveSync({schools:[A],now:()=>100000,
+   edge:{enabled:()=>true,rpc}});
+  const reader=async id=>{
+   calls.push('file:'+id);
+   const returned=alteration==='wrong-hash'?Buffer.from(bytes):bytes;
+   if(alteration==='wrong-hash')returned[80]^=0xff;
+   return {success:true,schoolId:alteration==='foreign-school'?B:A,
+     mime:alteration==='wrong-mime'?'image/png':'application/pdf',
+     base64:alteration==='bad-base64'?'!!!!':
+       alteration==='truncated'?returned.subarray(0,-3).toString('base64'):
+         returned.toString('base64')};
+  };
+  const deliver=async body=>{calls.push('write');throw Error('Metadata must remain pending');};
+  const result=await live.drain(A,deliver,
+    alteration==='absent-reader'?undefined:reader);
+  assert.equal(result.processed,0,alteration);
+  assert.equal(finishes.at(-1).verified,false,alteration);
+  assert.deepEqual(calls,alteration==='absent-reader'?[]:['file:school-drive-mark-1'],
+    'No Sheet write on unverified Drive media');
+ }
+});
+
 test('isolated Windows file stage verifies SHA, same-school file owner and retains Drive as pending',async()=>{
  const {createHash}=require('node:crypto');
  const bytes=Buffer.from('%PDF-1.7\\nOriginal test card\\n%%EOF','utf8');
