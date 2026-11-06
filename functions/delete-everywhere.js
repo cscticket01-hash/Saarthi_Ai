@@ -51,16 +51,16 @@ function createDeleteEverywhere({db}) {
     if(row.schoolId!==undefined&&row.schoolId!==school)fail('DELETE_EVERYWHERE_FOREIGN_RECORD');
     const generation=row.mobileStableId||row.personId||row._syncDeletedOwner;
     if(target.generation&&generation&&generation!==target.generation)fail('DELETE_EVERYWHERE_GENERATION_CONFLICT');
-    // Matching a pupil's identity is not enough: an independent PC may have
-    // committed a NEWER same-generation edit while the Drive purge was pending.
-    // Delete only the exact original source revision, or the exact verified
-    // tombstone revision. Any later Firebase write remains intact for review.
+    // An explicit generation-bound delete is allowed to supersede a newer
+    // edit of that SAME person; an occupant with a different generation is
+    // never removed. Ungenerated rows require exact revision CAS.
+    const sameGeneration=target.generation&&generation===target.generation;
     const sourceMatches=typeof target.sourceRevision==='string'&&
       target.sourceRevision.length>0&&row._syncRevision===target.sourceRevision;
     const tombstoneMatches=row._syncDeleted===true&&
       typeof target.revision==='string'&&target.revision.length>0&&
       row._syncRevision===target.revision;
-    if(!sourceMatches&&!tombstoneMatches)
+    if(!sameGeneration&&!sourceMatches&&!tombstoneMatches)
       fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
     if(typeof tx.delete!=='function')throw Object.assign(Error('Atomic Firebase delete is unavailable.'),{status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
     tx.delete(ref);return true;
