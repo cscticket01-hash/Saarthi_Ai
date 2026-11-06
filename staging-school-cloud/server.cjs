@@ -133,7 +133,7 @@ function fromEnvironment(env) {
   const {getFirestore}=runtimeRequire('firebase-admin/firestore');
   const {getMessaging}=runtimeRequire('firebase-admin/messaging');
   const oldCredential=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
-  const {validCredential,publicWrappingKey,unwrapCredential}=require('./test-firebase-credential-envelope');
+  const {validCredential,publicWrappingKey,unwrapCredential}=require('./test-firebase-credential-envelope.cjs');
   if(!validCredential(oldCredential))throw Error('Invalid central staging credential configuration');
   if(env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE&&!testSchoolId)
     throw Error('Encrypted credential override requires isolated TEST school');
