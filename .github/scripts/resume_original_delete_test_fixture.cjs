@@ -25,8 +25,9 @@ async function send(url,body,token){
 async function main(){
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REF!=='refs/heads/feature/smart-sync-3'||
   process.env.VS_RESUME_ORIGINAL_TEST_DELETE!==STUDENT)throw Error('Original TEST-only opt-in required');
+ await require('./test_runtime_identity.cjs').waitForRuntime('fa1d9c943c33a43e248faf9893d509e5cfc36153',{attempts:12});
  const health=await fetch(API+'/healthz',{signal:AbortSignal.timeout(20000)}).then(r=>r.json());
- if(health.ready!==true||health.runtimeCommit!=='eec9d8f9348b917f6d7845c8d3c31fa040ccff03')
+ if(health.ready!==true||health.runtimeCommit!=='fa1d9c943c33a43e248faf9893d509e5cfc36153')
   throw Error('TEST runtime did not match immutable source');
  const login=await send(LOGIN,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  if(login.status!==200||!login.data.idToken)throw Error('TEST owner auth failed');
