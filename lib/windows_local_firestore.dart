@@ -589,7 +589,9 @@ class FirebaseFirestore {
     List<String>? cloudRevisions,
   }) {
     final kind=parents.length==2?'feeReceipt':'marksheet';
-    final names=parents.length==2?['fee_payments','fee_ledger']:['exam_results'];
+    final names=parents.length==2?['fee_payments','fee_ledger']:
+      [(parents.first['before'] as Map?)?['collection']=='exam_center_results'
+        ?'exam_center_results':'exam_results'];
     if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
        activeProfileIdentity['schoolSyncId']!=school||
        !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
@@ -662,7 +664,9 @@ class FirebaseFirestore {
     required String pdfSha256,
   }) {
     final count=parents.length,kind=count==2?'receipt':'marksheet';
-    final names=count==2?['fee_payments','fee_ledger']:['exam_results'];
+    final names=count==2?['fee_payments','fee_ledger']:
+      [(parents.first['before'] as Map?)?['collection']=='exam_center_results'
+        ?'exam_center_results':'exam_results'];
     if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
        activeProfileIdentity['schoolSyncId']!=school||
        !(count==1||count==2)||
