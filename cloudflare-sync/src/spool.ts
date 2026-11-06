@@ -305,7 +305,15 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    }),'Verified canonical source metadata required');
   }
   storage.transactionSync(()=>{
-   const stored=values.payloadPurged===true?{...values,partial:{}}:values;
+   const previousResponse=row.response?JSON.parse(row.response) as Json:{};
+   // A one-time owner-reviewed Delete retry is a durable safety fence. Later
+   // delivery failures must not erase that counter and enable another retry.
+   const reviewMetadata=Number.isSafeInteger(previousResponse.reviewRetryCount)&&
+    Number(previousResponse.reviewRetryCount)>=0
+     ?{reviewRetryCount:Number(previousResponse.reviewRetryCount),
+       ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{})}:{};
+   const nextValues={...values,...reviewMetadata};
+   const stored=nextValues.payloadPurged===true?{...nextValues,partial:{}}:nextValues;
    // An immutable Drive proof is required before the 24h retention timer
    // starts. Retry/needsAttention never acquires an expiry deadline.
    const verified=values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-'));
