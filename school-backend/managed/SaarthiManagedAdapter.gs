@@ -2068,10 +2068,14 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   const generation=old&&(person==='student'?old._syncDeletedOwner||VS_studentGeneration(old,b.id):person==='teacher'?VS_teacherGeneration(old,b.id):old.personId)||null;
   const named=person==='student'?b.deletedStudentGeneration:person==='teacher'?b.deletedTeacherGeneration:undefined;
   if(named!==undefined&&named!==generation)throw new Error('Record revision conflict');
-  if(old&&!old._syncDeleted&&(old._syncRevision||'')!==b.expectedRecordRevision&&!(named&&named===generation))throw new Error('Record revision conflict');
+  // A generation ID protects against replacing a different pupil. It does
+  // NOT authorize deleting an intervening edit of the SAME pupil: the exact
+  // source revision is required for a new delete. Retries retain their
+  // original operation and durable erase plan below.
+  if(old&&!old._syncDeleted&&(old._syncRevision||'')!==b.expectedRecordRevision)throw new Error('Record revision conflict');
   if(b.collection==='documents'&&old&&old.documentRevision&&b.expectedRevision!==old.documentRevision)throw new Error('Versioned document requires a matching revision');
   if(old&&old._syncErasePlan){
-    if(old._syncOperationId!==b.operationId&&b.expectedRecordRevision!==old._syncRevision&&!(named&&named===generation))throw new Error('Record revision conflict');
+    if(old._syncOperationId!==b.operationId)throw new Error('Record revision conflict');
     return VS_resumeEverywhereDelete(store,b.id,old);
   }
   const revision=old&&old._syncDeleted?old._syncRevision:Utilities.getUuid();
@@ -2137,7 +2141,12 @@ function VS_resumeEverywhereDelete(store,id,data){
     const target=plan.targets[plan.cursor],view=VS_managedSheet(target.collection),current=VS_sheetItem(view,target.id);
     if(current){const row=current.data,owner=row.mobileStableId||row.personId||row._syncDeletedOwner;
       if(target.generation&&owner&&owner!==target.generation)throw new Error('Record revision conflict');
-      if(!row._syncDeleted&&row._syncRevision!==target.sourceRevision)throw new Error('Record revision conflict');
+      // A child deleted by a newer independent operation must not be
+      // overwritten by a stale cascade, even with the same student owner.
+      if(row._syncDeleted){
+        if(row._syncRevision!==target.revision&&row._syncRevision!==target.sourceRevision)
+          throw new Error('Record revision conflict');
+      }else if(row._syncRevision!==target.sourceRevision)throw new Error('Record revision conflict');
       if(!(target.collection===store.collection&&target.id===id)){
         const tombstone={schoolId:store.school,_syncDeleted:true,_syncRevision:target.revision,_syncOperationId:VS_layoutHash([data._syncOperationId,target.collection,target.id])};
         if(target.generation)tombstone._syncDeletedOwner=target.generation;
