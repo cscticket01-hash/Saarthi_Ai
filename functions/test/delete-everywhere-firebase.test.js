@@ -50,19 +50,22 @@ test('verified original Drive plan erases only exact tenant parent/fee and prese
  assert.equal(retry.firebaseDeletedRecords,0);
 });
 
-test('same-generation newer edit cannot be wiped by older Drive delete ACK',async()=>{
+test('explicit generation-bound delete wins over a later SAME pupil edit',async()=>{
  const newer={...source(),name:'Edited offline from second PC',_syncRevision:'newer-revision'};
  const f=fixture([[root,newer]]);
- await assert.rejects(f.cleanup.finish(A,request,ack()),e=>
-   e.code==='DELETE_EVERYWHERE_GENERATION_UNPROVEN'&&e.status===409);
- assert.deepEqual(f.data.get(root),newer);assert.equal(f.calls.length,0);
+ const result=await f.cleanup.finish(A,request,ack());
+ assert.equal(result.firebaseDeletionComplete,true);
+ assert.equal(result.firebaseDeletedRecords,1);
+ assert(!f.data.has(root));
+ assert.deepEqual(f.calls,[root]);
 });
 
 test('different generation, foreign ownership and newer tombstone all fail closed',async()=>{
  for(const row of [
   {...source(),mobileStableId:'p-new'},
   {...source(),schoolId:B},
-  {...source(),_syncDeleted:true,_syncRevision:'unrelated-tombstone'}
+  {...source(),mobileStableId:'p-new',_syncDeleted:true,
+    _syncRevision:'unrelated-tombstone'}
  ]){
   const f=fixture([[root,row]]);
   await assert.rejects(f.cleanup.finish(A,request,ack()));
