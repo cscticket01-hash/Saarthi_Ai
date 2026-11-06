@@ -19,7 +19,7 @@ function createDeleteEverywhere({db}) {
      typeof result.recordRevision!=='string'||!result.recordRevision||/^(?:cf-|live-)/.test(result.recordRevision)||
      // A successful HTTP response or a Drive flag alone must not clear Firebase.
      // The Script must return the same completed, immutable original delete.
-     !canonical||canonical.schoolId!==school||canonical.id!==request.id||
+     !canonical||canonical.schoolId!==school||(canonical.id!==undefined&&canonical.id!==request.id)||
      canonical._syncDeleted!==true||canonical._syncRevision!==result.recordRevision||
      canonical._syncOperationId!==request.operationId||
      canonical._syncErasePlan?.complete!==true||
