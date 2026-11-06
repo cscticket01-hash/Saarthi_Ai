@@ -67,7 +67,8 @@ function createDeleteEverywhere({db}) {
   // a replacement pupil using the same class/roll slot is never erased.
   for(const target of targets){
    const ref=db.doc('schools/'+school+'/'+target.collection+'/'+target.id);
-   const removed=await db.runTransaction(async tx=>{
+   let removed;
+   try{removed=await db.runTransaction(async tx=>{
     const snapshot=await tx.get(ref);if(!snapshot.exists)return false;
     const row=snapshot.data();
     if(row.schoolId!==undefined&&row.schoolId!==school)fail('DELETE_EVERYWHERE_FOREIGN_RECORD');
@@ -86,7 +87,18 @@ function createDeleteEverywhere({db}) {
       fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
     if(typeof tx.delete!=='function')throw Object.assign(Error('Atomic Firebase delete is unavailable.'),{status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
     tx.delete(ref);return true;
-   });
+   });}catch(error){
+    // A real Firestore IAM denial is not a signed Delete ACK. Retain the
+    // original operation for review; never leak provider messages or secrets.
+    if([7,'7','PERMISSION_DENIED','permission-denied'].includes(error?.code)) {
+     console.info(JSON.stringify({event:'delete_everywhere_firebase_failure',
+       stage:'transaction',code:'PERMISSION_DENIED'}));
+     throw Object.assign(Error('Firebase delete permission denied; original operation retained.'),
+       {status:503,code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED',
+        publicMessage:true});
+    }
+    throw error;
+   }
    if(removed)deleted++;
   }
   return {...result,firebaseDeletionComplete:true,firebaseDeletedRecords:deleted};
