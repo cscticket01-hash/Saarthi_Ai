@@ -127,6 +127,35 @@ test('atomic person publish refuses unapproved, foreign and unmigrated school be
  assert.equal(calls.length,0);
 });
 
+test('actual Windows exam_center_results is admitted by signed broker but cannot bypass migration gate',async()=>{
+ const calls=[],f=fixture(null,{
+   cloudflareSync:{enabled:()=>true,rpc:async(s,l,b)=>{
+     calls.push({s,l,b});throw Error('Unmigrated business write reached Cloudflare');
+   }},liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ const bundleId='windows-exam-drive-original-0001',docId='SHEET-student-test-0001';
+ const media=[{kind:'marksheet',id:'a'.repeat(64),uploadKey:'exam-original-0001',
+   sha256:'b'.repeat(64),sizeBytes:1024,mime:'application/pdf'}];
+ for(const collection of ['exam_center_results','exam_results']){
+  const request={action:'managed/live/bundle-publish',liveProtocol:1,
+   confirmIsolatedBundleTest:true,bundleId,mediaManifestHash:'c'.repeat(64),
+   media,operations:[
+    {collection,id:'exam-one_student-test',operation:'write',
+     operationId:'sync3-real-exam-parent-op-00001',expectedRevision:'',
+     data:{schoolId:A,studentId:'student-test',personId:'p-1111',
+       marksheetDocumentId:docId,marks:{Maths:98}}},
+    {collection:'documents',id:docId,operation:'write',
+     operationId:'sync3-real-marksheet-doc-op-0001',expectedRevision:'',
+     data:{schoolId:A,studentId:'student-test',personId:'p-1111',
+       documentKind:'marksheet',examResultId:'exam-one_student-test',
+       contentHash:'b'.repeat(64),mimeType:'application/pdf'}},
+   ]};
+  await assert.rejects(f.call(request),e=>e.status===503&&
+    e.code==='LIVE_MIGRATION_NOT_ACTIVE',
+    collection+' must pass broker type admission, then require verified Drive baseline');
+ }
+ assert.equal(calls.length,0,'Never touch Cloudflare before a verified source baseline');
+});
+
 test('published atomic media read is TEST-scoped, licensed and checks original Cloudflare byte hashes',async()=>{
  const bytes=Buffer.from('%PDF-1.7\\nA synthetic ID card\\n%%EOF','utf8');
  const id='b'.repeat(64),sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
