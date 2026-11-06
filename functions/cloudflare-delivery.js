@@ -104,7 +104,16 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  function verifiedRecord(result,school,request){
   if(result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
     typeof result.recordRevision!=='string'||!result.recordRevision||/^(live-|cf-)/.test(result.recordRevision))return false;
-  const record=result.record;if(!record)return true;
+  const record=result.record;
+  if(request?.operation==='delete'&&request.deleteEverywhereVersion===1){
+   // Never let an edge receipt say "Drive verified" when Google cleaned only
+   // its Sheet tombstone and Firebase still contains the original record.
+   if(result.deleteEverywhereVersion!==1||result.driveDeletionComplete!==true||
+      result.firebaseDeletionComplete!==true||record?._syncDeleted!==true||
+      record._syncErasePlan?.complete!==true||record._syncRevision!==result.recordRevision)
+    return false;
+  }
+  if(!record)return true;
   if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
   if(!request)return true;
   // Script may fulfil a second delete by returning the existing tombstone.
