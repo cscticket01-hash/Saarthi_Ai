@@ -56,6 +56,16 @@ void main() {
       respectBackoff:true,
     );
     expect(sends,0);
+    // An explicit Sync Now can disable routine backoff but never a provider
+    // quota minimum attached to the same original operation.
+    await WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      send:(a,b,c,d)async{},
+      sendVersioned:(_)async{sends++;return 'still-unwanted';},
+      onlyOperationId:original['operationId'] as String,
+      respectBackoff:false,
+    );
+    expect(sends,0);
     final retained=(await queued.reference.get()).data()!;
     expect(retained['operationId'],original['operationId']);
     expect(retained['retryAtMillis'],future);
