@@ -144,3 +144,12 @@ test('id-less tombstone with changed operation or signed target never removes Fi
   assert.equal(f.calls.length,0);
  }
 });
+
+test('Firestore permission denial is explicit, private and never grants a final Delete ACK',async()=>{
+ const denied=Object.assign(Error('Private provider and service-account details'),{code:7});
+ const db={doc:path=>({path}),runTransaction:async()=>{throw denied}};
+ const cleanup=createDeleteEverywhere({db});
+ await assert.rejects(cleanup.finish(A,request,ack()),e=>
+   e.status===503 && e.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED' &&
+   e.publicMessage===true && !String(e.message).includes('Private provider'));
+});
