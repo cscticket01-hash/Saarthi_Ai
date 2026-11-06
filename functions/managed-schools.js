@@ -286,6 +286,23 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    syncEvidenceWrites.set(schoolId,{at:now(),signature});
   }catch(_){}
  }
+ async function cascadeDeleteHints(school,request,ack){
+  // Google deleted original and linked records in multiple Sheet collections.
+  // Waking only the parent causes other Windows PCs, Android and website
+  // readers to retain stale document/fee/attendance views until a slow poll.
+  // Publish only the proven affected collections, AFTER Drive and Firebase
+  // finish. A failing hint cannot reverse a permanent provider ACK.
+  if(request?.action!=='managed_records'||request.operation!=='delete'||
+     ack?.deleteEverywhereVersion!==1||ack.driveDeletionComplete!==true||
+     ack.firebaseDeletionComplete!==true||!Array.isArray(ack.deletionTargets))
+    return;
+  const children=new Set();
+  for(const target of ack.deletionTargets){
+   if(target?.collection!==request.collection&&COLLECTIONS.has(target?.collection))
+    children.add(target.collection);
+  }
+  if(children.size)await changeHint(school,[...children],request.id);
+ }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
   if(body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1){
@@ -358,7 +375,11 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
    }
    if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);if(ticket){await deliveryBudget(syncDelivery.committed(ticket,result.recordRevision)).catch(()=>{});}else await changeHint(m.schoolId,body.collection,body.id);}
-   if(!ticket&&body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
+   if(body.action==='managed_records'&&body.operation==='delete'&&result.syncProtocol===2&&
+      result.deleteEverywhereVersion===1&&result.driveDeletionComplete===true&&result.firebaseDeletionComplete===true)
+     await cascadeDeleteHints(m.schoolId,body,result);
+   else if(!ticket&&body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)
+     await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
    if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
   }catch(error){
@@ -437,6 +458,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      }
     }
     if(body.action==='managed_records'&&typeof ack.recordRevision==='string') {
+     await cascadeDeleteHints(m.schoolId,body,ack);
      const data=body.data||{};const owner=['students_directory','teachers_directory'].includes(body.collection)?{personId:data.mobileStableId||body.id,role:body.collection==='students_directory'?'student':'teacher'}:data.personId?{personId:data.personId,role:data.ownerRole||'student'}:undefined;
      void notifyChanged(m.schoolId,body.operationId,false,owner).catch(()=>{});
     }

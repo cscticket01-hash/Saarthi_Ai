@@ -10,10 +10,19 @@ const fail=code=>{throw Object.assign(Error('Verified cloud deletion is pending;
 function createDeleteEverywhere({db}) {
  async function finish(school,request,result) {
   if(request.deleteEverywhereVersion!==1)return result;
+  const canonical=result?.record;
   if(!SCHOOL.test(school)||request.operation!=='delete'||request.syncProtocol!==2||
+     !COLLECTIONS.has(request.collection)||!validId(request.id)||
+     typeof request.operationId!=='string'||!request.operationId||
      result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
      result.deleteEverywhereVersion!==1||result.driveDeletionComplete!==true||
      typeof result.recordRevision!=='string'||!result.recordRevision||/^(?:cf-|live-)/.test(result.recordRevision)||
+     // A successful HTTP response or a Drive flag alone must not clear Firebase.
+     // The Script must return the same completed, immutable original delete.
+     !canonical||canonical.schoolId!==school||canonical.id!==request.id||
+     canonical._syncDeleted!==true||canonical._syncRevision!==result.recordRevision||
+     canonical._syncOperationId!==request.operationId||
+     canonical._syncErasePlan?.complete!==true||
      !Array.isArray(result.deletionTargets)||result.deletionTargets.length<1||result.deletionTargets.length>5000)
    fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
   const targets=result.deletionTargets,keys=new Set();
@@ -24,6 +33,12 @@ function createDeleteEverywhere({db}) {
    keys.add(target.collection+'/'+target.id);
   }
   if(!keys.has(request.collection+'/'+request.id))fail('DELETE_EVERYWHERE_TARGET_UNVERIFIED');
+  const root=targets.find(target=>target.collection===request.collection&&target.id===request.id);
+  if(root?.revision!==result.recordRevision||
+     // A signed Google plan, not an arbitrary response list, must determine
+     // every Firebase path. Byte-for-byte target identity is required.
+     JSON.stringify(canonical._syncErasePlan.targets)!==JSON.stringify(targets))
+    fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
   let deleted=0;
   // Exact deterministic paths make retries after any partial success idempotent.
   // A transaction rechecks ownership/generation immediately before deletion;
@@ -36,9 +51,17 @@ function createDeleteEverywhere({db}) {
     if(row.schoolId!==undefined&&row.schoolId!==school)fail('DELETE_EVERYWHERE_FOREIGN_RECORD');
     const generation=row.mobileStableId||row.personId||row._syncDeletedOwner;
     if(target.generation&&generation&&generation!==target.generation)fail('DELETE_EVERYWHERE_GENERATION_CONFLICT');
+    // An explicit generation-bound delete is allowed to supersede a newer
+    // edit of that SAME person; an occupant with a different generation is
+    // never removed. Ungenerated rows require exact revision CAS.
     const sameGeneration=target.generation&&generation===target.generation;
-    const sameRevision=target.sourceRevision&&row._syncRevision===target.sourceRevision||target.revision&&row._syncDeleted===true&&row._syncRevision===target.revision;
-    if(!sameGeneration&&!sameRevision)fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
+    const sourceMatches=typeof target.sourceRevision==='string'&&
+      target.sourceRevision.length>0&&row._syncRevision===target.sourceRevision;
+    const tombstoneMatches=row._syncDeleted===true&&
+      typeof target.revision==='string'&&target.revision.length>0&&
+      row._syncRevision===target.revision;
+    if(!sameGeneration&&!sourceMatches&&!tombstoneMatches)
+      fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
     if(typeof tx.delete!=='function')throw Object.assign(Error('Atomic Firebase delete is unavailable.'),{status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
     tx.delete(ref);return true;
    });

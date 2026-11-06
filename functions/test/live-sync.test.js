@@ -28,6 +28,59 @@ test('foreign baseline is rejected before any cloud authority writes',async()=>{
  await assert.rejects(live.prepare(A,'school_expenses',async()=>({success:true,schoolId:B,syncProtocol:2,records:{},collectionRevision:'other'})),e=>e.code==='LIVE_BASELINE_UNVERIFIED');
  assert.equal(writes,0);
 });
+test('Delete Everywhere backup never clears Cloudflare before signed Drive AND Firebase proof',async()=>{
+ const req={action:'managed_records',collection:'students_directory',id:'one',
+   operation:'delete',syncProtocol:2,operationId:'original-delete-op-0001',
+   expectedRecordRevision:'source-revision',deleteEverywhereVersion:1};
+ const record={schoolId:A,id:'one',_syncDeleted:true,
+   _syncRevision:'verified-drive-delete-revision',
+   _syncOperationId:req.operationId,_syncErasePlan:{complete:true}};
+ for(const missing of ['drive','firebase','erase-plan','none']){
+  const finished=[];
+  const live=createLiveSync({schools:[A],now:()=>100000,edge:{
+    enabled:()=>true,
+    rpc:async (school,lane,body)=>body.command==='backupClaim'
+      ?{job:{seq:1,claim:'owner',request:req}}:
+       (finished.push(body),{accepted:true})
+  }});
+  const ack={success:true,schoolId:A,syncProtocol:2,
+    recordRevision:record._syncRevision,deleteEverywhereVersion:1,
+    driveDeletionComplete:true,firebaseDeletionComplete:true,record:{...record}};
+  if(missing==='drive')ack.driveDeletionComplete=false;
+  if(missing==='firebase')ack.firebaseDeletionComplete=false;
+  if(missing==='erase-plan')ack.record._syncErasePlan={complete:false};
+  if(missing==='none'){delete ack.driveDeletionComplete;delete ack.firebaseDeletionComplete;}
+  const deliver=async body=>body.operation==='read'
+    ?{success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{one:{...record}}}
+    :ack;
+  const result=await live.drain(A,deliver);
+  assert.equal(result.processed,0,missing);
+  assert.equal(finished.at(-1).verified,false,missing);
+ }
+ const finished=[];
+ const live=createLiveSync({schools:[A],now:()=>100000,edge:{
+   enabled:()=>true,
+   rpc:async (school,lane,body)=>body.command==='backupClaim'
+     ?{job:{seq:1,claim:'owner',request:req}}:
+      (finished.push(body),{accepted:true})
+ }});
+ let reads=0;
+ const ack={success:true,schoolId:A,syncProtocol:2,
+   recordRevision:record._syncRevision,deleteEverywhereVersion:1,
+   driveDeletionComplete:true,firebaseDeletionComplete:true,record};
+ const deliver=async body=>{
+  if(body.operation==='read'){
+    reads++;
+    return {success:true,schoolId:A,syncProtocol:2,pointRead:true,
+      records:{one:{...record}}};
+  }
+  return ack;
+ };
+ assert.equal((await live.drain(A,deliver)).processed,1);
+ assert.equal(reads,1,'A separate exact signed tombstone readback is mandatory');
+ assert.equal(finished.at(-1).verified,true);
+});
+
 test('backup identity is verified and a fake cloud revision never becomes Drive verified',async()=>{
  const finished=[];const request={collection:'school_expenses',id:'one',operation:'write',operationId:'original-operation-0001',data:{schoolId:A,title:'Saved'}};
  const live=createLiveSync({schools:[A],now:()=>100000,edge:{enabled:()=>true,rpc:async(s,l,b)=>b.command==='backupClaim'?{job:{seq:1,claim:'owner',request}}:(finished.push(b),{accepted:true})}});
