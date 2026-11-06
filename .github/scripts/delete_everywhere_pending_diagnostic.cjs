@@ -19,6 +19,10 @@ async function main(){
  const scan=plan.archiveScan||{};
  const diagnostic={testFixturePresent:true,tombstone:row._syncDeleted===true,erasePlanVersion:plan.version||null,
    operationRetained:typeof row._syncOperationId==='string',
+   operationMatchesOriginal:row._syncOperationId==='980a80a2ed52f3a498c4410209225e95',
+   erasePlanComplete:plan.complete===true,
+   rootRevisionMatches:plan.targets?.[0]?.revision===row._syncRevision,
+   rootTargetMatches:plan.targets?.[0]?.collection==='students_directory'&&plan.targets?.[0]?.id===STUDENT,
    targetsProcessed:plan.cursor??null,targetsTotal:Array.isArray(plan.targets)?plan.targets.length:null,
    filesProcessed:plan.fileCursor??null,filesTotal:Array.isArray(plan.files)?plan.files.length:null,
    archiveComplete:plan.archivesComplete===true,
