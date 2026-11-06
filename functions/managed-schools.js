@@ -1180,6 +1180,18 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     fail(400,'Invalid original Delete Everywhere review identity','DELETE_REVIEW_INVALID');
   if(firebaseCredentialFingerprint!==null&&b.credentialFingerprint!==firebaseCredentialFingerprint)
    fail(409,'Runtime Firebase identity changed','DELETE_REVIEW_CREDENTIAL_MISMATCH');
+  if(b.diagnoseOnly===true){
+   const review=await cloudflareSync.rpc(m.schoolId,'records',{
+    command:'diagnoseDeleteReview',id:b.id,operationId:b.operationId,
+    recordId:b.recordId,expectedRecordRevision:b.expectedRecordRevision,
+    deletedStudentGeneration:b.deletedStudentGeneration,
+    credentialFingerprint:b.credentialFingerprint
+   });
+   if(!review||typeof review.state!=='string'||!Number.isInteger(review.retryCount)||
+      typeof review.immutable!=='boolean')
+    fail(503,'Delete review diagnostic not verified','DELETE_REVIEW_DIAGNOSTIC_UNVERIFIED');
+   return {success:true,schoolId:m.schoolId,reviewDiagnosis:review,diagnosticReadOnly:true};
+  }
   // Cloudflare itself verifies the immutable stored payload, fingerprint,
   // original operation ID, revision and failure class before reopening.
   const reopened=await cloudflareSync.rpc(m.schoolId,'records',{
