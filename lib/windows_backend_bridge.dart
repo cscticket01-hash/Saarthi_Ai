@@ -203,7 +203,8 @@ class WindowsBackendBridge {
     final exam=(await db.collection('exams').doc(examId).get()).data();
     own();
     if(student==null||exam==null||
-       student['schoolId']!=school||exam['schoolId']!=school||
+       (student['schoolId']!=null&&student['schoolId']!=school)||
+       (exam['schoolId']!=null&&exam['schoolId']!=school)||
        student['deleted']==true||student['_syncDeleted']==true||
        student['mobileStableId'] is! String||
        (student['mobileStableId'] as String).isEmpty||
