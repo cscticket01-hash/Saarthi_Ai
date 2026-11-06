@@ -75,3 +75,6 @@ flutter:
     - family: VidyaNotoDevanagari
       fonts:
         - asset: "assets/fonts/NotoSansDevanagari[wdth,wght].ttf"
+
+# Owner-authorized website, Windows and Android publication: 2026-11-03.
+# Runtime source matches verified TEST commit 10132bf; physical/load acceptance remains separate.

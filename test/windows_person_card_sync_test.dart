@@ -108,4 +108,136 @@ void main() {
     expect(documentAcknowledgementFromWrite(payload, {...ack, 'driveState': 'pending'}), isNull);
     expect(documentAcknowledgementFromWrite(payload, {...ack, 'recordRevision': 'cf-only'}), isNull);
   });
+
+ test('atomic pilot reserves both existing outboxes in one local CAS without claiming Drive ACK',()async{
+   const stable='p-88888888888888888888888888888888';
+   final parent={
+     'schoolId':school,'collection':'students_directory',
+     'documentId':'person-1','operation':'set',
+     'operationId':'original-person-operation-0001','baseCloudRevision':'',
+     'syncState':'pending',
+     'data':{'schoolId':school,'name':'Student One','mobileStableId':stable},
+   };
+   final card={
+     'schoolId':school,'documentId':'card-1',
+     'documentRevision':'original-idcard-revision-0001',
+     'documentKind':'idCard','deleted':false,'baseCloudRevision':'',
+     'ownerRole':'student','studentId':'person-1','personId':stable,
+     'optimizedMimeType':'application/pdf','syncState':'Pending',
+   };
+   final parentRef=db.collection('_windows_firebase_outbox').doc('queue-person-1');
+   final cardRef=db.collection('_windows_document_outbox').doc('card-1');
+   await parentRef.set(parent);
+   await cardRef.set(card);
+   const bundleId='atomic-outbox-original-pair-0001';
+   await db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parent,
+     documentId:cardRef.id,documentBefore:card,
+     bundleId:bundleId,state:'reserved');
+   final parentReserved=(await parentRef.get()).data()!;
+   final cardReserved=(await cardRef.get()).data()!;
+   expect(parentReserved['atomicBundleId'],bundleId);
+   expect(cardReserved['atomicBundleId'],bundleId);
+   expect(parentReserved['atomicState'],'reserved');
+   expect(cardReserved['atomicState'],'reserved');
+   expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty,
+     reason:'Cloudflare reservation is not a Drive receipt');
+   final changed={...cardReserved,'documentRevision':'new-local-save-0001'};
+   await cardRef.set(changed);
+   await expectLater(db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parentReserved,
+     documentId:cardRef.id,documentBefore:cardReserved,
+     bundleId:bundleId,state:'committed',
+     parentCloudRevision:'live-parent-one',documentCloudRevision:'live-card-one'),
+     throwsStateError);
+   expect((await parentRef.get()).data()?['atomicState'],'reserved');
+   expect((await cardRef.get()).data()?['documentRevision'],'new-local-save-0001');
+   await cardRef.set(cardReserved);
+   await db.markAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentRef.id,parentBefore:parentReserved,
+     documentId:cardRef.id,documentBefore:cardReserved,
+     bundleId:bundleId,state:'committed',
+     parentCloudRevision:'live-parent-one',documentCloudRevision:'live-card-one');
+   expect((await parentRef.get()).data()?['atomicCloudRevision'],'live-parent-one');
+   expect((await cardRef.get()).data()?['atomicCloudRevision'],'live-card-one');
+   expect((await parentRef.get()).data()?['atomicState'],'committed');
+   expect((await cardRef.get()).data()?['atomicState'],'committed');
+ });
+
+
+ test('dual verified Drive ACK retires original Person/Card queues together without duplicating upload',()async{
+   const stable='p-88888888888888888888888888888888';
+   const bundleId='atomic-pilot-verified-pair-0001';
+   const contentHash='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+   const parentOp='original-parent-create-operation-0001';
+   const cardOp='original-card-create-operation-0001';
+   final parentRef=db.collection('students_directory').doc('student-verified');
+   final documentRef=db.collection('_local_student_documents').doc('id-verified');
+   final parentQueueRef=db.collection('_windows_firebase_outbox').doc('parent-verified-queue');
+   final documentQueueRef=db.collection('_windows_document_outbox').doc('id-verified');
+   final originalParent={'schoolId':school,'name':'One','mobileStableId':stable};
+   final originalLocal={'schoolId':school,'documentId':'id-verified',
+     'documentRevision':cardOp,'localPath':'/safe/original.pdf',
+     'syncState':'Pending'};
+   await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()async{
+     await parentRef.set(originalParent);
+     await documentRef.set(originalLocal);
+   });
+   final queuedParent={'schoolId':school,'collection':'students_directory',
+     'documentId':'student-verified','operation':'set',
+     'operationId':parentOp,'baseCloudRevision':'',
+     'atomicBundleId':bundleId,'atomicState':'committed',
+     'atomicCloudRevision':'live-parent-verified',
+     'data':originalParent};
+   final queuedDocument={'schoolId':school,'documentId':'id-verified',
+     'documentRevision':cardOp,'documentKind':'idCard','deleted':false,
+     'studentId':'student-verified','personId':stable,
+     'ownerRole':'student','localPath':'/safe/original.pdf',
+     'baseCloudRevision':'','atomicBundleId':bundleId,
+     'atomicState':'committed','atomicCloudRevision':'live-card-verified'};
+   await parentQueueRef.set(queuedParent);
+   await documentQueueRef.set(queuedDocument);
+   final cloudParent={...originalParent,'_syncRevision':'live-parent-verified',
+     '_syncOperationId':parentOp};
+   final cloudDoc={'schoolId':school,'bundleId':bundleId,
+     'studentId':'student-verified','personId':stable,'ownerRole':'student',
+     'contentHash':contentHash,'fileId':'googleDriveVerifiedFile001',
+     'bundleMedia':[{'kind':'idCard','sha256':contentHash,
+       'fileId':'googleDriveVerifiedFile001'}],
+     '_syncRevision':'live-card-verified','_syncOperationId':cardOp};
+   final backup=[
+     {'operationId':parentOp,'collection':'students_directory',
+       'id':'student-verified','backupState':'verified','driveVerified':true,
+       'recordRevision':'live-parent-verified','driveRevision':'drive-parent-confirmed'},
+     {'operationId':cardOp,'collection':'documents',
+       'id':'id-verified','backupState':'verified','driveVerified':true,
+       'recordRevision':'live-card-verified','driveRevision':'drive-card-confirmed'},
+   ];
+   Future<void> finish({String hash=contentHash,Map<String,dynamic>? before})=>
+      db.finishVerifiedAtomicPersonCardOutbox(
+       school:school,parentQueueId:parentQueueRef.id,parentBefore:queuedParent,
+       parentLocalBefore:originalParent,documentId:documentQueueRef.id,
+       documentBefore:queuedDocument,documentLocalBefore:before??originalLocal,
+       bundleId:bundleId,parentCloud:cloudParent,documentCloud:cloudDoc,
+       verifiedBackups:backup,cardSha256:hash);
+   await expectLater(Future<void>.sync(()=>finish(hash:'f'*64)),throwsStateError);
+   expect((await parentQueueRef.get()).data(),isNotNull);
+   expect((await documentQueueRef.get()).data(),isNotNull);
+   await documentRef.set({...originalLocal,'documentRevision':'newer-local-card-edit'});
+   await expectLater(Future<void>.sync(()=>finish()),throwsStateError);
+   expect((await parentQueueRef.get()).data(),isNotNull);
+   expect((await documentQueueRef.get()).data(),isNotNull);
+   await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      documentRef.set(originalLocal));
+   await finish();
+   expect((await parentQueueRef.get()).data(),isNull);
+   expect((await documentQueueRef.get()).data(),isNull);
+   expect((await parentRef.get()).data()?['_syncRevision'],'live-parent-verified');
+   expect((await db.collection('documents').doc('id-verified').get()).data()?['bundleId'],bundleId);
+   expect((await documentRef.get()).data()?['syncState'],'Synced');
+   expect((await documentRef.get()).data()?['cloudRevision'],'drive-card-confirmed');
+   expect((await db.collection('_windows_sync_receipts')
+       .doc('document-id-verified-$cardOp').get()).data()?['bundleId'],bundleId);
+ });
+
 }

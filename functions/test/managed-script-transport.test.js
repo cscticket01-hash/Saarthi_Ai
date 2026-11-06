@@ -31,6 +31,15 @@ test('database exceptions are not mislabeled as Script failures and foreign scho
  await assert.rejects(f.call({...body,schoolId:'vs-'+ 'b'.repeat(32)}),e=>e.status===403);assert.equal(f.sent.length,0);
 });
 
+for(const code of ['SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW','SCRIPT_DELETE_ARCHIVE_SCAN_REVIEW','SCRIPT_DELETE_ARCHIVE_GENERATION_REVIEW'])
+ test('signed school archive review retains exact diagnostic without exposing school payload: '+code,async()=>{
+  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({
+   success:false,schoolId:A,code,message:'NEVER_EXPOSE_SCHOOL_RECORD'
+  })}));
+  await assert.rejects(f.call(body),e=>e.status===409&&e.code===code&&
+    e.publicMessage===true&&!e.message.includes('NEVER_EXPOSE'));
+  assert.equal(f.sent.length,1);
+ });
 test('verified school-root failure retains safe provider provenance instead of generic operation failure',async()=>{
  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,code:'SCRIPT_ROOT_IDENTITY_MISMATCH',message:'NEVER_EXPOSE'})}));
  await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_ROOT_IDENTITY_MISMATCH'&&!e.message.includes('NEVER_EXPOSE'));
@@ -84,6 +93,23 @@ test('legacy script lock and quota failures are retryable without leaking messag
  for(const [message,status,code] of [['Lock timed out NEVER_EXPOSE',504,'SCRIPT_TIMEOUT'],['Service invoked too many times NEVER_EXPOSE',429,'SCRIPT_QUOTA_EXCEEDED']]){
   const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({success:false,schoolId:A,message})}));
   await assert.rejects(f.call(body),e=>e.status===status&&e.code===code&&!e.message.includes('NEVER_EXPOSE'));
+  assert.equal(f.sent.length,1);
+ }
+});
+
+test('anonymous signed-request rejection with hidden schoolId is not falsely called a foreign school',async()=>{
+ const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify({
+   success:false,code:'SCRIPT_OPERATION_FAILED',message:'NEVER_EXPOSE'
+ })}));
+ await assert.rejects(f.call(body),e=>e.status===502&&e.code==='SCRIPT_SIGNED_RESPONSE_UNVERIFIED'&&
+   e.publicMessage===true&&!e.message.includes('NEVER_EXPOSE')&&!e.message.includes(A));
+ assert.equal(f.sent.length,1,'original immutable operation must not be resubmitted');
+});
+test('malformed signed-response identity never acknowledges a delete or write',async()=>{
+ for(const payload of [null,[],{success:true},{success:false,schoolId:null}]){
+  const f=fixture(async()=>({status:200,ok:true,text:async()=>JSON.stringify(payload)}));
+  await assert.rejects(f.call(body),e=>
+   e.status===502&&['SCRIPT_INVALID_RESPONSE','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_IDENTITY_MISMATCH'].includes(e.code));
   assert.equal(f.sent.length,1);
  }
 });

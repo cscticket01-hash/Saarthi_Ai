@@ -6,6 +6,10 @@ import 'dart:typed_data';
 class SchoolMediaBudgets {
   SchoolMediaBudgets._();
 
+  // Strict business contract: front + back with photo (if supplied), QR,
+  // text and branding must fit one complete 85 KiB PDF. Never silently raise
+  // the limit, truncate bytes, or send an oversized card to cloud storage.
+  // A failed render remains local for a safe retry/review.
   static const int idCard = 85 * 1024;
   static const int reportCard = 150 * 1024;
   static const int receipt = 30 * 1024;

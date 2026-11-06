@@ -48,6 +48,31 @@ void main() {
     expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), null);
   });
 
+  test('strict 85 KiB card boundary retains complete bytes and rejects oversized print', () {
+    // Existing 256 KiB release violated the owner contract. Never silently
+    // accept a 141.5 KiB PDF even when Cloudflare can carry that file.
+    Uint8List fakePdf(int size) {
+      final pdf = Uint8List(size);
+      pdf.setRange(0, 8, utf8.encode('%PDF-1.7'));
+      pdf.setRange(pdf.length - 5, pdf.length, utf8.encode('%%EOF'));
+      return pdf;
+    }
+
+    final accepted = fakePdf(85 * 1024);
+    final copy = Uint8List.fromList(accepted);
+    for (final kind in ['studentId', 'teacherId', 'otherStaffId', 'idCard']) {
+      expect(identical(SchoolMediaBudgets.verifyGeneratedPdf(kind, accepted), accepted), isTrue);
+      expect(accepted, copy, reason: 'PDF is never truncated or degraded');
+      expect(() => SchoolMediaBudgets.verifyGeneratedPdf(kind, fakePdf(85 * 1024 + 1)),
+        throwsFormatException);
+      expect(() => SchoolMediaBudgets.verifyGeneratedPdf(kind, fakePdf(141 * 1024 + 512)),
+        throwsFormatException);
+    }
+    expect(SchoolMediaBudgets.pdfLimit('bulkIdCards'), isNull);
+    expect(SchoolMediaBudgets.pdfLimit('reportCard'), 150 * 1024);
+    expect(SchoolMediaBudgets.pdfLimit('receipt'), 30 * 1024);
+  });
+
   test('logo and opaque school seal use actual compressed <=30 KB bytes', () {
     final image = img.Image(width: 900, height: 720);
     for (var y = 0; y < image.height; y++) {

@@ -51,8 +51,38 @@ class LiveSyncPage {
           !(entry['record']['_syncRevision'] as String).startsWith('live-')) {
         throw StateError('Live replay record differs; cursor retained.');
       }
+      final grouped=entry.containsKey('bundleId') ||
+          entry.containsKey('bundleSize') || entry.containsKey('bundleIndex');
+      if(grouped && (entry['bundleId'] is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(entry['bundleId'] as String) ||
+          entry['bundleSize'] is! int ||
+          (entry['bundleSize'] as int)<2 || (entry['bundleSize'] as int)>5 ||
+          entry['bundleIndex'] is! int ||
+          (entry['bundleIndex'] as int)<0 ||
+          (entry['bundleIndex'] as int)>=(entry['bundleSize'] as int) ||
+          entry['retired']==true)) {
+        throw StateError('Atomic replay metadata is invalid; cursor retained.');
+      }
       events.add(Map<String, dynamic>.from(entry));
       expected++;
+    }
+    // A single incomplete bundle must never advance the local checkpoint.
+    for(var i=0;i<events.length;) {
+      final first=events[i];
+      if(!first.containsKey('bundleId')) {i++;continue;}
+      final count=first['bundleSize'] as int;
+      if(first['bundleIndex']!=0||i+count>events.length) {
+        throw StateError('Atomic replay page is incomplete; cursor retained.');
+      }
+      for(var j=0;j<count;j++) {
+        final member=events[i+j];
+        if(member['bundleId']!=first['bundleId'] ||
+           member['bundleSize']!=count || member['bundleIndex']!=j ||
+           member['sequence']!=(first['sequence'] as int)+j) {
+          throw StateError('Atomic replay group differs; cursor retained.');
+        }
+      }
+      i+=count;
     }
     if (cursor != expected - 1 || raw.isEmpty && head != after) {
       throw StateError('Live replay gap; cursor retained.');
@@ -152,6 +182,47 @@ bool verifyLiveRecordReceipt(Map<String, dynamic> receipt, {
       record['id'] != null && record['id'] != id ||
       !retainedOriginal && record['_syncOperationId'] != operationId) {
     throw StateError('Live commitment did not verify; pending operation retained.');
+  }
+  return true;
+}
+
+/// A legacy school-notice lane durably commits the exact versioned record to
+/// Cloudflare SQLite *before* its asynchronous Google Drive delivery. This is
+/// an edge ACK, not a Drive/Firebase delete-everywhere ACK. The Cloudflare
+/// owner separately retains and retries the immutable Drive job until verified.
+/// Only this strict same-school tombstone/record may retire device pending.
+bool verifyLegacyCloudflareNoticeReceipt(
+  Map<String, dynamic> receipt, {
+  required String school,
+  required String collection,
+  required String id,
+  required String operationId,
+  bool deleting = false,
+}) {
+  if (collection != 'school_notices' ||
+      receipt['cloudflareAccepted'] != true ||
+      receipt['recordRevision'] is! String ||
+      !(receipt['recordRevision'] as String).startsWith('cf-')) {
+    return false;
+  }
+  final record = receipt['record'];
+  if (receipt['success'] != true ||
+      receipt['schoolId'] != school ||
+      receipt['syncProtocol'] != 2 ||
+      receipt.containsKey('liveProtocol') ||
+      receipt['driveState'] != 'pending' ||
+      receipt['collectionRevision'] is! String ||
+      !(receipt['collectionRevision'] as String).startsWith('cf-') ||
+      receipt['recordRevision'] == 'cf-' ||
+      record is! Map ||
+      record['schoolId'] != school ||
+      record['id'] != id ||
+      record['_syncRevision'] != receipt['recordRevision'] ||
+      record['_syncOperationId'] != operationId ||
+      (record['_syncDeleted'] == true) != deleting) {
+    throw StateError(
+      'Cloudflare notice commitment did not verify; original operation retained.',
+    );
   }
   return true;
 }

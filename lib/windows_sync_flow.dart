@@ -42,7 +42,7 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
           value:widget.phase!='paused'&&widget.active.isNotEmpty?null:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
         SizedBox(width:circle-20,height:circle-20,child:FittedBox(fit:BoxFit.scaleDown,child:SizedBox(width:circle-20,child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.phase=='idle'?Icons.check_circle_outline:Icons.sync,color:color),
           Text(widget.label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:small?12:15,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
-          if(widget.phase=='idle') Text(widget.lastMicros==null?'—':'${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
+          if(widget.phase=='idle') Text(widget.lastMicros==null?'Last sync: —':'Last sync: ${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
           Text(widget.pendingText ?? '${widget.pending} pending',style:const TextStyle(fontSize:11),textAlign:TextAlign.center),
         ]))))])),
       SizedBox(width:gap,height:height,child:AnimatedBuilder(animation:clock,builder:(_,__)=>CustomPaint(

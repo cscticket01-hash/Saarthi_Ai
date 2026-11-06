@@ -535,6 +535,16 @@ function VS_managedRecord(b) {
   try{
     if(timing)VS_TEST_SYNC_TIMING=timing;
     const result=VS_managedRecordUnlocked(b);
+    // The canonical record and its revision are one receipt. Capture both
+    // while the same writer lock is held; a later PC edit must not replace
+    // this operation's record after its revision has already been selected.
+    if(b.operation!=='read'&&result.recordRevision&&VS_sheetLifecycleEnabled()){
+      const saved=VS_sheetItem(VS_managedSheet(b.collection),b.id);
+      if(saved){
+        if(saved.data._syncRevision!==result.recordRevision)throw new Error('School record verification failed');
+        result.record=saved.data;
+      }
+    }
     if(timing){timing.totalScriptMs=Date.now()-began;result.testScriptTiming=timing;}
     return result;
   }finally{
@@ -919,6 +929,10 @@ function VS_managedDiagnostic(error) {
     'Delete everywhere Drive file verification pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
     'Delete everywhere Drive file deletion pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
     'Delete everywhere archive readback pending':'SCRIPT_DELETE_EVERYWHERE_PENDING',
+    'Delete everywhere archive plan requires review':'SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW',
+    'Delete everywhere archive scan identity requires review':'SCRIPT_DELETE_ARCHIVE_SCAN_REVIEW',
+    'Delete everywhere archive inventory requires bounded review':'SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW',
+    'Delete everywhere archive generation requires review':'SCRIPT_DELETE_ARCHIVE_GENERATION_REVIEW',
     'Verified local Sheet recovery required before editing':'SCRIPT_SHEET_RECOVERY_REQUIRED',
     'Recovery revision or content mismatch':'SCRIPT_RECOVERY_MISMATCH',
     'Sync state identity mismatch':'SCRIPT_SYNC_STATE_IDENTITY',
@@ -1033,7 +1047,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-02.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -1084,7 +1098,6 @@ function VS_managedHandle(e) {
       const pending=[];Object.keys(backup.records).forEach(col=>{VS_managedCollection(col);Object.keys(backup.records[col]).forEach(id=>{const data=backup.records[col][id];if(!/^[^/]{1,200}$/.test(id)||id==='.'||id==='..'||!data||data.schoolId!==school)throw new Error('Invalid backup record');pending.push({collection:col,id:id,data:data,operation:'write',createOnly:true});});});
       let copied=0,skipped=0;const lock=LockService.getScriptLock();lock.waitLock(30000);try{pending.forEach(r=>{const result=VS_managedRecordUnlocked(r);if(result.skipped)skipped++;else copied++;});}finally{lock.releaseLock();}result={copied:copied,skipped:skipped};
     }else throw new Error('Unknown managed storage action');
-    if(b.action==='managed_records'&&b.operation!=='read'&&result.recordRevision&&VS_sheetLifecycleEnabled()){const saved=VS_sheetItem(VS_managedSheet(b.collection),b.id);if(saved)result.record=saved.data;}
     return jsonResponse(Object.assign({success:true,schoolId:school},result));
   }catch(error){
     const safe={
@@ -1121,7 +1134,7 @@ function VS_managedHandle(e) {
       try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
     }
     const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
-    return jsonResponse({success:false,schoolId:school,message:safe[error.message]||'School storage request rejected',code:code});
+    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified?{schoolId:school}:{}));
   }
 }
 
@@ -2093,12 +2106,18 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   // Shared school assets remain owned by the surviving records; deleting one
   // reference must not remove another pupil's ID card/photo or school seal.
   const references=new Set();references.retirementScanComplete=true;
-  for(const collection of VS_LAYOUT_COLLECTIONS){
-    const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
-    if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
-    for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+  // A metadata-only delete owns no Drive file. Scanning every school collection
+  // cannot protect a file that is not being deleted; it only delays the
+  // version-safe tombstone/receipt and can exhaust Apps Script execution.
+  // Every file-bearing delete keeps the complete shared-reference census.
+  if(files.size>0){
+    for(const collection of VS_LAYOUT_COLLECTIONS){
+      const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
+      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+    }
+    if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   }
-  if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   const owned=[];for(const fileId of files){if(references.has(fileId)){retainedShared.push(fileId);continue;}VS_managedFile(fileId);owned.push(fileId);}
   const data={schoolId:school,_syncDeleted:true,_syncRevision:revision,_syncOperationId:b.operationId,_syncRequestHash:wireHash,_syncErasePlan:{version:1,targets:targets,files:owned,retainedShared:retainedShared,cursor:0,fileCursor:0,archivesComplete:false,complete:false}};
   if(generation)data._syncDeletedOwner=generation;
@@ -2152,22 +2171,67 @@ function VS_permanentlyEraseOwnedFile(fileId){
   const verified=UrlFetchApp.fetch(url+'?fields=id&supportsAllDrives=true',{method:'get',headers:headers,muteHttpExceptions:true});
   if(verified.getResponseCode()!==404)throw new Error('Delete everywhere Drive file deletion pending');
 }
-function VS_eraseArchiveInventory(){
-  const pending=[VS_managedRoot()],seen={},jobs=[];let visited=0,inspected=0;
-  while(pending.length){const folder=pending.shift();if(seen[folder.getId()])continue;seen[folder.getId()]=true;
-    if(++visited>250)throw new Error('Delete everywhere archive inventory requires bounded review');
-    const files=folder.getFiles();while(files.hasNext()){
-      const file=files.next();if(++inspected>2000)throw new Error('Delete everywhere archive inventory requires bounded review');
-      // Inventory metadata is already obtained from a folder under the verified
-      // root. Ordinary photos/PDFs and the live workbook are not archives.
-      // Keep every supported legacy archive form; ownership is checked again
-      // before any content is read or changed.
-      if(!VS_isRecordArchive(file,folder.getName()))continue;
-      if(jobs.length>=2000)throw new Error('Delete everywhere archive inventory requires bounded review');jobs.push(file.getId());
-    }
-    const children=folder.getFolders();while(children.hasNext()){if(pending.length+visited>=250)throw new Error('Delete everywhere archive inventory requires bounded review');pending.push(children.next());}
+/** Inventory is resumable: a large school can have thousands of ordinary
+ * images/files or hundreds of folders. Neither count blocks text-only delete.
+ * Drive continuation tokens are persisted inside the ORIGINAL same-school
+ * deletion plan; no extra school, root, workbook or authority is created.
+ * NO deletion ACK is emitted while inventory is incomplete. */
+function VS_eraseArchiveInventory(plan,onProgress){
+  const root=VS_managedRoot().getId();
+  if(!plan.archiveScan){
+    plan.archiveScan={root:root,stack:[{id:root,phase:'files',token:null}],ids:[]};
+    onProgress();
   }
-  return [...new Set(jobs)].sort();
+  const scan=plan.archiveScan;
+  if(scan.root!==root||!Array.isArray(scan.stack)||!Array.isArray(scan.ids))
+    throw new Error('Delete everywhere archive scan identity requires review');
+  // All progress is saved after a bounded amount of work, even if an API
+  // request times out. A continuation token may expire; never guess a cursor.
+  const started=Date.now();let scanned=0;
+  try{
+    while(scan.stack.length&&scanned<60&&Date.now()-started<20000){
+      const frame=scan.stack[scan.stack.length-1];
+      if(!frame||!/^[-A-Za-z0-9_]{1,200}$/.test(frame.id||'')||
+        !['files','folders','done'].includes(frame.phase))
+        throw new Error('Delete everywhere archive scan identity requires review');
+      if(frame.phase==='done'){scan.stack.pop();continue;}
+      const folder=DriveApp.getFolderById(frame.id);
+      if(frame.phase==='files'){
+        const it=frame.token?DriveApp.continueFileIterator(frame.token):folder.getFiles();
+        if(!it.hasNext()){frame.phase='folders';frame.token=null;continue;}
+        const file=it.next(),more=it.hasNext();
+        // Preserve the exact old inventory selection; media is not read.
+        if(VS_isRecordArchive(file,folder.getName())){
+          if(scan.ids.indexOf(file.getId())<0)scan.ids.push(file.getId());
+          // An oversized plan is NOT a verified deletion. Keep pending rather
+          // than writing a truncated/invalid Google Sheet cell.
+          if(JSON.stringify(scan).length>35000)
+            throw new Error('Delete everywhere archive plan requires review');
+        }
+        frame.token=more?it.getContinuationToken():null;
+        if(!more)frame.phase='folders';
+        scanned++;
+      }else{
+        const it=frame.token?DriveApp.continueFolderIterator(frame.token):folder.getFolders();
+        if(!it.hasNext()){frame.phase='done';frame.token=null;continue;}
+        const child=it.next(),more=it.hasNext();
+        frame.token=more?it.getContinuationToken():null;
+        if(!more)frame.phase='done';
+        scan.stack.push({id:child.getId(),phase:'files',token:null});
+        scanned++;
+        if(JSON.stringify(scan).length>35000)
+          throw new Error('Delete everywhere archive plan requires review');
+      }
+    }
+  }finally{
+    onProgress();
+  }
+  if(scan.stack.length)return false;
+  plan.archiveIds=[...new Set(scan.ids)].sort();
+  plan.archiveCursor=0;
+  delete plan.archiveScan;
+  onProgress();
+  return true;
 }
 function VS_isRecordArchive(file,parentName){
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),mime=file.getMimeType(),marker=String(file.getDescription()||'');
@@ -2186,7 +2250,7 @@ function VS_eraseArchiveGeneration(target,row){
   return target.sourceRevision&&row&&row._syncRevision===target.sourceRevision?true:null;
 }
 function VS_eraseExactRecordArchives(targets,plan,onProgress){
-  if(!plan.archiveIds){plan.archiveIds=VS_eraseArchiveInventory();plan.archiveCursor=0;onProgress();}
+  if(!plan.archiveIds&&!VS_eraseArchiveInventory(plan,onProgress))return false;
   let count=0,inspected=0;
   const root=VS_managedRoot().getId(),ownedFolders={};
   function owns(folder){const id=folder.getId();if(id===root)return true;if(Object.prototype.hasOwnProperty.call(ownedFolders,id))return ownedFolders[id];ownedFolders[id]=false;const parents=folder.getParents();while(parents.hasNext())if(owns(parents.next())){ownedFolders[id]=true;return true;}return false;}
