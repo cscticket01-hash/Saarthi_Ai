@@ -1175,14 +1175,15 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      typeof b.recordId!=='string'||!/^[-A-Za-z0-9_]{1,200}$/.test(b.recordId)||
      typeof b.expectedRecordRevision!=='string'||!b.expectedRecordRevision||
      b.expectedRecordRevision.length>100||
-     typeof b.deletedStudentGeneration!=='string'||!/^p-[a-f0-9]{32,64}$/.test(b.deletedStudentGeneration))
+     typeof b.deletedStudentGeneration!=='string'||!/^p-[a-f0-9]{32,64}$/.test(b.deletedStudentGeneration)||
+     typeof b.credentialFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(b.credentialFingerprint))
     fail(400,'Invalid original Delete Everywhere review identity','DELETE_REVIEW_INVALID');
   // Cloudflare itself verifies the immutable stored payload, fingerprint,
   // original operation ID, revision and failure class before reopening.
   const reopened=await cloudflareSync.rpc(m.schoolId,'records',{
    command:'retryDeleteReview',id:b.id,operationId:b.operationId,
    recordId:b.recordId,expectedRecordRevision:b.expectedRecordRevision,
-   deletedStudentGeneration:b.deletedStudentGeneration
+   deletedStudentGeneration:b.deletedStudentGeneration,credentialFingerprint:b.credentialFingerprint
   });
   if(reopened?.id!==b.id||reopened.state!=='retry'||
      reopened.response?.reviewRetryCount!==1)
