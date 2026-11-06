@@ -22,7 +22,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
@@ -1178,6 +1178,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      typeof b.deletedStudentGeneration!=='string'||!/^p-[a-f0-9]{32,64}$/.test(b.deletedStudentGeneration)||
      typeof b.credentialFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(b.credentialFingerprint))
     fail(400,'Invalid original Delete Everywhere review identity','DELETE_REVIEW_INVALID');
+  if(firebaseCredentialFingerprint!==null&&b.credentialFingerprint!==firebaseCredentialFingerprint)
+   fail(409,'Runtime Firebase identity changed','DELETE_REVIEW_CREDENTIAL_MISMATCH');
   // Cloudflare itself verifies the immutable stored payload, fingerprint,
   // original operation ID, revision and failure class before reopening.
   const reopened=await cloudflareSync.rpc(m.schoolId,'records',{
@@ -1186,7 +1188,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    deletedStudentGeneration:b.deletedStudentGeneration,credentialFingerprint:b.credentialFingerprint
   });
   if(reopened?.id!==b.id||reopened.state!=='retry'||
-     reopened.response?.reviewRetryCount!==1)
+     ![1,2].includes(reopened.response?.reviewRetryCount)||
+     reopened.response?.reviewCredentialFingerprint!==b.credentialFingerprint)
    fail(409,'Original Delete Everywhere receipt was not safely reopened','DELETE_REVIEW_REOPEN_FAILED');
   const drained=await edgeDelivery.drain(m.schoolId,'records',body=>signedRequest(m,body));
   const receipt=await edgeDelivery.status(m.schoolId,'records',b.id,body=>signedRequest(m,body));
