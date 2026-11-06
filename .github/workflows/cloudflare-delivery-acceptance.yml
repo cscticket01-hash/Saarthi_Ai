@@ -1,11 +1,16 @@
 name: Cloudflare delivery isolated synthetic acceptance
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - '.github/scripts/cloudflare_delivery_acceptance*'
       - '.github/workflows/cloudflare-delivery-acceptance.yml'
   push:
-    branches: [verify/cloudflare-delivery-live]
+    branches: [verify/cloudflare-delivery-live, feature/smart-sync-3]
+    paths:
+      - '.github/scripts/cloudflare_delivery_acceptance.cjs'
+      - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
+      - '.github/workflows/cloudflare-delivery-acceptance.yml'
 permissions:
   contents: read
 concurrency:
@@ -48,3 +53,41 @@ jobs:
           path: build/cloud-prerequisites/cloudflare-delivery.json
           if-no-files-found: warn
           retention-days: 7
+
+  isolated-test-drive-ack-readback:
+    # A TEST branch-only, explicit source-pinned real-provider acceptance.
+    # Existing production and other schools are never admitted.
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: harness-safeguards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VS_EXPECTED_RUNTIME: b6ad70852cbfdf67cfe9e585d56562e15a7c13ba
+      VS_VERIFIED_RENDER_COMMIT: b6ad70852cbfdf67cfe9e585d56562e15a7c13ba
+      VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbmmvlgm7kps73br03k0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify the deployed TEST backend business tree is unchanged
+        run: |
+          git diff --exit-code "$VS_EXPECTED_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --check .github/scripts/cloudflare_delivery_acceptance.cjs
+      - name: Real isolated TEST Cloudflare accepted → Drive ACK → independent PDF readbacks
+        env:
+          VS_CF_DELIVERY_ACCEPTANCE: '1'
+          VS_CF_DELIVERY_RUN_ID: cf-drive-${{ github.run_id }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/cloudflare_delivery_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-test-cloudflare-drive-ack-readback
+          path: build/cloud-prerequisites/cloudflare-delivery.json
+          if-no-files-found: warn
+          retention-days: 14
