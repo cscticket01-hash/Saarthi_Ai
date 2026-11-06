@@ -93,6 +93,40 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='retryDeleteReview'){
+  // One authenticated school-admin retry for the exact original synthetic or
+  // real student Delete Everywhere receipt. Never enqueue a replacement ID,
+  // alter the payload, or reopen a different review category.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  demand(row.state==='needsAttention','Only a review-needed delete may be reopened',409);
+  const request=JSON.parse(row.payload) as Json;
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+   request.operation==='delete'&&request.syncProtocol===2&&request.deleteEverywhereVersion===1&&
+   request.operationId===b.operationId&&request.id===b.recordId&&
+   request.expectedRecordRevision===b.expectedRecordRevision&&
+   request.deletedStudentGeneration===b.deletedStudentGeneration&&
+   typeof request.deletedStudentGeneration==='string'&&
+   /^p-[a-f0-9]{32,64}$/.test(request.deletedStudentGeneration),
+   'Original delete identity does not match the review request',409);
+  demand(previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
+   previous.failureStatus===409&&Number(previous.reviewRetryCount||0)===0,
+   'Only one exact ACK-review retry is allowed',409);
+  demand(await digest(JSON.stringify([school,request.action,
+   [request.collection,request.id,request.operationId]]))===id&&
+   await digest(canonical(request))===row.fingerprint,
+   'Original immutable delete receipt fingerprint mismatch',409);
+  const at=Date.now(),response={...previous,reviewRetryCount:1,reviewRetryAt:at};
+  storage.sql.exec("UPDATE edge_ops SET state='retry',due=?,claim='',claim_until=0,response=? WHERE id=? AND state='needsAttention'",
+   at,JSON.stringify(response),id);
+  const reopened=get(id);
+  demand(reopened.state==='retry'&&reopened.payload===row.payload&&
+   reopened.fingerprint===row.fingerprint&&JSON.parse(reopened.response||'{}').reviewRetryCount===1,
+   'Original delete review retry was not durably committed',409);
+  await wake(at+250);
+  return receipt(reopened);
+ }
  if(action==='pending'){
   demand(b.limit===1||lane==='records'&&b.limit===2);
   if(lane==='records')return schedule(storage,Number(b.limit),Date.now()).ids.map(get);
