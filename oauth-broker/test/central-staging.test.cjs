@@ -65,10 +65,17 @@ test('Central request traces expose only allowlisted actions, status and generat
  });
 });
 
-test('isolated health exposes only a valid public deployed commit; production and malformed values stay hidden',async()=>{
- for(const [testSchoolId,runtimeCommit,expected] of [['vs-'+ 'a'.repeat(32),'b'.repeat(40),'b'.repeat(40)],[null,'b'.repeat(40),undefined],['vs-'+ 'a'.repeat(32),'private unexpected data',undefined]]) {
-  await withServer(createHandler({handle:async()=>({}),health:async()=>{},testSchoolId,runtimeCommit}),async base=>{
-   const r=await fetch(base+'/school-cloud/healthz');assert.equal(r.status,200);assert.equal((await r.json()).runtimeCommit,expected);
+test('isolated health exposes only valid deployed commit and hashed Firebase identity; production and malformed values stay hidden',async()=>{
+ for(const [testSchoolId,runtimeCommit,adminCredentialFingerprint,expectedRuntime,expectedFingerprint] of [
+  ['vs-'+ 'a'.repeat(32),'b'.repeat(40),'c'.repeat(64),'b'.repeat(40),'c'.repeat(64)],
+  [null,'b'.repeat(40),'c'.repeat(64),undefined,undefined],
+  ['vs-'+ 'a'.repeat(32),'private unexpected data','private',undefined,undefined],
+  ['vs-'+ 'a'.repeat(32),'b'.repeat(40),'malformed','b'.repeat(40),undefined]
+ ]) {
+  await withServer(createHandler({handle:async()=>({}),health:async()=>{},testSchoolId,runtimeCommit,adminCredentialFingerprint}),async base=>{
+   const r=await fetch(base+'/school-cloud/healthz');assert.equal(r.status,200);
+   const body=await r.json();assert.equal(body.runtimeCommit,expectedRuntime);
+   assert.equal(body.adminCredentialFingerprint,expectedFingerprint);
   });
  }
 });
