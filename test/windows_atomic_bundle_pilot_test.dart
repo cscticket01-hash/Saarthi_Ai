@@ -249,7 +249,7 @@ void main(){
      final bundleId='typed-financial-original-'+type+'-0001';
      final file={'kind':type,'id':id,'uploadKey':uploadKey,
        'sha256':sha,'sizeBytes':bytes.length,'mime':'application/pdf'};
-     final first={'collection':receipt?'fee_payments':'exam_results',
+     final first={'collection':receipt?'fee_payments':'exam_center_results',
        'id':receipt?'pay1':'result1','operation':'write',
        'operationId':'typed-financial-parent-'+type+'-0001',
        'expectedRevision':'','data':{'schoolId':school,'studentId':'s1'}};
