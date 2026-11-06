@@ -112,7 +112,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const known=new Set(['DELETE_EVERYWHERE_ACK_UNVERIFIED',
     'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED']);
   return {state:row.state,retryCount:Number.isInteger(count)&&count>=0?count:-1,
-    failureClass:known.has(previous.failureCode)?previous.failureCode:'OTHER',
+    failureClass:typeof previous.failureCode==='string'&&known.has(previous.failureCode)?previous.failureCode:'OTHER',
     failureStatus:Number.isInteger(previous.failureStatus)?previous.failureStatus:0,
     sameRuntimeCredential:typeof previous.reviewCredentialFingerprint==='string'&&
       previous.reviewCredentialFingerprint===b.credentialFingerprint,
