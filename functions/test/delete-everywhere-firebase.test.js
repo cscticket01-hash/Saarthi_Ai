@@ -117,3 +117,13 @@ test('wrong school, fake Drive flags, wrong operation, incomplete plan or change
   assert.equal(f.calls.length,0);
  }
 });
+
+test('Firestore IAM permission denial is typed and never claims Firebase deletion',async()=>{
+ const db={doc:path=>({path}),runTransaction:async()=>{
+  throw Object.assign(Error('private upstream permission detail'),{code:7});
+ }};
+ const cleanup=createDeleteEverywhere({db});
+ await assert.rejects(cleanup.finish(A,request,ack()),error=>
+  error.status===503&&error.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
+  error.publicMessage===true&&!error.message.includes('private upstream'));
+});
