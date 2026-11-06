@@ -126,7 +126,7 @@ class AtomicBundlePilot {
       (media.length==1||media[1]['kind']=='photo');
     final fee=first=='fee_payments'&&operations.length==3&&
       operations[1]['collection']=='fee_ledger'&&kind=='receipt'&&media.length==1;
-    final exam=first=='exam_results'&&operations.length==2&&
+    final exam={'exam_results','exam_center_results'}.contains(first)&&operations.length==2&&
       kind=='marksheet'&&media.length==1;
     if(!(person||fee||exam)||operations.last['collection']!='documents')return false;
     return operations.every((op)=>op['operation']=='write'&&
