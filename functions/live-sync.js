@@ -123,6 +123,14 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    }
    const ack=await deliver(job.request);
    const record=ack?.record;
+   // Explicit delete-everywhere has two owners: Drive/Sheets AND Firebase.
+   // A signed Drive tombstone alone must NEVER certify the full purge or
+   // release Cloudflare's immutable backup while Firebase cleanup is pending.
+   if(job.request.operation==='delete'&&job.request.deleteEverywhereVersion===1&&
+      (ack?.deleteEverywhereVersion!==1||ack.driveDeletionComplete!==true||
+       ack.firebaseDeletionComplete!==true||record?._syncDeleted!==true||
+       record?._syncErasePlan?.complete!==true))
+     refuse(503,'LIVE_DELETE_EVERYWHERE_PENDING');
    if(ack?.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision||/^(live-|cf-)/.test(ack.recordRevision)||
       record&&(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==ack.recordRevision||record.id!==undefined&&record.id!==job.request.id||record._syncOperationId!==undefined&&record._syncOperationId!==job.request.operationId))refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
    // An ACK body may repeat the submitted record without actually reading
