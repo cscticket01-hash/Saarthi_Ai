@@ -26,6 +26,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'windows_local_firestore.dart';
+import 'windows_exam_service.dart';
 import 'windows_local_settings.dart';
 import 'windows_local_storage.dart';
 import 'windows_service_status.dart';
@@ -1227,6 +1228,22 @@ class WindowsBackendBridge {
     final originProfile = FirebaseFirestore.instance.activeProfileId;
     final savedIdentity = await CentralSchoolCloud.saved();
     final localAction = _decodeBody(body);
+    // The exam editor's existing POST path must use the SAME durable
+    // local Exam Center Save as the Windows native exam service. In TEST
+    // pilots, never bypass the Result+Marksheet batch with a direct
+    // Drive-first legacy API call.
+    if(savedIdentity['managed']==true &&
+       const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')&&
+       {'list_exam_center','save_exam','save_exam_result'}
+         .contains(localAction['action'])) {
+      if(FirebaseFirestore.instance.activeProfileId!=originProfile||
+         FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']!=
+           savedIdentity['schoolId']||
+         !await FirebaseFirestore.instance.localPersistenceEnabled())
+        throw StateError('School changed before Exam Center Save.');
+      final result=await WindowsExamService.request(localAction);
+      return _jsonResponse(jsonEncode(result),200);
+    }
     if (savedIdentity['managed'] == true &&
         {
           'list_student_documents',
