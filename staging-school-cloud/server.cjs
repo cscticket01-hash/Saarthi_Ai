@@ -8,7 +8,7 @@ function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
   return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
 }
-function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
