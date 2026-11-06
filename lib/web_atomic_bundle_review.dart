@@ -110,7 +110,7 @@ List<WebAtomicFinancialDocument> verifyWebAtomicFinancialBundles(
   for(final entry in groups.entries){
     final rows=entry.value,first=rows.first;
     final fee=first['collection']=='fee_payments';
-    final exam=first['collection']=='exam_results';
+    final exam={'exam_results','exam_center_results'}.contains(first['collection']);
     if(!fee&&!exam)continue; // Existing Person/Card handled by its own viewer.
     final count=fee?3:2;
     if(rows.length!=count||rows.last['collection']!='documents'||
