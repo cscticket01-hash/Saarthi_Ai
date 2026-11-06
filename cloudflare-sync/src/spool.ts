@@ -312,7 +312,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     Number(previousResponse.reviewRetryCount)>=0
      ?{reviewRetryCount:Number(previousResponse.reviewRetryCount),
        ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{})}:{};
-   const nextValues={...values,...reviewMetadata};
+   const nextValues={...values,...reviewMetadata} as Json;
    const stored=nextValues.payloadPurged===true?{...nextValues,partial:{}}:nextValues;
    // An immutable Drive proof is required before the 24h retention timer
    // starts. Retry/needsAttention never acquires an expiry deadline.
