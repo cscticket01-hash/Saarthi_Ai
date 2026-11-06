@@ -506,7 +506,10 @@ class WindowsPendingSchoolSync {
       }
       if (onlyOperationId != null && item['operationId'] != onlyOperationId)
         continue;
-      if (respectBackoff &&
+      // A manual Sync Now can bypass a local transport backoff, but cannot
+      // override a provider quota minimum. Keep the immutable pending request
+      // until the saved deadline even when the caller disables normal backoff.
+      if ((respectBackoff || item['failureCategory'] == 'quota') &&
           !pendingRecordBackoffDue(
             item,
             DateTime.now(),
