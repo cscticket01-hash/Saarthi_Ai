@@ -85,6 +85,19 @@ test('matching immutable Firebase tombstone may be removed; partial failure retr
  assert.deepEqual(f.calls,[root,child]);
 });
 
+test('real signed GS tombstone may omit redundant id when exact immutable root, operation and revision match',async()=>{
+ const f=fixture([[root,source()]]);
+ const proof=ack();delete proof.record.id;
+ const r=await f.cleanup.finish(A,request,proof);
+ assert.equal(r.firebaseDeletionComplete,true);
+ assert.equal(r.firebaseDeletedRecords,1);
+ assert(!f.data.has(root));
+ const wrong=fixture([[root,source()]]);
+ const bad=ack();bad.record.id='another-school-row';
+ await assert.rejects(wrong.cleanup.finish(A,request,bad),e=>e.code==='DELETE_EVERYWHERE_ACK_UNVERIFIED');
+ assert(wrong.data.has(root));
+});
+
 test('missing original Firebase rows are retry-safe, not invented as completed writes',async()=>{
  const f=fixture();
  const result=await f.cleanup.finish(A,request,ack());
