@@ -370,9 +370,9 @@ class WindowsBackendBridge {
         own();
         final bytes = await File(canonical).readAsBytes();
         own();
-        if (document['documentKind'] == 'feeReceipt' &&
+        if ({'feeReceipt','marksheet'}.contains(document['documentKind']) &&
             document['contentHash'] != crypto.sha256.convert(bytes).toString())
-          throw StateError('Original receipt hash mismatch. File retained for review.');
+          throw StateError('Original school PDF hash mismatch. File retained for review.');
         if (bytes.isNotEmpty) return bytes;
       } on FileSystemException { /* Retain the path; try authenticated restore. */ }
     }
@@ -381,23 +381,25 @@ class WindowsBackendBridge {
     // yet. Only the authenticated school broker can authorize these bytes.
     // Old/legacy documents continue using the existing verified Drive path.
     final bundleId=document['bundleId'],bundleMedia=document['bundleMedia'];
+    final atomicPdfKind=document['documentKind']=='marksheet'?'marksheet':'idCard';
+    final atomicPdfLimit=atomicPdfKind=='marksheet'?150*1024:85*1024;
     if(bundleId is String &&
         RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId) &&
         bundleMedia is List) {
       final matches=bundleMedia.whereType<Map>().where((part)=>
-        part['kind']=='idCard' && part['id'] is String &&
+        part['kind']==atomicPdfKind && part['id'] is String &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(part['id'] as String) &&
         part['sha256'] is String &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(part['sha256'] as String) &&
         part['sizeBytes'] is int &&
-        (part['sizeBytes'] as int)>0 && (part['sizeBytes'] as int)<=85*1024
+        (part['sizeBytes'] as int)>0 && (part['sizeBytes'] as int)<=atomicPdfLimit
       ).toList();
       if(matches.length==1) {
         final media=matches.single;
         try {
           final result=await ManagedSchoolSession.callForSchool(school,
             'managed/live/bundle-media',{'liveProtocol':1,'bundleId':bundleId,
-              'kind':'idCard','id':media['id']});
+              'kind':atomicPdfKind,'id':media['id']});
           own();
           if(result['success']==true && result['schoolId']==school &&
               result['bundleProtocol']==1 && result['bundleId']==bundleId &&
