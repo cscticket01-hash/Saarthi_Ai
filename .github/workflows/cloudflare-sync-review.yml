@@ -1,5 +1,12 @@
 name: Cloudflare school sync review
 on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - 'cloudflare-sync/src/spool.ts'
+      - 'cloudflare-sync/test/runtime.test.mjs'
+      - 'functions/managed-schools.js'
+      - '.github/workflows/cloudflare-sync-review.yml'
   pull_request:
     paths:
       - 'lib/document_processing_engine.dart'
