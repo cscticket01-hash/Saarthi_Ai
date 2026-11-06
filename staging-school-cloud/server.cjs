@@ -1,6 +1,6 @@
 'use strict';
 const {createSchoolCloud} = require('../functions/school-cloud-core');
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
 const PROJECT = 'saarthi-ai-df12b';
 function isolatedTestSchool(env) {
@@ -34,7 +34,8 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       try{
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
         return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true,
-          ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {})});
+          ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {}),
+          ...(testSchoolId&&/^[a-f0-9]{64}$/.test(adminCredentialFingerprint||'')?{adminCredentialFingerprint}: {})});
       }catch{return send(503,{service:'vidya-saarthi-central-staging',ready:false});}
     }
     if(req.method!=='POST' || req.url!=='/school-cloud') return send(405,{success:false,message:'POST required'});
@@ -131,6 +132,7 @@ function fromEnvironment(env) {
   const {getFirestore}=runtimeRequire('firebase-admin/firestore');
   const {getMessaging}=runtimeRequire('firebase-admin/messaging');
   const key=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
+  const adminCredentialFingerprint=createHash('sha256').update(String(key.client_email||'')).digest('hex');
   if(key.project_id!==PROJECT || !key.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com') || !key.private_key) throw new Error('Invalid central staging credential configuration');
   const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
   const auth=getAuth(app),db=getFirestore(app);
@@ -169,7 +171,7 @@ function fromEnvironment(env) {
   const complaintTimer=setInterval(sweepComplaints,6*60*60*1000);complaintTimer.unref();
   setImmediate(sweepComplaints);
   const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
-  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
