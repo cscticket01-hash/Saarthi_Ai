@@ -123,28 +123,36 @@ async function main(){
  const probe=await plantExactSyntheticMirror(firebase.db,plan);
  report.stage='predelete-readback-verified';
  console.log('ORIGINAL_DELETE_BEFORE '+JSON.stringify(report.before));
- for(let retry=1;retry<=4;retry++){
+ // Reopen the already-existing needsAttention receipt exactly once. This
+ // never calls enqueue with a new ID and the Worker rechecks the stored payload.
+ const reopened=await call({action:'managed/cloudflare/retry-delete',lane:'records',
+  id:RECEIPT,operationId:OP,recordId:STUDENT,
+  expectedRecordRevision:ORIGINAL,deletedStudentGeneration:GENERATION});
+ if(reopened.status!==200||reopened.data.success!==true||reopened.data.retried!==true)
+  throw Error('Original Cloudflare review retry blocked HTTP '+reopened.status+' '+(reopened.data.code||'UNVERIFIED'));
+ report.originalReceiptReopened=true;
+ let final=null;
+ for(let retry=1;retry<=12;retry++){
   report.attempts=retry;
-  const r=await call({action:'managed/records',edgeDeliveryVersion:1,operation:'delete',collection:'students_directory',
-    id:STUDENT,syncProtocol:2,operationId:OP,expectedRecordRevision:ORIGINAL,
-    deletedStudentGeneration:GENERATION,deleteEverywhereVersion:1});
-  const edge=r.status===200&&r.data.success===true&&r.data.delivery
-   ?await call({action:'managed/cloudflare/operation',lane:'records',id:RECEIPT,waitMillis:18000}):r;
-  if(edge.status===200&&edge.data.success===true&&!edge.data.delivery){
-   const final=edge.data;
-   if(final.driveDeletionComplete!==true||final.firebaseDeletionComplete!==true||
-      !final.deletedFileIds?.includes(PDF))throw Error('Delete returned unverified final ACK');
-   report.driveVerified=true;report.firebaseVerified=true;
-   report.firebaseDeletedByRender=final.firebaseDeletedRecords;
-   if(!Number.isInteger(report.firebaseDeletedByRender)||report.firebaseDeletedByRender<probe.length)throw Error('Render did not report deletion of all three verified Firebase mirrors');
-   await readbackAbsent(firebase.db,probe);
-   break;
+  const edge=await call({action:'managed/cloudflare/operation',lane:'records',id:RECEIPT,waitMillis:18000});
+  if(edge.status===200&&edge.data.success===true&&edge.data.driveState==='verified'){
+   final=edge.data;break;
   }
-  if(edge.status===200&&edge.data.delivery){console.log('ORIGINAL_DELETE_EDGE_PENDING '+JSON.stringify({attempt:retry,state:edge.data.deliveryStatus?.state||'pending'}));continue;}
-  if(edge.data.code!=='SCRIPT_DELETE_EVERYWHERE_PENDING')
-   throw Error('Original Cloudflare receipt blocked HTTP '+edge.status+' '+(edge.data.code||'unexpected provider error'));
-  console.log('ORIGINAL_DELETE_RETRY '+JSON.stringify({attempt:retry,code:edge.data.code}));
+  if(edge.status===200&&edge.data.success===true&&edge.data.driveState==='pending'){
+   console.log('ORIGINAL_DELETE_EDGE_PENDING '+JSON.stringify({attempt:retry,state:edge.data.deliveryStatus?.state||'pending',failureCode:edge.data.deliveryStatus?.failureCode||null}));
+   continue;
+  }
+  throw Error('Original Cloudflare receipt blocked HTTP '+edge.status+' '+(edge.data.code||'UNVERIFIED'));
  }
+ if(!final)throw Error('Original Delete Everywhere receipt did not reach a verified Drive+Firebase ACK');
+ if(final.driveDeletionComplete!==true||final.firebaseDeletionComplete!==true||
+    !final.deletedFileIds?.includes(PDF))throw Error('Delete returned unverified final ACK');
+ report.driveVerified=true;report.firebaseVerified=true;
+ report.firebaseDeletedByRender=final.firebaseDeletedRecords;
+ if(!Number.isInteger(report.firebaseDeletedByRender)||report.firebaseDeletedByRender<probe.length)
+  throw Error('Render did not report all three real Firebase mirror deletes');
+ await readbackAbsent(firebase.db,probe);
+
  if(report.driveVerified!==true||report.firebaseVerified!==true)
   throw Error('Original delete still retained after bounded exact retries');
  const after=await read('students_directory',STUDENT);
