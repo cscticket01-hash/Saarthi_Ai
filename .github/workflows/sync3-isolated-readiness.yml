@@ -52,9 +52,9 @@ jobs:
         run: node .github/scripts/await_test_gate.cjs
       - name: Read expected provider version from this exact source
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
-      - name: Verify readiness gate refuses false or foreign TEST acceptance
-        run: node --test .github/scripts/verify_test_readiness_gate.test.cjs
-      - name: Check TEST source identity and read-only storage protocol
+      - name: Verify runtime and source-only gates fail closed
+        run: node --test .github/scripts/test_runtime_identity.test.cjs .github/scripts/verify_test_readiness_gate.test.cjs
+      - name: Classify PR source review or verify real deployed TEST (strict)
         env:
           VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
           VS_TEST_HEAD_REF: ${{ github.head_ref }}
@@ -62,13 +62,15 @@ jobs:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: |
-          # Real deployed-source gates still wait for exact runtime. An
-          # intentionally undeployed atomic PR performs read-only source
-          # provenance observation; it MUST NOT claim cloud acceptance.
-          if [ "$VS_UNDEPLOYED_SOURCE_PR" != 'true' ]; then
+          # A draft PR is not a TEST deployment: prove source-level fences
+          # offline and record BLOCKED acceptance. Never call an unrelated,
+          # cold or unavailable TEST service and pretend it tested this SHA.
+          if [ "$VS_UNDEPLOYED_SOURCE_PR" = 'true' ]; then
+            node .github/scripts/verify_test_readiness_gate.cjs --emit-pr-source-only
+          else
             node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+            node .github/scripts/test_cloud_readiness.cjs
           fi
-          node .github/scripts/test_cloud_readiness.cjs
       - name: Require real deployed acceptance or explicit unreleased PR BLOCKED evidence
         env:
           VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
