@@ -1,0 +1,34 @@
+name: TEST resume only original retained synthetic student deletion
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/resume_original_delete_test_fixture.cjs'
+      - '.github/workflows/resume-original-delete-test.yml'
+permissions:
+  contents: read
+jobs:
+  resume-original-deletion:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax safety check
+        run: node --check .github/scripts/resume_original_delete_test_fixture.cjs
+      - name: Resume exact original TEST fixture without creating new data
+        env:
+          VS_RESUME_ORIGINAL_TEST_DELETE: TEST_DELETE_42222529247_8ce61a39
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/resume_original_delete_test_fixture.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-test-delete-resume
+          path: build/cloud-prerequisites/original-test-delete-resume.json
+          retention-days: 14
+          if-no-files-found: warn
