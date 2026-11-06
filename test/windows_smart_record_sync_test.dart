@@ -191,6 +191,33 @@ void main(){
   expect((await db.collection('_windows_document_outbox').get()).docs,hasLength(1));
  });
 
+ test('quota cooldown and exact offline operation survive local storage reopen',()async{
+  final ref=db.collection('school_notices').doc('reconnect-backoff');
+  await ref.set({'title':'Offline saved','schoolId':school});
+  final previous=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+  final originalOperation=previous['operationId'];
+  final until=DateTime.now().add(const Duration(hours:2)).millisecondsSinceEpoch;
+  final outbox=db.collection('_windows_firebase_outbox').doc(
+    (await db.collection('_windows_firebase_outbox').get()).docs.single.id);
+  await outbox.update({'syncState':'needsAttention','failureCategory':'quota',
+    'retryAtMillis':until,'retryCount':3});
+  final profile=db.activeProfileId;
+  await db.resetVolatileSession();
+  await db.switchProfile(profile,identity:{'schoolSyncId':school,'schoolId':school});
+  final retained=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+  expect(retained['operationId'],originalOperation);
+  expect(retained['retryAtMillis'],until);
+  expect(retained['data']['title'],'Offline saved');
+  expect(pendingRecordBackoffDue(retained,DateTime.now(),explicitRetry:true),false);
+  var sends=0;
+  await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+    send:(a,b,c,d)async{},sendVersioned:(item)async {
+      sends++;return 'must-not-ack';
+    },onlyOperationId:originalOperation as String,respectBackoff:false);
+  expect(sends,0,reason:'reconnect cannot violate a preserved provider quota deadline');
+  expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],originalOperation);
+  expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+ });
  test('verified reconnect recovery is per-school and bounded, without quota bypass',(){
    final now=DateTime.utc(2026,11,2,2,15);
    bool due({String? failed=school,String? previousSchool,
