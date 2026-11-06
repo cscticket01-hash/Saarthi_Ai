@@ -68,7 +68,7 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   if(verified.schoolId!==school||verified.success!==true||verified.syncProtocol!==2||verified.collectionRevision!==source.collectionRevision||verified.unchanged!==true)refuse(409,'LIVE_BASELINE_CHANGED');
   return {liveProtocol:1,schoolId:school,...await command(school,{command:'seedSeal',collection,fingerprint})};
  }
- async function drain(school,deliver){
+ async function drain(school,deliver,readArchiveFile){
   const {job}=await command(school,{command:'backupClaim'});if(!job)return {processed:0};
   const finish=values=>command(school,{command:'backupFinish',sequence:job.seq,claim:job.claim,...values});
   try{
@@ -92,6 +92,32 @@ function createLiveSync({edge,schools=[],now=Date.now}){
         next.mime!==previous.mime||typeof next.fileId!=='string'||
         !/^[A-Za-z0-9_-]{1,200}$/.test(next.fileId))refuse(409,'LIVE_MEDIA_ARCHIVE_MISMATCH');
     }
+    // Google Drive FILE identity is not proved by a Cloudflare metadata ACK.
+    // Demand an independent, signed Google Apps Script file readback for every
+    // original bundle byte stream before saving the document Sheet row.
+    if(typeof readArchiveFile!=='function')refuse(503,'LIVE_DRIVE_FILE_READBACK_REQUIRED');
+    for(const file of archive.files){
+     const maxBytes=file.kind==='photo'?40*1024:file.kind==='idCard'?85*1024:
+       file.kind==='receipt'?30*1024:file.kind==='marksheet'?150*1024:0;
+     if(!maxBytes||!Number.isSafeInteger(file.sizeBytes)||
+        file.sizeBytes<16||file.sizeBytes>maxBytes)
+       refuse(409,'LIVE_DRIVE_FILE_PROOF_INVALID');
+     const readback=await readArchiveFile(file.fileId);
+     const encoded=readback?.base64;
+     if(readback?.success!==true||readback.schoolId!==school||
+        readback.mime!==file.mime||typeof encoded!=='string'||
+        encoded.length!==Math.ceil(file.sizeBytes/3)*4||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+       refuse(502,'LIVE_DRIVE_FILE_READ_UNVERIFIED');
+     const bytes=Buffer.from(encoded,'base64');
+     if(bytes.length!==file.sizeBytes||bytes.toString('base64')!==encoded||
+        createHash('sha256').update(bytes).digest('hex')!==file.sha256)
+       refuse(502,'LIVE_DRIVE_FILE_SHA_UNVERIFIED');
+     if(file.kind!=='photo'&&
+       (bytes.subarray(0,5).toString('ascii')!=='%PDF-'||
+        !bytes.subarray(Math.max(0,bytes.length-2048)).toString('latin1').includes('%%EOF')))
+       refuse(502,'LIVE_DRIVE_PDF_READ_UNVERIFIED');
+    }
     archiveFiles=archive.files;
     job.request.data={...document,bundleMedia:archiveFiles,fileId:archiveFiles[0].fileId};
    }
@@ -99,12 +125,15 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    const record=ack?.record;
    if(ack?.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||typeof ack.recordRevision!=='string'||!ack.recordRevision||/^(live-|cf-)/.test(ack.recordRevision)||
       record&&(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==ack.recordRevision||record.id!==undefined&&record.id!==job.request.id||record._syncOperationId!==undefined&&record._syncOperationId!==job.request.operationId))refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
-   let proof=record;
-   if(!proof){
-    const readback=await deliver({action:'managed_records',operation:'read',collection:job.request.collection,id:job.request.id,syncProtocol:2});
-    if(readback?.success!==true||readback.schoolId!==school||readback.syncProtocol!==2||readback.pointRead!==true)refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
-    proof=readback.records?.[job.request.id];
-   }
+   // An ACK body may repeat the submitted record without actually reading
+   // Sheets. Always issue a separate, signed, exact-ID Drive point read. The
+   // original queued operation survives if readback differs or is unavailable.
+   const readback=await deliver({action:'managed_records',operation:'read',
+     collection:job.request.collection,id:job.request.id,syncProtocol:2});
+   if(readback?.success!==true||readback.schoolId!==school||
+      readback.syncProtocol!==2||readback.pointRead!==true)
+     refuse(502,'LIVE_BACKUP_READBACK_REQUIRED');
+   const proof=readback.records?.[job.request.id];
    if(!proof||proof.schoolId!==school||proof._syncRevision!==ack.recordRevision||proof._syncOperationId!==job.request.operationId)refuse(502,'LIVE_BACKUP_ACK_UNVERIFIED');
    const expected=job.request.operation==='delete'?{schoolId:school,_syncDeleted:true}:job.request.data;
    const savedRecord={...proof};if(!Object.hasOwn(expected,'id')&&savedRecord.id===job.request.id)delete savedRecord.id;
