@@ -110,14 +110,22 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    typeof request.deletedStudentGeneration==='string'&&
    /^p-[a-f0-9]{32,64}$/.test(request.deletedStudentGeneration),
    'Original delete identity does not match the review request',409);
-  demand(previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
-   previous.failureStatus===409&&Number(previous.reviewRetryCount||0)===0,
-   'Only one exact ACK-review retry is allowed',409);
+  const retryCount=Number(previous.reviewRetryCount||0);
+  const credentialFingerprint=b.credentialFingerprint;
+  demand(typeof credentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(credentialFingerprint),
+   'Verified Render Firebase credential fingerprint required for review retry',409);
+  const firstAckReview=previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
+   previous.failureStatus===409&&retryCount===0;
+  const repairedCredentialReview=previous.failureCode==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
+   previous.failureStatus===503&&retryCount===1&&
+   (!previous.reviewCredentialFingerprint||previous.reviewCredentialFingerprint!==credentialFingerprint);
+  demand(firstAckReview||repairedCredentialReview,
+   'Only the original ACK retry or one retry after a changed Firebase credential is allowed',409);
   demand(await digest(JSON.stringify([school,request.action,
    [request.collection,request.id,request.operationId]]))===id&&
    await digest(canonical(request))===row.fingerprint,
    'Original immutable delete receipt fingerprint mismatch',409);
-  const at=Date.now(),response={...previous,reviewRetryCount:1,reviewRetryAt:at};
+  const at=Date.now(),response={...previous,reviewRetryCount:retryCount+1,reviewRetryAt:at,reviewCredentialFingerprint:credentialFingerprint};
   storage.sql.exec("UPDATE edge_ops SET state='retry',due=?,claim='',claim_until=0,response=? WHERE id=? AND state='needsAttention'",
    at,JSON.stringify(response),id);
   const reopened=get(id);
@@ -311,7 +319,8 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    const reviewMetadata=Number.isSafeInteger(previousResponse.reviewRetryCount)&&
     Number(previousResponse.reviewRetryCount)>=0
      ?{reviewRetryCount:Number(previousResponse.reviewRetryCount),
-       ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{})}:{};
+       ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{}),
+       ...(typeof previousResponse.reviewCredentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(previousResponse.reviewCredentialFingerprint)?{reviewCredentialFingerprint:previousResponse.reviewCredentialFingerprint}:{})}:{};
    const nextValues={...values,...reviewMetadata} as Json;
    const stored=nextValues.payloadPurged===true?{...nextValues,partial:{}}:nextValues;
    // An immutable Drive proof is required before the 24h retention timer
