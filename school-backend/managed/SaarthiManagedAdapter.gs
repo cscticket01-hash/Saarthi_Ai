@@ -2275,7 +2275,7 @@ function VS_eraseExactRecordArchives(targets,plan,onProgress){
       const response=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(fileId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
       if(response.getResponseCode()!==404)throw error;
     }
-    if(file){VS_eraseOneRecordArchive(file,targets,plan.files);count++;}
+    if(file&&VS_eraseOneRecordArchive(file,targets,plan.files)===true)count++;
     plan.archiveCursor++;inspected++;
   }}finally{onProgress();}
   return plan.archiveCursor===plan.archiveIds.length;
@@ -2283,33 +2283,43 @@ function VS_eraseExactRecordArchives(targets,plan,onProgress){
 function VS_eraseOneRecordArchive(file,targets,deletedFiles){
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),marker=String(file.getDescription()||'');
   if(file.getMimeType()==='application/vnd.google-apps.spreadsheet'){
-    if(marker!=='VIDYA_SHEET_BACKUP:'+school)return;
-    const book=SpreadsheetApp.openById(file.getId());
+    if(marker!=='VIDYA_SHEET_BACKUP:'+school)return false;
+    const book=SpreadsheetApp.openById(file.getId());let updated=false;
     for(const target of targets){const sheet=book.getSheetByName(target.collection);if(!sheet)continue;const view={school:school,collection:target.collection,sheet:sheet},item=VS_sheetItem(view,target.id);if(!item||item.data._syncDeleted)continue;const matches=VS_eraseArchiveGeneration(target,item.data);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)continue;
-      const values=[Utilities.base64EncodeWebSafe(target.id),school,target.revision,'YES','',...Array(28).fill('')];const tombstone={id:target.id,schoolId:school,data:{schoolId:school,_syncDeleted:true,_syncRevision:target.revision}};values[6]=JSON.stringify(JSON.stringify(tombstone));sheet.getRange(item.row,1,1,33).setValues([values]);SpreadsheetApp.flush();
+      const values=[Utilities.base64EncodeWebSafe(target.id),school,target.revision,'YES','',...Array(28).fill('')];const tombstone={id:target.id,schoolId:school,data:{schoolId:school,_syncDeleted:true,_syncRevision:target.revision}};values[6]=JSON.stringify(JSON.stringify(tombstone));sheet.getRange(item.row,1,1,33).setValues([values]);SpreadsheetApp.flush();updated=true;
       const check=VS_sheetItem(view,target.id);if(!check||!check.data._syncDeleted||check.data.name)throw new Error('Delete everywhere archive readback pending');
     }
-    return;
+    return updated;
   }
-  if(file.getMimeType()!=='application/json')return;
+  if(file.getMimeType()!=='application/json')return false;
   const known=/^VIDYA_(?:RECORD_JSON|RECYCLE|RECORD_BACKUP|LAYOUT_BACKUP|JSON|REDACTED_BACKUP):/.test(marker);
   const legacyBackup=!marker&&/^School_Backup_/.test(file.getName());
   const audit=!marker&&/^Audit_[A-Za-z0-9_-]+\.json$/.test(file.getName());
   let legacyCollection=null;const parents=file.getParents();while(parents.hasNext()){const name=parents.next().getName();if(name.indexOf('records_')===0&&VS_LAYOUT_COLLECTIONS.indexOf(name.slice(8))>=0)legacyCollection=name.slice(8);}
-  if(!known&&!legacyBackup&&!legacyCollection&&!audit)return;
+  if(!known&&!legacyBackup&&!legacyCollection&&!audit)return false;
+  // The exact system-generated single-record backup name commits to the
+  // original record ID and JSON digest. Unrelated immutable originals need
+  // no expensive full blob read; unknown/legacy layouts are still inspected.
+  if(marker.indexOf('VIDYA_RECORD_JSON:'+school+':')===0){
+    const parts=marker.split(':'),name=/^([a-f0-9]{64})_([a-f0-9]{64})\.json$/.exec(file.getName());
+    if(parts.length===4&&name&&parts[3]===name[2]&&
+       VS_LAYOUT_COLLECTIONS.indexOf(parts[2])>=0&&
+       !targets.some(t=>t.collection===parts[2]&&VS_layoutHash(t.id)===name[1]))
+      return false;
+  }
   const blob=file.getBlob();if(blob.getBytes().length>20*1024*1024)throw new Error('Delete everywhere archive exceeds safe limit');
   const raw=blob.getDataAsString(),value=JSON.parse(raw);if(value.schoolId!==school)throw new Error('Foreign school archive');
   if(audit){
-    const original=file.getName().slice(6,-5);if(deletedFiles.indexOf(original)<0)return;
+    const original=file.getName().slice(6,-5);if(deletedFiles.indexOf(original)<0)return false;
     if(!/^[A-Za-z0-9_-]{1,200}$/.test(value.backupId||'')||!/^[a-f0-9]{64}$/.test(value.hash||''))throw new Error('Delete everywhere archive identity mismatch');
     let copy;try{copy=VS_managedFile(value.backupId);}catch(error){const missing=UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(value.backupId)+'?fields=id',{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});if(missing.getResponseCode()!==404)throw error;}
     if(copy&&(copy.getDescription()!=='VIDYA_BINARY_BACKUP:'+school+':'+value.hash||VS_layoutBytesHash(copy.getBlob().getBytes())!==value.hash))throw new Error('Delete everywhere archive identity mismatch');
-    VS_permanentlyEraseOwnedFile(value.backupId);VS_permanentlyEraseOwnedFile(file.getId());return;
+    VS_permanentlyEraseOwnedFile(value.backupId);VS_permanentlyEraseOwnedFile(file.getId());return true;
   }
   if(legacyBackup&&(value.schemaVersion!==3||!value.records||typeof value.records!=='object'))throw new Error('Delete everywhere archive identity mismatch');
   if(known){const parts=marker.split(':'),hash=marker.indexOf('VIDYA_RECORD_BACKUP:')===0?VS_layoutHash(raw):VS_layoutHash(value);if(parts[1]!==school||parts[parts.length-1]!==hash)throw new Error('Delete everywhere archive identity mismatch');}
   const singleCollection=value.collection||legacyCollection,single=targets.find(t=>t.collection===singleCollection&&t.id===value.id);
-  if(single){const matches=VS_eraseArchiveGeneration(single,value.data);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)return;VS_permanentlyEraseOwnedFile(file.getId());return;}
+  if(single){const matches=VS_eraseArchiveGeneration(single,value.data);if(matches===null)throw new Error('Delete everywhere archive generation requires review');if(!matches)return false;VS_permanentlyEraseOwnedFile(file.getId());return true;}
   let changed=false;
   for(const target of targets){
     const rows=value.collection===target.collection?value.records:!value.collection&&value.records?value.records[target.collection]:null;
@@ -2320,7 +2330,7 @@ function VS_eraseOneRecordArchive(file,targets,deletedFiles){
     if(VS_layoutHash(row)===VS_layoutHash(minimal))continue;rows[target.id]=minimal;changed=true;
   }
   if(value.previousHead&&targets.some(target=>target.collection===value.collection)){delete value.previousHead;changed=true;}
-  if(!changed)return;
+  if(!changed)return false;
   // These are archival pointers, never an automatic recovery source. Drop the
   // obsolete link on a privacy redaction rather than leave a stale content hash.
   if(value.previousHead)delete value.previousHead;
@@ -2331,4 +2341,5 @@ function VS_eraseOneRecordArchive(file,targets,deletedFiles){
   for(const key of Object.keys(all)){if(!/^VS_(?:JSON_HEAD_|LAYOUT_)/.test(key))continue;let state;try{state=JSON.parse(all[key]);}catch(_){continue;}
     let touched=false;function update(item,depth){if(!item||typeof item!=='object'||depth>12)return;if((item.fileId===file.getId()||item.id===file.getId())&&typeof item.hash==='string'){item.hash=hash;touched=true;}for(const child of Object.values(item))if(child&&typeof child==='object')update(child,depth+1);}update(state,0);if(touched)props.setProperty(key,JSON.stringify(state));
   }
+  return true;
 }
