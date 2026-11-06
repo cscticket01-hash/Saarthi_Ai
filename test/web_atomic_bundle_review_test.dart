@@ -114,7 +114,7 @@ void main(){
  test('TEST Web marksheet requires matching exam result and school',(){
    const groupId='web-exam-marksheet-bundle-0001',id='exam-result-1';
    final events=<Map<String,dynamic>>[
-     {'sequence':1,'collection':'exam_results','id':id,
+     {'sequence':1,'collection':'exam_center_results','id':id,
        'bundleId':groupId,'bundleSize':2,'bundleIndex':0,
        'record':{'schoolId':school,'studentId':'student',
          'marksheetDocumentId':'SHEET-$id','_syncRevision':'live-exam-1'}},
