@@ -2381,6 +2381,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             await _measure('atomicFinancialStage',()=>
               WindowsAtomicFinancialCoordinator.run(
                 _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Actual Windows Exam Center Save uses exam_center_results.
+            // Pair that original row with its existing immutable PDF outbox.
+            _admitBatch();
+            await _measure('atomicExamMarksheetStage',()=>
+              WindowsAtomicFinancialCoordinator.runExam(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
           }
           await _measure('recordUploadStage', () => _pushManagedOutbox());
           unawaited(_refreshDriveDeliveries());
