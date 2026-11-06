@@ -363,7 +363,10 @@ void main(){
       ],
     }},
   ];
-  await expectLater(db.applyVerifiedLiveBundle(school,wrong),throwsStateError);
+  // The guarded local transaction may reject an invalid bundle synchronously
+  // before it returns a Future. Capture both sync and async rejections.
+  await expectLater(Future<void>.sync(() => db.applyVerifiedLiveBundle(school,wrong)),
+    throwsStateError);
   expect((await db.collection('students_directory')
     .doc('different-person').get()).data(),isNull,
     reason:'Bad photo cannot partially create a Person');
