@@ -148,10 +148,12 @@ async function main(){
  let final=current.status===200&&current.data.success===true&&current.data.driveState==='verified'?current.data:null;
  if(!final&&current.status===200&&current.data.success===true&&current.data.driveState==='pending'){
   report.originalReceiptAlreadyQueued=true;
- }else if(!final&&current.status===409&&current.data.code==='DELETE_EVERYWHERE_ACK_UNVERIFIED'){
+ }else if(!final&&((current.status===409&&current.data.code==='DELETE_EVERYWHERE_ACK_UNVERIFIED')||
+   (current.status===503&&current.data.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&report.firebaseCredentialIdentityMatch===true))){
   const reopened=await call({action:'managed/cloudflare/retry-delete',lane:'records',
    id:RECEIPT,operationId:OP,recordId:STUDENT,
-   expectedRecordRevision:ORIGINAL,deletedStudentGeneration:GENERATION});
+   expectedRecordRevision:ORIGINAL,deletedStudentGeneration:GENERATION,
+   credentialFingerprint:health.adminCredentialFingerprint});
   if(reopened.status!==200||reopened.data.success!==true||reopened.data.retried!==true)
    throw Error('Original Cloudflare review retry blocked HTTP '+reopened.status+' '+(reopened.data.code||'UNVERIFIED'));
   report.originalReceiptReopened=true;
