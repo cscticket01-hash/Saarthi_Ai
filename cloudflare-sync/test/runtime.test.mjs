@@ -54,7 +54,8 @@ test('one school-admin review retry reopens only the exact original Delete Every
  }},'records');
  const args={id,operationId:request.operationId,recordId:request.id,
   expectedRecordRevision:request.expectedRecordRevision,
-  deletedStudentGeneration:request.deletedStudentGeneration};
+  deletedStudentGeneration:request.deletedStudentGeneration,
+  credentialFingerprint:'c'.repeat(64)};
  const reopened=await rpc('retryDeleteReview',args,'records');
  assert.equal(reopened.status,200);assert.equal(reopened.value.state,'retry');
  assert.equal(reopened.value.response.reviewRetryCount,1);
@@ -64,13 +65,28 @@ test('one school-admin review retry reopens only the exact original Delete Every
  assert.equal(await rpc('claim',{id,claim:'review-claim-2',expires:Date.now()+10000},'records').then(r=>r.value),true);
  await rpc('finish',{id,claim:'review-claim-2',values:{
   state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
-  failureStatus:409,failureCode:'DELETE_EVERYWHERE_ACK_UNVERIFIED'
+  failureStatus:503,failureCode:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'
  }},'records');
  const afterFailure=await rpc('status',{id},'records');
  assert.equal(afterFailure.value.response.reviewRetryCount,1,
-  'later failure must preserve the durable one-time review counter');
- const repeated=await rpc('retryDeleteReview',args,'records');
- assert.equal(repeated.status,409,'manual review retry stays one-time after another failure');
+  'later failure must preserve the durable retry counter');
+ assert.equal(afterFailure.value.response.reviewCredentialFingerprint,'c'.repeat(64),
+  'later failure must preserve the credential fingerprint');
+ const sameCredential=await rpc('retryDeleteReview',args,'records');
+ assert.equal(sameCredential.status,409,'same failed Firebase credential cannot be retried again');
+ const repaired=await rpc('retryDeleteReview',{...args,credentialFingerprint:'d'.repeat(64)},'records');
+ assert.equal(repaired.status,200,'a changed verified credential may consume the one remaining retry');
+ assert.equal(repaired.value.response.reviewRetryCount,2);
+ assert.equal(repaired.value.response.reviewCredentialFingerprint,'d'.repeat(64));
+ assert.equal(await rpc('claim',{id,claim:'review-claim-3',expires:Date.now()+10000},'records').then(r=>r.value),true);
+ await rpc('finish',{id,claim:'review-claim-3',values:{
+  state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  failureStatus:503,failureCode:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'
+ }},'records');
+ const afterSecondFailure=await rpc('status',{id},'records');
+ assert.equal(afterSecondFailure.value.response.reviewRetryCount,2);
+ const third=await rpc('retryDeleteReview',{...args,credentialFingerprint:'e'.repeat(64)},'records');
+ assert.equal(third.status,409,'no third retry is allowed');
  const forged=await rpc('retryDeleteReview',{...args,operationId:'different-operation-0001'},'records');
  assert.equal(forged.status,409,'a different operation ID cannot borrow the retry');
  const foreign=await rpc('retryDeleteReview',args,'records',other);
