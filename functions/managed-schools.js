@@ -411,7 +411,11 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!state.school||!e.active||e.blocked||state.school.deletedAt)fail(403,'School is inactive');
   if(e.status!=='trial'){if(!state.licence||state.licence.revoked||state.licence.schoolId!==b.schoolId)fail(403,'School licence inactive');e.expiresAt=Number(state.licence.expiresAt?.toMillis?.()??state.licence.expiresAt);}
   const owner={schoolId:b.schoolId,entitlement:e};if(!lease(owner).allowed||e.status!=='trial'&&!e.activated)fail(403,'School licence inactive');
-  return {success:true,schoolId:b.schoolId,...await liveSync.drain(b.schoolId,body=>signedRequest(owner,body))};
+  return {success:true,schoolId:b.schoolId,...await liveSync.drain(
+   b.schoolId,body=>signedRequest(owner,body),
+   // Internal signed GS read, never a public arbitrary-file capability.
+   fileId=>signedRequest(owner,{action:'managed_file',fileId})
+  )};
  }
  if(action==='managed/cloudflare/drain'){
   if(!edgeEnabled(b.schoolId)||!cloudflareSync.verify(b,req.headers||{})||! /^(?:attendance-[a-f0-9]{2}|notices|records|file-[a-f0-9]{64})$/.test(b.lane||''))fail(403,'Cloudflare delivery authorization required');
