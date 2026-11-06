@@ -142,9 +142,16 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    'Verified Render Firebase credential fingerprint required for review retry',409);
   const firstAckReview=previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
    previous.failureStatus===409&&retryCount===0;
+  // The first Render attempt can fail on Firebase IAM before any manual
+  // review counter has been written. After a verified runtime credential
+  // repair, permit exactly one same-operation retry at count 0. A subsequent
+  // permission-denied review is allowed only with a different bound key and
+  // only while count is 1; never accept a third attempt or a new operation.
   const repairedCredentialReview=previous.failureCode==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
-   previous.failureStatus===503&&retryCount===1&&
-   (!previous.reviewCredentialFingerprint||previous.reviewCredentialFingerprint!==credentialFingerprint);
+   previous.failureStatus===503&&(
+    retryCount===0&&!previous.reviewCredentialFingerprint||
+    retryCount===1&&(!previous.reviewCredentialFingerprint||
+      previous.reviewCredentialFingerprint!==credentialFingerprint));
   demand(firstAckReview||repairedCredentialReview,
    'Only the original ACK retry or one retry after a changed Firebase credential is allowed',409);
   demand(await digest(JSON.stringify([school,request.action,
