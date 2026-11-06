@@ -128,13 +128,18 @@ async function main(){
  console.log('ORIGINAL_DELETE_BEFORE '+JSON.stringify(report.before));
  // Reopen the already-existing needsAttention receipt exactly once. This
  // never calls enqueue with a new ID and the Worker rechecks the stored payload.
- const reopened=await call({action:'managed/cloudflare/retry-delete',lane:'records',
-  id:RECEIPT,operationId:OP,recordId:STUDENT,
-  expectedRecordRevision:ORIGINAL,deletedStudentGeneration:GENERATION});
- if(reopened.status!==200||reopened.data.success!==true||reopened.data.retried!==true)
-  throw Error('Original Cloudflare review retry blocked HTTP '+reopened.status+' '+(reopened.data.code||'UNVERIFIED'));
- report.originalReceiptReopened=true;
- let final=null;
+ const current=await call({action:'managed/cloudflare/operation',lane:'records',id:RECEIPT,waitMillis:18000});
+ let final=current.status===200&&current.data.success===true&&current.data.driveState==='verified'?current.data:null;
+ if(!final&&current.status===200&&current.data.success===true&&current.data.driveState==='pending'){
+  report.originalReceiptAlreadyQueued=true;
+ }else if(!final&&current.status===409&&current.data.code==='DELETE_EVERYWHERE_ACK_UNVERIFIED'){
+  const reopened=await call({action:'managed/cloudflare/retry-delete',lane:'records',
+   id:RECEIPT,operationId:OP,recordId:STUDENT,
+   expectedRecordRevision:ORIGINAL,deletedStudentGeneration:GENERATION});
+  if(reopened.status!==200||reopened.data.success!==true||reopened.data.retried!==true)
+   throw Error('Original Cloudflare review retry blocked HTTP '+reopened.status+' '+(reopened.data.code||'UNVERIFIED'));
+  report.originalReceiptReopened=true;
+ }else if(!final)throw Error('Original Cloudflare receipt blocked HTTP '+current.status+' '+(current.data.code||'UNVERIFIED'));
  for(let retry=1;retry<=12;retry++){
   report.attempts=retry;
   const edge=await call({action:'managed/cloudflare/operation',lane:'records',id:RECEIPT,waitMillis:18000});
