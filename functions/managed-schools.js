@@ -1166,6 +1166,31 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   await deviceAccess.authorize({req,body:b,identity:fresh,entitlement:lease(fresh)});
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
+ if(action==='managed/cloudflare/retry-delete'){
+  if(!edgeEnabled(m.schoolId))fail(503,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const access=lease(m);
+  if(!access.allowed||access.status!=='trial'&&!access.activated)fail(403,'School licence is inactive');
+  if(b.lane!=='records'||typeof b.id!=='string'||!/^[a-f0-9]{64}$/.test(b.id)||
+     typeof b.operationId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId)||
+     typeof b.recordId!=='string'||!/^[-A-Za-z0-9_]{1,200}$/.test(b.recordId)||
+     typeof b.expectedRecordRevision!=='string'||!b.expectedRecordRevision||
+     b.expectedRecordRevision.length>100||
+     typeof b.deletedStudentGeneration!=='string'||!/^p-[a-f0-9]{32,64}$/.test(b.deletedStudentGeneration))
+    fail(400,'Invalid original Delete Everywhere review identity','DELETE_REVIEW_INVALID');
+  // Cloudflare itself verifies the immutable stored payload, fingerprint,
+  // original operation ID, revision and failure class before reopening.
+  const reopened=await cloudflareSync.rpc(m.schoolId,'records',{
+   command:'retryDeleteReview',id:b.id,operationId:b.operationId,
+   recordId:b.recordId,expectedRecordRevision:b.expectedRecordRevision,
+   deletedStudentGeneration:b.deletedStudentGeneration
+  });
+  if(reopened?.id!==b.id||reopened.state!=='retry'||
+     reopened.response?.reviewRetryCount!==1)
+   fail(409,'Original Delete Everywhere receipt was not safely reopened','DELETE_REVIEW_REOPEN_FAILED');
+  const drained=await edgeDelivery.drain(m.schoolId,'records',body=>signedRequest(m,body));
+  const receipt=await edgeDelivery.status(m.schoolId,'records',b.id,body=>signedRequest(m,body));
+  return {success:true,schoolId:m.schoolId,retried:true,processed:drained.processed,...receipt};
+ }
  if(action==='managed/cloudflare/operation'){
   if(!edgeEnabled(m.schoolId))fail(503,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
   const until=Date.now()+Math.min(20000,Math.max(0,Number(b.waitMillis)||0));
