@@ -8,7 +8,7 @@ function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
   return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
 }
-function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
@@ -35,7 +35,8 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
         return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true,
           ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {}),
-          ...(testSchoolId&&/^[a-f0-9]{64}$/.test(adminCredentialFingerprint||'')?{adminCredentialFingerprint}: {})});
+          ...(testSchoolId&&/^[a-f0-9]{64}$/.test(adminCredentialFingerprint||'')?{adminCredentialFingerprint}: {}),
+           ...(testSchoolId&&typeof wrappingPublicKey==='string'&&/^[A-Za-z0-9+/]+={0,2}$/.test(wrappingPublicKey)&&/^[a-f0-9]{64}$/.test(wrappingKeyFingerprint||'')?{wrappingPublicKey,wrappingKeyFingerprint}: {})});
       }catch{return send(503,{service:'vidya-saarthi-central-staging',ready:false});}
     }
     if(req.method!=='POST' || req.url!=='/school-cloud') return send(405,{success:false,message:'POST required'});
@@ -131,9 +132,17 @@ function fromEnvironment(env) {
   const {getAuth}=runtimeRequire('firebase-admin/auth');
   const {getFirestore}=runtimeRequire('firebase-admin/firestore');
   const {getMessaging}=runtimeRequire('firebase-admin/messaging');
-  const key=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
+  const oldCredential=JSON.parse(env.SAARTHI_FIREBASE_ADMIN_JSON || '{}');
+  const {validCredential,publicWrappingKey,unwrapCredential}=require('./test-firebase-credential-envelope');
+  if(!validCredential(oldCredential))throw Error('Invalid central staging credential configuration');
+  if(env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE&&!testSchoolId)
+    throw Error('Encrypted credential override requires isolated TEST school');
+  const wrapping=testSchoolId?publicWrappingKey(oldCredential):null;
+  const key=testSchoolId&&env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE
+    ?unwrapCredential(oldCredential,JSON.parse(env.SAARTHI_TEST_FIREBASE_ADMIN_ENVELOPE))
+    :oldCredential;
   const adminCredentialFingerprint=createHash('sha256').update(String(key.client_email||'')).digest('hex');
-  if(key.project_id!==PROJECT || !key.client_email?.endsWith('@'+PROJECT+'.iam.gserviceaccount.com') || !key.private_key) throw new Error('Invalid central staging credential configuration');
+  if(!validCredential(key))throw Error('Invalid effective TEST Firebase credential configuration');
   const app=initializeApp({credential:cert(key),projectId:PROJECT},'central-render-staging');
   const auth=getAuth(app),db=getFirestore(app);
   db.settings({ignoreUndefinedProperties:true});
@@ -171,7 +180,7 @@ function fromEnvironment(env) {
   const complaintTimer=setInterval(sweepComplaints,6*60*60*1000);complaintTimer.unref();
   setImmediate(sweepComplaints);
   const handle=async req => {await verifyTest();return /^(managed\/|developer\/managed\/)/.test(req.body?.action || '') ? managed(req) : legacyHandle(req);};
-  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
+  return createHandler({handle,testSchoolId,runtimeCommit:env.RENDER_GIT_COMMIT,adminCredentialFingerprint,...(wrapping||{}),allowedOrigins:(env.SAARTHI_SCHOOL_WEB_ORIGINS || '').split(',').filter(Boolean),health:async()=>{
     await verifyTest();
     await db.doc('_central_staging_health/runtime').get();
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
