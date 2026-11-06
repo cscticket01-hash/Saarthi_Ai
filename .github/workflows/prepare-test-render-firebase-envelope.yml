@@ -1,0 +1,39 @@
+name: Isolated TEST Render Firebase encrypted credential handoff
+
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - 'staging-school-cloud/test-firebase-credential-envelope.cjs'
+      - 'staging-school-cloud/test-firebase-credential-envelope.test.cjs'
+      - 'staging-school-cloud/server.cjs'
+      - '.github/scripts/prepare_test_render_envelope.cjs'
+      - '.github/workflows/prepare-test-render-firebase-envelope.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verified-encrypted-test-handoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify encryption, strict school scope and tamper rejection
+        run: node --test staging-school-cloud/test-firebase-credential-envelope.test.cjs
+      - name: Prepare ciphertext from verified GitHub TEST Firebase credential
+        env:
+          SCHOOL_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/prepare_test_render_envelope.cjs
+      - name: Retain encrypted TEST transfer evidence, never original secret
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-test-render-firebase-encrypted-handoff
+          path: build/cloud-prerequisites/test-render-credential-envelope.json
+          retention-days: 1
+          if-no-files-found: error
