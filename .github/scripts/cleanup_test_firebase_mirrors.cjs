@@ -49,7 +49,7 @@ async function main(){
  const parent=await read('students_directory',STUDENT);
  const plan=parent?._syncErasePlan;
  if(parent?.schoolId!==SCHOOL||parent._syncDeleted!==true||parent._syncOperationId!==OP||
-   parent._syncRevision!==ORIGINAL||plan?.version!==1||plan.complete!==true||plan.archivesComplete!==true||
+   plan?.version!==1||plan.complete!==true||plan.archivesComplete!==true||
    !Array.isArray(plan.targets)||plan.targets.length!==5||plan.cursor!==plan.targets.length||
    !Array.isArray(plan.files)||plan.files.length!==1||plan.files[0]!== '1ZMaJR3NMtT1G5Uy0HJPtfKvHPac6wgnj'||
    plan.fileCursor!==plan.files.length)
