@@ -20,7 +20,26 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
-  if(!r.ok||result.success!==true||result.schoolId!==school){const message=result.message;throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{status:r.status===409?409:503,code:message==='Replay history compacted; snapshot required'?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT':message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE',publicMessage:true});}
+  if(!r.ok||result.success!==true||result.schoolId!==school){
+   const message=result.message;
+   // Only this signed, school-admin TEST retry may expose a fixed diagnostic.
+   // Never forward arbitrary Worker text or the immutable saved payload.
+   const reviewErrors={
+    'Only a review-needed delete may be reopened':'DELETE_REVIEW_NOT_ATTENTION',
+    'Original delete identity does not match the review request':'DELETE_REVIEW_IDENTITY_MISMATCH',
+    'Only the original ACK retry or one retry after a changed Firebase credential is allowed':'DELETE_REVIEW_RETRY_FENCE',
+    'Original immutable delete receipt fingerprint mismatch':'DELETE_REVIEW_HASH_MISMATCH',
+    'Original delete review retry was not durably committed':'DELETE_REVIEW_COMMIT_FAILED'
+   };
+   const code=body.command==='retryDeleteReview'&&r.status===409&&
+     Object.prototype.hasOwnProperty.call(reviewErrors,message)
+      ?reviewErrors[message]:message==='Replay history compacted; snapshot required'
+      ?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT'
+      :message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE';
+   throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{
+    status:r.status===409?409:503,code,publicMessage:true
+   });
+  }
   return result.value;
  }
  const lane=id=>'attendance-'+id.slice(0,2);
