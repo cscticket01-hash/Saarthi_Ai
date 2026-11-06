@@ -224,6 +224,24 @@ class FirebaseFirestore {
   Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) =>
       _database.applyVerifiedStudentDeletion(school,id,generation,revision);
 
+  /// Reopen a disconnected document only if the EXACT queued snapshot is
+  /// still current. Reconnect callbacks must never rewrite a later Save, an
+  /// already-ACKed document, a changed school, or an administrator decision.
+  /// This uses the existing local storage writer, not another sync queue.
+  Future<bool> resumeDocumentOutboxAfterReconnect(
+    DocumentReference<Map<String,dynamic>> ref,
+    Map<String,dynamic> expected, {
+    required String schoolId,
+    required int retryAtMillis,
+  }) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_document_outbox') {
+      throw ArgumentError('Document outbox reference required');
+    }
+    return _database.resumeDocumentOutboxAfterReconnect(
+      ref.id,expected,schoolId:schoolId,retryAtMillis:retryAtMillis);
+  }
+
   /// Records a remote conflict only while the observed operation remains the
   /// exact durable current version. An administrator's newer review wins.
   Future<bool> recordOutboxConflict(DocumentReference<Map<String,dynamic>> ref,
@@ -1898,6 +1916,46 @@ class _LocalSchoolDatabase {
       } catch (error,stack) { completer.completeError(error,stack); }
     });
     return completer.future;
+  }
+
+  /// Serialized compare-and-swap for reconnect recovery of existing document
+  /// outbox rows. Compare the complete immutable snapshot, not only the ID:
+  /// later local edits, an ACK and a manually reviewed conflict all win.
+  Future<bool> resumeDocumentOutboxAfterReconnect(String queueId,
+      Map<String,dynamic> expected, {
+      required String schoolId, required int retryAtMillis}) {
+    final origin=_activeProfileId, school=_activeIdentity['schoolSyncId'];
+    final encodedExpected=_encodeMap(expected);
+    final done=Completer<bool>();
+    _writeTail=_writeTail.then((_)async{
+      try{
+        if(origin!=_activeProfileId||school!=schoolId||
+           encodedExpected['schoolId']!=schoolId||
+           retryAtMillis<=0||queueId.isEmpty) {
+          throw StateError('Original same-school document retry required.');
+        }
+        final root=await _readRoot(collections:{'_windows_document_outbox'});
+        if(origin!=_activeProfileId||_activeIdentity['schoolSyncId']!=schoolId)
+          throw StateError('School changed during document recovery.');
+        final collections=_collections(root);
+        final queue=collections['_windows_document_outbox'];
+        final current=queue is Map?queue[queueId]:null;
+        if(current is! Map||
+           _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(encodedExpected)||
+           !{'retry','needsAttention'}.contains(current['syncState'])||
+           !{'networkPath','timeout'}.contains(current['failureCategory'])) {
+          done.complete(false);return;
+        }
+        queue[queueId]={...Map<String,dynamic>.from(current),
+          'syncState':'retry','retryCount':0,'retryAtMillis':retryAtMillis};
+        _storeCollections(root,collections);
+        await _writeRoot(root);
+        final signal=_signals['_windows_document_outbox'];
+        if(signal!=null&&!signal.isClosed)signal.add(null);
+        done.complete(true);
+      }catch(error,stack){done.completeError(error,stack);}
+    });
+    return done.future;
   }
 
   Future<bool> recordOutboxConflict(String queueId,
