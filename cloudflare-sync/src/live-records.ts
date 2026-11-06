@@ -308,7 +308,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   }else demand(b.media===undefined&&b.mediaManifestHash===undefined,
     'Media bundle staging not yet verified',412);
   demand(byteLength(JSON.stringify(b))<=256000,'Atomic bundle too large',413);
-  const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','fee_payments','fee_ledger','exam_results','documents']):
+  const allowed=verifiedMedia?new Set(['students_directory','teachers_directory','fee_payments','fee_ledger','exam_results','exam_center_results','documents']):
    new Set(['school_notices','school_calendar','school_settings','school_expenses']);
   let archiveFiles:Json[]=[],bundleOwner:Json|undefined;
   if(verifiedMedia){
@@ -372,7 +372,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
          !Object.hasOwn(ledger,'bundleMedia')&&!Object.hasOwn(ledger,'bundleId'),
          'Fee ledger, original payment and receipt must agree',409);
      }else{
-       demand(first.collection==='exam_results'&&
+       demand(['exam_results','exam_center_results'].includes(String(first.collection))&&
          child.documentKind==='marksheet'&&
          (child.examResultId===first.id||head.marksheetDocumentId===last.id)&&
          typeof first.id==='string'&&
