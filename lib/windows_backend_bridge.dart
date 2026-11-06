@@ -797,9 +797,13 @@ class WindowsBackendBridge {
       final item=row.data();
       if(item['schoolId']!=school || !networkRecoveryCandidate(item))continue;
       if(db.activeProfileId!=profile)return resumed;
-      await row.reference.set({...item,'syncState':'retry','retryCount':0,
-        'retryAtMillis':DateTime.now().millisecondsSinceEpoch});
-      resumed++;
+      // The local outbox writer does the final compare-and-swap. This read
+      // may be stale after a concurrent Save or a verified ACK.
+      if(await db.resumeDocumentOutboxAfterReconnect(
+        row.reference,item,schoolId:school,
+        retryAtMillis:DateTime.now().millisecondsSinceEpoch)) {
+        resumed++;
+      }
     }
     return resumed;
   });
