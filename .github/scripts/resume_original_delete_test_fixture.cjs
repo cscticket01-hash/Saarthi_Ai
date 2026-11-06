@@ -108,10 +108,10 @@ async function main(){
  const health=await fetch(API+'/healthz',{signal:AbortSignal.timeout(20000)}).then(r=>r.json());
  if(health.ready!==true||health.runtimeCommit!==RUNTIME)
   throw Error('TEST runtime did not match immutable source');
+ await verifyFirestoreIam();
  if(health.adminCredentialFingerprint!==sha(account().client_email))
   throw Error('Render and GitHub TEST Firebase Admin service-account identities differ; refuse deletion');
  report.firebaseCredentialIdentityMatch=true;
- await verifyFirestoreIam();
  const login=await send(LOGIN,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  if(login.status!==200||!login.data.idToken)throw Error('TEST owner auth failed');
  const token=login.data.idToken;
