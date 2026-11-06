@@ -61,6 +61,52 @@ void main(){
        isFalse,reason:v.map((x)=>x['collection']).join('/'));
    }
  });
+ test('real Exam Center result and original marksheet use one existing atomic queue pair',(){
+   const examId='exam-one',studentId='student-001';
+   const resultId='exam-one_student-001',documentId='SHEET-exam-one-student-001';
+   final result=<String,dynamic>{
+     'schoolId':school,'collection':'exam_center_results',
+     'operation':'set','createIntent':true,'baseCloudRevision':'',
+     'documentId':resultId,'operationId':'original-exam-result-operation-0001',
+     'data':{'schoolId':school,'examId':examId,'studentId':studentId,
+       'personId':'p-'+'a'*32,'marks':{'Maths':98},
+       'marksheetDocumentId':documentId},
+   };
+   final pdf=<String,dynamic>{
+     'schoolId':school,'collection':'documents','documentKind':'marksheet',
+     'documentId':documentId,'examResultId':resultId,
+     'studentId':studentId,'personId':'p-'+'a'*32,'ownerRole':'student',
+     'documentRevision':'original-marksheet-revision-0001',
+     'contentHash':'c'*64,'baseCloudRevision':'','deleted':false,
+     'optimizedMimeType':'application/pdf','optimizedPath':'/school/marksheet.pdf',
+   };
+   expect(WindowsAtomicFinancialCoordinator.matchesExam(school,result,pdf),isTrue);
+   expect(WindowsAtomicFinancialCoordinator.matchesExam(school,
+     {...result,'collection':'exam_results'},pdf),isTrue,
+     reason:'Old exam_results original stays compatible without a duplicate write');
+   final cases=<List<Map<String,dynamic>>>[
+     [{...result,'schoolId':'vs-'+'f'*32},pdf],
+     [{...result,'createIntent':false},pdf],
+     [{...result,'baseCloudRevision':'live-prior'},pdf],
+     [{...result,'fieldPatch':{'set':{}}},pdf],
+     [{...result,'documentId':'different-result'},pdf],
+     [{...result,'operationId':pdf['documentRevision']},pdf],
+     [{...result,'data':{...result['data'],'marksheetDocumentId':'other'}},pdf],
+     [result,{...pdf,'schoolId':'vs-'+'f'*32}],
+     [result,{...pdf,'studentId':'other'}],
+     [result,{...pdf,'personId':'p-'+'b'*32}],
+     [result,{...pdf,'examResultId':'other'}],
+     [result,{...pdf,'documentKind':'feeReceipt'}],
+     [result,{...pdf,'contentHash':'not-a-digest'}],
+     [result,{...pdf,'baseCloudRevision':'drive-old'}],
+     [result,{...pdf,'deleted':true}],
+     [result,{...pdf,'optimizedMimeType':'image/png'}],
+   ];
+   for(final row in cases) {
+     expect(WindowsAtomicFinancialCoordinator.matchesExam(school,row[0],row[1]),
+       isFalse,reason:'A changed or foreign original may not enter atomic Exam Save');
+   }
+ });
  test('the atomic coordinator never activates in default production builds',(){
    expect(WindowsAtomicFinancialCoordinator.run('vs-'+'c'*32),
      completion(0));
