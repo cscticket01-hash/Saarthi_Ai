@@ -28,6 +28,40 @@ void main() {
     onActivity: observer,
   );
 
+  test('failed upload cooldown survives attention state and manual quota retry', () async {
+    final now=DateTime.now(),future=now.add(const Duration(minutes:15)).millisecondsSinceEpoch;
+    for(final state in ['retry','needsAttention']){
+      final quota={'syncState':state,'failureCategory':'quota',
+        'retryAtMillis':future};
+      expect(pendingRecordBackoffDue(quota,now),false);
+      expect(pendingRecordBackoffDue(quota,now,explicitRetry:true),false,
+        reason:'manual Sync Now must not bypass a stored provider quota minimum');
+      expect(pendingRecordBackoffDue(quota,now.add(const Duration(minutes:16))),true);
+    }
+    final timeout={'syncState':'needsAttention','failureCategory':'timeout',
+      'retryAtMillis':future};
+    expect(pendingRecordBackoffDue(timeout,now),false);
+    expect(pendingRecordBackoffDue(timeout,now,explicitRetry:true),true);
+    await db.collection('school_notices').doc('cooldown').set({'text':'saved offline'});
+    final queued=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    await queued.reference.update({'syncState':'needsAttention','failureCategory':'quota',
+      'retryAtMillis':future,'retryCount':1});
+    final original=(await queued.reference.get()).data()!;
+    var sends=0;
+    await WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      send:(a,b,c,d)async{},
+      sendVersioned:(_)async{sends++;return 'unwanted-revision';},
+      onlyOperationId:original['operationId'] as String,
+      respectBackoff:true,
+    );
+    expect(sends,0);
+    final retained=(await queued.reference.get()).data()!;
+    expect(retained['operationId'],original['operationId']);
+    expect(retained['retryAtMillis'],future);
+    expect(retained['syncState'],'needsAttention');
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+  });
   test('missing ACK remains durable retry and duplicate flush cannot acknowledge it', () async {
     await db.collection('school_notices').doc('n').set({'text': 'retain me'});
     final row =
