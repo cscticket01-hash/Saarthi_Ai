@@ -1,0 +1,73 @@
+name: Isolated TEST Delete Everywhere real provider and hosted client acceptance
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/delete_everywhere_live_acceptance.cjs'
+      - '.github/workflows/delete-everywhere-live-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+jobs:
+  real-test-delete-everywhere:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      VS_EXPECTED_TEST_RUNTIME: eec9d8f9348b917f6d7845c8d3c31fa040ccff03
+      VS_DELETE_EVERYWHERE_TEST: vs-db8afb01a3be46a983c8284714d06e5d
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact reviewed backend source and TEST-only script syntax
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --check .github/scripts/delete_everywhere_live_acceptance.cjs
+      - name: Real signed Windows protocol delete, Drive permanent file deletion, Android and Website API readback
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/delete_everywhere_live_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-test-delete-everywhere-evidence
+          path: build/cloud-prerequisites/delete-everywhere-live.json
+          if-no-files-found: warn
+          retention-days: 14
+  hosted-windows-delete-regression:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Windows host SQLite local delete, replay and dependent student lifecycle
+        env:
+          APPDATA: ${{ runner.temp }}/delete-everywhere-windows
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s test/windows_student_lifecycle_test.dart test/windows_notice_delete_unknown_recovery_test.dart test/windows_multi_pc_sync_test.dart
+  hosted-android-website-model-regression:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Android session data and Website-backed deleted-student filtering model tests
+        run: flutter test --concurrency=1 --timeout 180s test/mobile_smart_sync_test.dart test/student_lifecycle_policy_test.dart test/windows_sync_comparison_test.dart
