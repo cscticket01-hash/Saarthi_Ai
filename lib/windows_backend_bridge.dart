@@ -166,6 +166,100 @@ class WindowsBackendBridge {
     } catch (_) {}
   });
 
+  /// One original school-scoped Save for Exam Result + exact 150-KiB PDF.
+  /// The existing record outbox and document outbox are committed in the same
+  /// disk transaction. The ordinary Sync 3 owner publishes their atomic pair.
+  static Future<Map<String,dynamic>> saveExamResultWithMarksheet({
+    required String profileId,
+    required Map<String,dynamic> result,
+    required Uint8List pdfBytes,
+  }) => _documentWrite(() async {
+    SchoolMediaBudgets.verifyGeneratedPdf('marksheet',pdfBytes);
+    final db=FirebaseFirestore.instance;
+    void own() {
+      if(db.activeProfileId!=profileId)
+        throw StateError('School changed during original exam Save.');
+    }
+    own();
+    await db.ensureDurableSchoolRecords();
+    own();
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final managed=await CentralSchoolCloud.saved();
+    own();
+    if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
+       managed['managed']!=true||managed['schoolId']!=school||
+       !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       !await db.localPersistenceEnabled())
+      throw StateError('Original exam bundle requires a durable TEST school.');
+    final examId=result['examId']?.toString().trim()??'';
+    final studentId=result['studentId']?.toString().trim()??'';
+    final resultId='${examId}_$studentId';
+    if(examId.isEmpty||studentId.isEmpty||resultId.length>200||
+       examId.contains('/')||studentId.contains('/')||
+       result['marks'] is! Map||(result['marks'] as Map).isEmpty)
+      throw StateError('School exam result or subject marks are incomplete.');
+    final student=(await db.collection('students_directory')
+      .doc(studentId).get()).data();
+    final exam=(await db.collection('exams').doc(examId).get()).data();
+    own();
+    if(student==null||exam==null||
+       student['schoolId']!=school||exam['schoolId']!=school||
+       student['deleted']==true||student['_syncDeleted']==true||
+       student['mobileStableId'] is! String||
+       (student['mobileStableId'] as String).isEmpty||
+       exam['examId']!=examId)
+      throw StateError('Exam or student does not belong to active school.');
+    final stablePerson=student['mobileStableId'] as String;
+    final recordRef=db.collection('exam_center_results').doc(resultId);
+    final old=(await recordRef.get()).data();
+    own();
+    if(old!=null && old['schoolId']!=school)
+      throw StateError('Another school owns this exam result.');
+    final docId='SHEET-${crypto.sha256.convert(
+      utf8.encode(jsonEncode([school,examId,studentId]))).toString().substring(0,32)}';
+    if(old?['marksheetDocumentId']==docId&&
+       old?['personId']==stablePerson&&
+       old?['result']==result['result']&&
+       jsonEncode(old?['marks'])==jsonEncode(result['marks'])) {
+      final existing=(await db.collection('_local_student_documents')
+        .doc(docId).get()).data();
+      own();
+      if(existing!=null&&existing['documentKind']=='marksheet'&&
+         existing['examResultId']==resultId&&
+         existing['contentHash'] is String)
+        return {'success':true,'examResultId':resultId,
+          'marksheetDocumentId':docId,'unchanged':true};
+    }
+    final data=<String,dynamic>{
+      ...result,'schoolId':school,'examId':examId,
+      'studentId':studentId,'personId':stablePerson,
+      'marksheetDocumentId':docId,
+      'academicSession':result['academicSession']??exam['academicSession'],
+      'examName':result['examName']??exam['examName'],
+      'timestamp':result['timestamp']??DateTime.now().millisecondsSinceEpoch,
+    }..remove('action')..remove('pdfBase64');
+    final batch=db.batch();
+    batch.requireUnchanged(recordRef,old);
+    await _saveLocalStudentDocument({
+      '_queueCloud':true,'replaceDocumentId':docId,
+      'documentKind':'marksheet','examId':examId,'examResultId':resultId,
+      'studentId':studentId,'studentName':result['studentName']??student['name'],
+      'studentClass':result['studentClass']??student['class'],
+      'rollNo':result['rollNo']??student['rollNo'],
+      'documentName':'Marksheet ${exam['examName']??examId}',
+      'fileName':'Marksheet-$examId.pdf',
+      'mimeType':'application/pdf',
+      'fileBase64':base64Encode(pdfBytes),
+      'uploadedBy':'Exam Center',
+    },owningBatch:batch);
+    own();
+    batch.set(recordRef,data,const SetOptions(merge:true));
+    await batch.commit();
+    try{onLocalDocumentCommitted?.call();}catch(_){}
+    return {'success':true,'examResultId':resultId,
+      'marksheetDocumentId':docId,'cloudSyncPending':true};
+  });
+
   // Response's default Latin-1 encoder rejects multilingual JSON metadata.
   static http.Response _jsonResponse(
     String body,
@@ -2832,18 +2926,19 @@ class WindowsBackendBridge {
     Map<String, dynamic> processing = {};
     String? processingWarning;
     try {
-      if (body['documentKind'] == 'feeReceipt') {
-        // Financial originals are immutable. Never rasterize/recompress a receipt.
+      if (body['documentKind'] == 'feeReceipt' ||
+          body['documentKind'] == 'marksheet') {
+        // Financial and exam PDF originals must never be rasterized or recompressed.
         if (!utf8
             .decode(bytes.take(5).toList(), allowMalformed: true)
             .startsWith('%PDF-'))
-          throw StateError('A valid receipt PDF is required.');
+          throw StateError('A valid immutable PDF is required.');
         processing = {
           'optimized': Uint8List.fromList(bytes),
           'highQuality': Uint8List.fromList(bytes),
           'mimeType': 'application/pdf',
           'sourceRetained': true,
-          'cleanupStatus': 'Exact original financial receipt retained',
+          'cleanupStatus': 'Exact original school PDF retained',
         };
       } else if (body['documentKind'] == 'idCard') {
         await IdCardEngine.verifyExport(
@@ -2866,7 +2961,8 @@ class WindowsBackendBridge {
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
     } catch (e) {
-      if (body['_queueCloud'] == true || body['documentKind'] == 'feeReceipt') rethrow;
+      if (body['_queueCloud'] == true ||
+          {'feeReceipt','marksheet'}.contains(body['documentKind'])) rethrow;
       processingWarning =
           'Processing unavailable; original retained. ${e.runtimeType}';
     }
@@ -2893,6 +2989,7 @@ class WindowsBackendBridge {
     final exactOriginal = {
       'idCard',
       'feeReceipt',
+      'marksheet',
     }.contains(body['documentKind'] );
     final optimizedFile =exactOriginal
         ? file : File('${file.path}.optimized.$optimizedExtension');
@@ -2918,6 +3015,13 @@ class WindowsBackendBridge {
       if (body['documentKind'] == 'feeReceipt') ...{
         'documentKind': 'feeReceipt',
         'inventoryCategory': 'feeReceipt',
+        'contentHash': crypto.sha256.convert(bytes).toString(),
+      },
+      if (body['documentKind'] == 'marksheet') ...{
+        'documentKind': 'marksheet',
+        'inventoryCategory': 'examMarksheet',
+        'examId': body['examId'],
+        'examResultId': body['examResultId'],
         'contentHash': crypto.sha256.convert(bytes).toString(),
       },
       if (ownerRecord?['mobileStableId'] is String) ...{
