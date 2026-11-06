@@ -18,6 +18,26 @@ test('explicit deletion removes person payload and exact child payloads, preserv
  assert(write(s,'students_directory','one',{name:'New occupant',mobileStableId:N,replacesStudentGeneration:G},r.recordRevision,'write_new_occupant_0001').success);
  assert.equal(s.call(request).success,false);assert.equal(read(s,'students_directory').records.one.name,'New occupant');
 });
+test('stale Windows offline delete cannot erase a newer same-generation Google Sheet edit',()=>{
+ const s=storage({lifecycle:true});rest(s);
+ const first=write(s,'students_directory','one',{name:'Original',mobileStableId:G});
+ assert.equal(first.success,true);
+ const updated=write(s,'students_directory','one',
+   {name:'Newer save from PC2',mobileStableId:G},first.recordRevision,
+   'newer-write-operation-0001');
+ assert.equal(updated.success,true,JSON.stringify(updated));
+ const stale={...deletion('one',first.recordRevision),deletedStudentGeneration:G};
+ const result=s.call(stale);
+ assert.equal(result.success,false,'same person ID alone must not authorize lost updates');
+ assert.equal(read(s,'students_directory').records.one.name,'Newer save from PC2');
+ // The later owner may still explicitly delete at the revision it actually saw.
+ const current=deletion('one',updated.recordRevision);
+ current.deletedStudentGeneration=G;
+ const verified=s.call(current);
+ assert.equal(verified.success,true,JSON.stringify(verified));
+ assert.equal(verified.driveDeletionComplete,true);
+});
+
 test('owned files use permanent Drive delete and exact snapshots are removed instead of recycled',()=>{
  const s=storage({lifecycle:true}),photo=s.roots[A].createFile('Photo','pupil bytes','image/png'),foreign=s.roots[B].createFile('Photo','other bytes','image/png');const calls=rest(s);
  const a=write(s,'students_directory','one',{name:'Pupil',mobileStableId:G,photoFileId:photo.id});assert(a.success);
