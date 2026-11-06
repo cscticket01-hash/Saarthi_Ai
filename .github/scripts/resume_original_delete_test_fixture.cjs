@@ -13,7 +13,7 @@ const PDF='1ZMaJR3NMtT1G5Uy0HJPtfKvHPac6wgnj';
 const OP='980a80a2ed52f3a498c4410209225e95';
 const ORIGINAL='da3ac36d-a064-469b-877f-774f2442d1ae';
 const API='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-const RUNTIME='a1844cbf8805b9b61df66e68e11a60ad86fc0fae';
+const RUNTIME='ffea363c3ba05b99f1bed68315b5276be3572111';
 const PROJECT='saarthi-ai-df12b';
 const LOGIN='https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
 const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
