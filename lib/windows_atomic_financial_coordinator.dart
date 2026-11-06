@@ -266,4 +266,214 @@ class WindowsAtomicFinancialCoordinator {
     }
     return completed;
   }
+  /// The existing Windows Exam Center writes exam_center_results, not a new
+  /// exam_results collection. One original result row and its existing
+  /// _windows_document_outbox marksheet form the same 2-member transaction.
+  static bool matchesExam(String school,Map<String,dynamic> result,
+      Map<String,dynamic> doc) {
+    final data=result['data'],id=result['documentId'],documentId=doc['documentId'];
+    if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       result['schoolId']!=school||doc['schoolId']!=school||
+       !{'exam_center_results','exam_results'}.contains(result['collection'])||
+       result['operation']!='set'||result['createIntent']!=true||
+       result['baseCloudRevision']!=''||
+       result['priorDeletion']!=null||result['fieldPatch']!=null||
+       result['operationId'] is! String||
+       id is! String||id.isEmpty||id.length>200||
+       data is! Map||data['schoolId']!=school||
+       data['examId'] is! String||data['studentId'] is! String||
+       id!='${data['examId']}_${data['studentId']}'||
+       data['personId'] is! String||data['personId'].isEmpty||
+       data['marksheetDocumentId']!=documentId||
+       doc['documentKind']!='marksheet'||doc['deleted']==true||
+       doc['baseCloudRevision']!=''||doc['documentRevision'] is! String||
+       doc['examResultId']!=id||doc['studentId']!=data['studentId']||
+       doc['personId']!=data['personId']||doc['ownerRole']!='student'||
+       doc['contentHash'] is! String||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(doc['contentHash'])||
+       (doc['optimizedMimeType']??doc['mimeType'])!='application/pdf'||
+       (doc['optimizedPath']??doc['localPath']) is! String)
+      return false;
+    final ops=[result['operationId'],doc['documentRevision']];
+    return ops.every((id)=>id is String&&
+      RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(id))&&
+      ops.toSet().length==2&&
+      [result,doc].every((row)=>row['atomicBundleId']==null||
+        {'reserved','committed'}.contains(row['atomicState']));
+  }
+
+  /// Same immutable File Durable Object / Drive receipt protocol as the
+  /// existing Fee triple. No second queue, importer or sync engine.
+  static Future<int> runExam(String school,{bool Function()? canAdmit})async{
+    if(!AtomicBundlePilot.buildEnabled)return 0;
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    if(db.activeProfileIdentity['schoolSyncId']!=school||
+       !await db.localPersistenceEnabled())
+      throw StateError('TEST marksheet requires original school local storage.');
+    void scope(){
+      if(db.activeProfileId!=profile||
+         db.activeProfileIdentity['schoolSyncId']!=school)
+        throw StateError('School changed during atomic marksheet sync.');
+    }
+    final parents=(await db.collection('_windows_firebase_outbox').get()).docs;
+    final documents=(await db.collection('_windows_document_outbox').get()).docs;
+    scope();var completed=0;
+    for(final parentRef in parents){
+      if(canAdmit?.call()==false)break;
+      scope();
+      var parent=parentRef.data();
+      if(!{'exam_center_results','exam_results'}.contains(parent['collection'])||
+         parent['operation']!='set'||parent['baseCloudRevision']!='')continue;
+      final source=parent['data'];
+      if(source is! Map||source['marksheetDocumentId'] is! String)continue;
+      final docs=documents.where((d)=>
+        d.id==source['marksheetDocumentId']&&
+        matchesExam(school,parent,d.data())).toList();
+      if(docs.length!=1)continue;
+      final docRef=docs.single,doc=docRef.data();
+      final resultId=parent['documentId'] as String;
+      final collection=parent['collection'] as String;
+      final localResult=(await db.collection(collection).doc(resultId).get()).data();
+      final localDocument=(await db.collection('_local_student_documents')
+        .doc(docRef.id).get()).data();
+      scope();
+      if(localResult==null||localDocument==null||
+         localResult['schoolId']!=school||
+         localResult['marksheetDocumentId']!=docRef.id||
+         localResult['personId']!=source['personId']||
+         localDocument['documentRevision']!=doc['documentRevision']||
+         localDocument['localPath']!=doc['localPath'])continue;
+      if(parent['atomicState']==null){
+        final prepared=await WindowsFirebaseRemote.prepareQueuedRecord(
+          parentRef.reference,parent,school);
+        scope();
+        if(prepared==null)continue; // Existing conflict owner retains it.
+        parent=prepared;
+      }
+      if(!matchesExam(school,parent,doc))continue;
+      final ids=[parent['operationId'] as String,
+        doc['documentRevision'] as String];
+      final bundle=bundleId(school,ids),key=uploadKey(school,ids.last);
+      if(parent['atomicBundleId']!=null&&parent['atomicBundleId']!=bundle||
+         doc['atomicBundleId']!=null&&doc['atomicBundleId']!=bundle||
+         parent['atomicState']!=doc['atomicState'])
+        throw StateError('Original marksheet reservation diverged.');
+      final path=(doc['optimizedPath']??doc['localPath']) as String;
+      final bytes=await File(path).readAsBytes();
+      scope();
+      if(bytes.length<16||bytes.length>150*1024||
+         sha256.convert(bytes).toString()!=doc['contentHash']||
+         utf8.decode(bytes.take(5).toList(),allowMalformed:true)!='%PDF-'||
+         !latin1.decode(bytes.skip(bytes.length>2048?bytes.length-2048:0)
+           .toList()).contains('%%EOF'))
+        throw StateError('Original immutable marksheet PDF changed.');
+      final hash=doc['contentHash'] as String;
+      final fileId=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+      final media=[<String,dynamic>{
+        'kind':'marksheet','id':fileId,'uploadKey':key,
+        'sha256':hash,'sizeBytes':bytes.length,'mime':'application/pdf'}];
+      final wire=parent['wireData'] is Map?
+        Map<String,dynamic>.from(parent['wireData'] as Map):
+        Map<String,dynamic>.from(parent['data'] as Map);
+      if(wire['schoolId']!=school||wire['marksheetDocumentId']!=docRef.id||
+         wire['_syncFieldPatch']!=null||wire['personId']!=doc['personId'])
+        throw StateError('Unverified original exam wire data.');
+      final child=<String,dynamic>{
+        'schoolId':school,'studentId':doc['studentId'],
+        'personId':doc['personId'],'ownerRole':'student',
+        'examResultId':resultId,'examId':source['examId'],
+        'documentKind':'marksheet','documentId':docRef.id,
+        'documentRevision':ids.last,'contentHash':hash,
+        'mimeType':'application/pdf','sizeBytes':bytes.length,
+        'fileName':doc['fileName']??'$resultId.pdf',
+      };
+      final operations=<Map<String,dynamic>>[
+        {'collection':collection,'id':resultId,'operation':'write',
+         'operationId':ids.first,'expectedRevision':'','data':wire},
+        {'collection':'documents','id':docRef.id,'operation':'write',
+         'operationId':ids.last,'expectedRevision':'','data':child},
+      ];
+      List<Map<String,dynamic>> queued(Map<String,dynamic> row)=>[
+        {'queueId':parentRef.id,'before':row}];
+      if(parent['atomicState']==null){
+        await db.markAtomicFinancialOutbox(school:school,bundleId:bundle,
+          parents:queued(parent),documentId:docRef.id,documentBefore:doc,
+          state:'reserved');
+        scope();
+        parent=(await parentRef.reference.get()).data()!;
+      }
+      final currentDoc=(await docRef.reference.get()).data();
+      scope();
+      if(currentDoc==null||currentDoc['atomicBundleId']!=bundle||
+         currentDoc['documentRevision']!=ids.last)
+        throw StateError('Original marksheet changed during reservation.');
+      if(canAdmit?.call()==false)return completed;
+      var receipt=await AtomicBundlePilot.receipt(
+        school:school,bundleId:bundle,operations:operations,
+        media:media,isolatedTest:true);
+      scope();
+      if(receipt['found']==false){
+        final staged=await AtomicBundlePilot.stage(school:school,
+          kind:'marksheet',uploadKey:key,
+          name:(doc['optimizedFileName']??doc['fileName']??'marksheet.pdf') as String,
+          mime:'application/pdf',bytes:Uint8List.fromList(bytes),
+          isolatedTest:true);
+        scope();
+        if(staged['id']!=fileId||staged['sha256']!=hash)
+          throw StateError('Cloudflare marksheet SHA differs.');
+        await AtomicBundlePilot.publish(school:school,bundleId:bundle,
+          operations:operations,media:media,isolatedTest:true);
+        scope();
+        receipt=await AtomicBundlePilot.receipt(school:school,
+          bundleId:bundle,operations:operations,media:media,isolatedTest:true);
+        scope();
+      }
+      if(receipt['found']!=true)
+        throw StateError('Original exam atomic receipt missing.');
+      // Lost ACK / restarted Windows: only this signed receipt can advance
+      // the original reserved pair. Never publish a second pair.
+      final latestParent=(await parentRef.reference.get()).data()!;
+      final latestDoc=(await docRef.reference.get()).data()!;
+      scope();
+      if(latestParent['atomicState']=='reserved'){
+        final ack=(receipt['receipt'] as Map)['acknowledgements'] as List;
+        await db.markAtomicFinancialOutbox(school:school,bundleId:bundle,
+          parents:queued(latestParent),documentId:docRef.id,
+          documentBefore:latestDoc,state:'committed',
+          cloudRevisions:[for(final value in ack)
+            (value as Map)['recordRevision'] as String]);
+        scope();
+      }
+      if(receipt['driveVerified']!=true)continue;
+      if(canAdmit?.call()==false)return completed;
+      final backups=(receipt['backups'] as List)
+        .map((b)=>Map<String,dynamic>.from(b as Map)).toList();
+      final remote=<Map<String,dynamic>>[];
+      for(final op in operations){
+        final answer=await ManagedSchoolSession.callForSchool(school,
+          'managed/live/read',{
+            'liveProtocol':1,'collection':op['collection'],'id':op['id']});
+        scope();
+        final row=answer['record'];
+        if(answer['success']!=true||answer['schoolId']!=school||
+           answer['liveProtocol']!=1||row is! Map||
+           answer['recordRevision']!=backups[remote.length]['recordRevision']||
+           row['_syncRevision']!=answer['recordRevision']||
+           row['_syncOperationId']!=op['operationId'])
+          throw StateError('Signed marksheet Drive record readback differs.');
+        remote.add(Map<String,dynamic>.from(row));
+      }
+      final finalParent=(await parentRef.reference.get()).data()!;
+      final finalDoc=(await docRef.reference.get()).data()!;
+      scope();
+      await db.finishVerifiedAtomicFinancialOutbox(school:school,
+        bundleId:bundle,parents:queued(finalParent),
+        parentLocalBefore:[localResult],documentId:docRef.id,
+        documentBefore:finalDoc,documentLocalBefore:localDocument,
+        cloudRecords:remote,verifiedBackups:backups,pdfSha256:hash);
+      scope();completed++;
+    }
+    return completed;
+  }
+
 }
