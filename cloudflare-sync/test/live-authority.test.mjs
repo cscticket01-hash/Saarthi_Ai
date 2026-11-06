@@ -591,7 +591,7 @@ test('fee payment, ledger and PDF share one original school DO commit; exam resu
     'x-vidya-signature':createHmac('sha256',key).update(time+'\n'+raw).digest('hex')},body:raw});
   return {status:response.status,...await response.json()};
  }
- await seed('fee_payments');await seed('fee_ledger');await seed('exam_results');
+ await seed('fee_payments');await seed('fee_ledger');await seed('exam_center_results');
  const studentId='student-stage-first',personId='p-'+'8'.repeat(32);
  for(const kind of ['receipt','marksheet']){
   const fee=kind==='receipt',size=fee?2048:4096;
@@ -613,7 +613,7 @@ test('fee payment, ledger and PDF share one original school DO commit; exam resu
    operationId:'finance-original-payment-operation-0001',expectedRevision:'',
    data:{...data,paymentId:parentId,receiptDocumentId:docId,month:'2026-11',
     installmentAmount:50,totalPaid:50,expectedAmount:100}}:
-   {collection:'exam_results',id:parentId,operation:'write',
+   {collection:'exam_center_results',id:parentId,operation:'write',
     operationId:'finance-original-exam-operation-00001',expectedRevision:'',
     data:{...data,marksheetDocumentId:docId,score:98}};
   const ledger={collection:'fee_ledger',id:'ledger-finance-001',operation:'write',
