@@ -93,6 +93,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='diagnoseDeleteReview'){
+  // TEST-only read-only owner diagnosis. No payload, private fields, raw
+  // service-account fingerprint, mutation or receipt retirement is returned.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  const request=JSON.parse(row.payload) as Json;
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+    request.operation==='delete'&&request.operationId===b.operationId&&
+    request.id===b.recordId&&request.expectedRecordRevision===b.expectedRecordRevision&&
+    request.deletedStudentGeneration===b.deletedStudentGeneration,
+    'Original delete review identity mismatch',409);
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  const count=Number(previous.reviewRetryCount||0);
+  const immutable=await digest(JSON.stringify([school,request.action,
+    [request.collection,request.id,request.operationId]]))===id&&
+    await digest(canonical(request))===row.fingerprint;
+  const known=new Set(['DELETE_EVERYWHERE_ACK_UNVERIFIED',
+    'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED']);
+  return {state:row.state,retryCount:Number.isInteger(count)&&count>=0?count:-1,
+    failureClass:known.has(previous.failureCode)?previous.failureCode:'OTHER',
+    failureStatus:Number.isInteger(previous.failureStatus)?previous.failureStatus:0,
+    sameRuntimeCredential:typeof previous.reviewCredentialFingerprint==='string'&&
+      previous.reviewCredentialFingerprint===b.credentialFingerprint,
+    previousCredentialBound:typeof previous.reviewCredentialFingerprint==='string',
+    immutable};
+ }
  if(action==='retryDeleteReview'){
   // One authenticated school-admin retry for the exact original synthetic or
   // real student Delete Everywhere receipt. Never enqueue a replacement ID,
