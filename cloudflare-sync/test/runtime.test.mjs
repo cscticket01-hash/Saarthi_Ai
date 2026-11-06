@@ -61,8 +61,16 @@ test('one school-admin review retry reopens only the exact original Delete Every
  const projection=await rpc('projection',{id},'records');
  assert.deepEqual(projection.value.request,request,'original payload and operation identity remain unchanged');
  assert.equal((await rpc('stats',{},'records')).value.needsAttention,0);
+ assert.equal(await rpc('claim',{id,claim:'review-claim-2',expires:Date.now()+10000},'records').then(r=>r.value),true);
+ await rpc('finish',{id,claim:'review-claim-2',values:{
+  state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  failureStatus:409,failureCode:'DELETE_EVERYWHERE_ACK_UNVERIFIED'
+ }},'records');
+ const afterFailure=await rpc('status',{id},'records');
+ assert.equal(afterFailure.value.response.reviewRetryCount,1,
+  'later failure must preserve the durable one-time review counter');
  const repeated=await rpc('retryDeleteReview',args,'records');
- assert.equal(repeated.status,409,'manual review retry is one-time only');
+ assert.equal(repeated.status,409,'manual review retry stays one-time after another failure');
  const forged=await rpc('retryDeleteReview',{...args,operationId:'different-operation-0001'},'records');
  assert.equal(forged.status,409,'a different operation ID cannot borrow the retry');
  const foreign=await rpc('retryDeleteReview',args,'records',other);
