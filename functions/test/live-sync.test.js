@@ -38,7 +38,25 @@ test('backup identity is verified and a fake cloud revision never becomes Drive 
  }
  assert.equal((await live.drain(A,async()=>({success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',record:{schoolId:A,id:'one',title:'Wrong content',_syncOperationId:request.operationId,_syncRevision:'drive-verified'}}))).processed,0);
  assert.equal(finished.at(-1).verified,false);
- assert.equal((await live.drain(A,async()=>({success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',record:{schoolId:A,id:'one',title:'Saved',_syncOperationId:request.operationId,_syncRevision:'drive-verified'}}))).processed,1);
+ // A forged success ACK alone is insufficient; an exact Sheets point read is mandatory.
+ let pointReads=0;
+ const ack={success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',
+   record:{schoolId:A,id:'one',title:'Saved',
+     _syncOperationId:request.operationId,_syncRevision:'drive-verified'}};
+ assert.equal((await live.drain(A,async()=>ack)).processed,0,
+   'ACK containing a record cannot substitute for a Drive read');
+ assert.equal(finished.at(-1).verified,false);
+ const deliver=async b=>{
+   if(b.operation==='read'){
+     pointReads++;
+     assert.equal(b.id,'one');
+     return {success:true,schoolId:A,syncProtocol:2,pointRead:true,
+       records:{one:{...ack.record}}};
+   }
+   return ack;
+ };
+ assert.equal((await live.drain(A,deliver)).processed,1);
+ assert.equal(pointReads,1);
  assert.equal(finished.at(-1).verified,true);
 });
 test('stream grants have distinct signing domain, short expiry and no token in the URL',()=>{
@@ -190,12 +208,17 @@ test('Android atomic ID PDF only reaches the mobile session owner of its publish
 });
 
 test('atomic document Drive backup waits for every staged file proof and enriches only after verification',async()=>{
- const sha='d'.repeat(64),id='b'.repeat(64),bundleId='atomic-document-drive-barrier-0001';
+ const bytes=Buffer.alloc(1024,32);
+ bytes.write('%PDF-1.7',0,'ascii');
+ bytes.write('%%EOF',bytes.length-5,'ascii');
+ const sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const id='b'.repeat(64),bundleId='atomic-document-drive-barrier-0001';
  const media=[{kind:'idCard',id,sha256:sha,sizeBytes:1024,mime:'application/pdf'}];
  const data={schoolId:A,studentId:'p1',personId:'p-stable',
    ownerRole:'student',bundleId,bundleManifestHash:'f'.repeat(64),
    bundleMedia:media,documentKind:'idCard'};
- let archived=false,delivered=0;
+ let archived=false,delivered=0,pointReads=0,fileReads=0;
+ let savedRecord=null;
  const finishes=[],rpc=async(s,l,request)=>{
   if(request.command==='backupClaim')return {job:{seq:1,claim:'claim-once',
     request:{action:'managed_records',collection:'documents',id:'card-1',
@@ -212,20 +235,34 @@ test('atomic document Drive backup waits for every staged file proof and enriche
  };
  const live=createLiveSync({edge:{enabled:()=>true,rpc},schools:[A],now:()=>100000});
  const deliver=async request=>{
+  if(request.operation==='read'){
+   pointReads++;
+   assert.equal(request.id,'card-1');
+   return {success:true,schoolId:A,syncProtocol:2,pointRead:true,
+     records:{'card-1':savedRecord}};
+  }
   delivered++;
   assert.equal(request.data.fileId,'drive-original-file-1');
   assert.equal(request.data.bundleMedia[0].sha256,sha);
-  return {success:true,schoolId:A,syncProtocol:2,recordRevision:'real-drive-revision',
-   record:{...request.data,_syncOperationId:request.operationId,
-     _syncRevision:'real-drive-revision'}};
+  savedRecord={...request.data,_syncOperationId:request.operationId,
+   _syncRevision:'real-drive-revision'};
+  return {success:true,schoolId:A,syncProtocol:2,
+   recordRevision:'real-drive-revision',record:savedRecord};
  };
- assert.equal((await live.drain(A,deliver)).processed,0);
+ const readFile=async fileId=>{
+   fileReads++;assert.equal(fileId,'drive-original-file-1');
+   return {success:true,schoolId:A,mime:'application/pdf',
+     base64:bytes.toString('base64')};
+ };
+ assert.equal((await live.drain(A,deliver,readFile)).processed,0);
  assert.equal(delivered,0,'Never send unarchived file IDs to school Script');
  assert.equal(finishes.at(-1).verified,false);
  assert.equal(finishes.at(-1).review,false);
  archived=true;
- assert.equal((await live.drain(A,deliver)).processed,1);
+ assert.equal((await live.drain(A,deliver,readFile)).processed,1);
  assert.equal(delivered,1);
+ assert.equal(pointReads,1,'Always require signed exact Sheets point read');
+ assert.equal(fileReads,1,'Read actual original PDF bytes back from Drive');
  assert.equal(finishes.at(-1).verified,true);
  assert.equal(finishes.at(-1).archiveFiles[0].fileId,'drive-original-file-1');
  assert.equal(finishes.at(-1).driveRevision,'real-drive-revision');
