@@ -830,6 +830,9 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    if(session?.success===true&&session.schoolId===b.schoolId&&
       ['student','teacher'].includes(session.role)&&
       typeof session.personId==='string'){
+     // A verified negative owner lookup must revoke an old PDF/photo cache
+     // pointer. Do not silently retain a deleted or photo-free generation.
+     result.atomicBundleDiscoveryVersion=1;
      const bundle=await liveSync.command(b.schoolId,{command:'ownerBundle',
        role:session.role,personId:session.personId});
      if(bundle?.found===true&&bundle.schoolId===b.schoolId&&
