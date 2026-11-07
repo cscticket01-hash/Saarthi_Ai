@@ -183,12 +183,15 @@ void main() {
               reason:
                   'Native Android must read the notice ACKed by the hosted Windows outbox in this same run');
           metrics['windowsNoticeReadOnNativeAndroid'] = true;
-          final webNotice = 'synthetic-web-notice-${run.split('-').first}';
+          // Website publishes using GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT.
+          // The Android build's VS_TEST_RUN_ID already contains both.
+          // Windows notice is intentionally keyed by GITHUB_RUN_ID only.
+          final webNotice = 'synthetic-web-notice-$run';
           expect(
               (session.dashboard['notices'] as List).any((row) =>
                   row['id'] == webNotice &&
                   row['title'] ==
-                      'Synthetic website exchange ${run.split('-').first}'),
+                      'Synthetic website exchange $run'),
               true);
           metrics['websiteNoticeReadOnNativeAndroid'] = true;
           final captured = DateTime.now().millisecondsSinceEpoch;
