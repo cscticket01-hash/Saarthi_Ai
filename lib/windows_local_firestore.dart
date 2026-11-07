@@ -479,13 +479,19 @@ class FirebaseFirestore {
        documentCloud['schoolId']!=school||
        documentCloud['_syncDeleted']==true||
        documentCloud['bundleId']!=bundleId||
+       documentCloud['documentKind']!='idCard'||
+       documentCloud['documentId']!=documentId||
+       documentCloud['documentRevision']!=cardOp||
+       documentCloud['mimeType']!='application/pdf'||
        documentCloud['personId']!=generation||
        documentCloud['ownerRole']!=role||
        (role=='student'?documentCloud['studentId']:documentCloud['teacherId'])!=personId||
        documentCloud['_syncOperationId']!=cardOp||
        documentCloud['contentHash']!=cardSha256||
        media is! List||media.isEmpty||media.first is! Map||
+       (media.first as Map)['kind']!='idCard'||
        (media.first as Map)['sha256']!=cardSha256||
+       (media.first as Map)['fileId']!=fileId||
        (media.length==2)!=hasOriginalPhoto||
        (hasOriginalPhoto&&(
          media[1] is! Map || portrait is! Map ||
