@@ -676,10 +676,13 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_atomic_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_atomic_portrait','mobile_atomic_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
-  if(b.request.action==='mobile_atomic_idcard'){
+  if(['mobile_atomic_idcard','mobile_atomic_portrait'].includes(b.request.action)){
+   // Both published school media receivers use the identical signed mobile
+   // session and original Durable Object owner; no second photo uploader.
+   const portraitRequest=b.request.action==='mobile_atomic_portrait';
    if(!atomicBundleTestSchools.includes(b.schoolId)||!liveSync.enabled(b.schoolId))
      fail(412,'Atomic mobile card is not enabled','ATOMIC_BUNDLE_TEST_DISABLED');
    const session=await signed(m,{action:'managed_mobile',
@@ -691,6 +694,29 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      fail(403,'School card session did not verify');
    const bundle=await liveSync.command(b.schoolId,{command:'ownerBundle',
      role:session.role,personId:session.personId});
+   if(portraitRequest){
+     const pointer=bundle?.portrait;
+     if(bundle?.found!==true||bundle.noPhoto===true||pointer==null)
+       return {success:true,schoolId:b.schoolId,projectId:b.schoolId,
+         mobileAtomicPortrait:true,available:false,...cardContext};
+     if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+        typeof bundle.bundleId!=='string'||
+        !/^[A-Za-z0-9_-]{16,100}$/.test(bundle.bundleId)||
+        typeof pointer.id!=='string'||!/^[a-f0-9]{64}$/.test(pointer.id)||
+        typeof pointer.sha256!=='string'||!/^[a-f0-9]{64}$/.test(pointer.sha256)||
+        !['image/jpeg','image/png','image/webp'].includes(pointer.mime)||
+        !Number.isSafeInteger(pointer.sizeBytes)||
+        pointer.sizeBytes<1||pointer.sizeBytes>40*1024)
+       fail(502,'Published school portrait pointer invalid');
+     const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,'photo',pointer.id);
+     if(file.ownerRole!==session.role||file.personId!==session.personId||
+        file.sha256!==pointer.sha256||file.mime!==pointer.mime||
+        file.sizeBytes!==pointer.sizeBytes)
+       fail(403,'Another person portrait is not accessible');
+     return {...file,projectId:b.schoolId,mobileAtomicPortrait:true,
+       available:true,portraitRevision:'atomic-'+bundle.bundleId,
+       contentHash:file.sha256,...cardContext};
+   }
    if(bundle?.found!==true)return {success:true,schoolId:b.schoolId,
      projectId:b.schoolId,mobileAtomicIdCard:true,available:false,...cardContext};
    if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
@@ -812,6 +838,16 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
        result.atomicIdCardBundle={bundleId:bundle.bundleId,
          id:bundle.id,sha256:bundle.sha256,
          noPhoto:bundle.noPhoto===true};
+       if(bundle.portrait&&bundle.noPhoto!==true&&
+          typeof bundle.portrait.id==='string'&&
+          /^[a-f0-9]{64}$/.test(bundle.portrait.id)&&
+          typeof bundle.portrait.sha256==='string'&&
+          /^[a-f0-9]{64}$/.test(bundle.portrait.sha256))
+         result.atomicPortraitBundle={
+           bundleId:bundle.bundleId,id:bundle.portrait.id,
+           sha256:bundle.portrait.sha256,mime:bundle.portrait.mime,
+           sizeBytes:bundle.portrait.sizeBytes,
+         };
      }
    }
   }
