@@ -81,7 +81,7 @@ jobs:
     env:
       # A TEST-only harness edit need not re-deploy unchanged business code.
       # Never trust a changed backend/application source without exact replay.
-      VS_EXPECTED_TEST_RUNTIME: ${{ github.ref == 'refs/heads/feature/smart-sync-3' && '189343b2cdfd7607296b8affccd413952e47d246' || github.sha }}
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.ref == 'refs/heads/feature/smart-sync-3' && '177009bad2db0a416ec540a7b90d9b54d5d25053' || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,7 +92,7 @@ jobs:
       - name: Verify exact TEST business source, runtime identity and Script version
         shell: bash
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
           node --test .github/scripts/*.test.cjs
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
