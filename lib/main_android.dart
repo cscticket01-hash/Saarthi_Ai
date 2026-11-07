@@ -928,7 +928,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     Uint8List? previousReport;
     try {
       if (kind == 'studentId' || kind == 'teacherId') {
-        final cached = await _s.cachedPdf('idCard');
+        // A published atomic card must always use its signed bundle SHA.
+        // Never open a previous legacy PDF from cache when the new bundle
+        // is photo-less, replaced, or not yet verified on this device.
+        final atomic = _data['atomicIdCardBundle'];
+        if(atomic is Map && atomic['noPhoto']==true){
+          throw StateError('The school ID is saved, but its preview is hidden until a photo is attached.');
+        }
+        final cached = atomic is Map ? null : await _s.cachedPdf('idCard');
         final manifest = _data['idCardPackage'];
         final expected = manifest is Map
             ? manifest['documentRevision']?.toString()
@@ -1389,22 +1396,30 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           children: [
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
-            PublishedIdCard(
-              automatic: true,
-              key: ValueKey(
-                jsonEncode([
-                  _s.link?.projectId,
-                  _s.link?.role,
-                  _s.link?.personId,
-                  _data['idCardPackage'],
-                ]),
+            if(_data['atomicIdCardBundle'] is Map &&
+                (_data['atomicIdCardBundle'] as Map)['noPhoto']==true)
+              const Text(
+                'Your school ID card is securely synced. The preview is hidden until your school adds a photo.',
+                textAlign: TextAlign.center,
+              )
+            else
+              PublishedIdCard(
+                automatic: true,
+                key: ValueKey(
+                  jsonEncode([
+                    _s.link?.projectId,
+                    _s.link?.role,
+                    _s.link?.personId,
+                    _data['idCardPackage'],
+                    _data['atomicIdCardBundle'],
+                  ]),
+                ),
+                load: _refreshPublishedCard,
+                refresh: () => _load(afterSignal: true),
+                open: (bytes) =>
+                    _previewPdf(bytes, 'School ID card • Front & back'),
+                openExternally: _openIdPdfExternally,
               ),
-              load: _refreshPublishedCard,
-              refresh: () => _load(afterSignal: true),
-              open: (bytes) =>
-                  _previewPdf(bytes, 'School ID card • Front & back'),
-              openExternally: _openIdPdfExternally,
-            ),
           ],
         ),
       ),
