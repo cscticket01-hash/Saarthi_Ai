@@ -4,7 +4,7 @@ const {canGcRecord,scrubDomainReceipt,hydrateDomainReceipt}=require('./live-doma
 const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
-const terminal=new Set(['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
+const terminal=new Set(['DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
 function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,atomicSmallFilesEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
  const gcEnabled=school=>typeof payloadGcEnabled==='function'?payloadGcEnabled(school)===true:payloadGcEnabled===true;
  const identity=request=>({action:request.action,collection:request.collection,id:request.id,operation:request.operation,syncProtocol:2,operationId:request.operationId,expectedRecordRevision:request.expectedRecordRevision});
@@ -104,7 +104,16 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  function verifiedRecord(result,school,request){
   if(result?.success!==true||result.schoolId!==school||result.syncProtocol!==2||
     typeof result.recordRevision!=='string'||!result.recordRevision||/^(live-|cf-)/.test(result.recordRevision))return false;
-  const record=result.record;if(!record)return true;
+  const record=result.record;
+  if(request?.operation==='delete'&&request.deleteEverywhereVersion===1){
+   // Never let an edge receipt say "Drive verified" when Google cleaned only
+   // its Sheet tombstone and Firebase still contains the original record.
+   if(result.deleteEverywhereVersion!==1||result.driveDeletionComplete!==true||
+      result.firebaseDeletionComplete!==true||record?._syncDeleted!==true||
+      record._syncErasePlan?.complete!==true||record._syncRevision!==result.recordRevision)
+    return false;
+  }
+  if(!record)return true;
   if(record.schoolId!==school||record._syncRevision!==undefined&&record._syncRevision!==result.recordRevision)return false;
   if(!request)return true;
   // Script may fulfil a second delete by returning the existing tombstone.
@@ -193,7 +202,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
-   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
+   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
    // Cloudflare preserves the operation, including partial verified receipts.
