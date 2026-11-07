@@ -708,7 +708,52 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
         !Number.isSafeInteger(pointer.sizeBytes)||
         pointer.sizeBytes<1||pointer.sizeBytes>40*1024)
        fail(502,'Published school portrait pointer invalid');
-     const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,'photo',pointer.id);
+     let file;
+     try{
+       file=await publishedBundleBytes(b.schoolId,bundle.bundleId,'photo',pointer.id);
+     }catch(error){
+       // Original Cloudflare bytes expire after the verified retention window.
+       // Drive is a fallback ONLY after the same school Durable Object proves
+       // this original bundle's full immutable media archive is complete.
+       // A revoked/foreign/current-version denial can never be bypassed.
+       if([400,401,403,409,412].includes(error?.status))throw error;
+       const archive=await liveSync.command(b.schoolId,{
+         command:'bundleArchive',bundleId:bundle.bundleId});
+       if(archive?.bundleProtocol!==1||archive.schoolId!==b.schoolId||
+          archive.bundleId!==bundle.bundleId||archive.archiveReady!==true||
+          !Array.isArray(archive.files))
+         fail(503,'Verified archived portrait unavailable');
+       const photos=archive.files.filter(f=>f.kind==='photo');
+       const saved=photos.length===1?photos[0]:null;
+       if(!saved||saved.id!==pointer.id||saved.sha256!==pointer.sha256||
+          saved.mime!==pointer.mime||saved.sizeBytes!==pointer.sizeBytes||
+          typeof saved.fileId!=='string'||
+          !/^[A-Za-z0-9_-]{1,200}$/.test(saved.fileId))
+         fail(502,'Archived portrait identity differs from live bundle');
+       const reply=await signed(m,{action:'managed_file',fileId:saved.fileId});
+       const encoded=reply?.base64;
+       if(reply?.success!==true||reply.schoolId!==b.schoolId||
+          reply.mime!==pointer.mime||typeof encoded!=='string'||
+          encoded.length!==Math.ceil(pointer.sizeBytes/3)*4||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+         fail(502,'Signed school Drive portrait readback missing');
+       const bytes=Buffer.from(encoded,'base64');
+       if(bytes.length!==pointer.sizeBytes||
+          bytes.toString('base64')!==encoded||hash(bytes)!==pointer.sha256)
+         fail(502,'Archived portrait bytes differ from published SHA');
+       const current=await liveSync.command(b.schoolId,{
+         command:'ownerBundle',role:session.role,personId:session.personId});
+       if(current?.found!==true||current.schoolId!==b.schoolId||
+          current.bundleId!==bundle.bundleId||current.noPhoto===true||
+          current.portrait?.id!==pointer.id||
+          current.portrait?.sha256!==pointer.sha256)
+         fail(409,'Published portrait changed during verified archive read');
+       file={success:true,schoolId:b.schoolId,bundleProtocol:1,
+         bundleId:bundle.bundleId,kind:'photo',id:pointer.id,
+         mime:pointer.mime,sizeBytes:bytes.length,sha256:pointer.sha256,
+         base64:encoded,ownerRole:session.role,personId:session.personId,
+         fileId:saved.fileId,archiveReady:true};
+     }
      if(file.ownerRole!==session.role||file.personId!==session.personId||
         file.sha256!==pointer.sha256||file.mime!==pointer.mime||
         file.sizeBytes!==pointer.sizeBytes)
