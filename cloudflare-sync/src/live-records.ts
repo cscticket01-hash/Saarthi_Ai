@@ -334,14 +334,42 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
        proofs.length===1&&proofs[0].mime==='application/pdf'),
      'Original media proof does not match bundle type',412);
    if(personKind){
+     // A bundled Person MUST NOT contain another photo source outside the
+     // immutable staged portrait. Otherwise a peer could display or back up
+     // a different image while the bundle receipt claims one atomic photo.
+     // Keep empty optional input fields for legacy no-photo creates.
+     const unstagedPortrait=(value:unknown,depth=0):boolean=>{
+       if(depth>12)return true;
+       if(typeof value==='string')return value.trimStart().startsWith('data:image/');
+       if(Array.isArray(value))return value.some(item=>unstagedPortrait(item,depth+1));
+       if(value&&typeof value==='object'){
+         for(const [key,item] of Object.entries(value as Record<string,unknown>)){
+           if(/^(?:photo(?:url|base64|fileid|path|uri|mimetype|sourcehash)|portrait(?:url|base64|fileid|path|uri)|imagebase64)$/i.test(key)&&
+              item!==null&&item!==undefined&&
+              (typeof item!=='string'||item.trim().length>0))return true;
+           if(unstagedPortrait(item,depth+1))return true;
+         }
+       }
+       return false;
+     };
      demand(personCollections.has(String(first.collection))&&
-       !Object.hasOwn(head,'atomicPortrait'),
-       'Person and ID document must commit as one verified pair',412);
+       !Object.hasOwn(head,'atomicPortrait')&&!unstagedPortrait(head),
+       'Person photo must be staged with the original atomic portrait',412);
      const teacher=first.collection==='teachers_directory';
-     const generation=String(head.mobileStableId||first.id);
+     demand(typeof head.mobileStableId==='string'&&
+       /^p-[a-f0-9]{32,64}$/.test(head.mobileStableId),
+       'Original person generation required for an ID bundle',409);
+     const generation=String(head.mobileStableId);
      demand(child.personId===generation&&child.ownerRole===(teacher?'teacher':'student')&&
-       (teacher?child.teacherId===first.id:child.studentId===first.id),
-       'ID document belongs to a different person generation',409);
+       child.studentId===first.id&&
+       (teacher?child.teacherId===first.id:
+         child.teacherId===undefined)&&
+       child.documentKind==='idCard'&&child.documentId===last.id&&
+       child.documentRevision===last.operationId&&
+       child.contentHash===proofs[0].sha256&&
+       child.mimeType==='application/pdf'&&
+       child.sizeBytes===proofs[0].sizeBytes,
+       'ID document must match the exact owner generation and staged PDF',409);
      bundleOwner={role:teacher?'teacher':'student',personId:generation};
    }else{
      demand(head.studentId!==undefined&&typeof head.studentId==='string'&&
