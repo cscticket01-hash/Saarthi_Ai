@@ -179,11 +179,23 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   const card=files.filter(f=>f.kind==='idCard');
   demand(card.length===1&&typeof card[0].id==='string'&&
     /^[a-f0-9]{64}$/.test(card[0].id),'Published ID card proof unavailable',412);
+  const photos=files.filter(f=>f.kind==='photo');
+  demand(photos.length<=1&&photos.every(p=>
+    typeof p.id==='string'&&/^[a-f0-9]{64}$/.test(p.id)&&
+    typeof p.sha256==='string'&&/^[a-f0-9]{64}$/.test(p.sha256)&&
+    ['image/jpeg','image/png','image/webp'].includes(String(p.mime))&&
+    Number.isSafeInteger(p.sizeBytes)&&Number(p.sizeBytes)>0&&
+    Number(p.sizeBytes)<=40*1024),
+    'Published school portrait proof unavailable',412);
   return {bundleProtocol:1,schoolId:school,found:true,
     bundleId:saved.bundleId,id:card[0].id,sha256:card[0].sha256,
     sizeBytes:card[0].sizeBytes,mime:card[0].mime,
     archiveReady:saved.archiveReady===true,
-    noPhoto:!files.some(f=>f.kind==='photo')};
+    noPhoto:photos.length===0,
+    ...(photos.length===1?{portrait:{
+      id:photos[0].id,sha256:photos[0].sha256,mime:photos[0].mime,
+      sizeBytes:photos[0].sizeBytes,
+    }}:{})};
  }
  if(command==='ownerFinancialBundle'){
   // Internal school DO lookup. The broker MUST first verify the student's
