@@ -791,6 +791,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     );
   }
 
+  String? _portraitCacheKey;
+  Future<Uint8List?>? _portraitRead;
+  Future<Uint8List?> _schoolPortrait() {
+    final key=jsonEncode([_s.link?.projectId,_s.link?.role,
+      _s.link?.personId,_data['atomicPortraitBundle']]);
+    if(_portraitCacheKey==key&&_portraitRead!=null)return _portraitRead!;
+    _portraitCacheKey=key;
+    final read=_s.publishedAtomicPortrait();
+    _portraitRead=read;
+    unawaited(read.catchError((Object _) {
+      if(identical(_portraitRead,read))_portraitRead=null;
+      return null;
+    }));
+    return read;
+  }
+
   Future<Uint8List?>? _cardRefresh;
   Future<Uint8List?> _refreshPublishedCard() {
     if (_cardRefresh != null) return _cardRefresh!;
@@ -1394,6 +1410,23 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       _card(
         Column(
           children: [
+            if(_data['atomicPortraitBundle'] is Map)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: FutureBuilder<Uint8List?>(
+                  future:_schoolPortrait(),
+                  builder:(context,snapshot){
+                    final bytes=snapshot.data;
+                    if(bytes==null||bytes.isEmpty)
+                      return const CircleAvatar(
+                        radius:42,child:Icon(Icons.person_outline,size:40));
+                    return ClipOval(child:Image.memory(bytes,
+                      width:84,height:84,fit:BoxFit.cover,
+                      errorBuilder:(_,__,___)=>const CircleAvatar(
+                        radius:42,child:Icon(Icons.person_outline,size:40))));
+                  },
+                ),
+              ),
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
             if(_data['atomicIdCardBundle'] is Map &&
