@@ -46,5 +46,30 @@ async function main(){
  console.log('ORIGINAL_DELETE_RECEIPT_DIAGNOSIS '+JSON.stringify({
   status:'READ_ONLY_VERIFIED',review,backendRuntimeMatchesProject:true
  }));
+ // Inspect ONLY the original school-owned tombstone and bounded cursors.
+ // Archive IDs, record contents, credentials and remote request data are never logged.
+ const own=await send(API,{action:'managed/records',operation:'read',collection:'students_directory',
+  id:STUDENT,schoolId:SCHOOL,syncProtocol:2},login.data.idToken);
+ if(own.status!==200||own.data.success!==true||own.data.schoolId!==SCHOOL||
+    own.data.pointRead!==true)throw Error('Original TEST tombstone cannot be read securely');
+ const row=own.data.records?.[STUDENT],plan=row?._syncErasePlan;
+ if(!row||row.schoolId!==SCHOOL||row._syncDeleted!==true||
+    row._syncOperationId!==OP||plan?.version!==1||
+    !Array.isArray(plan.targets)||!Array.isArray(plan.files))
+  throw Error('Original scoped Delete Everywhere plan not proven');
+ const bounded=(n,len)=>Number.isInteger(n)&&n>=0&&n<=len?n:null;
+ const archiveCount=Array.isArray(plan.archiveIds)?plan.archiveIds.length:null;
+ console.log('ORIGINAL_DELETE_PLAN_DIAGNOSIS '+JSON.stringify({
+  status:'READ_ONLY_VERIFIED',
+  targetCursor:bounded(plan.cursor,plan.targets.length),
+  targetTotal:plan.targets.length,
+  fileCursor:bounded(plan.fileCursor,plan.files.length),
+  fileTotal:plan.files.length,
+  archivesComplete:plan.archivesComplete===true,
+  archiveCursor:archiveCount===null?null:bounded(plan.archiveCursor,archiveCount),
+  archiveTotal:archiveCount,
+  scanRemainingFrames:Array.isArray(plan.archiveScan?.stack)?plan.archiveScan.stack.length:null,
+  complete:plan.complete===true
+ }));
 }
 main().catch(e=>{console.error('ORIGINAL_DELETE_DIAGNOSIS_FAILED '+String(e.message).slice(0,175));process.exitCode=1});
