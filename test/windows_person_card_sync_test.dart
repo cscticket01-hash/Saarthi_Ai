@@ -200,6 +200,8 @@ void main() {
    final cloudParent={...originalParent,'_syncRevision':'live-parent-verified',
      '_syncOperationId':parentOp};
    final cloudDoc={'schoolId':school,'bundleId':bundleId,
+     'documentKind':'idCard','documentId':'id-verified',
+     'documentRevision':cardOp,'mimeType':'application/pdf',
      'studentId':'student-verified','personId':stable,'ownerRole':'student',
      'contentHash':contentHash,'fileId':'googleDriveVerifiedFile001',
      'bundleMedia':[{'kind':'idCard','sha256':contentHash,
@@ -222,6 +224,15 @@ void main() {
        verifiedBackups:backup,cardSha256:hash);
    await expectLater(Future<void>.sync(()=>finish(hash:'f'*64)),throwsStateError);
    expect((await parentQueueRef.get()).data(),isNotNull);
+   expect((await documentQueueRef.get()).data(),isNotNull);
+   await expectLater(db.finishVerifiedAtomicPersonCardOutbox(
+     school:school,parentQueueId:parentQueueRef.id,parentBefore:queuedParent,
+     parentLocalBefore:originalParent,documentId:documentQueueRef.id,
+     documentBefore:queuedDocument,documentLocalBefore:originalLocal,
+     bundleId:bundleId,parentCloud:cloudParent,
+     documentCloud:{...cloudDoc,'fileId':'different-unverified-drive-file'},
+     verifiedBackups:backup,cardSha256:contentHash),throwsStateError,
+     reason:'Cloud document and attested media must share one Drive file ID');
    expect((await documentQueueRef.get()).data(),isNotNull);
    await documentRef.set({...originalLocal,'documentRevision':'newer-local-card-edit'});
    await expectLater(Future<void>.sync(()=>finish()),throwsStateError);
