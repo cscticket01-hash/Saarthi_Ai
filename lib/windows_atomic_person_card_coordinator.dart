@@ -71,6 +71,22 @@ class WindowsAtomicPersonCardCoordinator {
     return true;
   }
 
+  /// A local Save can serialize identical original portrait bytes as a data
+  /// URI on one durable row and plain base64 on the other. Comparing the
+  /// encoded strings would incorrectly discard a valid atomic create. Do not
+  /// accept changed/missing or invalid bytes as the same queued operation.
+  static bool samePortraitSnapshot(Map original,Map queued) {
+    final first=inlinePortraitSource(original);
+    final second=inlinePortraitSource(queued);
+    if(first==null||second==null)return first==null&&second==null;
+    if(first==second)return true;
+    try {
+      final a=originalPortraitBytes(first),b=originalPortraitBytes(second);
+      return a.length==b.length&&
+        sha256.convert(a).toString()==sha256.convert(b).toString();
+    }catch(_){return false;}
+  }
+
   static bool photoFreeWire(Object? wire) {
     if(wire==null)return true;
     if(wire is! Map||hasUnstagedInlineMedia(wire))return false;
@@ -190,8 +206,7 @@ class WindowsAtomicPersonCardCoordinator {
       scope();
       if(originalParent==null||originalCard==null||
          !canStageOriginalPortrait(originalParent)||
-         inlinePortraitSource(originalParent)!=
-           inlinePortraitSource(parent['data'] as Map)||
+         !samePortraitSnapshot(originalParent,parent['data'] as Map)||
          originalCard['documentRevision']!=card['documentRevision']||
          originalCard['localPath']!=card['localPath']||
          originalParent['mobileStableId']!=(parent['data'] as Map)['mobileStableId'])
