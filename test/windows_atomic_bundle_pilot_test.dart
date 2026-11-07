@@ -212,6 +212,23 @@ void main(){
      'YWJjZA=='),utf8.encode('abcd'));
  });
 
+ test('equivalent portrait encodings reconcile to the exact original bytes',(){
+   final plain={'photoBase64':'YWJjZA=='};
+   final uri={'photoUrl':'data:image/jpeg;base64,YWJjZA=='};
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(plain,uri),isTrue);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(uri,plain),isTrue);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(plain,plain),isTrue);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot({},{}),isTrue);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot({},plain),isFalse);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(plain,{}),isFalse);
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(
+     plain,{'photoUrl':'data:image/jpeg;base64,YWJjZQ=='}),isFalse,
+     reason:'Changed original photo cannot be silently bound to a queued create');
+   expect(WindowsAtomicPersonCardCoordinator.samePortraitSnapshot(
+     plain,{'photoUrl':'data:image/jpeg;base64,%%%'}),isFalse,
+     reason:'Malformed persisted portrait is never treated as equivalent');
+ });
+
  test('receipt and marksheet reuse TEST cloud stage with exact printable PDF ceilings',() async {
    Uint8List document(int size) {
      final bytes=Uint8List(size);
