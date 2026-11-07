@@ -23,4 +23,5 @@ jobs:
         env:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+          VS_DIAGNOSE_ORIGINAL_TEST_DELETE: TEST_DELETE_42362168489_3677a100
         run: node .github/scripts/diagnose_original_delete_receipt.cjs
