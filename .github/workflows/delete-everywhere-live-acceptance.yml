@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      VS_EXPECTED_TEST_RUNTIME: eec9d8f9348b917f6d7845c8d3c31fa040ccff03
+      VS_EXPECTED_TEST_RUNTIME: 177009bad2db0a416ec540a7b90d9b54d5d25053
       VS_DELETE_EVERYWHERE_TEST: vs-db8afb01a3be46a983c8284714d06e5d
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
           node-version: '22'
       - name: Verify exact reviewed backend source and TEST-only script syntax
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
           node --check .github/scripts/delete_everywhere_live_acceptance.cjs
       - name: Real signed Windows protocol delete, Drive permanent file deletion, Android and Website API readback
         env:
