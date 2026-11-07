@@ -86,7 +86,10 @@ jobs:
     needs: read-only-test-cloud
     # Diagnostic only: observe the real currently deployed TEST broker without
     # claiming it matches the reviewed PR commit or Script contract.
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'
+    # Observe the real TEST connection for the atomic draft too; this is
+    # strictly an observation of the *currently deployed* runtime. It does
+    # not convert PR source checks into exact-source cloud acceptance.
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/live-sync-authority-v1-20261102' || github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105')
     name: Read-only current TEST licence and Drive diagnostic (not release acceptance)
     runs-on: ubuntu-latest
     timeout-minutes: 10
