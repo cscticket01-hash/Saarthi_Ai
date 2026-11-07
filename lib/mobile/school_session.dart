@@ -1454,6 +1454,19 @@ class SchoolSession {
     final oldPdfs = Map<String, dynamic>.from(_pdfCache);
     final merged = {...dashboard, ...result};
     final removedPdfs = <String, dynamic>{};
+    if(result['atomicBundleDiscoveryVersion']==1){
+      // Only a newly verified signed mobile owner lookup can prove that a
+      // previous school-published card/portrait is no longer authorized.
+      // A transport timeout retains the earlier cached dashboard instead.
+      if(!result.containsKey('atomicIdCardBundle'))
+        merged.remove('atomicIdCardBundle');
+      if(!result.containsKey('atomicPortraitBundle'))
+        merged.remove('atomicPortraitBundle');
+      final pointer=result['atomicIdCardBundle'];
+      if(pointer is Map&&pointer['noPhoto']==true&&
+         _pdfCache.containsKey('idCard'))
+        removedPdfs['idCard']=_pdfCache['idCard'];
+    }
     if (result['groupRecordDeltas'] != null) {
       if (result['mobileRecordDeltaVersion'] != 1 ||
           result['groupRecordDeltas'] is! Map) {
