@@ -71,5 +71,29 @@ async function main(){
   scanRemainingFrames:Array.isArray(plan.archiveScan?.stack)?plan.archiveScan.stack.length:null,
   complete:plan.complete===true
  }));
+ // Independently authenticate the ORIGINAL Cloudflare receipt. No new
+ // delete, retry, seed, archive mutation or credential is ever submitted.
+ const receipt=await send(API,{action:'managed/cloudflare/operation',schoolId:SCHOOL,
+  lane:'records',id:RECEIPT,waitMillis:0},login.data.idToken);
+ if(review.state==='completed'&&plan.complete===true){
+  const ack=receipt.data||{};
+  if(receipt.status!==200||ack.success!==true||ack.schoolId!==SCHOOL||
+     ack.driveState!=='verified'||ack.driveDeletionComplete!==true||
+     ack.firebaseDeletionComplete!==true||ack.deleteEverywhereVersion!==1||
+     !Array.isArray(ack.deletedFileIds)||!plan.files.every(id=>ack.deletedFileIds.includes(id))||
+     plan.archivesComplete!==true||plan.archiveCursor!==archiveCount)
+   throw Error('Completed TEST delete still lacks exact signed Drive and Firebase final ACK');
+  console.log('ORIGINAL_DELETE_SIGNED_FINAL_ACK '+JSON.stringify({
+   status:'PASS',schoolScoped:true,verifiedCloudflareReceipt:true,
+   driveDeletionComplete:true,firebaseDeletionComplete:true,
+   targetCount:plan.targets.length,ownedFilesDeleted:plan.files.length,
+   archivesVerified:archiveCount
+  }));
+ }else{
+  console.log('ORIGINAL_DELETE_SIGNED_FINAL_ACK '+JSON.stringify({
+   status:'PENDING',schoolScoped:true,verifiedCloudflareReceipt:false,
+   planComplete:plan.complete===true
+  }));
+ }
 }
 main().catch(e=>{console.error('ORIGINAL_DELETE_DIAGNOSIS_FAILED '+String(e.message).slice(0,175));process.exitCode=1});
