@@ -351,19 +351,22 @@ test('expired Cloudflare original portrait falls back to exact signed Drive byte
  const image={kind:'photo',id,sha256:sha,sizeBytes:bytes.length,
    mime:'image/jpeg',fileId:'verifiedOriginalSchoolPhoto01'};
  const portrait={id,sha256:sha,sizeBytes:bytes.length,mime:'image/jpeg'};
- let archived=true,oldOwner=true;
+ let archived=true,revokeAfterArchive=false,archiveRead=false;
  const rpc=async(s,l,b)=>{
    if(b.command==='ownerBundle')return {bundleProtocol:1,schoolId:s,
-     found:oldOwner,bundleId,portrait,noPhoto:false};
+     found:!revokeAfterArchive||!archiveRead,bundleId,portrait,noPhoto:false};
    if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
      bundleId,id,kind:'photo',sha256:sha,mime:'image/jpeg',
      sizeBytes:bytes.length,ownerRole:'student',personId:'verified-pupil'};
    if(b.command==='bundleProof')
      throw Object.assign(Error('Cloudflare bytes expired'),{status:404});
-   if(b.command==='bundleArchive')return {bundleProtocol:1,schoolId:s,
+   if(b.command==='bundleArchive'){
+     archiveRead=true;
+     return {bundleProtocol:1,schoolId:s,
      bundleId,archiveReady:archived,files:[{kind:'idCard',id:'d'.repeat(64),
        sha256:'e'.repeat(64),mime:'application/pdf',sizeBytes:100},
        image]};
+   }
    throw Error('Unexpected original school media call '+b.command);
  };
  const fetchImpl=async(_url,opt)=>{
@@ -383,9 +386,9 @@ test('expired Cloudflare original portrait falls back to exact signed Drive byte
  assert.equal(success.archiveReady,true);
  assert.equal(success.fileId,image.fileId);
  assert.equal(Buffer.from(success.base64,'base64').toString('hex'),bytes.toString('hex'));
- archived=false;
+ archived=false;archiveRead=false;
  await assert.rejects(f.call(req),e=>e.status===503);
- archived=true;oldOwner=false;
+ archived=true;revokeAfterArchive=true;archiveRead=false;
  await assert.rejects(f.call(req),e=>e.status===409);
 });
 
