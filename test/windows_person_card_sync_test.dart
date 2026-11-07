@@ -274,18 +274,7 @@ void main() {
         'ID PDF archive manifest',
      if(cloudParent['atomicPortrait']!=null)'photo unexpectedly staged',
      if(cloudDoc['fileId'] is! String||
-        !RegExp(r'^[A-Za-z0-9_-]{1,200}
-   expect((await documentQueueRef.get()).data(),isNull);
-   expect((await parentRef.get()).data()?['_syncRevision'],'live-parent-verified');
-   expect((await db.collection('documents').doc('id-verified').get()).data()?['bundleId'],bundleId);
-   expect((await documentRef.get()).data()?['syncState'],'Synced');
-   expect((await documentRef.get()).data()?['cloudRevision'],'drive-card-confirmed');
-   expect((await db.collection('_windows_sync_receipts')
-       .doc('document-id-verified-$cardOp').get()).data()?['bundleId'],bundleId);
- });
-
-}
-).hasMatch(cloudDoc['fileId'] as String))
+        !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(cloudDoc['fileId'] as String))
         'verified Drive file ID',
      if(backup.length!=2)'backup count',
    ];
