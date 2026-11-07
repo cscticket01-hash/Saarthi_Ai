@@ -13,7 +13,7 @@ const PDF='1ZMaJR3NMtT1G5Uy0HJPtfKvHPac6wgnj';
 const OP='980a80a2ed52f3a498c4410209225e95';
 const ORIGINAL='da3ac36d-a064-469b-877f-774f2442d1ae';
 const API='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-const RUNTIME='ffea363c3ba05b99f1bed68315b5276be3572111';
+const RUNTIME='177009bad2db0a416ec540a7b90d9b54d5d25053';
 const PROJECT='saarthi-ai-df12b';
 const LOGIN='https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
 const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
@@ -47,21 +47,31 @@ async function firestore() {
  const app=initializeApp({credential:cert(account()),projectId:PROJECT},'verify-original-delete-'+process.env.GITHUB_RUN_ID);
  return {db:getFirestore(app),close:()=>deleteApp(app)};
 }
-async function plantExactSyntheticMirror(db,plan){
- // No creation of new GS/Drive records and NO writes to real student keys.
- // Every target must exist in the immutable, same-school sealed original plan.
- if(plan.complete!==true||plan.archivesComplete!==true||plan.cursor!==plan.targets.length||plan.fileCursor!==plan.files.length)
-  throw Error('Provider deletion plan is not fully verified: do not seed Firebase');
+function exactSyntheticMirrorProbe(plan){
+ // The only records eligible for both first-run positive proof and repeat
+ // readback are these exact scoped synthetic targets in the signed plan.
+ if(!plan||plan.complete!==true||plan.archivesComplete!==true||
+    !Array.isArray(plan.targets)||!Array.isArray(plan.files)||
+    plan.cursor!==plan.targets.length||plan.fileCursor!==plan.files.length)
+  throw Error('Provider deletion plan is not fully verified');
  const probe=[
   {collection:'students_directory',id:STUDENT},
   {collection:'documents',id:DOCUMENT},
   {collection:'fee_payments',id:FEE},
  ];
- let seeded=0,alreadyThere=0;
  for(const {collection,id} of probe){
   const target=plan.targets.find(t=>t.collection===collection&&t.id===id);
   if(!target||!target.sourceRevision||target.generation!==GENERATION)
    throw Error('Original synthetic Firebase target generation/revision not proven');
+ }
+ return probe;
+}
+async function plantExactSyntheticMirror(db,plan){
+ // Never create GS/Drive records or touch any real student keys.
+ const probe=exactSyntheticMirrorProbe(plan);
+ let seeded=0,alreadyThere=0;
+ for(const {collection,id} of probe){
+  const target=plan.targets.find(t=>t.collection===collection&&t.id===id);
   const ref=db.doc('schools/'+SCHOOL+'/'+collection+'/'+id);
   const before=await ref.get();
   if(before.exists){
@@ -137,15 +147,20 @@ async function main(){
  report.before={targetsProcessed:plan.cursor,targetsTotal:plan.targets.length,
   filesProcessed:plan.fileCursor,filesTotal:plan.files.length,
   archivesRedacted:plan.archiveCursor||0,archivesTotal:plan.archiveIds?.length??null};
- // Firestore proof must include positive *before* and negative *after* reads.
- // These same three TEST paths are reused on a retry, never duplicated.
- const probe=await plantExactSyntheticMirror(firebase.db,plan);
- report.stage='predelete-readback-verified';
- console.log('ORIGINAL_DELETE_BEFORE '+JSON.stringify(report.before));
- // Reopen the already-existing needsAttention receipt exactly once. This
- // never calls enqueue with a new ID and the Worker rechecks the stored payload.
+ // Query the ORIGINAL durable receipt before any Firestore write. On a
+ // verified replay we must not resurrect three already-deleted test mirrors.
  const current=await call({action:'managed/cloudflare/operation',lane:'records',id:RECEIPT,waitMillis:18000});
  let final=current.status===200&&current.data.success===true&&current.data.driveState==='verified'?current.data:null;
+ let probe;
+ if(final){
+  probe=exactSyntheticMirrorProbe(plan);
+  report.stage='verified-replay-readback-only';
+  report.firebaseBefore={checked:probe.length,seeded:0,existingSafeMirrors:0,allPresent:false};
+ }else{
+  probe=await plantExactSyntheticMirror(firebase.db,plan);
+  report.stage='predelete-readback-verified';
+ }
+ console.log('ORIGINAL_DELETE_BEFORE '+JSON.stringify(report.before));
  if(!final&&current.status===200&&current.data.success===true&&current.data.driveState==='pending'){
   report.originalReceiptAlreadyQueued=true;
  }else if(!final&&((current.status===409&&current.data.code==='DELETE_EVERYWHERE_ACK_UNVERIFIED')||
