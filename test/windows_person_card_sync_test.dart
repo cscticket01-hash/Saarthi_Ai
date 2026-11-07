@@ -240,6 +240,57 @@ void main() {
    expect((await documentQueueRef.get()).data(),isNotNull);
    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
       documentRef.set(originalLocal));
+   // Keep every archive guard observable in this regression: a green
+   // Cloudflare receipt is never permission to retire a changed Drive row.
+   final archiveGuardFailures=<String>[
+     if(db.activeProfileIdentity['schoolSyncId']!=school)'school profile',
+     if(queuedParent['atomicBundleId']!=bundleId||
+        queuedParent['atomicState']!='committed')'parent atomic reservation',
+     if(queuedDocument['atomicBundleId']!=bundleId||
+        queuedDocument['atomicState']!='committed')'card atomic reservation',
+     if(queuedDocument['documentRevision']!=originalLocal['documentRevision']||
+        queuedDocument['localPath']!=originalLocal['localPath'])'original PDF path/revision',
+     if(queuedDocument['personId']!=stable)'card generation',
+     if(originalParent['schoolId']!=school||
+        cloudParent['schoolId']!=school||
+        cloudParent['mobileStableId']!=stable||
+        cloudParent['_syncOperationId']!=parentOp)'person live identity',
+     if(cloudDoc['schoolId']!=school||
+        cloudDoc['bundleId']!=bundleId||
+        cloudDoc['documentKind']!='idCard'||
+        cloudDoc['documentId']!=documentQueueRef.id||
+        cloudDoc['documentRevision']!=cardOp||
+        cloudDoc['mimeType']!='application/pdf'||
+        cloudDoc['personId']!=stable||
+        cloudDoc['ownerRole']!='student'||
+        cloudDoc['studentId']!='student-verified'||
+        cloudDoc['_syncOperationId']!=cardOp||
+        cloudDoc['contentHash']!=contentHash)'card live identity',
+     if(cloudDoc['bundleMedia'] is! List||
+        (cloudDoc['bundleMedia'] as List).length!=1||
+        (cloudDoc['bundleMedia'] as List).first['kind']!='idCard'||
+        (cloudDoc['bundleMedia'] as List).first['sha256']!=contentHash||
+        (cloudDoc['bundleMedia'] as List).first['fileId']!=cloudDoc['fileId'])
+        'ID PDF archive manifest',
+     if(cloudParent['atomicPortrait']!=null)'photo unexpectedly staged',
+     if(cloudDoc['fileId'] is! String||
+        !RegExp(r'^[A-Za-z0-9_-]{1,200}
+   expect((await documentQueueRef.get()).data(),isNull);
+   expect((await parentRef.get()).data()?['_syncRevision'],'live-parent-verified');
+   expect((await db.collection('documents').doc('id-verified').get()).data()?['bundleId'],bundleId);
+   expect((await documentRef.get()).data()?['syncState'],'Synced');
+   expect((await documentRef.get()).data()?['cloudRevision'],'drive-card-confirmed');
+   expect((await db.collection('_windows_sync_receipts')
+       .doc('document-id-verified-$cardOp').get()).data()?['bundleId'],bundleId);
+ });
+
+}
+).hasMatch(cloudDoc['fileId'] as String))
+        'verified Drive file ID',
+     if(backup.length!=2)'backup count',
+   ];
+   expect(archiveGuardFailures,isEmpty,
+     reason:'Every immutable original archive identity field must match before CAS');
    await finish();
    expect((await parentQueueRef.get()).data(),isNull);
    expect((await documentQueueRef.get()).data(),isNull);
