@@ -1,9 +1,19 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const SCHOOL='vs-db8afb01a3be46a983c8284714d06e5d';
-const STUDENT='TEST_DELETE_42222529247_8ce61a39';
-const OP='980a80a2ed52f3a498c4410209225e95';
-const ORIGINAL='da3ac36d-a064-469b-877f-774f2442d1ae';
+// Exact, immutable TEST-only acceptance fixtures. Never infer a school,
+// record generation or operation ID from a caller-provided arbitrary string.
+const originalFixtures=Object.freeze({
+ 'TEST_DELETE_42222529247_8ce61a39':Object.freeze({
+  operationId:'980a80a2ed52f3a498c4410209225e95',
+  originalRevision:'da3ac36d-a064-469b-877f-774f2442d1ae'}),
+ 'TEST_DELETE_42362168489_3677a100':Object.freeze({
+  operationId:'376738e10b5ec7edbae9670383a3b790',
+  originalRevision:'1ac77f0b-030c-44c7-abe5-4343cb8b4d13'})
+});
+const STUDENT=process.env.VS_DIAGNOSE_ORIGINAL_TEST_DELETE||'';
+const selected=Object.hasOwn(originalFixtures,STUDENT)?originalFixtures[STUDENT]:null;
+const OP=selected?.operationId||'',ORIGINAL=selected?.originalRevision||'';
 const API='https://saarthi-sync-v2-test.onrender.com/school-cloud';
 const PROJECT='saarthi-ai-df12b';
 const sha=x=>createHash('sha256').update(x).digest('hex');
@@ -15,8 +25,8 @@ async function send(url,body,token){
  return {status:r.status,data:await r.json()};
 }
 async function main(){
- if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REF!=='refs/heads/feature/smart-sync-3')
-  throw Error('Isolated TEST runner required');
+ if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REF!=='refs/heads/feature/smart-sync-3'||!selected)
+  throw Error('Exact isolated TEST-only deletion receipt required');
  const h=await fetch(API+'/healthz',{signal:AbortSignal.timeout(20000)}).then(r=>r.json());
  if(h.ready!==true||h.projectId!==PROJECT||!/^[a-f0-9]{40}$/.test(h.runtimeCommit||'')||
   !/^[a-f0-9]{64}$/.test(h.adminCredentialFingerprint||''))
