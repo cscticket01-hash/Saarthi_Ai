@@ -126,6 +126,15 @@ void main(){
      'studentId':'student-one','optimizedMimeType':'application/pdf',
      'optimizedPath':'/isolated/student-card.pdf'};
    expect(WindowsAtomicPersonCardCoordinator.matches(school,parent,doc),isTrue);
+   final teacher={...parent,
+     'collection':'teachers_directory',
+     'data':{'schoolId':school,'mobileStableId':'p-'+'6'*32}};
+   final teacherCard={...doc,'ownerRole':'teacher','personId':'p-'+'6'*32,
+     'teacherId':'student-one'};
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,teacher,teacherCard),isTrue);
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+     {...teacher,'data':{'schoolId':school,'mobileStableId':'p-broken'}},
+     teacherCard),isFalse,reason:'Teacher QR owner must use a verified generation');
    for(final bad in <Map<String,dynamic>>[
      {...doc,'schoolId':'vs-'+'f'*32},
      {...doc,'documentKind':'feeReceipt'},
