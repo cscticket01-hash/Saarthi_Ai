@@ -418,8 +418,13 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
   id:photoId,sha256:photoSha,mime:'image/jpeg',
   sizeBytes:photoBytes.length,
  },'Person and exact original 40 KiB portrait pointer commit atomically');
- assert.equal((await rpc({command:'ownerBundle',role:'student',
-  personId:'p-'+'8'.repeat(32)})).value.noPhoto,false);
+ const photoOwner=await rpc({command:'ownerBundle',role:'student',
+  personId:'p-'+'8'.repeat(32)});
+ assert.equal(photoOwner.value.noPhoto,false);
+ assert.deepEqual(photoOwner.value.portrait,{
+   id:photoId,sha256:photoSha,mime:'image/jpeg',
+   sizeBytes:photoBytes.length,
+ },'Authorized mobile portrait and published PDF share one atomic receipt');
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',
   id:photoId})).value.sha256,photoSha);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);
