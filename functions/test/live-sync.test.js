@@ -297,6 +297,51 @@ test('Android atomic ID PDF only reaches the mobile session owner of its publish
  await assert.rejects(off.call(request),e=>e.status===412);
 });
 
+test('signed mobile portrait reads the original same-person Cloudflare file only',async()=>{
+ const bytes=Buffer.from([0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,
+   0x49,0x46,0x00,0x01,0x00,0x01,0x00,0x00,0x00,0x00,0xff,0xd9]);
+ const sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const bundleId='mobile-original-portrait-bundle-000001',id='f'.repeat(64);
+ let fileOwner='verified-pupil',noPhoto=false;const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push(b.command);
+   if(b.command==='ownerBundle')return {bundleProtocol:1,schoolId:s,
+     found:true,bundleId,id:'e'.repeat(64),noPhoto,
+     portrait:{id,sha256:sha,mime:'image/jpeg',sizeBytes:bytes.length}};
+   if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+     bundleId,id,kind:'photo',sha256:sha,mime:'image/jpeg',
+     sizeBytes:bytes.length,ownerRole:'student',personId:fileOwner};
+   if(b.command==='bundleProof')return {version:1,schoolId:s,id,
+     sha256:sha,mime:'image/jpeg',sizeBytes:bytes.length,staged:true};
+   if(b.command==='readPart')return {offset:0,sizeBytes:bytes.length,
+     sha256:sha,base64:bytes.toString('base64')};
+   throw Error('unexpected portrait operation '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const req={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_portrait',sessionToken:'s'.repeat(64),
+     deviceId:'school-mobile-original-portrait-device-01'}};
+ const result=await f.call(req);
+ assert.equal(result.available,true);
+ assert.equal(result.mobileAtomicPortrait,true);
+ assert.equal(result.contentHash,sha);
+ assert.equal(result.ownerRole,'student');
+ assert.equal(Buffer.from(result.base64,'base64').toString('hex'),bytes.toString('hex'));
+ const before=calls.length;
+ noPhoto=true;
+ const empty=await f.call(req);
+ assert.equal(empty.available,false);
+ assert.deepEqual(calls.slice(before),['ownerBundle'],
+   'A photo-free ID must not disclose or fetch old photo bytes');
+ noPhoto=false;fileOwner='foreign-pupil-generation';
+ await assert.rejects(f.call(req),e=>e.status===403);
+ await assert.rejects(f.call({...req,schoolId:B}),
+   e=>e.status===412||e.status===403);
+ const disabled=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(disabled.call(req),e=>e.status===412);
+});
+
 test('atomic document Drive backup waits for every staged file proof and enriches only after verification',async()=>{
  const bytes=Buffer.alloc(1024,32);
  bytes.write('%PDF-1.7',0,'ascii');
