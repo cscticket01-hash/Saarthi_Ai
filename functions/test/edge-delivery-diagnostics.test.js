@@ -68,3 +68,17 @@ test('explicit Delete Everywhere never reports Drive verified until Firebase AND
  assert.equal(values.result.driveDeletionComplete,true);
  assert.equal(values.result.firebaseDeletionComplete,true);
 });
+
+test('Firebase permission denial retains the immutable cloud ticket under owner review',async()=>{
+ const logs=[];
+ const {finished}=await run(async()=>{
+   throw Object.assign(Error('private credentials must not be reported'),
+      {status:503,code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'});
+ }, e=>logs.push(e));
+ assert.equal(finished.state,'needsAttention');
+ assert.equal(finished.failureCode,'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED');
+ assert.equal(finished.nextAttemptAt,Number.MAX_SAFE_INTEGER);
+ assert.deepEqual(logs,[{event:'edge_delivery_failure',lane:'records',phase:'deliver',
+   code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED',status:503}]);
+ assert(!JSON.stringify(logs).includes('credentials'));
+});
