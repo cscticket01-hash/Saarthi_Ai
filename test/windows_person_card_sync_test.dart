@@ -278,6 +278,31 @@ void main() {
         'verified Drive file ID',
      if(backup.length!=2)'backup count',
    ];
+   // Check the original unmodified Person snapshot, not just the archived
+   // signed media manifest: an inline source cannot be silently dropped.
+   final queuedSource=queuedParent['data'];
+   final originalPhotoSource=queuedSource is Map
+       ? (queuedSource['photoBase64'] is String&&
+          (queuedSource['photoBase64'] as String).trim().isNotEmpty
+            ?queuedSource['photoBase64']:queuedSource['photoUrl'])
+       :null;
+   final hasOriginalPhoto=originalPhotoSource is String&&
+       originalPhotoSource.trim().isNotEmpty;
+   if(((cloudDoc['bundleMedia'] as List).length==2)!=hasOriginalPhoto)
+      archiveGuardFailures.add('original portrait versus archived media count');
+   if(hasOriginalPhoto&&cloudParent['atomicPortrait'] is! Map)
+      archiveGuardFailures.add('original portrait lacks signed identity');
+   if(!RegExp(r'^[a-f0-9]{64}$').hasMatch(contentHash))
+      archiveGuardFailures.add('PDF hash envelope');
+   if(!RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId))
+      archiveGuardFailures.add('bundle ID envelope');
+   if(cloudParent['_syncDeleted']==true||cloudDoc['_syncDeleted']==true)
+      archiveGuardFailures.add('deleted cloud record');
+   if(queuedParent['collection']!='students_directory'||
+      queuedParent['documentId']!='student-verified'||
+      queuedParent['operationId']!=parentOp||
+      queuedDocument['documentRevision']!=cardOp)
+      archiveGuardFailures.add('original operation identity');
    expect(archiveGuardFailures,isEmpty,
      reason:'Every immutable original archive identity field must match before CAS');
    await finish();
