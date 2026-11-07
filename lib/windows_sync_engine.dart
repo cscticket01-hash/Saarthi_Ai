@@ -8,6 +8,9 @@ import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
 import 'windows_school_identity.dart';
 import 'windows_person_card_sync.dart';
+import 'windows_connect/atomic_bundle_pilot.dart';
+import 'windows_atomic_person_card_coordinator.dart';
+import 'windows_atomic_financial_coordinator.dart';
 import 'windows_id_card_reviews.dart';
 import 'windows_sync_inbox.dart';
 import 'sync_latency_statistics.dart';
@@ -392,6 +395,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       canRun:()=>!isPaused&&!_resetPaused,
       call:(action,body)=>ManagedSchoolSession.callForSchool(school,action,body),
       onWork:(){if(automaticScheduleExpected){if(_syncing)_rerunRequested=true;scheduleSoon();}},
+      reconcileBundle:(entries) async {
+        final active=_liveRuntime;
+        if(active==null || _activeProfileId!=profile ||
+            _activeSchoolSyncId!=school || isPaused)return false;
+        final store=active.store;
+        if(store is! WindowsLiveRuntimeLocalStore)return false;
+        return store.reconcileBundle(entries,
+          (action,body)=>ManagedSchoolSession.callForSchool(school,action,body));
+      },
       reconcile:(targets)async {
         final generation=_remoteChangeGeneration;
         await _pullManagedChanges(schoolOverride:school,verifyInventory:false,
@@ -2334,6 +2346,48 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         try {
           _admitBatch();
           _setCheckingCloud(false);
+          if(AtomicBundlePilot.buildEnabled) {
+            // Isolated TEST builds only: prepare the same QR/ID card generator
+            // before any legacy Person outbox row is independently submitted.
+            // Production and unpaired records retain the existing path.
+            await SchoolPersonIdentity.preparePendingCreates(
+              _activeSchoolSyncId,canAdmit:()=>!isPaused);
+            final pendingParents=(await FirebaseFirestore.instance
+                .collection('_windows_firebase_outbox').get()).docs;
+            final targets=<String,Set<String>>{
+              'studentId':<String>{},'teacherId':<String>{}};
+            for(final row in pendingParents){
+              final item=row.data(),collection=item['collection'],
+                    id=item['documentId'];
+              if(item['schoolId']==_activeSchoolSyncId &&
+                 item['operation']=='set' && item['baseCloudRevision']=='' &&
+                 id is String && id.isNotEmpty &&
+                 !{'conflict','needsAttention'}.contains(item['syncState'])) {
+                if(collection=='students_directory')targets['studentId']!.add(id);
+                if(collection=='teachers_directory')targets['teacherId']!.add(id);
+              }
+            }
+            if(targets.values.any((set)=>set.isNotEmpty)){
+              await WindowsDocumentTemplates.publishChangedIdCards(
+                affectedPeople:targets,onCardRepair:_recordActivity);
+            }
+            _admitBatch();
+            await _measure('atomicPersonCardStage',()=>
+              WindowsAtomicPersonCardCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Reuse the same saved fee/ledger/receipt outboxes; only the
+            // isolated TEST owner can reserve or retire a complete triple.
+            _admitBatch();
+            await _measure('atomicFinancialStage',()=>
+              WindowsAtomicFinancialCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Actual Windows Exam Center Save uses exam_center_results.
+            // Pair that original row with its existing immutable PDF outbox.
+            _admitBatch();
+            await _measure('atomicExamMarksheetStage',()=>
+              WindowsAtomicFinancialCoordinator.runExam(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+          }
           await _measure('recordUploadStage', () => _pushManagedOutbox());
           unawaited(_refreshDriveDeliveries());
         } catch (e) {

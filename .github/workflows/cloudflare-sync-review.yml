@@ -31,6 +31,37 @@ on:
       - 'lib/windows_drive_delivery_queue.dart'
       - 'test/windows_drive_delivery_queue_test.dart'
       - 'test/windows_live_sync_runtime_test.dart'
+      - 'lib/mobile/atomic_card_delivery.dart'
+      - 'test/mobile_atomic_card_delivery_test.dart'
+      - 'lib/mobile/atomic_portrait_delivery.dart'
+      - 'test/mobile_atomic_portrait_delivery_test.dart'
+      - 'lib/main_android.dart'
+      - 'lib/web_atomic_bundle_review.dart'
+      - 'lib/sync_review_school_console.dart'
+      - 'test/web_atomic_bundle_review_test.dart'
+      - 'lib/windows_connect/atomic_bundle_pilot.dart'
+      - 'lib/windows_connect/atomic_portrait_preflight.dart'
+      - 'lib/windows_connect/atomic_person_portrait_delivery.dart'
+      - 'lib/windows_person_avatar.dart'
+      - 'test/atomic_person_portrait_delivery_test.dart'
+      - 'lib/windows_atomic_financial_coordinator.dart'
+      - 'lib/windows_local_firestore.dart'
+      - 'lib/windows_sync_engine.dart'
+      - 'lib/mobile/atomic_financial_delivery.dart'
+      - 'lib/windows_atomic_person_card_coordinator.dart'
+      - 'lib/windows_sync_engine.dart'
+      - 'lib/windows_pending_school_sync.dart'
+      - 'lib/windows_backend_bridge.dart'
+      - 'lib/windows_local_firestore.dart'
+      - 'test/windows_person_card_sync_test.dart'
+      - 'test/windows_atomic_bundle_pilot_test.dart'
+      - 'test/atomic_portrait_preflight_test.dart'
+      - 'test/windows_atomic_financial_coordinator_test.dart'
+      - 'test/windows_atomic_exam_local_save_test.dart'
+      - 'lib/windows_exam_service.dart'
+      - 'lib/windows_exam_history_screen.dart'
+      - 'test/mobile_atomic_financial_delivery_test.dart'
+      - 'test/live_sync_atomic_page_test.dart'
       - 'test/windows_live_sync_store_test.dart'
       - 'test/live_sync_receipt_test.dart'
       - 'test/windows_sheet_recovery_test.dart'
@@ -88,7 +119,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Verify 40 KB portrait size and retained quality
-        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart
+        run: flutter test --concurrency=1 test/smart_media_compression_test.dart test/document_processing_engine_test.dart test/template_artwork_compression_test.dart test/school_media_budgets_test.dart test/atomic_portrait_preflight_test.dart
       - name: Enforce 1/2/5 isolated device queues and disjoint-field merge
         env:
           APPDATA: ${{ runner.temp }}/live-five-pc-queues
@@ -151,12 +182,16 @@ jobs:
         run: flutter test --concurrency=1 --timeout 90s --name 'revoked PC proof|PC proof rejection keeps|transient theme connection error' test/windows_startup_test.dart
       - env:
           APPDATA: ${{ runner.temp }}/live-protocol-recovery
-        run: flutter test --concurrency=1 test/pdf_media_dedup_test.dart test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart
+        run: flutter test --concurrency=1 test/pdf_media_dedup_test.dart test/windows_live_sync_store_test.dart test/windows_live_sync_runtime_test.dart test/live_sync_atomic_page_test.dart test/live_sync_receipt_test.dart test/windows_drive_delivery_queue_test.dart test/windows_sheet_recovery_test.dart test/mobile_atomic_card_delivery_test.dart test/mobile_atomic_portrait_delivery_test.dart test/mobile_atomic_financial_delivery_test.dart test/web_atomic_bundle_review_test.dart test/windows_atomic_bundle_pilot_test.dart test/atomic_person_portrait_delivery_test.dart test/windows_atomic_financial_coordinator_test.dart test/windows_fee_collection_flow_test.dart
+      - name: Verify actual original Exam + Marksheet local Save (isolated TEST only)
+        env:
+          APPDATA: ${{ runner.temp }}/atomic-exam-school
+        run: flutter test --dart-define=SAARTHI_ATOMIC_BUNDLE_TEST=true --concurrency=1 --timeout 120s test/windows_atomic_exam_local_save_test.dart
       - name: Verify existing offline duplicate self-repair on independent SQLite devices
         env:
           APPDATA: ${{ runner.temp }}/live-duplicate-recovery
         run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 120s --plain-name 'offline identical entry adopts cloud original' test/windows_multi_pc_sync_test.dart
-      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_drive_delivery_queue.dart lib/windows_firebase_sync.dart lib/cloud_transfer_status.dart lib/windows_connect/managed_school_session.dart lib/windows_live_sync_runtime.dart lib/live_sync_protocol.dart lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart lib/windows_person_card_sync.dart lib/windows_school_identity.dart
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_drive_delivery_queue.dart lib/windows_firebase_sync.dart lib/cloud_transfer_status.dart lib/windows_connect/managed_school_session.dart lib/windows_live_sync_runtime.dart lib/live_sync_protocol.dart lib/mobile/cloudflare_lane.dart lib/mobile/school_session.dart lib/mobile/atomic_portrait_delivery.dart lib/main_android.dart lib/windows_settings_panel.dart lib/windows_sync_control_center.dart lib/windows_sync_engine.dart lib/sync_recovery_policy.dart lib/school_backend_transport.dart lib/windows_sync_recovery.dart lib/windows_connect/central_school_cloud.dart lib/windows_person_card_sync.dart lib/windows_school_identity.dart
       - env:
           APPDATA: ${{ runner.temp }}/cloudflare-apps
         run: flutter test --concurrency=1 --timeout 90s test/windows_person_card_sync_test.dart test/windows_sync_comparison_test.dart test/central_school_cloud_test.dart test/windows_sync_intelligent_repair_test.dart test/windows_local_first_save_test.dart test/windows_school_profile_restore_test.dart test/cloudflare_lane_test.dart test/mobile_attendance_outbox_test.dart test/mobile_attendance_permit_cache_test.dart test/mobile_attendance_history_test.dart test/windows_theme_presets_test.dart test/sync_recovery_policy_test.dart test/windows_sync_control_cleanup_test.dart

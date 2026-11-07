@@ -27,13 +27,101 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
-   if(b.command==='commit'||b.command==='backupFinish')await this.wake(Date.now()+250);
-   const result=liveCommand(this.ctx.storage,school,b);
+   if(b.command==='bundlePrepare'){
+    // Read-only preflight on the existing per-file DOs. No new file queue,
+    // no new record authority and, crucially, NO bundle commit/visible ACK.
+    demand(/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))&&Array.isArray(b.media)&&
+      b.media.length>=1&&b.media.length<=2&&
+      (b.requireDrive===undefined||typeof b.requireDrive==='boolean'),'Invalid media bundle manifest');
+    const media=b.media as Json[],seen=new Set<string>(),ids=new Set<string>(),proofs:Json[]=[];
+    // One existing file lane per PDF. Fee receipts and marksheets cannot
+    // masquerade as an ID card or attach an unrelated portrait.
+    const primary=String(media[0]?.kind||'');
+    demand(['idCard','receipt','marksheet'].includes(primary)&&
+      (primary==='idCard'||media.length===1),
+      'Only an ID with optional photo, or one original financial PDF is allowed',412);
+    for(const item of media){
+     demand(item&&typeof item==='object'&&!Array.isArray(item)&&
+       Object.keys(item).every(k=>['kind','id','uploadKey','sha256','sizeBytes','mime'].includes(k)),
+       'Invalid media proof request');
+     const kind=String(item.kind||''),id=String(item.id||'');
+     demand((kind===primary||(primary==='idCard'&&kind==='photo'))&&!seen.has(kind)&&
+       operationPattern.test(id)&&typeof item.uploadKey==='string'&&
+       /^[A-Za-z0-9_-]{1,150}$/.test(item.uploadKey)&&
+       id===await digest(JSON.stringify([school,item.uploadKey])),'Untrusted staged file identity',409);
+     const limit=kind==='idCard'?85*1024:kind==='receipt'?30*1024:
+       kind==='marksheet'?150*1024:40*1024;
+     const allowed=(kind==='photo'?
+       ['image/jpeg','image/png','image/webp'].includes(String(item.mime)):
+       item.mime==='application/pdf')&&Number.isSafeInteger(item.sizeBytes)&&
+       Number(item.sizeBytes)>0&&Number(item.sizeBytes)<=limit;
+     demand(allowed&&typeof item.sha256==='string'&&operationPattern.test(item.sha256)&&
+       !ids.has(id),'Media size, kind or digest rejected',413);
+     seen.add(kind);ids.add(id);
+     const proof=await this.env.LANES.getByName(school+'/file-'+id)
+       .command(school,'file-'+id,{command:'bundleProof',id,requireDrive:b.requireDrive===true}) as Json;
+     demand(proof.staged===true&&proof.version===1&&proof.schoolId===school&&
+       proof.id===id&&proof.uploadKey===item.uploadKey&&
+       proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
+       proof.mime===item.mime&&
+       (b.requireDrive!==true||proof.driveVerified===true&&
+        typeof proof.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(proof.fileId)),
+       'Staged file bytes or Drive receipt do not match bundle manifest',409);
+     proofs.push({kind,id,sha256:proof.sha256,sizeBytes:proof.sizeBytes,mime:proof.mime,
+       driveVerified:proof.driveVerified===true,...(proof.driveVerified===true?{fileId:proof.fileId}:{})});
+    }
+    demand(seen.has(primary),'Original PDF proof is required for atomic bundle',412);
+    const manifestHash=await digest(canonical({schoolId:school,bundleId:b.bundleId,media:media}));
+    return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+      mediaReady:true,archiveReady:proofs.every(p=>p.driveVerified===true),manifestHash,proofs};
+   }
+   if(b.command==='bundleArchive'){
+    // Internal backup barrier: staged bytes can be delivered instantly to
+    // peers, but the document must never claim a Drive backup until every
+    // original file-lane reports its matching verified Drive receipt.
+    const manifest=liveCommand(this.ctx.storage,school,
+      {command:'bundleArchiveManifest',bundleId:b.bundleId}) as Json;
+    const archived:Json[]=[];
+    for(const item of manifest.files as Json[]){
+      const id=String(item.id);
+      const proof=await this.env.LANES.getByName(school+'/file-'+id)
+        .command(school,'file-'+id,{command:'bundleProof',id,requireDrive:true}) as Json;
+      demand(proof.schoolId===school&&proof.version===1&&
+        typeof proof.staged==='boolean'&&proof.driveVerified===true&&proof.id===item.id&&
+        proof.sha256===item.sha256&&proof.sizeBytes===item.sizeBytes&&
+        proof.mime===item.mime&&typeof proof.fileId==='string'&&
+        /^[A-Za-z0-9_-]{1,200}$/.test(proof.fileId),
+        'Archive has no matching immutable Drive file receipt',412);
+      archived.push({...item,fileId:proof.fileId});
+    }
+    return {bundleProtocol:1,schoolId:school,bundleId:b.bundleId,
+      mediaManifestHash:manifest.mediaManifestHash,archiveReady:true,files:archived};
+   }
+   let verifiedMedia:Json|undefined;
+   if(b.command==='bundlePublish'){
+    // Only signed, hash-verified staged bytes can authorize peer visibility.
+    // Drive is an asynchronous backup, never a prerequisite for Cloudflare ACK.
+    demand(Object.keys(b).every(k=>['command','schoolId','lane','bundleId',
+      'operations','media','mediaManifestHash'].includes(k))&&
+      typeof b.mediaManifestHash==='string'&&/^[a-f0-9]{64}$/.test(b.mediaManifestHash),
+      'Invalid atomic person bundle request');
+    const prior=liveCommand(this.ctx.storage,school,{command:'bundleReceipt',
+      bundleId:b.bundleId,operations:b.operations,media:b.media,
+      mediaManifestHash:b.mediaManifestHash});
+    if(prior.found===true)return prior.receipt;
+    verifiedMedia=await this.command(school,'live',{command:'bundlePrepare',
+      bundleId:b.bundleId,media:b.media,requireDrive:false}) as Json;
+    demand(verifiedMedia.mediaReady===true&&
+      verifiedMedia.manifestHash===b.mediaManifestHash,'Staged media manifest changed',409);
+    b={...b,command:'bundleCommit'};
+   }
+   if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
+   const result=liveCommand(this.ctx.storage,school,b,Date.now(),false,verifiedMedia);
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
     const head=liveCommand(this.ctx.storage,school,{command:'head'});
     if(Number(head.cursor)>10000)liveCommand(this.ctx.storage,school,{command:'compact',before:Number(head.cursor)-10000});
    }
-   if(b.command==='commit')for(const socket of this.ctx.getWebSockets()){
+   if(b.command==='commit'||b.command==='bundleCommit')for(const socket of this.ctx.getWebSockets()){
     const grant=socket.deserializeAttachment() as LiveSocketGrant;
     try{if(grant.schoolId!==school||grant.expiresAt<=Date.now())socket.close(1008,'Refresh school authorization');else socket.send(JSON.stringify({liveProtocol:1,schoolId:school,cursor:result.cursor}));}catch{}
    }

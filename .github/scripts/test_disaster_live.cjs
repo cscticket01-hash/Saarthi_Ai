@@ -38,7 +38,7 @@ async function run(){
  report.readinessEvidence=await require('./await_test_gate.cjs').waitForTestGate({kind:'readiness',sha:process.env.GITHUB_SHA,token:process.env.GITHUB_TOKEN});
  // Never mutate a different broker deployment after the proof was reviewed.
  stage='test_runtime_identity';
- await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME||process.env.GITHUB_SHA);
  stage='test_authentication';
  const login=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+apiKey,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});assert.equal(login.http,200);const token=login.data.idToken;assert.ok(token);
  const call=async body=>{const r=await post(endpoint,{...body,schoolId},token);if(r.http!==200){const error=new Error('TEST request failed');error.http=r.http;error.category=r.data.code;throw error;}assert.equal(r.data.success,true);assert.equal(r.data.schoolId,schoolId);return r.data;};
@@ -48,7 +48,7 @@ async function run(){
  stage='capability_readiness';
  let ready=false;for(let n=0;n<40;n++){try{const r=await call({action:'managed/storage/check'});if(r.disasterRehearsalVersion===5&&r.brokerDisasterRehearsalVersion===5&&r.disasterReadbackVersion===1&&r.brokerDisasterReadbackVersion===1){ready=true;break;}}catch(_){}await delay(15000);}assert.ok(ready);pass('Authenticated TEST broker and reviewed disaster capability');
  stage='fixture_ack';
- await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME||process.env.GITHUB_SHA);
  const pdf=Buffer.from('%PDF-1.4\nSynthetic TEST disaster binary\n%%EOF\n');
  const {id,op,upload,original}=await require('./disaster_fixture_resume.cjs').prepareDisasterFixture(call,identity,schoolId,pdf,report);
  pass(identity.resumed?'Original operation and retained Drive bytes positively verified':'Original operation and file durable ACK');
@@ -94,9 +94,9 @@ async function run(){
    }
    if(step%10===0)console.log(JSON.stringify({stage:request.operation,phase:result.phase,step,copied:result.copied,binaryCount:result.binaryCount}));await delay(2000);
  }throw Error('TEST disaster job exceeds bounded verification window');};
- await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME||process.env.GITHUB_SHA);
  const backup=await execute({operation:'backup',operationId:crypto.createHash('sha256').update(id+'/backup').digest('hex')});pass('Complete managed-record and uploaded-byte archive hash readback');report.backupBinaryCount=backup.binaryCount;
- await require('./test_runtime_identity.cjs').waitForRuntime(process.env.GITHUB_SHA);
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME||process.env.GITHUB_SHA);
  const restored=await execute({operation:'rehearse',operationId:crypto.createHash('sha256').update(id+'/restore').digest('hex'),fileId:backup.fileId});pass('Separate private Sheets/Drive restore readback, stable retry identity');report.restoredRecordCount=restored.recordCount;report.restoredBinaryCount=restored.binaryCount;
  // Completed rehearsal metadata is historical. A new audit operation must
  // actually read the retained Sheets rows and hash every restored binary again.

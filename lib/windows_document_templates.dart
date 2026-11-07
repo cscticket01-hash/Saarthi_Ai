@@ -15,6 +15,7 @@ import 'school_qr_link.dart';
 import 'windows_school_identity.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/atomic_person_portrait_delivery.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'id_card_catalog.dart';
 import 'school_media_budgets.dart';
@@ -133,12 +134,20 @@ class WindowsDocumentTemplates {
 
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
     final url = data['photoUrl']?.toString().trim() ?? '';
-    if (url.isNotEmpty) return _image(url);
+    if (url.isNotEmpty) {
+      final found=await _image(url);
+      if(found!=null)return found;
+    }
     final raw = data['photoBase64']?.toString().trim() ?? '';
-    if (raw.isEmpty) return null;
-    return _image(
-      raw.startsWith('data:image/') ? raw : 'data:image/jpeg;base64,$raw',
-    );
+    if (raw.isNotEmpty) {
+      final found=await _image(
+        raw.startsWith('data:image/') ? raw : 'data:image/jpeg;base64,$raw',
+      );
+      if(found!=null)return found;
+    }
+    if(data['atomicPortrait'] is Map)
+      return AtomicPersonPortraitDelivery.cachedBytes(data);
+    return null;
   }
 
   static Future<Uint8List?> selected(

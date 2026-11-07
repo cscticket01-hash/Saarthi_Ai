@@ -200,4 +200,176 @@ void main(){
   await store.replaceCheckpoint(1,5);expect(await store.cursor(school),5);
   expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],pending['operationId']);
  });
+
+ test('durable inbox applies only whole bundles across the 100-record batching boundary',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('runtime-atomic-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  final ordinary=<Map<String,dynamic>>[
+    for(var i=1;i<=99;i++)
+      {'sequence':i,'collection':'school_expenses','id':'expense-$i',
+       'record':{'schoolId':school,'_syncRevision':'live-$i'}}
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':99,'head':101,'more':true,'events':ordinary,
+  },school,0));
+  final bundle=<Map<String,dynamic>>[
+    {'sequence':100,'collection':'students_directory','id':'person-one',
+     'bundleId':'atomic-person-card-0000001','bundleSize':2,'bundleIndex':0,
+     'record':{'schoolId':school,'_syncRevision':'live-100'}},
+    {'sequence':101,'collection':'documents','id':'id-card-one',
+     'bundleId':'atomic-person-card-0000001','bundleSize':2,'bundleIndex':1,
+     'record':{'schoolId':school,'_syncRevision':'live-101'}},
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':101,'head':101,'more':false,'events':bundle,
+  },school,99));
+  final first=await store.pending();
+  expect(first.length,99,reason:'a 2-record bundle cannot be split by the 100 cap');
+  expect(first.every((entry)=>entry.bundleId==null),isTrue);
+  await store.applied(first);
+  final second=await store.pending();
+  expect(second.map((e)=>e.collection).toList(),['students_directory','documents']);
+  expect(second.map((e)=>e.bundleIndex).toList(),[0,1]);
+  await db.collection('_windows_live_incoming').doc('$school-101').delete();
+  await expectLater(store.pending(),throwsStateError,
+    reason:'a lost card event must retain the parent for recovery');
+ });
+
+
+ test('Windows applies verified Person + ID Card together without producing uploads',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-success-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  const bundle='atomic-receiver-bundle-0001';
+  final parent=<String,dynamic>{'schoolId':school,'name':'Verified Student',
+    'mobileStableId':'p-verified-student-one','_syncRevision':'live-parent-one'};
+  final card=<String,dynamic>{'schoolId':school,'studentId':'person-1',
+    'personId':'p-verified-student-one','ownerRole':'student',
+    'bundleManifestHash':'a'*64,'_syncRevision':'live-card-one'};
+  final events=<Map<String,dynamic>>[
+   {'sequence':1,'collection':'students_directory','id':'person-1','record':parent,
+    'bundleId':bundle,'bundleSize':2,'bundleIndex':0},
+   {'sequence':2,'collection':'documents','id':'card-1','record':card,
+    'bundleId':bundle,'bundleSize':2,'bundleIndex':1},
+  ];
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,
+    'cursor':2,'head':2,'more':false,'events':events,
+  },school,0));
+  final entries=await store.pending();expect(entries.length,2);
+  var reads=0;
+  final done=await store.reconcileBundle(entries,(action,body)async{
+    expect(action,'managed/live/read');
+    reads++;
+    final record=body['collection']=='students_directory'?parent:card;
+    return {'success':true,'liveProtocol':1,'schoolId':school,
+      'recordRevision':record['_syncRevision'],'record':record};
+  });
+  expect(done,isTrue);expect(reads,2);
+  expect((await db.collection('students_directory').doc('person-1').get()).data()?['name'],'Verified Student');
+  expect((await db.collection('documents').doc('card-1').get()).data()?['studentId'],'person-1');
+  expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  await store.applied(entries);
+  expect((await store.pending()).isEmpty,isTrue);
+ });
+ test('pending local card edit blocks the entire incoming Person/Card transaction',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-blocked-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  await db.collection('documents').doc('card-blocked').set({
+    'schoolId':school,'name':'Unsynced card local edit'});
+  final old=(await db.collection('_windows_firebase_outbox').get()).docs.single.data();
+  final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+  const bundle='atomic-blocked-bundle-0001';
+  final person={'schoolId':school,'name':'Server student',
+    '_syncRevision':'live-server-parent'};
+  final card={'schoolId':school,'name':'Server card',
+    '_syncRevision':'live-server-card'};
+  await store.retainPage(LiveSyncPage.parse({
+    'success':true,'liveProtocol':1,'schoolId':school,'cursor':2,'head':2,
+    'more':false,'events':[
+      {'sequence':1,'collection':'students_directory','id':'person-blocked',
+       'bundleId':bundle,'bundleSize':2,'bundleIndex':0,'record':person},
+      {'sequence':2,'collection':'documents','id':'card-blocked',
+       'bundleId':bundle,'bundleSize':2,'bundleIndex':1,'record':card},
+    ],
+  },school,0));
+  final entries=await store.pending();
+  final applied=await store.reconcileBundle(entries,(action,body)async {
+    final value=body['collection']=='students_directory'?person:card;
+    return {'success':true,'liveProtocol':1,'schoolId':school,
+      'recordRevision':value['_syncRevision'],'record':value};
+  });
+  expect(applied,isFalse);
+  expect((await db.collection('students_directory').doc('person-blocked').get()).data(),isNull);
+  expect((await db.collection('documents').doc('card-blocked').get()).data()?['name'],
+    'Unsynced card local edit');
+  expect((await db.collection('_windows_firebase_outbox').get()).docs.single.data()['operationId'],
+    old['operationId']);
+  expect((await store.pending()).length,2);
+ });
+
+ test('Windows refuses incomplete original Person+Photo+ID proof before local CAS',()async{
+  FlutterSecureStorage.setMockInitialValues({});
+  await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+  final db=FirebaseFirestore.instance;
+  await db.switchProfile('atomic-photo-'+DateTime.now().microsecondsSinceEpoch.toString(),
+    identity:{'schoolId':school,'schoolSyncId':school});
+  const bundle='atomic-original-photo-bundle-0001';
+  const generation='p-99999999999999999999999999999999';
+  final photoId='a'*64,photoHash='b'*64;
+  final person={'schoolId':school,'mobileStableId':generation,
+   'name':'Atomic Student','_syncRevision':'live-photo-parent',
+   'atomicPortrait':{'bundleId':bundle,'documentId':'original-card',
+     'role':'student','id':photoId,'sha256':photoHash,
+     'mime':'image/jpeg','sizeBytes':1024}};
+  final doc={'schoolId':school,'studentId':'original-person',
+    'personId':generation,'ownerRole':'student','documentKind':'idCard',
+    'bundleId':bundle,'bundleManifestHash':'c'*64,
+    '_syncRevision':'live-photo-card',
+    'bundleMedia':[
+      {'kind':'idCard','sha256':'d'*64},
+      {'kind':'photo','id':photoId,'sha256':photoHash,
+       'mime':'image/jpeg','sizeBytes':1024},
+    ]};
+  final good=<Map<String,dynamic>>[
+    {'bundleId':bundle,'bundleSize':2,'bundleIndex':0,
+     'collection':'students_directory','id':'original-person','record':person},
+    {'bundleId':bundle,'bundleSize':2,'bundleIndex':1,
+     'collection':'documents','id':'original-card','record':doc},
+  ];
+  await db.applyVerifiedLiveBundle(school,good);
+  expect((await db.collection('students_directory')
+    .doc('original-person').get()).data()?['atomicPortrait'],
+    person['atomicPortrait']);
+  final wrong=[
+    {...good[0],'id':'different-person'},
+    {...good[1],'record':{
+      ...doc,'bundleMedia':[
+        {'kind':'idCard','sha256':'d'*64},
+        {'kind':'photo','id':photoId,'sha256':'f'*64,
+         'mime':'image/jpeg','sizeBytes':1024},
+      ],
+    }},
+  ];
+  // The guarded local transaction may reject an invalid bundle synchronously
+  // before it returns a Future. Capture both sync and async rejections.
+  await expectLater(Future<void>.sync(() => db.applyVerifiedLiveBundle(school,wrong)),
+    throwsStateError);
+  expect((await db.collection('students_directory')
+    .doc('different-person').get()).data(),isNull,
+    reason:'Bad photo cannot partially create a Person');
+ });
+
 }

@@ -16,6 +16,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'atomic_card_delivery.dart';
+import 'atomic_portrait_delivery.dart';
+import 'atomic_financial_delivery.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -1451,6 +1454,19 @@ class SchoolSession {
     final oldPdfs = Map<String, dynamic>.from(_pdfCache);
     final merged = {...dashboard, ...result};
     final removedPdfs = <String, dynamic>{};
+    if(result['atomicBundleDiscoveryVersion']==1){
+      // Only a newly verified signed mobile owner lookup can prove that a
+      // previous school-published card/portrait is no longer authorized.
+      // A transport timeout retains the earlier cached dashboard instead.
+      if(!result.containsKey('atomicIdCardBundle'))
+        merged.remove('atomicIdCardBundle');
+      if(!result.containsKey('atomicPortraitBundle'))
+        merged.remove('atomicPortraitBundle');
+      final pointer=result['atomicIdCardBundle'];
+      if(pointer is Map&&pointer['noPhoto']==true&&
+         _pdfCache.containsKey('idCard'))
+        removedPdfs['idCard']=_pdfCache['idCard'];
+    }
     if (result['groupRecordDeltas'] != null) {
       if (result['mobileRecordDeltaVersion'] != 1 ||
           result['groupRecordDeltas'] is! Map) {
@@ -1580,8 +1596,90 @@ class SchoolSession {
     return dashboard;
   }
 
+  /// TEST financial download is scoped to the same signed student session
+  /// and original document ID. The broker verifies the generation before any
+  /// Cloudflare bytes are returned. A response hash is checked again here.
+  Future<Uint8List?> publishedAtomicFinancialDocument(
+      String kind,String documentId) async {
+    final current=link;
+    if(current==null||!current.managed||current.role!='student')return null;
+    if(!{'receipt','marksheet'}.contains(kind)||
+       documentId.isEmpty||documentId.length>200||documentId.contains('/'))
+      throw StateError('Invalid original school document identity.');
+    final generation=_generation,school=current.schoolId;
+    final reply=await schoolCall('mobile_atomic_document',{
+      'kind':kind,'documentId':documentId,
+    });
+    if(generation!=_generation||!identical(current,link))
+      throw SchoolAccessDenied('School session changed during document delivery.');
+    if(reply['available']==false&&reply['success']==true&&
+       reply['schoolId']==school&&reply['mobileAtomicDocument']==true)
+      return null;
+    return AtomicFinancialDelivery.verify(school,kind,documentId,reply);
+  }
+
+  /// Read the original Person portrait from the same published bundle as
+  /// the ID card. The broker verifies the signed student's/teacher's session;
+  /// a missing, replaced or foreign image never becomes a cached success.
+  Future<Uint8List?> publishedAtomicPortrait() async {
+    final pointer=dashboard['atomicPortraitBundle'];
+    final current=link;
+    if(pointer is! Map||current==null||!current.managed)return null;
+    final generation=_generation,school=current.schoolId;
+    final response=await schoolCall('mobile_atomic_portrait',{});
+    if(generation!=_generation||!identical(current,link))
+      throw SchoolAccessDenied('School session changed during portrait delivery.');
+    if(response['success']==true&&response['available']==false&&
+       response['schoolId']==school&&response['mobileAtomicPortrait']==true)
+      return null;
+    return AtomicPortraitDelivery.verify(school,current.role,pointer,response);
+  }
+
   /// Fetch the exact school-published PDF, never independently render an ID.
   Future<Uint8List?> publishedIdCard() async {
+    final atomic=dashboard['atomicIdCardBundle'];
+    if(atomic is Map && link?.managed==true) {
+      // A photo-less PDF is still stored at the school, but the student
+      // preview remains hidden per the school ID-card policy.
+      if(atomic['noPhoto']==true)return null;
+      final revision='atomic-${atomic['bundleId']}';
+      if(cachedPdfVersion('idCard')==revision) {
+        final existing=await cachedPdf('idCard');
+        if(existing!=null)return existing;
+      }
+      final generation=_generation,school=link!.schoolId;
+      Map<String,dynamic>? response;
+      try {
+        response=await schoolCall('mobile_atomic_idcard',{});
+      } on SchoolAccessDenied {
+        rethrow;
+      } catch (_) {
+        if(generation!=_generation || link?.schoolId!=school)
+          throw SchoolAccessDenied('School session changed.');
+        // After Cloudflare's 24h verified-only retention, recover ONLY
+        // through the same student's signed Drive-backed document with
+        // exactly the published card SHA. Never downgrade a mismatched card.
+        if(!AtomicCardDelivery.canUseArchivedCard(
+          atomic,dashboard['idCardPackage']))rethrow;
+      }
+      if(response!=null) {
+        if(generation!=_generation || link?.schoolId!=school)
+          throw SchoolAccessDenied('School session changed.');
+        // A returned but forged/tampered response is NOT a fallback signal.
+        final bytes=AtomicCardDelivery.verify(school,atomic,response);
+        bool current(){
+          final latest=dashboard['atomicIdCardBundle'];
+          return generation==_generation && link?.schoolId==school &&
+            latest is Map && latest['bundleId']==atomic['bundleId'] &&
+            latest['id']==atomic['id'] && latest['sha256']==atomic['sha256'] &&
+            latest['noPhoto']!=true;
+        }
+        await cachePdf('idCard',revision,bytes,
+          expectedHash:atomic['sha256'] as String,accept:current);
+        if(!current())throw StateError('Published ID changed during download.');
+        return bytes;
+      }
+    }
     final manifest = dashboard['idCardPackage'];
     if (manifest is! Map)
       return dashboard.containsKey('idCardPackage')

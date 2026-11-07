@@ -145,6 +145,73 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  demand(operationPattern.test(id),'Invalid receipt ID');const row=get(id);demand(row,'Delivery receipt unavailable',404);
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
+ if(action==='bundleProof'){
+  // The existing file Durable Object is the only authority for its bytes.
+  // This signed internal proof never claims a Google Drive ACK.
+  demand(lane==='file-'+id,'File proof requires the original file owner',400);
+  await seal(id);
+  const current=get(id),manifest=JSON.parse(current.payload) as Json;
+  demand(['pending','retry','processing','completed'].includes(current.state),'Staged file is not durable',412);
+  const size=Number(manifest.sizeBytes);
+  // PDF proof can also certify a <=150 KiB TEST marksheet. ID/photo limits
+  // remain independently enforced by the verified-media bundle preflight.
+  const mediaMax=manifest.mime==='application/pdf'?150*1024:
+    ['image/jpeg','image/png','image/webp'].includes(String(manifest.mime))?40*1024:0;
+  demand(Number.isSafeInteger(size)&&size>0&&size<=mediaMax&&manifest.received===size&&
+    typeof manifest.sha256==='string'&&operationPattern.test(manifest.sha256)&&
+    typeof manifest.uploadKey==='string'&&
+    await digest(JSON.stringify([school,manifest.uploadKey]))===id,'Staged file manifest incomplete',412);
+  // Drive identity is independently signed, scoped and durable even after
+  // the 24h verified-only byte purge. Archive-only proof may survive a purge;
+  // cloud staging proof MUST NOT survive without its original bytes.
+  const result=current.response?((JSON.parse(current.response) as Json).result as Json):null;
+  const driveVerified=current.state==='completed'&&current.verified_at>0&&
+    result?.success===true&&result.schoolId===school&&
+    result.uploadResumableVersion===1&&result.uploadKey===manifest.uploadKey&&
+    result.sha256===manifest.sha256&&result.sizeBytes===size&&
+    result.committed===true&&result.offset===size&&
+    typeof result.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId);
+  const chunks=storage.sql.exec<{offset:number;size:number;body:ArrayBuffer}>(
+    'SELECT offset,size,body FROM edge_chunks ORDER BY offset').toArray();
+  const purged=chunks.length===1&&chunks[0].offset===0&&
+    chunks[0].size===size&&chunks[0].body.byteLength===0&&
+    current.purge_due===0&&current.verified_at>0;
+  if(purged){
+   demand(b.requireDrive===true&&driveVerified,
+     'Temporary Cloudflare bytes expired; signed Drive proof required',412);
+   return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+     sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:false,
+     driveVerified:true,fileId:result!.fileId};
+  }
+  demand(chunks.length===1&&chunks[0].offset===0&&chunks[0].size===size&&
+    chunks[0].body.byteLength===size,'Staged file bytes unavailable',412);
+  const bytes=new Uint8Array(chunks[0].body);
+  const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))]
+    .map(x=>x.toString(16).padStart(2,'0')).join('');
+  demand(actual===manifest.sha256,'Staged file SHA-256 mismatch',409);
+  if(manifest.mime==='application/pdf'){
+    demand(bytes.length>=16&&[0x25,0x50,0x44,0x46,0x2d].every((v,i)=>bytes[i]===v)&&
+      Buffer.from(bytes.subarray(Math.max(0,bytes.length-2048))).toString('latin1').includes('%%EOF'),
+      'Staged ID PDF is incomplete',412);
+  }else if(manifest.mime==='image/jpeg'){
+    demand(size>=6&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff&&
+      bytes[size-2]===0xff&&bytes[size-1]===0xd9,'Staged JPEG is incomplete',412);
+  }else if(manifest.mime==='image/png'){
+    demand(size>=20&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v)&&
+      [73,69,78,68,174,66,96,130].every((v,i)=>bytes[size-8+i]===v),
+      'Staged PNG is incomplete',412);
+  }else if(manifest.mime==='image/webp'){
+    demand(size>=20&&Buffer.from(bytes.subarray(0,4)).toString('ascii')==='RIFF'&&
+      Buffer.from(bytes.subarray(8,12)).toString('ascii')==='WEBP'&&
+      new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(4,true)+8===size,
+      'Staged WebP is incomplete',412);
+  }else demand(false,'Unsupported atomic bundle media type',412);
+  // No "completed" label alone can stand in for a verified Drive receipt.
+  if(b.requireDrive===true)demand(driveVerified,'Google Drive verified media receipt required',412);
+  return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+    sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true,
+    driveVerified, ...(driveVerified?{fileId:result!.fileId}: {})};
+ }
  if(action==='projection'){
   demand(lane==='records','Record projection unavailable',400);
   const saved=row.response?JSON.parse(row.response):{};

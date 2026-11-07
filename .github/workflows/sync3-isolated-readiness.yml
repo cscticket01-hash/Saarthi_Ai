@@ -17,6 +17,10 @@ on:
       - 'school-backend/**'
       - 'staging-school-cloud/**'
       - '.github/workflows/sync3-isolated-readiness.yml'
+      - '.github/workflows/disaster-test.yml'
+      - '.github/workflows/test-cloud-prerequisites.yml'
+      - '.github/scripts/connect_isolated_test_storage.cjs'
+      - '.github/scripts/test_sync_review_web.cjs'
 permissions:
   contents: read
   actions: read
@@ -29,11 +33,13 @@ jobs:
   read-only-test-cloud:
     # Include live-authority PR 206 in the genuine read-only TEST deployment gate. Do not waive exact runtime,
     # owner credentials, tested Apps Script version or read-only protocol acceptance.
-    if: (github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3') || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102'))
+    if: (github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3') || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/sync3-unified-repair-20261026' || github.head_ref == 'release/batch-pr189-190-191-20261031' || github.head_ref == 'feature/live-sync-authority-v1-20261102' || github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -46,16 +52,30 @@ jobs:
         run: node .github/scripts/await_test_gate.cjs
       - name: Read expected provider version from this exact source
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
-      - name: Check existing isolated TEST identity and read-only storage protocol
+      - name: Verify runtime and source-only gates fail closed
+        run: node --test .github/scripts/test_runtime_identity.test.cjs .github/scripts/verify_test_readiness_gate.test.cjs
+      - name: Classify PR source review or verify real deployed TEST (strict)
         env:
           VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
+          VS_TEST_HEAD_REF: ${{ github.head_ref }}
+          VS_UNDEPLOYED_SOURCE_PR: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105' }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: |
-          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
-          node .github/scripts/test_cloud_readiness.cjs
-      - name: Require actual readiness rather than successful script execution alone
-        run: node -e "const r=require('./build/cloud-prerequisites/report.json'); if(r.status!=='PASS') {console.error('Isolated TEST readiness '+r.status+'; inspect sanitized artifact.');process.exit(1);}"
+          # A draft PR is not a TEST deployment: prove source-level fences
+          # offline and record BLOCKED acceptance. Never call an unrelated,
+          # cold or unavailable TEST service and pretend it tested this SHA.
+          if [ "$VS_UNDEPLOYED_SOURCE_PR" = 'true' ]; then
+            node .github/scripts/verify_test_readiness_gate.cjs --emit-pr-source-only
+          else
+            node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+            node .github/scripts/test_cloud_readiness.cjs
+          fi
+      - name: Require real deployed acceptance or explicit unreleased PR BLOCKED evidence
+        env:
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
+          VS_TEST_HEAD_REF: ${{ github.head_ref }}
+        run: node .github/scripts/verify_test_readiness_gate.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -66,7 +86,10 @@ jobs:
     needs: read-only-test-cloud
     # Diagnostic only: observe the real currently deployed TEST broker without
     # claiming it matches the reviewed PR commit or Script contract.
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/live-sync-authority-v1-20261102'
+    # Observe the real TEST connection for the atomic draft too; this is
+    # strictly an observation of the *currently deployed* runtime. It does
+    # not convert PR source checks into exact-source cloud acceptance.
+    if: github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'feature/live-sync-authority-v1-20261102' || github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105')
     name: Read-only current TEST licence and Drive diagnostic (not release acceptance)
     runs-on: ubuntu-latest
     timeout-minutes: 10

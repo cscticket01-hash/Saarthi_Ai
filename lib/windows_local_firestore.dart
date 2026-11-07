@@ -224,6 +224,24 @@ class FirebaseFirestore {
   Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) =>
       _database.applyVerifiedStudentDeletion(school,id,generation,revision);
 
+  /// Reopen a disconnected document only if the EXACT queued snapshot is
+  /// still current. Reconnect callbacks must never rewrite a later Save, an
+  /// already-ACKed document, a changed school, or an administrator decision.
+  /// This uses the existing local storage writer, not another sync queue.
+  Future<bool> resumeDocumentOutboxAfterReconnect(
+    DocumentReference<Map<String,dynamic>> ref,
+    Map<String,dynamic> expected, {
+    required String schoolId,
+    required int retryAtMillis,
+  }) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_document_outbox') {
+      throw ArgumentError('Document outbox reference required');
+    }
+    return _database.resumeDocumentOutboxAfterReconnect(
+      ref.id,expected,schoolId:schoolId,retryAtMillis:retryAtMillis);
+  }
+
   /// Records a remote conflict only while the observed operation remains the
   /// exact durable current version. An administrator's newer review wins.
   Future<bool> recordOutboxConflict(DocumentReference<Map<String,dynamic>> ref,
@@ -285,6 +303,493 @@ class FirebaseFirestore {
       ()=>_database.applyOperations(operations));
   }
 
+  /// Apply one verified live event bundle using the existing serialized
+  /// local database transaction. Any pending edit/restore in *any* member
+  /// rejects the whole group; no partial parent/card visibility is possible.
+  /// This never generates a new outgoing operation or acknowledges Drive.
+  Future<void> applyVerifiedLiveBundle(String school,
+      List<Map<String,dynamic>> events) {
+    final profile=activeProfileId;
+    if(activeProfileIdentity['schoolSyncId']!=school ||
+        events.length<2 || events.length>5) {
+      throw StateError('Invalid atomic download school or group size.');
+    }
+    final group=events.first['bundleId'];
+    if(group is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(group)) {
+      throw StateError('Atomic bundle identity unavailable.');
+    }
+    // Verify Person + Portrait + ID as one consistent incoming group.
+    if(events.length==2&&
+       {'students_directory','teachers_directory'}.contains(
+         events.first['collection'])&&events.last['collection']=='documents') {
+      final parent=events.first['record'],child=events.last['record'];
+      if(parent is Map&&child is Map) {
+        final portrait=parent['atomicPortrait'],media=child['bundleMedia'];
+        final photos=media is List?
+          media.whereType<Map>().where((m)=>m['kind']=='photo').toList():<Map>[];
+        if(photos.length>1||(portrait is Map)!=(photos.length==1))
+          throw StateError('Incoming original portrait bundle is incomplete.');
+        if(portrait is Map) {
+          final role=events.first['collection']=='teachers_directory'?
+            'teacher':'student',photo=photos.single;
+          if(child['bundleId']!=group||child['documentKind']!='idCard'||
+             child['ownerRole']!=role||
+             child['personId']!=parent['mobileStableId']||
+             (role=='student'?child['studentId']:child['teacherId'])!=
+               events.first['id']||
+             portrait['bundleId']!=group||
+             portrait['documentId']!=events.last['id']||
+             portrait['role']!=role||portrait['id']!=photo['id']||
+             portrait['sha256']!=photo['sha256']||
+             portrait['mime']!=photo['mime']||
+             portrait['sizeBytes']!=photo['sizeBytes']||
+             photo['sha256'] is! String||
+             !RegExp(r'^[a-f0-9]{64}$').hasMatch(photo['sha256'] as String)||
+             photo['sizeBytes'] is! int||
+             (photo['sizeBytes'] as int)<12||
+             (photo['sizeBytes'] as int)>40*1024)
+            throw StateError('Incoming Person/Photo/ID proof changed.');
+        }
+      }
+    }
+    final seen=<String>{}, operations=<_WriteOperation>[];
+    for(var i=0;i<events.length;i++) {
+      final row=events[i],collection=row['collection'],id=row['id'];
+      final data=row['record'];
+      if(row['bundleId']!=group || row['bundleSize']!=events.length ||
+          row['bundleIndex']!=i || collection is! String ||
+          !liveSyncCollections.contains(collection) || id is! String ||
+          id.isEmpty || id.length>200 || id.contains('/') ||
+          data is! Map || data['schoolId']!=school ||
+          data['_syncDeleted']==true ||
+          data['_syncRevision'] is! String ||
+          !(data['_syncRevision'] as String).startsWith('live-') ||
+          !seen.add('$collection/$id')) {
+        throw StateError('Atomic download member did not verify.');
+      }
+      final ref=this.collection(collection).doc(id);
+      ref.requireOriginProfile();
+      operations.add(_WriteOperation._(type:_WriteType.set,
+        collection:collection,documentId:id,
+        data:Map<String,dynamic>.from(data),preservePending:true));
+    }
+    if(activeProfileId!=profile ||
+        activeProfileIdentity['schoolSyncId']!=school) {
+      throw StateError('Atomic download changed school profile.');
+    }
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(operations,rejectBlockedDownload:true));
+  }
+
+
+  /// TEST-only: reserve the two existing queues in the same disk transaction.
+  /// No queue is removed and a Cloudflare receipt is never a Drive receipt.
+  Future<void> markAtomicPersonCardOutbox({
+    required String school,required String parentQueueId,
+    required Map<String,dynamic> parentBefore,required String documentId,
+    required Map<String,dynamic> documentBefore,required String bundleId,
+    required String state,String? parentCloudRevision,
+    String? documentCloudRevision,
+  }) {
+    final personCollection=parentBefore['collection'];
+    final personId=parentBefore['documentId'];
+    final personOp=parentBefore['operationId'];
+    final cardOp=documentBefore['documentRevision'];
+    final data=parentBefore['data'];
+    final generation=data is Map?data['mobileStableId']:null;
+    if(activeProfileIdentity['schoolSyncId']!=school||
+       !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       !{'students_directory','teachers_directory'}.contains(personCollection)||
+       personId is! String||personOp is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(personOp)||
+       cardOp is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(cardOp)||
+       personOp==cardOp||
+       data is! Map||generation is! String||
+       parentBefore['schoolId']!=school||parentBefore['operation']!='set'||
+       parentBefore['priorDeletion']!=null||
+       parentBefore['baseCloudRevision']!=''||
+       documentBefore['schoolId']!=school||
+       documentBefore['documentId']!=documentId||
+       documentBefore['documentKind']!='idCard'||
+       documentBefore['deleted']==true||
+       documentBefore['baseCloudRevision']!=''||
+       documentBefore['studentId']!=personId||
+       documentBefore['personId']!=generation||
+       documentBefore['ownerRole']!=(personCollection=='teachers_directory'?'teacher':'student')||
+       !{'reserved','committed'}.contains(state)||
+       [parentBefore,documentBefore].any((row)=>
+         row['atomicBundleId']!=null&&row['atomicBundleId']!=bundleId||
+         row['atomicState']!=null&&!{'reserved','committed'}.contains(row['atomicState']))||
+       (state=='reserved'&&[parentBefore,documentBefore].any((row)=>
+         row['atomicState']=='committed'))||
+       (state=='committed'&&(
+         parentCloudRevision is! String||documentCloudRevision is! String||
+         !parentCloudRevision.startsWith('live-')||
+         !documentCloudRevision.startsWith('live-'))))
+      throw StateError('Original same-school atomic outbox pair changed.');
+    final parent={...parentBefore,'atomicBundleId':bundleId,'atomicState':state,
+      'atomicOperationId':personOp,
+      if(state=='committed')'atomicCloudRevision':parentCloudRevision};
+    final child={...documentBefore,'atomicBundleId':bundleId,'atomicState':state,
+      'atomicOperationId':cardOp,
+      if(state=='committed')'atomicCloudRevision':documentCloudRevision};
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations([
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_firebase_outbox',documentId:parentQueueId,data:parent),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_document_outbox',documentId:documentId,data:child),
+      ],expected:{
+        '_windows_firebase_outbox':{parentQueueId:_encodeMap(parentBefore)},
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+      }));
+  }
+
+
+  /// One serialized retirement after TWO verified Google Drive backups.
+  /// If either original queue or either local Save changed, nothing is
+  /// removed, no matter how many Cloudflare retries have succeeded.
+  Future<void> finishVerifiedAtomicPersonCardOutbox({
+    required String school,required String parentQueueId,
+    required Map<String,dynamic> parentBefore,
+    required Map<String,dynamic> parentLocalBefore,
+    required String documentId,required Map<String,dynamic> documentBefore,
+    required Map<String,dynamic> documentLocalBefore,
+    required String bundleId,required Map<String,dynamic> parentCloud,
+    required Map<String,dynamic> documentCloud,
+    required List<Map<String,dynamic>> verifiedBackups,
+    required String cardSha256,
+  }) {
+    final collection=parentBefore['collection'];
+    final personId=parentBefore['documentId'];
+    final personOp=parentBefore['operationId'];
+    final cardOp=documentBefore['documentRevision'];
+    final source=parentBefore['data'];
+    final generation=source is Map?source['mobileStableId']:null;
+    final role=collection=='teachers_directory'?'teacher':'student';
+    final media=documentCloud['bundleMedia'];
+    final fileId=documentCloud['fileId'];
+    final parentSource=source is Map?
+      (source['photoBase64'] is String&&
+        (source['photoBase64'] as String).trim().isNotEmpty?
+          source['photoBase64']:source['photoUrl']):null;
+    final hasOriginalPhoto=parentSource is String&&parentSource.trim().isNotEmpty;
+    final portrait=parentCloud['atomicPortrait'];
+    if(activeProfileIdentity['schoolSyncId']!=school||
+       !{'students_directory','teachers_directory'}.contains(collection)||
+       personId is! String||personOp is! String||cardOp is! String||
+       generation is! String||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(cardSha256)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       [parentBefore,documentBefore].any((r)=>
+         r['atomicBundleId']!=bundleId||r['atomicState']!='committed')||
+       documentBefore['documentRevision']!=documentLocalBefore['documentRevision']||
+       documentBefore['localPath']!=documentLocalBefore['localPath']||
+       documentBefore['personId']!=generation||
+       parentLocalBefore['schoolId']!=school||
+       parentCloud['schoolId']!=school||
+       parentCloud['_syncDeleted']==true||
+       parentCloud['mobileStableId']!=generation||
+       parentCloud['_syncOperationId']!=personOp||
+       documentCloud['schoolId']!=school||
+       documentCloud['_syncDeleted']==true||
+       documentCloud['bundleId']!=bundleId||
+       documentCloud['documentKind']!='idCard'||
+       documentCloud['documentId']!=documentId||
+       documentCloud['documentRevision']!=cardOp||
+       documentCloud['mimeType']!='application/pdf'||
+       documentCloud['personId']!=generation||
+       documentCloud['ownerRole']!=role||
+       (role=='student'?documentCloud['studentId']:documentCloud['teacherId'])!=personId||
+       documentCloud['_syncOperationId']!=cardOp||
+       documentCloud['contentHash']!=cardSha256||
+       media is! List||media.isEmpty||media.first is! Map||
+       (media.first as Map)['kind']!='idCard'||
+       (media.first as Map)['sha256']!=cardSha256||
+       (media.first as Map)['fileId']!=fileId||
+       (media.length==2)!=hasOriginalPhoto||
+       (hasOriginalPhoto&&(
+         media[1] is! Map || portrait is! Map ||
+         (media[1] as Map)['kind']!='photo' ||
+         (media[1] as Map)['sha256']!=portrait['sha256'] ||
+         (media[1] as Map)['id']!=portrait['id'] ||
+         (media[1] as Map)['mime']!=portrait['mime'] ||
+         (media[1] as Map)['sizeBytes']!=portrait['sizeBytes'] ||
+         portrait['bundleId']!=bundleId||
+         portrait['documentId']!=documentId||
+         portrait['role']!=role||
+         (media[1] as Map)['fileId'] is! String||
+         !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(
+           (media[1] as Map)['fileId'] as String)
+       ))||
+       (!hasOriginalPhoto&&portrait!=null)||
+       fileId is! String||
+       !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId)||
+       verifiedBackups.length!=2)
+      throw StateError('Atomic Person and ID Card archive identity differs.');
+    final originalOps=[personOp,cardOp],
+      originalCollections=[collection,'documents'],originalIds=[personId,documentId],
+      cloudRecords=[parentCloud,documentCloud];
+    for(var i=0;i<2;i++){
+      final backup=verifiedBackups[i];
+      if(backup['operationId']!=originalOps[i]||
+         backup['collection']!=originalCollections[i]||
+         backup['id']!=originalIds[i]||
+         backup['backupState']!='verified'||
+         backup['driveVerified']!=true||
+         backup['recordRevision']!=cloudRecords[i]['_syncRevision']||
+         backup['driveRevision'] is! String||
+         (backup['driveRevision'] as String).isEmpty||
+         (backup['driveRevision'] as String).startsWith('live-')||
+         (backup['driveRevision'] as String).startsWith('cf-'))
+        throw StateError('Both original Drive backup ACKs required.');
+    }
+    if(parentBefore['atomicCloudRevision']!=parentCloud['_syncRevision']||
+       documentBefore['atomicCloudRevision']!=documentCloud['_syncRevision'])
+      throw StateError('Original atomic Cloudflare revisions differ.');
+    final observedProfile=activeProfileId;
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final documentLocal={...documentLocalBefore,
+      'cloudRevision':verifiedBackups[1]['driveRevision'],
+      'baseCloudRevision':verifiedBackups[1]['driveRevision'],
+      'cloudFileUrl':'https://drive.google.com/file/d/$fileId/view',
+      'cloudUploadedAt':now,'atomicBundleId':bundleId,'syncState':'Synced'};
+    // Keep the exact local photo for offline UX; the cloud still owns the
+    // single school-scoped immutable portrait SHA/Drive reference.
+    final localPerson=<String,dynamic>{...parentCloud,
+      if(hasOriginalPhoto)...{
+        'photoUrl':'https://drive.google.com/file/d/${(media[1] as Map)['fileId']}/view',
+        'photoFileId':(media[1] as Map)['fileId'],
+        'photoBase64':parentSource,
+      },
+    };
+    if(activeProfileId!=observedProfile||
+       activeProfileIdentity['schoolSyncId']!=school)
+      throw StateError('School changed before original queue retirement.');
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations([
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_firebase_outbox',documentId:parentQueueId,
+          data:parentBefore,acknowledgedRevision:parentCloud['_syncRevision'] as String,
+          canonicalRecord:parentCloud),
+        _WriteOperation._(type:_WriteType.delete,
+          collection:'_windows_document_outbox',documentId:documentId,
+          data:documentBefore),
+        _WriteOperation._(type:_WriteType.set,
+          collection:collection as String,documentId:personId,data:localPerson),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'documents',documentId:documentId,data:documentCloud),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_local_student_documents',
+          documentId:documentId,data:documentLocal),
+        _WriteOperation._(type:_WriteType.set,
+          collection:'_windows_sync_receipts',
+          documentId:'document-$documentId-$cardOp',data:{
+            'schoolId':school,'operationId':cardOp,'collection':'documents',
+            'documentId':documentId,'recordRevision':documentCloud['_syncRevision'],
+            'driveRevision':verifiedBackups[1]['driveRevision'],
+            'contentHash':cardSha256,'bundleId':bundleId,
+            'verification':'original Drive backup and signed live readback',
+            'acknowledgedAt':now,
+          }),
+      ],expected:{
+        '_windows_firebase_outbox':{parentQueueId:_encodeMap(parentBefore)},
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+        collection as String:{personId:_encodeMap(parentLocalBefore)},
+        '_local_student_documents':{documentId:_encodeMap(documentLocalBefore)},
+      }));
+  }
+
+
+  /// TEST-only original fee/exam transaction reservation. The two existing
+  /// record queues and the original document queue are reserved in one CAS.
+  Future<void> markAtomicFinancialOutbox({
+    required String school,required String bundleId,
+    required List<Map<String,dynamic>> parents,required String documentId,
+    required Map<String,dynamic> documentBefore,required String state,
+    List<String>? cloudRevisions,
+  }) {
+    final kind=parents.length==2?'feeReceipt':'marksheet';
+    final names=parents.length==2?['fee_payments','fee_ledger']:
+      [(parents.first['before'] as Map?)?['collection']=='exam_center_results'
+        ?'exam_center_results':'exam_results'];
+    if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
+       activeProfileIdentity['schoolSyncId']!=school||
+       !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school)||
+       !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(bundleId)||
+       !(parents.length==1||parents.length==2)||
+       !{'reserved','committed'}.contains(state)||
+       documentBefore['documentId']!=documentId||
+       documentBefore['schoolId']!=school||
+       documentBefore['documentKind']!=kind||
+       documentBefore['documentRevision'] is! String||
+       documentBefore['deleted']==true||
+       documentBefore['baseCloudRevision']!=''||
+       (state=='committed'&&
+         (cloudRevisions==null||cloudRevisions.length!=parents.length+1||
+          cloudRevisions.any((r)=>!r.startsWith('live-'))))
+      )throw StateError('Financial atomic queue reservation rejected.');
+    final ops=<_WriteOperation>[],existing=<String,Map<String,dynamic>>{};
+    final used=<String>{documentBefore['documentRevision'] as String};
+    for(var i=0;i<parents.length;i++){
+      final entry=parents[i],id=entry['queueId'],prior=entry['before'];
+      if(id is! String||id.isEmpty||prior is! Map<String,dynamic>||
+         existing.containsKey(id)||prior['schoolId']!=school||
+         prior['collection']!=names[i]||prior['operation']!='set'||
+         prior['data'] is! Map||(prior['data'] as Map)['schoolId']!=school||
+         prior['documentId'] is! String||prior['operationId'] is! String||
+         !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(prior['operationId'])||
+         !used.add(prior['operationId'] as String)||
+         prior['fieldPatch']!=null||prior['priorDeletion']!=null||
+         (prior['atomicBundleId']!=null&&prior['atomicBundleId']!=bundleId)||
+         (prior['atomicState']!=null&&
+          !{'reserved','committed'}.contains(prior['atomicState']))||
+         (state=='reserved'&&prior['atomicState']=='committed'))
+        throw StateError('Original financial queue changed.');
+      existing[id]=_encodeMap(prior);
+      ops.add(_WriteOperation._(type:_WriteType.set,
+        collection:'_windows_firebase_outbox',documentId:id,
+        data:{...prior,'atomicBundleId':bundleId,'atomicState':state,
+          'atomicOperationId':prior['operationId'],
+          if(state=='committed')'atomicCloudRevision':cloudRevisions![i]}));
+    }
+    if(documentBefore['atomicBundleId']!=null&&
+         documentBefore['atomicBundleId']!=bundleId||
+       documentBefore['atomicState']!=null&&
+         !{'reserved','committed'}.contains(documentBefore['atomicState'])||
+       state=='reserved'&&documentBefore['atomicState']=='committed')
+      throw StateError('Original financial PDF queue changed.');
+    ops.add(_WriteOperation._(type:_WriteType.set,
+      collection:'_windows_document_outbox',documentId:documentId,
+      data:{...documentBefore,'atomicBundleId':bundleId,'atomicState':state,
+        'atomicOperationId':documentBefore['documentRevision'],
+        if(state=='committed')'atomicCloudRevision':cloudRevisions!.last}));
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(ops,expected:{
+        '_windows_firebase_outbox':existing,
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+      }));
+  }
+
+
+  /// Only exact verified Drive backups of every original queue member can
+  /// acknowledge and retire the SAME local fee/exam transaction atomically.
+  Future<void> finishVerifiedAtomicFinancialOutbox({
+    required String school,required String bundleId,
+    required List<Map<String,dynamic>> parents,
+    required List<Map<String,dynamic>> parentLocalBefore,
+    required String documentId,required Map<String,dynamic> documentBefore,
+    required Map<String,dynamic> documentLocalBefore,
+    required List<Map<String,dynamic>> cloudRecords,
+    required List<Map<String,dynamic>> verifiedBackups,
+    required String pdfSha256,
+  }) {
+    final count=parents.length,kind=count==2?'receipt':'marksheet';
+    final names=count==2?['fee_payments','fee_ledger']:
+      [(parents.first['before'] as Map?)?['collection']=='exam_center_results'
+        ?'exam_center_results':'exam_results'];
+    if(!const bool.fromEnvironment('SAARTHI_ATOMIC_BUNDLE_TEST')||
+       activeProfileIdentity['schoolSyncId']!=school||
+       !(count==1||count==2)||
+       parentLocalBefore.length!=count||cloudRecords.length!=count+1||
+       verifiedBackups.length!=count+1||
+       documentBefore['atomicBundleId']!=bundleId||
+       documentBefore['atomicState']!='committed'||
+       documentBefore['documentId']!=documentId||
+       documentBefore['contentHash']!=pdfSha256||
+       documentLocalBefore['documentRevision']!=documentBefore['documentRevision']||
+       documentLocalBefore['localPath']!=documentBefore['localPath']||
+       !RegExp(r'^[a-f0-9]{64}$').hasMatch(pdfSha256))
+      throw StateError('Original financial save changed before Drive ACK.');
+    final doc=cloudRecords.last,proof=doc['bundleMedia'],fileId=doc['fileId'];
+    if(doc['schoolId']!=school||doc['bundleId']!=bundleId||
+       doc['_syncDeleted']==true||
+       doc['_syncOperationId']!=documentBefore['documentRevision']||
+       doc['contentHash']!=pdfSha256||
+       doc['atomicBundleId']!=null||
+       proof is! List||proof.length!=1||proof.single is! Map||
+       (proof.single as Map)['kind']!=kind||
+       (proof.single as Map)['sha256']!=pdfSha256||
+       fileId is! String||!RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId))
+      throw StateError('Signed financial PDF Drive identity differs.');
+    final ops=<_WriteOperation>[];
+    final expectedParents=<String,Map<String,dynamic>>{};
+    final localExpected=<String,Map<String,Map<String,dynamic>>>{};
+    for(var i=0;i<count;i++){
+      final entry=parents[i],prior=entry['before'],queueId=entry['queueId'];
+      final local=parentLocalBefore[i],cloud=cloudRecords[i],backup=verifiedBackups[i];
+      if(prior is! Map<String,dynamic>||queueId is! String||
+         prior['collection']!=names[i]||prior['schoolId']!=school||
+         prior['atomicBundleId']!=bundleId||prior['atomicState']!='committed'||
+         prior['atomicCloudRevision']!=cloud['_syncRevision']||
+         prior['documentId'] is! String||prior['operationId'] is! String||
+         local['schoolId']!=school||cloud['schoolId']!=school||
+         cloud['_syncDeleted']==true||cloud['_syncOperationId']!=prior['operationId']||
+         backup['collection']!=names[i]||backup['id']!=prior['documentId']||
+         backup['operationId']!=prior['operationId']||
+         backup['recordRevision']!=cloud['_syncRevision']||
+         backup['backupState']!='verified'||backup['driveVerified']!=true||
+         backup['driveRevision'] is! String||
+         (backup['driveRevision'] as String).isEmpty||
+         expectedParents.containsKey(queueId))
+        throw StateError('Financial record lacks original signed Drive ACK.');
+      expectedParents[queueId]=_encodeMap(prior);
+      (localExpected[names[i]]??=<String,Map<String,dynamic>>{})[
+        prior['documentId'] as String]=_encodeMap(local);
+      ops.add(_WriteOperation._(type:_WriteType.delete,
+        collection:'_windows_firebase_outbox',documentId:queueId,
+        data:prior,acknowledgedRevision:cloud['_syncRevision'] as String,
+        canonicalRecord:cloud));
+      ops.add(_WriteOperation._(type:_WriteType.set,
+        collection:names[i],documentId:prior['documentId'] as String,data:cloud));
+    }
+    final backup=verifiedBackups.last;
+    if(documentBefore['atomicCloudRevision']!=doc['_syncRevision']||
+       backup['collection']!='documents'||backup['id']!=documentId||
+       backup['operationId']!=documentBefore['documentRevision']||
+       backup['recordRevision']!=doc['_syncRevision']||
+       backup['backupState']!='verified'||backup['driveVerified']!=true||
+       backup['driveRevision'] is! String||
+       (backup['driveRevision'] as String).isEmpty)
+      throw StateError('Receipt or marksheet has no verified Drive ACK.');
+    final now=DateTime.now().millisecondsSinceEpoch;
+    final docLocal={...documentLocalBefore,
+      'cloudRevision':backup['driveRevision'],
+      'baseCloudRevision':backup['driveRevision'],
+      'cloudFileUrl':'https://drive.google.com/file/d/$fileId/view',
+      'cloudUploadedAt':now,'atomicBundleId':bundleId,'syncState':'Synced'};
+    ops.addAll([
+      _WriteOperation._(type:_WriteType.delete,
+        collection:'_windows_document_outbox',documentId:documentId,
+        data:documentBefore),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'documents',documentId:documentId,data:doc),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'_local_student_documents',documentId:documentId,data:docLocal),
+      _WriteOperation._(type:_WriteType.set,
+        collection:'_windows_sync_receipts',
+        documentId:'document-' + documentId + '-' +
+          (documentBefore['documentRevision'] as String),
+        data:{'schoolId':school,'operationId':documentBefore['documentRevision'],
+          'collection':'documents','documentId':documentId,
+          'recordRevision':doc['_syncRevision'],
+          'driveRevision':backup['driveRevision'],
+          'contentHash':pdfSha256,'bundleId':bundleId,
+          'verification':'signed live record and original Drive backup',
+          'acknowledgedAt':now}),
+    ]);
+    return WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+      _database.applyOperations(ops,expected:{
+        '_windows_firebase_outbox':expectedParents,
+        '_windows_document_outbox':{documentId:_encodeMap(documentBefore)},
+        '_local_student_documents':{documentId:_encodeMap(documentLocalBefore)},
+        ...localExpected,
+      }));
+  }
+
   /// Retain a complete live page and its cursor in the same serialized disk
   /// transaction. These are incoming records, never upload or Drive receipts.
   Future<void> retainLiveSyncPage(LiveSyncPage page) async {
@@ -304,6 +809,10 @@ class FirebaseFirestore {
         data:{'schoolId':page.schoolId,'sequence':event['sequence'],
           'collection':event['collection'],'id':event['id'],
           'record':jsonDecode(jsonEncode(event['record'])),'state':'retained',
+          // Persist immutable bundle boundaries across Windows restart.
+          if(event['bundleId']!=null)...{
+            'bundleId':event['bundleId'],'bundleSize':event['bundleSize'],
+            'bundleIndex':event['bundleIndex']},
           if(event['retired']==true)...{'retired':true,'source':'drive',
             'recordAuthority':'school-drive'}}),
       _WriteOperation._(type:_WriteType.set,collection:'_windows_live_checkpoints',
@@ -1252,7 +1761,8 @@ class _LocalSchoolDatabase {
 
   Future<void> applyOperations(
     List<_WriteOperation> operations,
-    {Map<String, Map<String, Map<String, dynamic>?>> expected = const {}}
+    {Map<String, Map<String, Map<String, dynamic>?>> expected = const {},
+      bool rejectBlockedDownload = false}
   ) {
     if (operations.isEmpty) {
       return Future<void>.value();
@@ -1334,6 +1844,29 @@ class _LocalSchoolDatabase {
           }
         }
 
+        // The ordinary replay path may skip a locally edited record, but a
+        // bundled Person + Document must never skip only one member. Check
+        // every guard inside the single serialized disk-write owner first.
+        if(rejectBlockedDownload) {
+          if(!downloadOnly || operations.length<2 || operations.length>5)
+            throw StateError('Atomic download requires a verified bounded group.');
+          final pending=collections['_windows_firebase_outbox'];
+          final restores=collections['_windows_recycle_requests'];
+          for(final operation in operations) {
+            if(pending is Map && pending.values.any((item)=>
+                item is Map && item['collection']==operation.collection &&
+                item['documentId']==operation.documentId)) {
+              throw StateError('Atomic incoming group held by a local unsent edit.');
+            }
+            if(restores is Map && restores.values.any((item)=>
+                item is Map && item['schoolId']==_activeIdentity['schoolSyncId'] &&
+                item['collection']==operation.collection &&
+                item['documentId']==operation.documentId &&
+                item['localRestore']==true && item['state']!='verified')) {
+              throw StateError('Atomic incoming group held by an active restore.');
+            }
+          }
+        }
         final touched = <String>{};
         var trackedMutation = false;
 
@@ -1898,6 +2431,46 @@ class _LocalSchoolDatabase {
       } catch (error,stack) { completer.completeError(error,stack); }
     });
     return completer.future;
+  }
+
+  /// Serialized compare-and-swap for reconnect recovery of existing document
+  /// outbox rows. Compare the complete immutable snapshot, not only the ID:
+  /// later local edits, an ACK and a manually reviewed conflict all win.
+  Future<bool> resumeDocumentOutboxAfterReconnect(String queueId,
+      Map<String,dynamic> expected, {
+      required String schoolId, required int retryAtMillis}) {
+    final origin=_activeProfileId, school=_activeIdentity['schoolSyncId'];
+    final encodedExpected=_encodeMap(expected);
+    final done=Completer<bool>();
+    _writeTail=_writeTail.then((_)async{
+      try{
+        if(origin!=_activeProfileId||school!=schoolId||
+           encodedExpected['schoolId']!=schoolId||
+           retryAtMillis<=0||queueId.isEmpty) {
+          throw StateError('Original same-school document retry required.');
+        }
+        final root=await _readRoot(collections:{'_windows_document_outbox'});
+        if(origin!=_activeProfileId||_activeIdentity['schoolSyncId']!=schoolId)
+          throw StateError('School changed during document recovery.');
+        final collections=_collections(root);
+        final queue=collections['_windows_document_outbox'];
+        final current=queue is Map?queue[queueId]:null;
+        if(current is! Map||
+           _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(encodedExpected)||
+           !{'retry','needsAttention'}.contains(current['syncState'])||
+           !{'networkPath','timeout'}.contains(current['failureCategory'])) {
+          done.complete(false);return;
+        }
+        queue[queueId]={...Map<String,dynamic>.from(current),
+          'syncState':'retry','retryCount':0,'retryAtMillis':retryAtMillis};
+        _storeCollections(root,collections);
+        await _writeRoot(root);
+        final signal=_signals['_windows_document_outbox'];
+        if(signal!=null&&!signal.isClosed)signal.add(null);
+        done.complete(true);
+      }catch(error,stack){done.completeError(error,stack);}
+    });
+    return done.future;
   }
 
   Future<bool> recordOutboxConflict(String queueId,

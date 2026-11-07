@@ -24,11 +24,13 @@ bool pendingRecordBackoffDue(
   DateTime now, {
   bool explicitRetry = false,
 }) {
-  final deadline = item['retryAtMillis'];
-  return explicitRetry ||
-      item['syncState'] != 'retry' ||
-      deadline is! int ||
-      deadline <= now.millisecondsSinceEpoch;
+  // A failed transport may be retained as needsAttention. Its stored
+  // provider deadline still applies after process restart/reconnect.
+  // Sync Now may probe a non-quota record, but never bypass a quota minimum.
+  if(!{'retry','needsAttention'}.contains(item['syncState']))return true;
+  final deadline=item['retryAtMillis'];
+  if(deadline is! int||deadline<=now.millisecondsSinceEpoch)return true;
+  return explicitRetry&&item['failureCategory']!='quota';
 }
 
 /// An unclassified failed notice delete can be retried only after an
@@ -98,6 +100,8 @@ class WindowsPendingSchoolSync {
       final item = row.data(),
           state = item['syncState'],
           category = item['failureCategory'];
+      // Only the exact atomic bundle owner can repair this reserved operation.
+      if(item['atomicBundleId']!=null)continue;
       // Existing unknown notices must not be stuck forever. Probe only the
       // original same-school DELETE; no automatic replay without readback.
       final unknownNoticeDelete = state == 'needsAttention' &&
@@ -494,6 +498,16 @@ class WindowsPendingSchoolSync {
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
       if (canAdmit?.call() == false) break;
       var item = queued.data();
+      // This exact original operation belongs to the isolated atomic
+      // Person/Card recovery owner. Never issue a second independent upload.
+      if(item['atomicBundleId']!=null) {
+        if(item['atomicBundleId'] is! String ||
+            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['atomicBundleId']) ||
+            !{'reserved','committed'}.contains(item['atomicState']) ||
+            item['schoolId']!=db.activeProfileIdentity['schoolSyncId'])
+          throw StateError('Atomic outbox reservation requires school review.');
+        continue;
+      }
       if (sendVersioned != null &&
           item['schoolId'] != null &&
           item['schoolId'] != db.activeProfileIdentity['schoolSyncId']) {
@@ -504,7 +518,10 @@ class WindowsPendingSchoolSync {
       }
       if (onlyOperationId != null && item['operationId'] != onlyOperationId)
         continue;
-      if (respectBackoff &&
+      // A manual Sync Now can bypass a local transport backoff, but cannot
+      // override a provider quota minimum. Keep the immutable pending request
+      // until the saved deadline even when the caller disables normal backoff.
+      if ((respectBackoff || item['failureCategory'] == 'quota') &&
           !pendingRecordBackoffDue(
             item,
             DateTime.now(),

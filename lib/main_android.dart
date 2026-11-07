@@ -791,6 +791,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     );
   }
 
+  String? _portraitCacheKey;
+  Future<Uint8List?>? _portraitRead;
+  Future<Uint8List?> _schoolPortrait() {
+    final key=jsonEncode([_s.link?.projectId,_s.link?.role,
+      _s.link?.personId,_data['atomicPortraitBundle']]);
+    if(_portraitCacheKey==key&&_portraitRead!=null)return _portraitRead!;
+    _portraitCacheKey=key;
+    final read=_s.publishedAtomicPortrait();
+    _portraitRead=read;
+    unawaited(read.catchError((Object _) {
+      if(identical(_portraitRead,read))_portraitRead=null;
+      return null;
+    }));
+    return read;
+  }
+
   Future<Uint8List?>? _cardRefresh;
   Future<Uint8List?> _refreshPublishedCard() {
     if (_cardRefresh != null) return _cardRefresh!;
@@ -812,6 +828,22 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   Future<void> _openSchoolDocument(Map<String, dynamic> document) async {
     final active = _s.link;
     try {
+      // Only an explicitly published atomic receipt/marksheet uses this
+      // authenticated Cloudflare-first reader. Legacy school documents keep
+      // their original verified Drive route without a new TEST request.
+      final bundle=document['bundleId'],proofs=document['bundleMedia'];
+      final type=document['documentKind']=='feeReceipt'?'receipt':
+        document['documentKind']=='marksheet'?'marksheet':null;
+      final documentId=document['documentId'];
+      if(bundle is String&&proofs is List&&type!=null&&documentId is String){
+        final bytes=await _s.publishedAtomicFinancialDocument(type,documentId);
+        if(!mounted||!identical(active,_s.link))return;
+        if(bytes==null || (document['contentHash'] is String&&
+           sha256.convert(bytes).toString()!=document['contentHash']))
+          throw StateError('Published school PDF changed. Refresh before opening.');
+        await _previewPdf(bytes,document['documentName']?.toString()??'School document');
+        return;
+      }
       final result = await _s.schoolCall('mobile_document', {
         'documentId': document['documentId'],
       });
@@ -912,7 +944,14 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     Uint8List? previousReport;
     try {
       if (kind == 'studentId' || kind == 'teacherId') {
-        final cached = await _s.cachedPdf('idCard');
+        // A published atomic card must always use its signed bundle SHA.
+        // Never open a previous legacy PDF from cache when the new bundle
+        // is photo-less, replaced, or not yet verified on this device.
+        final atomic = _data['atomicIdCardBundle'];
+        if(atomic is Map && atomic['noPhoto']==true){
+          throw StateError('The school ID is saved, but its preview is hidden until a photo is attached.');
+        }
+        final cached = atomic is Map ? null : await _s.cachedPdf('idCard');
         final manifest = _data['idCardPackage'];
         final expected = manifest is Map
             ? manifest['documentRevision']?.toString()
@@ -1371,24 +1410,49 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       _card(
         Column(
           children: [
+            if(_data['atomicPortraitBundle'] is Map)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: FutureBuilder<Uint8List?>(
+                  future:_schoolPortrait(),
+                  builder:(context,snapshot){
+                    final bytes=snapshot.data;
+                    if(bytes==null||bytes.isEmpty)
+                      return const CircleAvatar(
+                        radius:42,child:Icon(Icons.person_outline,size:40));
+                    return ClipOval(child:Image.memory(bytes,
+                      width:84,height:84,fit:BoxFit.cover,
+                      errorBuilder:(_,__,___)=>const CircleAvatar(
+                        radius:42,child:Icon(Icons.person_outline,size:40))));
+                  },
+                ),
+              ),
             Text(_s.person['name']?.toString() ?? ''),
             const SizedBox(height: 12),
-            PublishedIdCard(
-              automatic: true,
-              key: ValueKey(
-                jsonEncode([
-                  _s.link?.projectId,
-                  _s.link?.role,
-                  _s.link?.personId,
-                  _data['idCardPackage'],
-                ]),
+            if(_data['atomicIdCardBundle'] is Map &&
+                (_data['atomicIdCardBundle'] as Map)['noPhoto']==true)
+              const Text(
+                'Your school ID card is securely synced. The preview is hidden until your school adds a photo.',
+                textAlign: TextAlign.center,
+              )
+            else
+              PublishedIdCard(
+                automatic: true,
+                key: ValueKey(
+                  jsonEncode([
+                    _s.link?.projectId,
+                    _s.link?.role,
+                    _s.link?.personId,
+                    _data['idCardPackage'],
+                    _data['atomicIdCardBundle'],
+                  ]),
+                ),
+                load: _refreshPublishedCard,
+                refresh: () => _load(afterSignal: true),
+                open: (bytes) =>
+                    _previewPdf(bytes, 'School ID card • Front & back'),
+                openExternally: _openIdPdfExternally,
               ),
-              load: _refreshPublishedCard,
-              refresh: () => _load(afterSignal: true),
-              open: (bytes) =>
-                  _previewPdf(bytes, 'School ID card • Front & back'),
-              openExternally: _openIdPdfExternally,
-            ),
           ],
         ),
       ),
