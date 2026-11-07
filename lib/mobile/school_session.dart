@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'atomic_card_delivery.dart';
+import 'atomic_portrait_delivery.dart';
 import 'atomic_financial_delivery.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -1602,6 +1603,23 @@ class SchoolSession {
        reply['schoolId']==school&&reply['mobileAtomicDocument']==true)
       return null;
     return AtomicFinancialDelivery.verify(school,kind,documentId,reply);
+  }
+
+  /// Read the original Person portrait from the same published bundle as
+  /// the ID card. The broker verifies the signed student's/teacher's session;
+  /// a missing, replaced or foreign image never becomes a cached success.
+  Future<Uint8List?> publishedAtomicPortrait() async {
+    final pointer=dashboard['atomicPortraitBundle'];
+    final current=link;
+    if(pointer is! Map||current==null||!current.managed)return null;
+    final generation=_generation,school=current.schoolId;
+    final response=await schoolCall('mobile_atomic_portrait',{});
+    if(generation!=_generation||!identical(current,link))
+      throw SchoolAccessDenied('School session changed during portrait delivery.');
+    if(response['success']==true&&response['available']==false&&
+       response['schoolId']==school&&response['mobileAtomicPortrait']==true)
+      return null;
+    return AtomicPortraitDelivery.verify(school,current.role,pointer,response);
   }
 
   /// Fetch the exact school-published PDF, never independently render an ID.
