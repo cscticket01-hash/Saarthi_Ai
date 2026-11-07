@@ -161,6 +161,12 @@ void main(){
      expect(WindowsAtomicPersonCardCoordinator.matches(school,
        {...parent,'data':{...(parent['data'] as Map),...original}},doc),isTrue);
    }
+   expect(WindowsAtomicPersonCardCoordinator.matches(school,
+       {...parent,'data':{...(parent['data'] as Map),
+         'photoBase64':'YWJjZA==',
+         'photoUrl':'data:image/jpeg;base64,YWJjZA=='}},
+       doc),isTrue,
+       reason:'Two equivalent original photo representations share one staged photo');
    for(final unsupported in <Map<String,dynamic>>[
      {'photoUrl':'https://drive.google.com/file/d/existing-photo/view'},
      {'photoPath':'C:/school/retained/student.jpg'},
