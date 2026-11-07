@@ -40,7 +40,18 @@ class WindowsAtomicPersonCardCoordinator {
     final raw=inlinePortraitSource(data),b=data['photoBase64'],u=data['photoUrl'];
     if(b!=null&&b is! String||u!=null&&u is! String)return false;
     if(b is String&&b.trim().isNotEmpty&&
-       u is String&&u.trim().isNotEmpty&&b.trim()!=u.trim())return false;
+       u is String&&u.trim().isNotEmpty){
+      // A normal school Save may retain the SAME photo in raw base64 and
+      // data:image form. Compare the actual bytes, not their encodings.
+      // Differing photos still fail closed and use the legacy safe owner.
+      try{
+        final x=originalPortraitBytes(b.trim()),
+          y=originalPortraitBytes(u.trim());
+        if(x.length!=y.length||
+           sha256.convert(x).toString()!=sha256.convert(y).toString())
+          return false;
+      }catch(_){return false;}
+    }
     if(u is String&&u.trim().isNotEmpty&&!u.trim().startsWith('data:image/'))
       return false;
     for(final key in const [
