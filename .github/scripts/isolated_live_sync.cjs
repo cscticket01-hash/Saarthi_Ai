@@ -71,11 +71,14 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
  check('Fresh capture-authorizing TEST permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
  const capturePolicy=JSON.parse(Buffer.from(r.data.attendancePermit.split('.')[0],'base64url').toString('utf8'));
- check('TEST capture policy confirms dated school opening',r,capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId));
+ check('TEST capture policy binds school, day, student record and generation',r,
+  capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId)&&
+  capturePolicy.schoolId===schoolId&&capturePolicy.role==='student'&&
+  capturePolicy.documentId===studentId&&capturePolicy.personId===personId);
  permit=r.data.attendancePermit;
  const captured=priorEntry?priorEntry.entryCapturedAt:Date.now();
  report.attendanceSampleAlreadyCompleted=Boolean(priorEntry);
- const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
+ const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId:studentId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
  r=await mobile(attendance);check('Actual isolated durable attendance acceptance',r,r.http===200&&r.data.accepted===true&&typeof r.data.operationId==='string');
  const op=r.data.operationId;report.attendanceOperationId=op;
  r=await mobile(attendance);check('Attendance identical retry deduplicated',r,r.http===200&&r.data.operationId===op&&r.data.duplicate===true);
