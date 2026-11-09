@@ -10,7 +10,7 @@ permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: 4ba61b40b254bce6cd4a1b515926324c3b84df78
+  VS_EXPECTED_TEST_RUNTIME: 55ee5f569167247be32edc2de63f0468fe23b2bd
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
