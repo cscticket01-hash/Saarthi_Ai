@@ -15,7 +15,7 @@ jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,9 +29,10 @@ jobs:
           const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
           const sha=process.env.VS_EXPECTED_TEST_RUNTIME,token=process.env.GITHUB_TOKEN;
           async function main(){
-           await waitForTestGate({kind:'cloud',sha,token});
-           await waitForTestGate({kind:'readiness',sha,token});
-           await waitForTestGate({kind:'disaster',sha,token});
+           for (const kind of ['cloud','readiness','disaster']) {
+            try { await waitForTestGate({kind,sha,token}); }
+            catch (error) { throw new Error(kind + ' gate: ' + error.message); }
+           }
           }
           main().catch(error=>{console.error(error.message);process.exitCode=1});
           JS
