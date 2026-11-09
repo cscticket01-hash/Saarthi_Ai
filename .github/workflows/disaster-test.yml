@@ -7,6 +7,7 @@ on:
       - .github/workflows/disaster-test.yml
       - .github/workflows/test-cloud-prerequisites.yml
       - .github/scripts/run_android_live_test.sh
+      - .github/tests/native_android_windows_readback_test.dart
       - .github/workflows/sync3-isolated-readiness.yml
       - lib/testing/isolated_admin_fixture.dart
       - .github/tests/isolated_engine_live_test.dart

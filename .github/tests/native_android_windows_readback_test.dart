@@ -49,12 +49,13 @@ void main() {
         'collection': 'school_notices',
         'syncProtocol': 2
       });
-      final webId =
-          'synthetic-web-notice-${Platform.environment['GITHUB_RUN_ID']}';
-      final webRow =
-          Map<String, dynamic>.from((web['records'] as Map)[webId] as Map);
-      expect(webRow['title'],
-          'Synthetic website exchange ${Platform.environment['GITHUB_RUN_ID']}');
+      // The website and Android evidence use the same hosted run/attempt.
+      final webId = 'synthetic-web-notice-$run';
+      final websiteRecords = web['records'] as Map;
+      expect(websiteRecords[webId], isA<Map>(),
+          reason: 'Website notice from this exact TEST attempt is missing');
+      final webRow = Map<String, dynamic>.from(websiteRecords[webId] as Map);
+      expect(webRow['title'], 'Synthetic website exchange $run');
       report['websiteNoticeReadOnHostedWindows'] = true;
       final watch = Stopwatch()..start();
       final reply = await ManagedSchoolSession.callForSchool(
