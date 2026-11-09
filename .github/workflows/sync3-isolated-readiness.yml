@@ -6,6 +6,8 @@ on:
       - '.github/scripts/await_test_gate*'
       - '.github/workflows/sync3-isolated-readiness.yml'
       - '.github/scripts/test_disaster_live.cjs'
+      - '.github/tests/isolated_engine_live_test.dart'
+      - '.github/workflows/disaster-test.yml'
       - '.github/scripts/test_runtime_identity.cjs'
       - 'functions/**'
       - 'school-backend/**'
@@ -54,13 +56,16 @@ jobs:
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol
         env:
-          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.event_name == 'push' && '177009bad2db0a416ec540a7b90d9b54d5d25053' || github.event.pull_request.head.sha || github.sha }}
           # A PR waiting for a TEST deploy must report BLOCKED promptly.
           # Long polling belongs only to explicitly deployed TEST gates.
           VS_TEST_FAST_GATE: ${{ github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105' && '1' || '0' }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: |
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
+          fi
           node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME,{attempts:process.env.VS_TEST_FAST_GATE==='1'?1:36}).catch(()=>process.exit(1))"
           node .github/scripts/test_cloud_readiness.cjs
       - name: Require actual readiness rather than successful script execution alone
