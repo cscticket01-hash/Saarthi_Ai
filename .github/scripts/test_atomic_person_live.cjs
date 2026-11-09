@@ -52,24 +52,39 @@ async function run() {
   const profile = await admin('managed/profile', {operation: 'read'});
   assert.equal(profile.profile?.schoolName, 'TEST Sync V2');
   const status = await live('rollout-status');
+  const gs = await admin('managed/storage/check');
+  report.preflight = {
+    configured: status.configured === true,
+    workerVerified: status.workerVerified === true,
+    scriptVerified: status.scriptVerified === true,
+    queuesVerified: status.queuesVerified === true,
+    pending: status.pending,
+    needsAttention: status.needsAttention,
+    unsettledWrites: status.unsettledWrites,
+    collections: Object.fromEntries(collections.map(name => [name, status.collections[name]])),
+    scriptMatchesReviewedBundle: gs.scriptBundleVersion === '2026-11-04.4',
+    resumableUploadVerified: gs.uploadResumableVersion === 1,
+  };
   assert.ok(status.configured && status.workerVerified && status.scriptVerified && status.queuesVerified);
   assert.equal(status.pending, 0);
   assert.equal(status.needsAttention, 0);
   assert.equal(status.unsettledWrites, 0);
   assert.ok(collections.every(name => status.collections[name] === 'legacy'), 'A clean isolated cohort is required');
-  const gs = await admin('managed/storage/check');
   assert.equal(gs.scriptBundleVersion, '2026-11-04.4');
   assert.equal(gs.uploadResumableVersion, 1);
   // The rollback verifier performs an independent Drive point read per row.
   // Bound that work before placing any write fence on the shared TEST school.
   let baselineRows = 0;
+  report.baselineCounts = {};
   for (const collection of collections) {
     const snapshot = await admin('managed/records', {collection, operation: 'read', syncProtocol: 2});
     assert.equal(snapshot.syncProtocol, 2);
     assert.ok(snapshot.records && !Array.isArray(snapshot.records) &&
       !snapshot.partialRecords && !snapshot.partial && !snapshot.pointRead && !snapshot.unchanged,
     'A complete signed TEST baseline is required');
-    baselineRows += Object.keys(snapshot.records).length;
+    const count = Object.keys(snapshot.records).length;
+    report.baselineCounts[collection] = count;
+    baselineRows += count;
   }
   report.baselineRows = baselineRows;
   if (baselineRows > 24) throw Object.assign(
