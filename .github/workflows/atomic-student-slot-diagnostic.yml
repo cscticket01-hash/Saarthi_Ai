@@ -1,0 +1,61 @@
+name: Isolated TEST student slot conflict readback
+on:
+  push:
+    branches: [test/atomic-person-live-20261109]
+    paths: [.github/workflows/atomic-student-slot-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  signed-point-read:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify the accepted synthetic student from signed Drive storage
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const {waitForRuntime} = require('./.github/scripts/test_runtime_identity.cjs');
+          const schoolId = 'vs-db8afb01a3be46a983c8284714d06e5d';
+          const id = 'TEST2-DEMO-000061';
+          async function post(url, data, token) {
+            const r = await fetch(url, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json', ...(token ? {Authorization: 'Bearer ' + token} : {})},
+              body: JSON.stringify(data), signal: AbortSignal.timeout(90000),
+            });
+            assert.equal(r.status, 200);
+            return r.json();
+          }
+          async function main() {
+            await waitForRuntime('2811a4774bf1aeedac926335f1fc1495b32afff4');
+            const key = fs.readFileSync('lib/platform/platform_config.dart', 'utf8')
+              .match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
+            const {idToken} = await post(
+              'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + key,
+              {email: process.env.VS_TEST_LOGIN_EMAIL, password: process.env.VS_TEST_LOGIN_PASSWORD, returnSecureToken: true});
+            assert.ok(idToken);
+            const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
+            const call = (action, body = {}) => post(endpoint, {...body, schoolId, action}, idToken);
+            const status = await call('managed/live/rollout-status', {liveProtocol: 1});
+            const reply = await call('managed/records', {
+              collection: 'students_directory', operation: 'read', syncProtocol: 2, id,
+            });
+            assert.ok(reply.success && reply.schoolId === schoolId && reply.syncProtocol === 2 && reply.pointRead);
+            const row = reply.records[id];
+            assert.ok(row && row.schoolId === schoolId && row.syntheticTest === true && row._syncDeleted !== true);
+            const successorVerified = row._syncOperationId === 'VS100K2_000061_8e2b6e9f3d62a344' &&
+              row._syncRevision === '32bbde59-9471-4324-9152-80bd6cfbc247';
+            console.log(JSON.stringify({successorVerified, deliveryQueues: status.deliveryQueues}));
+            assert.ok(successorVerified);
+          }
+          main().catch(() => {console.error('Signed synthetic successor proof failed'); process.exitCode = 1;});
+          JS
