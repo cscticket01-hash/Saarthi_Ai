@@ -21,12 +21,12 @@ class AndroidRunnerGuards(unittest.TestCase):
             flutter = '''#!/usr/bin/env python3
 import json,os,sys
 if sys.argv[1]=='build': sys.exit(0)
-assert '--dds' in sys.argv and '--no-dds' not in sys.argv
+assert '--no-dds' in sys.argv and '--dds' not in sys.argv
 assert '--no-enable-impeller' in sys.argv
 assert '127.0.0.1' in os.environ['NO_PROXY']
 mode=os.environ['RUNNER_GUARD_MODE']
-if mode=='dds_failure':
- print('Failed to start Dart Development Service');sys.exit(1)
+if mode=='vm_failure':
+ print('Connecting to the VM Service timed out.');sys.exit(1)
 proof={'schoolId':'vs-db8afb01a3be46a983c8284714d06e5d','status':'PASS','nativeCloudChecks':'FAIL' if mode=='bad_cloud' else 'PASS'}
 print('VS_ANDROID_OS_EVIDENCE '+json.dumps(proof))
 if mode=='duplicate': print('VS_ANDROID_OS_EVIDENCE '+json.dumps(proof))
@@ -47,8 +47,8 @@ sys.exit(1 if mode=='failed_test_with_proof' else 0)
         code, proof=self.run_case('pass')
         self.assertEqual(code,0);self.assertEqual(proof['schoolId'],SCHOOL)
 
-    def test_dds_start_failure_cannot_produce_success(self):
-        code,proof=self.run_case('dds_failure')
+    def test_vm_connection_failure_cannot_produce_success(self):
+        code,proof=self.run_case('vm_failure')
         self.assertNotEqual(code,0);self.assertIsNone(proof)
 
     def test_native_failure_and_duplicate_evidence_fail_closed(self):

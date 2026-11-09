@@ -10,16 +10,17 @@ adb -s emulator-5554 shell am force-stop "$test_package"
 adb -s emulator-5554 forward --remove-all
 adb -s emulator-5554 logcat -c
 adb -s emulator-5554 install -r build/app/outputs/flutter-apk/app-debug.apk
-# DDS and its forwarded VM service must use loopback directly, never an HTTP proxy.
+# The forwarded VM service must use loopback directly.
 export NO_PROXY="${NO_PROXY:-},localhost,127.0.0.1,::1"
 export no_proxy="${no_proxy:-},localhost,127.0.0.1,::1"
 adb -s emulator-5554 shell "run-as $test_package sh -c 'mkdir -p files && cat > files/vs_test_credentials.json'" < "$RUNNER_TEMP/vs-android-test.json"
 test_log="$RUNNER_TEMP/vs-android-native.log"
 trap 'rm -f "$test_log"' EXIT
 # Hosted SwiftShader is a software GPU. Use Skia rather than Vulkan/Impeller;
-# DDS remains enabled and every native test assertion/evidence check still runs.
+# Connect directly to the forwarded VM service so DDS startup cannot prevent
+# the native cloud assertions from running.
 set +e
-timeout --signal=TERM --kill-after=30s 12m flutter test integration_test/sync_v2_android_live_test.dart -d emulator-5554 --dds --no-enable-impeller --verbose --dart-define=VS_TEST_CONNECT_CONFIRM=vs-db8afb01a3be46a983c8284714d06e5d --dart-define=VS_TEST_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud 2>&1 | tee "$test_log"
+timeout --signal=TERM --kill-after=30s 12m flutter test integration_test/sync_v2_android_live_test.dart -d emulator-5554 --no-dds --no-enable-impeller --verbose --dart-define=VS_TEST_CONNECT_CONFIRM=vs-db8afb01a3be46a983c8284714d06e5d --dart-define=VS_TEST_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud 2>&1 | tee "$test_log"
 android_result=${PIPESTATUS[0]}
 if [ "$android_result" -eq 124 ] || [ "$android_result" -eq 137 ]; then
   printf '%s\n' 'VS_ANDROID_TEST_FAILURE driver_timeout'
