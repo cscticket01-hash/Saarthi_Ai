@@ -31,15 +31,29 @@ on:
 permissions:
   contents: read
   actions: read
-# Disaster backup captures a school-wide snapshot. It must never overlap
-# same-school signed writes, Delete Everywhere or readback fixture creation.
-# Use the existing single TEST school writer, not a second mutex.
-concurrency:
-  group: sync3-verified-test-school-mutations
-  cancel-in-progress: false
 jobs:
-  disaster-live:
+  wait-for-readiness:
     if: github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wait for exact-source cloud readiness before taking the writer lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VS_TEST_GATE_KIND: readiness
+          VS_TEST_GATE_SHA: ${{ github.sha }}
+        run: node .github/scripts/await_test_gate.cjs
+  disaster-live:
+    needs: wait-for-readiness
+    # The existing school writer lock protects only the actual snapshot and
+    # restore, after the prerequisite workflows have finished using it.
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:

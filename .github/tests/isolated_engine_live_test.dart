@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../../lib/windows_connect/central_school_cloud.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
 import '../../lib/windows_sync_engine.dart';
 import '../../lib/windows_pending_school_sync.dart';
@@ -49,6 +50,20 @@ void main() {
   Future<Database> open()=>databaseFactoryFfi.openDatabase('${tmp.path}/attendance.db',options:OpenDatabaseOptions(version:1,onCreate:(db,_)=>AttendanceStore.createSchema(db)));
   var store=AttendanceStore(openDatabaseOverride:open);
   final transport=OfflineBoundary();
+  Future<Map<String,dynamic>> writeFixture(String stage,String action,Map<String,dynamic> body) async {
+   report['fixtureWriteStage']=stage;
+   // Each caller supplies a stable operation ID or upload key. Only replay an
+   // explicitly retained Cloudflare operation, and still require the real ACK.
+   try {
+    return await ManagedSchoolSession.callForSchool(school,action,body);
+   } on CentralCloudException catch (error) {
+    if(error.status!=503 || error.diagnosticCode!='EDGE_DELIVERY_PENDING' ||
+        error.retryAfterMs>15000) rethrow;
+    report['retainedDeliveryRetriedAt']=stage;
+    await Future<void>.delayed(Duration(milliseconds:error.retryAfterMs.clamp(2000,15000).toInt()));
+    return ManagedSchoolSession.callForSchool(school,action,body);
+   }
+  }
   try{
    final authentication=OfflineBoundary();final authenticationClock=Stopwatch()..start();
    final login=await authenticateIsolatedAdminFixture(Platform.environment['VS_TEST_LOGIN_EMAIL']!,Platform.environment['VS_TEST_LOGIN_PASSWORD']!,endpoint:endpoint,client:authentication);
@@ -164,19 +179,19 @@ void main() {
    report['binaryInventoryCoverage']=binaries.summary['inventory'];
    report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
 
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
+   await writeFixture('person','managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    // Each retry owns its PDF fixture; a successful prerequisite job can belong
    // to an earlier GITHUB_RUN_ATTEMPT and must not supply guessed identities.
    final fixturePdf=utf8.encode('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
    final fixtureHash=sha256.convert(fixturePdf).toString();
-   final fixture=await ManagedSchoolSession.callForSchool(school,'managed/file/upload',{
+   final fixture=await writeFixture('pdf','managed/file/upload',{
     'name':'hosted-$unique-fixture.pdf','mime':'application/pdf',
     'base64':base64Encode(fixturePdf),'uploadKey':'hosted-$unique-fixture'});
    expect(fixture['schoolId'],school);expect(fixture['fileId'],isA<String>());
    final fixtureReadback=await ManagedSchoolSession.callForSchool(school,'managed/file/read',{'fileId':fixture['fileId']});
    expect(base64Decode(fixtureReadback['base64']),fixturePdf);
    report['attemptOwnedPdfVerified']=true;
-   await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixturePdf.length,'contentHash':fixtureHash,'documentRevision':fixtureHash}});
+   await writeFixture('card','managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixturePdf.length,'contentHash':fixtureHash,'documentRevision':fixtureHash}});
    // The website intentionally consumes this run-stable notice ID. A retried
    // client must import its verified prior revision before creating a new edit.
    final priorNotices=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'school_notices','operation':'read','syncProtocol':2});
@@ -208,7 +223,7 @@ void main() {
    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(1));
    await WindowsPendingSchoolSync.flush(profileId:profile,send:(a,b,c,d)async=>throw StateError('Versioned path required'),sendVersioned:(item)async{
     report['queueWaitMs']=clock.elapsedMilliseconds;final apiClock=Stopwatch()..start();
-    final ack=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':item['collection'],'id':item['documentId'],'operation':'write','data':item['data'],'syncProtocol':2,'operationId':item['operationId'],'expectedRecordRevision':item['baseCloudRevision']??''});
+    final ack=await writeFixture('notice','managed/records',{'collection':item['collection'],'id':item['documentId'],'operation':'write','data':item['data'],'syncProtocol':2,'operationId':item['operationId'],'expectedRecordRevision':item['baseCloudRevision']??''});
     report['windowsWriteApiMs']=apiClock.elapsedMilliseconds;report['windowsWriteServerTiming']=ack['syncTiming'];
     expect(ack['schoolId'],school);expect(ack['syncProtocol'],2);expect(ack['recordRevision'],isA<String>());return ack['recordRevision'] as String;
    });
