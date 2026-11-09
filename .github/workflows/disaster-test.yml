@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      VS_EXPECTED_TEST_RUNTIME: 177009bad2db0a416ec540a7b90d9b54d5d25053
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:

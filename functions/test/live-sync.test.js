@@ -297,6 +297,101 @@ test('Android atomic ID PDF only reaches the mobile session owner of its publish
  await assert.rejects(off.call(request),e=>e.status===412);
 });
 
+test('signed mobile portrait reads the original same-person Cloudflare file only',async()=>{
+ const bytes=Buffer.from([0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,
+   0x49,0x46,0x00,0x01,0x00,0x01,0x00,0x00,0x00,0x00,0xff,0xd9]);
+ const sha=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+ const bundleId='mobile-original-portrait-bundle-000001',id='f'.repeat(64);
+ let fileOwner='verified-pupil',noPhoto=false;const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+   calls.push(b.command);
+   if(b.command==='ownerBundle')return {bundleProtocol:1,schoolId:s,
+     found:true,bundleId,id:'e'.repeat(64),noPhoto,
+     portrait:{id,sha256:sha,mime:'image/jpeg',sizeBytes:bytes.length}};
+   if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+     bundleId,id,kind:'photo',sha256:sha,mime:'image/jpeg',
+     sizeBytes:bytes.length,ownerRole:'student',personId:fileOwner};
+   if(b.command==='bundleProof')return {version:1,schoolId:s,id,
+     sha256:sha,mime:'image/jpeg',sizeBytes:bytes.length,staged:true};
+   if(b.command==='readPart')return {offset:0,sizeBytes:bytes.length,
+     sha256:sha,base64:bytes.toString('base64')};
+   throw Error('unexpected portrait operation '+b.command);
+ }};
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A],
+   atomicBundleTestSchools:[A]});
+ const req={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_portrait',sessionToken:'s'.repeat(64),
+     deviceId:'school-mobile-original-portrait-device-01'}};
+ const result=await f.call(req);
+ assert.equal(result.available,true);
+ assert.equal(result.mobileAtomicPortrait,true);
+ assert.equal(result.contentHash,sha);
+ assert.equal(result.ownerRole,'student');
+ assert.equal(Buffer.from(result.base64,'base64').toString('hex'),bytes.toString('hex'));
+ const before=calls.length;
+ noPhoto=true;
+ const empty=await f.call(req);
+ assert.equal(empty.available,false);
+ assert.deepEqual(calls.slice(before),['ownerBundle'],
+   'A photo-free ID must not disclose or fetch old photo bytes');
+ noPhoto=false;fileOwner='foreign-pupil-generation';
+ await assert.rejects(f.call(req),e=>e.status===403);
+ await assert.rejects(f.call({...req,schoolId:B}),
+   e=>e.status===412||e.status===403);
+ const disabled=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(disabled.call(req),e=>e.status===412);
+});
+
+test('expired Cloudflare original portrait falls back to exact signed Drive bytes, never a forged archive',async()=>{
+ const {createHash}=require('node:crypto');
+ const bytes=Buffer.from([0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,
+   0x49,0x46,0x00,0x01,0x00,0x01,0x00,0x00,0x00,0x00,0xff,0xd9]);
+ const sha=createHash('sha256').update(bytes).digest('hex');
+ const bundleId='verified-archive-student-portrait-0001',id='c'.repeat(64);
+ const image={kind:'photo',id,sha256:sha,sizeBytes:bytes.length,
+   mime:'image/jpeg',fileId:'verifiedOriginalSchoolPhoto01'};
+ const portrait={id,sha256:sha,sizeBytes:bytes.length,mime:'image/jpeg'};
+ let archived=true,revokeAfterArchive=false,archiveRead=false;
+ const rpc=async(s,l,b)=>{
+   if(b.command==='ownerBundle')return {bundleProtocol:1,schoolId:s,
+     found:!revokeAfterArchive||!archiveRead,bundleId,portrait,noPhoto:false};
+   if(b.command==='bundleMedia')return {bundleProtocol:1,schoolId:s,
+     bundleId,id,kind:'photo',sha256:sha,mime:'image/jpeg',
+     sizeBytes:bytes.length,ownerRole:'student',personId:'verified-pupil'};
+   if(b.command==='bundleProof')
+     throw Object.assign(Error('Cloudflare bytes expired'),{status:404});
+   if(b.command==='bundleArchive'){
+     archiveRead=true;
+     return {bundleProtocol:1,schoolId:s,
+     bundleId,archiveReady:archived,files:[{kind:'idCard',id:'d'.repeat(64),
+       sha256:'e'.repeat(64),mime:'application/pdf',sizeBytes:100},
+       image]};
+   }
+   throw Error('Unexpected original school media call '+b.command);
+ };
+ const fetchImpl=async(_url,opt)=>{
+   const envelope=JSON.parse(opt.body),payload=JSON.parse(envelope.payload);
+   const result=payload.action==='managed_file'
+      ?{success:true,schoolId:A,mime:'image/jpeg',base64:bytes.toString('base64')}
+      :{success:true,schoolId:A,role:'student',personId:'verified-pupil'};
+   return {ok:true,status:200,text:async()=>JSON.stringify(result)};
+ };
+ const f=fixture(fetchImpl,{cloudflareSync:{enabled:()=>true,rpc},
+   liveSyncSchools:[A],atomicBundleTestSchools:[A]});
+ const req={action:'managed/mobile',schoolId:A,
+   request:{action:'mobile_atomic_portrait',sessionToken:'s'.repeat(64),
+     deviceId:'school-portrait-archive-device-001'}};
+ const success=await f.call(req);
+ assert.equal(success.available,true);
+ assert.equal(success.archiveReady,true);
+ assert.equal(success.fileId,image.fileId);
+ assert.equal(Buffer.from(success.base64,'base64').toString('hex'),bytes.toString('hex'));
+ archived=false;archiveRead=false;
+ await assert.rejects(f.call(req),e=>e.status===503);
+ archived=true;revokeAfterArchive=true;archiveRead=false;
+ await assert.rejects(f.call(req),e=>e.status===409);
+});
+
 test('atomic document Drive backup waits for every staged file proof and enriches only after verification',async()=>{
  const bytes=Buffer.alloc(1024,32);
  bytes.write('%PDF-1.7',0,'ascii');

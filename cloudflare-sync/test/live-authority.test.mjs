@@ -346,12 +346,44 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
   {collection:'documents',id:'card-stage-first',operation:'write',
    operationId:'sync3-stage-card-operation-0001',expectedRevision:'',
    data:{schoolId:A,personId:'p-'+'8'.repeat(32),studentId:'student-stage-first',
-    ownerRole:'student',documentKind:'idCard',contentHash:sha256}},
+    ownerRole:'student',documentKind:'idCard',documentId:'card-stage-first',
+    documentRevision:'sync3-stage-card-operation-0001',contentHash:sha256,
+    mimeType:'application/pdf',sizeBytes:bytes.length}},
  ];
  const mediaManifestHash=createHash('sha256').update(canonical({schoolId:A,bundleId,media})).digest('hex');
  const before=(await rpc({command:'head'})).value.cursor;
  assert.equal((await rpc({command:'bundlePrepare',bundleId,media,requireDrive:true})).status,412,
   'Unverified Drive must not receive an archive-ready claim');
+ // A stale/unverified photo URL must never coexist with the server-attested
+ // portrait, and an unverified PDF hash/role/generation must not publish.
+ for(const extra of [
+  {photoUrl:'https://drive.google.com/file/d/unverified/view'},
+  {photoBase64:'data:image/jpeg;base64,YWJjZA=='},
+  {nested:{photoFileId:'forged-photo-id'}},
+  {atomicPortrait:{bundleId:'client-forged'}},
+ ]){
+   const invalid=[{...operations[0],data:{...operations[0].data,...extra}},
+     operations[1]];
+   assert.equal((await rpc({command:'bundlePublish',bundleId,media,
+     operations:invalid,mediaManifestHash})).status,412,
+     'Unstaged person photo must be blocked before any atomic commit');
+ }
+ for(const tamper of [
+   {contentHash:'0'.repeat(64)},
+   {sizeBytes:bytes.length+1},
+   {documentId:'another-card'},
+   {personId:'p-'+'9'.repeat(32)},
+   {studentId:'another-person'},
+   {documentRevision:'wrong-original-op'},
+   {mimeType:'image/jpeg'},
+ ]){
+   assert.equal((await rpc({command:'bundlePublish',bundleId,media,
+     operations:[operations[0],{...operations[1],
+       data:{...operations[1].data,...tamper}}],mediaManifestHash})).status,409,
+     'Wrong ID metadata cannot publish a Person + Photo + Card bundle');
+ }
+ assert.equal((await rpc({command:'head'})).value.cursor,before,
+   'Refused person/photo/PDF proof must not create visible records');
  const commit=await rpc({command:'bundlePublish',bundleId,media,
    operations,mediaManifestHash});
  assert.equal(commit.status,200,JSON.stringify(commit));
@@ -386,8 +418,13 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
   id:photoId,sha256:photoSha,mime:'image/jpeg',
   sizeBytes:photoBytes.length,
  },'Person and exact original 40 KiB portrait pointer commit atomically');
- assert.equal((await rpc({command:'ownerBundle',role:'student',
-  personId:'p-'+'8'.repeat(32)})).value.noPhoto,false);
+ const photoOwner=await rpc({command:'ownerBundle',role:'student',
+  personId:'p-'+'8'.repeat(32)});
+ assert.equal(photoOwner.value.noPhoto,false);
+ assert.deepEqual(photoOwner.value.portrait,{
+   id:photoId,sha256:photoSha,mime:'image/jpeg',
+   sizeBytes:photoBytes.length,
+ },'Authorized mobile portrait and published PDF share one atomic receipt');
  assert.equal((await rpc({command:'bundleMedia',bundleId,kind:'photo',
   id:photoId})).value.sha256,photoSha);
  assert.equal((await rpc({command:'head'})).value.cursor,before+2);
@@ -405,6 +442,44 @@ test('Sync3 Cloudflare-first person and ID commit is atomic before Google Drive 
    'A deleted ID revokes its original person portrait too');
  assert.equal((await rpc({command:'ownerBundle',role:'student',
    personId:'p-'+'8'.repeat(32)})).value.found,false);
+
+ // Teacher ID also uses the existing dual queue and original PDF/photo
+ // staging, but must be bound to the teacher owner, not a student generation.
+ await seed('teachers_directory');
+ const teacherBundleId='sync3-original-teacher-photo-card-0001',
+  teacherGeneration='p-'+'6'.repeat(32),
+  teacherOps=[
+   {collection:'teachers_directory',id:'teacher-stage-first',operation:'write',
+    operationId:'sync3-stage-teacher-operation-0001',expectedRevision:'',
+    data:{schoolId:A,mobileStableId:teacherGeneration,name:'School Teacher'}},
+   {collection:'documents',id:'teacher-card-stage-first',operation:'write',
+    operationId:'sync3-stage-teacher-card-operation-0001',expectedRevision:'',
+    data:{schoolId:A,studentId:'teacher-stage-first',teacherId:'teacher-stage-first',
+     personId:teacherGeneration,ownerRole:'teacher',documentKind:'idCard',
+     documentId:'teacher-card-stage-first',
+     documentRevision:'sync3-stage-teacher-card-operation-0001',
+     contentHash:sha256,mimeType:'application/pdf',sizeBytes:bytes.length}},
+  ];
+ const teacherManifest=createHash('sha256').update(canonical({
+   schoolId:A,bundleId:teacherBundleId,media})).digest('hex');
+ const teacherPublished=await rpc({command:'bundlePublish',
+   bundleId:teacherBundleId,media,operations:teacherOps,
+   mediaManifestHash:teacherManifest});
+ assert.equal(teacherPublished.status,200,JSON.stringify(teacherPublished));
+ const teacherOwner=await rpc({command:'ownerBundle',role:'teacher',
+   personId:teacherGeneration});
+ assert.equal(teacherOwner.value.found,true);
+ assert.equal(teacherOwner.value.noPhoto,false);
+ assert.equal((await rpc({command:'ownerBundle',role:'student',
+   personId:teacherGeneration})).value.found,false);
+ const teacherRecord=(await rpc({command:'read',
+   collection:'teachers_directory',id:'teacher-stage-first'})).value.record;
+ assert.equal(teacherRecord.atomicPortrait.role,'teacher');
+ assert.equal(teacherRecord.atomicPortrait.sha256,photoSha);
+ const teacherDoc=(await rpc({command:'read',
+   collection:'documents',id:'teacher-card-stage-first'})).value.record;
+ assert.equal(teacherDoc.ownerRole,'teacher');
+ assert.equal(teacherDoc.contentHash,sha256);
 });
 
 test('Sync3 archived person and document publish as one Ready transaction, never a partial peer event',async()=>{
@@ -438,7 +513,10 @@ test('Sync3 archived person and document publish as one Ready transaction, never
  const document={collection:'documents',id:'card-archive-1',operation:'write',
   operationId:'sync3-document-archive-write-0001',expectedRevision:'',
   data:{schoolId:A,studentId:person.id,personId:generation,ownerRole:'student',
-   type:'idCard',name:'Verified Card'}};
+   documentKind:'idCard',documentId:'card-archive-1',
+   documentRevision:'sync3-document-archive-write-0001',
+   contentHash:sha256,mimeType:'application/pdf',sizeBytes:cardBytes.length,
+   name:'Verified Card'}};
  const request={command:'bundlePublish',bundleId,mediaManifestHash,media,
   operations:[person,document]};
  const before=(await rpc({command:'head'})).value.cursor;
