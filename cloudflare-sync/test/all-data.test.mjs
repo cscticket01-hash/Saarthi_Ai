@@ -227,7 +227,7 @@ test('explicit parallel canary admits at most two independent records and emits 
 });
 
 test('signed TEST readback settles only the exact superseded student roll conflict',async()=>{
- const school=tenant('8'),id='TEST2-DEMO-000061',generation='p-'+'7'.repeat(32);
+ const school='vs-'+hash('student-slot-supersession').slice(0,32),id='TEST2-DEMO-000061',generation='p-'+'7'.repeat(32);
  const original={...write('students_directory',id,'original-slot-operation-0001'),
   data:{schoolId:school,syntheticTest:true,mobileStableId:generation,name:'Synthetic pupil',rollNo:'1'}};
  const next={...original,operationId:'accepted-slot-operation-0001',data:{...original.data,rollNo:'2'}};

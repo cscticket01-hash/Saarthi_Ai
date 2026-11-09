@@ -230,7 +230,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   demand(await digest(JSON.stringify([school,request.action,identity]))===id,'Operation identity mismatch');
   const fingerprint=await digest(canonical(request));const old=get(id);
   if(old){demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));return receipt(old);}
-  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
+  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state NOT IN ('completed','superseded')").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
   const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
  if(action==='putSmall'){
