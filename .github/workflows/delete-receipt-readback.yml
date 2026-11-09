@@ -1,0 +1,86 @@
+name: Isolated TEST completed deletion client readback
+on:
+  push:
+    branches: [test/atomic-person-live-20261109]
+    paths: [.github/workflows/delete-receipt-readback.yml]
+permissions:
+  contents: read
+jobs:
+  signed-readback:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify the exact completed TEST delete without recreating the fixture
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const {createHash} = require('node:crypto');
+          const {waitForRuntime} = require('./.github/scripts/test_runtime_identity.cjs');
+          const schoolId = 'vs-db8afb01a3be46a983c8284714d06e5d';
+          const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
+          const suffix = '42362168489_3677a100';
+          const student = 'TEST_DELETE_' + suffix;
+          const document = 'TEST_DELETE_CARD_' + suffix;
+          const fee = 'TEST_DELETE_FEE_' + suffix;
+          const sha = value => createHash('sha256').update(value).digest('hex');
+          let stage = 'runtime';
+          async function post(url, body, token) {
+            const response = await fetch(url, {
+              method: 'POST', redirect: 'error', signal: AbortSignal.timeout(110000),
+              headers: {'Content-Type': 'application/json', ...(token ? {Authorization: 'Bearer ' + token} : {})},
+              body: JSON.stringify(body),
+            });
+            return {status: response.status, data: await response.json()};
+          }
+          async function main() {
+            await waitForRuntime('931d56832232dcbc6f378fbefa689866077dfafd');
+            stage = 'TEST authentication';
+            const key = fs.readFileSync('lib/platform/platform_config.dart', 'utf8')
+              .match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
+            const {data: {idToken}} = await post(
+              'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + key,
+              {email: process.env.VS_TEST_LOGIN_EMAIL, password: process.env.VS_TEST_LOGIN_PASSWORD, returnSecureToken: true});
+            assert.ok(idToken);
+            async function admin(body) {
+              const {status, data} = await post(endpoint, {...body, schoolId}, idToken);
+              assert.ok(status === 200 && data.success === true && data.schoolId === schoolId);
+              return data;
+            }
+            stage = 'Drive and Firebase receipt';
+            const ack = await admin({action: 'managed/cloudflare/operation', lane: 'records',
+              id: '689d5f03c90285d9eed477f89db00dac91baa9620d13ee079f86110aaf3940dc'});
+            assert.ok(ack.driveState === 'verified' && ack.deleteEverywhereVersion === 1 &&
+              ack.driveDeletionComplete === true && ack.firebaseDeletionComplete === true);
+            assert.ok(ack.deletedFileIds?.length > 0);
+            assert.ok(ack.deletionTargets?.some(x => x.collection === 'documents' && x.id === document));
+            assert.ok(ack.deletionTargets?.some(x => x.collection === 'fee_payments' && x.id === fee));
+            stage = 'Windows signed point read';
+            for (const [collection, id] of [['students_directory', student], ['documents', document], ['fee_payments', fee]]) {
+              const out = await admin({action: 'managed/records', operation: 'read', collection, id, syncProtocol: 2});
+              assert.ok(out.pointRead === true && out.records?.[id]?._syncDeleted === true);
+            }
+            stage = 'Website delta';
+            const out = await admin({action: 'managed/changes', collections: ['students_directory', 'documents', 'fee_payments'], knownRevisions: {}});
+            assert.ok(out.changes?.students_directory?.records?.[student]?._syncDeleted === true);
+            assert.ok(out.changes?.documents?.records?.[document]?._syncDeleted === true);
+            stage = 'Android deleted QR rejection';
+            const mobile = await post(endpoint, {action: 'managed/mobile', schoolId, request: {
+              action: 'mobile_login', projectId: schoolId, role: 'student', personId: 'p-' + sha('test-delete/' + student),
+              linkToken: sha('test-mobile-link/' + student), studentClass: '1', rollNo: '268489', dob: '2015-01-01',
+            }});
+            assert.ok(mobile.status === 403 && /QR does not belong|invalid or has not synced|regenerate your ID card/i.test(mobile.data.message || ''));
+            assert.equal(mobile.data.sessionToken, undefined);
+            console.log(JSON.stringify({status: 'PASS', driveFirebaseReceipt: true, windowsSignedTombstones: true,
+              websiteDeltaTombstones: true, androidDeletedQrRejected: true}));
+          }
+          main().catch(() => {console.error('Readback failed at ' + stage); process.exitCode = 1;});
+          JS
