@@ -60,6 +60,21 @@ async function run() {
   const gs = await admin('managed/storage/check');
   assert.equal(gs.scriptBundleVersion, '2026-11-04.4');
   assert.equal(gs.uploadResumableVersion, 1);
+  // The rollback verifier performs an independent Drive point read per row.
+  // Bound that work before placing any write fence on the shared TEST school.
+  let baselineRows = 0;
+  for (const collection of collections) {
+    const snapshot = await admin('managed/records', {collection, operation: 'read', syncProtocol: 2});
+    assert.equal(snapshot.syncProtocol, 2);
+    assert.ok(snapshot.records && !Array.isArray(snapshot.records) &&
+      !snapshot.partialRecords && !snapshot.partial && !snapshot.pointRead && !snapshot.unchanged,
+    'A complete signed TEST baseline is required');
+    baselineRows += Object.keys(snapshot.records).length;
+  }
+  report.baselineRows = baselineRows;
+  if (baselineRows > 24) throw Object.assign(
+    Error('The isolated school exceeds this rehearsal rollback budget'), {code: 'ATOMIC_TEST_ROLLBACK_BUDGET'});
+
   const confirmation = {confirmIsolatedBundleTest: true};
   let active = false;
   const archives = [];
