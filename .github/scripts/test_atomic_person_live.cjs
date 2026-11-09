@@ -66,9 +66,6 @@ async function run() {
     resumableUploadVerified: gs.uploadResumableVersion === 1,
   };
   assert.ok(status.configured && status.workerVerified && status.scriptVerified && status.queuesVerified);
-  assert.equal(status.pending, 0);
-  assert.equal(status.needsAttention, 0);
-  assert.equal(status.unsettledWrites, 0);
   assert.ok(collections.every(name => status.collections[name] === 'legacy'), 'A clean isolated cohort is required');
   assert.equal(gs.scriptBundleVersion, '2026-11-04.4');
   assert.equal(gs.uploadResumableVersion, 1);
@@ -87,6 +84,32 @@ async function run() {
     baselineRows += count;
   }
   report.baselineRows = baselineRows;
+  if (status.needsAttention > 0) {
+    const health = await fetch(endpoint + '/healthz', {signal: AbortSignal.timeout(20000)}).then(r => r.json());
+    assert.equal(health.runtimeCommit, process.env.VS_EXPECTED_TEST_RUNTIME);
+    assert.match(health.adminCredentialFingerprint || '', /^[a-f0-9]{64}$/);
+    report.originalDeleteReviews = [];
+    const knownDeletes = [
+      ['TEST_DELETE_42222529247_8ce61a39', '980a80a2ed52f3a498c4410209225e95', 'da3ac36d-a064-469b-877f-774f2442d1ae'],
+      ['TEST_DELETE_42362168489_3677a100', '376738e10b5ec7edbae9670383a3b790', '1ac77f0b-030c-44c7-abe5-4343cb8b4d13'],
+    ];
+    for (const [recordId, operationId, expectedRecordRevision] of knownDeletes) {
+      try {
+        const result = await admin('managed/cloudflare/retry-delete', {
+          lane: 'records', id: hash(JSON.stringify([schoolId, 'managed_records', ['students_directory', recordId, operationId]])),
+          recordId, operationId, expectedRecordRevision, deletedStudentGeneration: 'p-' + hash('test-delete/' + recordId),
+          credentialFingerprint: health.adminCredentialFingerprint, diagnoseOnly: true,
+        });
+        assert.equal(result.diagnosticReadOnly, true);
+        report.originalDeleteReviews.push({recordId, ...result.reviewDiagnosis});
+      } catch (error) {
+        report.originalDeleteReviews.push({recordId, code: error.code || 'REVIEW_UNAVAILABLE'});
+      }
+    }
+  }
+  assert.equal(status.pending, 0);
+  assert.equal(status.needsAttention, 0);
+  assert.equal(status.unsettledWrites, 0);
   if (baselineRows > 24) throw Object.assign(
     Error('The isolated school exceeds this rehearsal rollback budget'), {code: 'ATOMIC_TEST_ROLLBACK_BUDGET'});
 
