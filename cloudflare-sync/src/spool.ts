@@ -93,6 +93,51 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='settleTestStudentSlotReview'){
+  const successorId=String(b.successorId||'');
+  demand(lane==='records'&&operationPattern.test(id)&&operationPattern.test(successorId)&&id!==successorId,
+    'Invalid student slot review receipts');
+  const failed=get(id),accepted=get(successorId);
+  demand(failed&&accepted&&accepted.seq>failed.seq&&accepted.state==='completed'&&
+    ['needsAttention','superseded'].includes(failed.state),'Original and successor receipts required',409);
+  const original=JSON.parse(failed.payload) as Json,next=JSON.parse(accepted.payload) as Json;
+  const failure=JSON.parse(failed.response||'{}') as Json,ack=(JSON.parse(accepted.response||'{}') as Json).result as Json;
+  const validCreate=(request:Json)=>request.action==='managed_records'&&
+    request.collection==='students_directory'&&request.operation==='write'&&request.syncProtocol===2&&
+    request.expectedRecordRevision===''&&request.id===b.recordId&&
+    (request.data as Json)?.schoolId===school&&(request.data as Json)?.syntheticTest===true&&
+    (request.data as Json)?.mobileStableId===b.generation;
+  demand(validCreate(original)&&validCreate(next)&&/^p-[a-f0-9]{32,64}$/.test(String(b.generation))&&
+    original.operationId!==next.operationId&&next.operationId===b.operationId&&
+    failure.failureCode==='STUDENT_SLOT_CONFLICT'&&failure.failureStatus===409&&
+    ack?.success===true&&ack.schoolId===school&&ack.syncProtocol===2&&ack.recordRevision===b.revision&&
+    (ack.record as Json)?._syncOperationId===b.operationId&&(ack.record as Json)?._syncRevision===b.revision,
+    'Verified synthetic student slot successor required',409);
+  const {rollNo:oldRoll,...oldIdentity}=original.data as Json;
+  const {rollNo:newRoll,...newIdentity}=next.data as Json;
+  demand(oldRoll!==undefined&&newRoll!==undefined&&oldRoll!==newRoll&&canonical(oldIdentity)===canonical(newIdentity),
+    'Successor must be the same synthetic student with a corrected roll number',409);
+  for(const row of [failed,accepted]){
+   const request=JSON.parse(row.payload) as Json;
+   demand(await digest(canonical(request))===row.fingerprint&&
+     await digest(JSON.stringify([school,request.action,[request.collection,request.id,request.operationId]]))===row.id,
+     'Immutable student slot receipt mismatch',409);
+  }
+  return storage.transactionSync(()=>{
+   const current=get(id),successor=get(successorId);
+   demand(current?.fingerprint===failed.fingerprint&&successor?.state==='completed'&&
+     successor.fingerprint===accepted.fingerprint&&successor.response===accepted.response,
+     'Student slot successor changed',409);
+   if(current.state==='superseded'){
+    demand(JSON.parse(current.response||'{}').supersededBy===successorId,'Student slot review successor changed',409);
+   }else{
+    demand(current.state==='needsAttention'&&current.response===failed.response,'Student slot review changed',409);
+    storage.sql.exec("UPDATE edge_ops SET state='superseded',response=? WHERE id=?",
+      JSON.stringify({...failure,supersededBy:successorId}),id);
+   }
+   return {schoolId:school,id,successorId,state:'superseded'};
+  });
+ }
  if(action==='diagnoseDeleteReview'){
   // TEST-only read-only owner diagnosis. No payload, private fields, raw
   // service-account fingerprint, mutation or receipt retirement is returned.

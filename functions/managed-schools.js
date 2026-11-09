@@ -951,6 +951,27 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='settle-test-student-slot-review'){
+   if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[a-f0-9]{64}$/.test(b.id||'')||!/^[a-f0-9]{64}$/.test(b.successorId||'')||
+      !/^TEST2-DEMO-\d{6}$/.test(b.recordId||''))
+    fail(400,'Exact synthetic student slot receipts required');
+   const source=await signedRequest(m,{action:'managed_records',operation:'read',
+     collection:'students_directory',id:b.recordId,syncProtocol:2});
+   const current=source.records?.[b.recordId];
+   if(source.syncProtocol!==2||source.pointRead!==true||current?.schoolId!==m.schoolId||
+      current.syntheticTest!==true||current._syncDeleted===true||
+      !/^p-[a-f0-9]{32,64}$/.test(current.mobileStableId||'')||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(current._syncOperationId||'')||
+      typeof current._syncRevision!=='string'||!current._syncRevision)
+    fail(409,'Signed current synthetic student proof required','STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+   const result=await cloudflareSync.rpc(m.schoolId,'records',{command:'settleTestStudentSlotReview',
+     id:b.id,successorId:b.successorId,recordId:b.recordId,generation:current.mobileStableId,
+     operationId:current._syncOperationId,revision:current._syncRevision});
+   if(result?.schoolId!==m.schoolId||result.id!==b.id||result.successorId!==b.successorId||
+      result.state!=='superseded')fail(503,'Student slot review settlement unverified');
+   return {success:true,...result};
+  }
   if(operation==='bundle-media'){
    if(!atomicBundleTestSchools.includes(m.schoolId))
      fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');

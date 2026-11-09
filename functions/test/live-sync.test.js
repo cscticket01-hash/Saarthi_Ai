@@ -833,3 +833,32 @@ test('isolated cohort rollback verifies 730 current rows using one signed collec
  }
  assert.equal(seals.length,1);
 });
+
+test('student slot settlement needs the admitted TEST school and current signed point read',async()=>{
+ const id='TEST2-DEMO-000061',receipt='a'.repeat(64),successorId='b'.repeat(64);
+ const record={schoolId:A,syntheticTest:true,mobileStableId:'p-'+'1'.repeat(32),
+  _syncOperationId:'accepted-slot-operation-0001',_syncRevision:'drive-revision'};
+ const input={action:'managed/live/settle-test-student-slot-review',liveProtocol:1,id:receipt,successorId,recordId:id};
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  calls.push([s,l,b]);
+  return {schoolId:s,id:b.id,successorId:b.successorId,state:'superseded'};
+ }};
+ let row=record;
+ const read=async()=>({ok:true,status:200,text:async()=>JSON.stringify({
+  success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{[id]:row}
+ })});
+ const options={cloudflareSync:edge,liveSyncSchools:[A]};
+ await assert.rejects(fixture(read,options).call(input),e=>e.code==='ATOMIC_BUNDLE_TEST_DISABLED');
+ const f=fixture(read,{...options,atomicBundleTestSchools:[A]});
+ row={...record,schoolId:B};
+ await assert.rejects(f.call(input),e=>e.code==='STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+ row={...record,_syncDeleted:true};
+ await assert.rejects(f.call(input),e=>e.code==='STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+ assert.equal(calls.length,0);
+ row=record;
+ assert.equal((await f.call(input)).state,'superseded');
+ assert.deepEqual(calls,[[A,'records',{command:'settleTestStudentSlotReview',
+  id:receipt,successorId,recordId:id,generation:record.mobileStableId,
+  operationId:record._syncOperationId,revision:record._syncRevision}]]);
+});

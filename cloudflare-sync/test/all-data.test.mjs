@@ -225,3 +225,34 @@ test('explicit parallel canary admits at most two independent records and emits 
  assert.deepEqual(Object.keys(final.deliveryTiming).sort(),['deliveryMillis','observedAt','queueWaitMillis','version']);
  assert.equal((await rpc(school,'records',{command:'stats'})).value.pending,1);
 });
+
+test('signed TEST readback settles only the exact superseded student roll conflict',async()=>{
+ const school=tenant('8'),id='TEST2-DEMO-000061',generation='p-'+'7'.repeat(32);
+ const original={...write('students_directory',id,'original-slot-operation-0001'),
+  data:{schoolId:school,syntheticTest:true,mobileStableId:generation,name:'Synthetic pupil',rollNo:'1'}};
+ const next={...original,operationId:'accepted-slot-operation-0001',data:{...original.data,rollNo:'2'}};
+ const failed=await delivery.record(school,original);
+ const finish=async(id,values)=>{
+  const claim='test-claim-'+id;
+  assert.equal(await edge.rpc(school,'records',{command:'claim',id,claim,expires:Date.now()+120000}),true);
+  assert.equal(await edge.rpc(school,'records',{command:'finish',id,claim,
+   values:{...values,nextAttemptAt:Number.MAX_SAFE_INTEGER}}),true);
+ };
+ await finish(failed.delivery.id,{state:'needsAttention',failureCode:'STUDENT_SLOT_CONFLICT',failureStatus:409});
+ const successor=await delivery.record(school,next);
+ const record={...next.data,_syncOperationId:next.operationId,_syncRevision:'drive-revision'};
+ await finish(successor.delivery.id,{state:'completed',
+  result:{success:true,schoolId:school,syncProtocol:2,recordRevision:record._syncRevision,record}});
+ const body={command:'settleTestStudentSlotReview',id:failed.delivery.id,successorId:successor.delivery.id,
+  recordId:id,generation,operationId:next.operationId,revision:record._syncRevision};
+ assert.equal((await rpc(school,'records',{...body,revision:'wrong'})).status,409);
+ assert.equal((await edge.rpc(school,'records',{command:'stats'})).needsAttention,1);
+ for(let attempt=0;attempt<2;attempt++){
+  const result=await edge.rpc(school,'records',body);
+  assert.equal(result.state,'superseded');
+  assert.equal(result.successorId,successor.delivery.id);
+ }
+ assert.equal((await edge.rpc(school,'records',{command:'stats'})).needsAttention,0);
+ assert.equal((await delivery.status(school,'records',successor.delivery.id)).driveState,'verified');
+ await assert.rejects(delivery.record(school,original),e=>e.code==='STUDENT_SLOT_CONFLICT');
+});
