@@ -59,7 +59,7 @@ jobs:
         run: node -e "const v=require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion();require('node:fs').appendFileSync(process.env.GITHUB_ENV,'VS_EXPECTED_TEST_SCRIPT_VERSION='+v+'\n');"
       - name: Check existing isolated TEST identity and read-only storage protocol
         env:
-          VS_EXPECTED_TEST_RUNTIME: ${{ github.event_name == 'push' && '177009bad2db0a416ec540a7b90d9b54d5d25053' || github.event.pull_request.head.sha || github.sha }}
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.event.pull_request.head.sha || github.sha }}
           # A PR waiting for a TEST deploy must report BLOCKED promptly.
           # Long polling belongs only to explicitly deployed TEST gates.
           VS_TEST_FAST_GATE: ${{ github.head_ref == 'feature/sync3-atomic-bundle-phase1-20261105' && '1' || '0' }}

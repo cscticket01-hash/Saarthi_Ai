@@ -79,9 +79,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      # A TEST-only harness edit need not re-deploy unchanged business code.
-      # Never trust a changed backend/application source without exact replay.
-      VS_EXPECTED_TEST_RUNTIME: ${{ github.ref == 'refs/heads/feature/smart-sync-3' && '177009bad2db0a416ec540a7b90d9b54d5d25053' || github.sha }}
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +92,7 @@ jobs:
         run: |
           git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
           node --test .github/scripts/*.test.cjs
+          node -e 'require("./.github/scripts/test_runtime_identity.cjs").waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(error=>{console.error(error.message);process.exitCode=1})'
       - name: Pair owner-approved isolated TEST storage and verify signed readback
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d

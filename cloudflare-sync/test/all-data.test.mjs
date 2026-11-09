@@ -197,12 +197,27 @@ test('person/document/financial jobs and mixed batches are conservative ordering
 test('explicit parallel canary admits at most two independent records and emits bounded timing evidence',async()=>{
  const school=tenant('5'),parallel=createCloudflareDelivery({edge,recordParallelism:2});
  for(let i=0;i<3;i++)await parallel.record(school,{...write('school_expenses','parallel-'+i,'operation-parallel-'+i+'-0000'),data:{schoolId:school}});
- let active=0,peak=0;const receipts=[];
- const result=await parallel.drain(school,'records',async request=>{
-  active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,20));active--;receipts.push(request);
-  return {success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-'+request.id,record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
- });
- assert.equal(result.processed,2);assert.equal(peak,2);assert.equal(receipts.length,2);
+ // Both records must actually enter their delivery callbacks before either
+ // leaves. A fixed 20-ms sleep can falsely report serial execution when the
+ // hosted runner takes longer than 20 ms to complete the second signed claim.
+ let active=0,peak=0,entered=0;const receipts=[];
+ let releasePair;
+ const pairEntered=new Promise(resolve=>{releasePair=resolve;});
+ const claimDeadline=setTimeout(releasePair,3000);
+ try {
+  const result=await parallel.drain(school,'records',async request=>{
+   active++;peak=Math.max(peak,active);
+   if(++entered===2)releasePair();
+   await pairEntered;
+   active--;receipts.push(request);
+   return {success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-'+request.id,record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
+  });
+  assert.equal(result.processed,2,'Both records must have independent verified Drive receipts');
+  assert.equal(peak,2,'Both claims must be admitted concurrently within 3 seconds');
+  assert.equal(receipts.length,2);
+ } finally {
+  clearTimeout(claimDeadline);
+ }
  const id=hash(JSON.stringify([school,'managed_records',[receipts[0].collection,receipts[0].id,receipts[0].operationId]]));
  const final=await parallel.status(school,'records',id);
  assert.equal(final.driveState,'verified');assert.equal(final.deliveryTiming.version,1);
