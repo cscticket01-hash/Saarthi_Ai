@@ -768,3 +768,21 @@ test('signed 150 KiB published marksheet is read in full, not truncated by old 1
  assert.equal(result.base64.length,204800);
  assert.equal(Buffer.from(result.base64,'base64').compare(bytes),0);
 });
+
+test('isolated person migration has a server-owned collection set and separate rollout gate',async()=>{
+ const edge={enabled:()=>true,rpc:async()=>assert.fail('Early request reached Worker')};
+ const request={action:'managed/live/prepare-person-bundle',liveProtocol:1,confirmIsolatedBundleTest:true};
+ const base={cloudflareSync:edge,liveSyncSchools:[A]};
+ const disabled=fixture(null,base);
+ await assert.rejects(disabled.call(request),e=>e.code==='ATOMIC_BUNDLE_TEST_DISABLED');
+ const f=fixture(null,{...base,atomicBundleTestSchools:[A]});
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...request,collections:['documents']}),e=>e.status===400);
+ await assert.rejects(f.call({...request,confirmIsolatedBundleTest:false}),e=>e.status===400);
+ assert.equal(f.docs.has('school_live_migrations/'+A),false);
+ await assert.rejects(f.call(request),e=>e.code==='LIVE_LEGACY_DRAIN_GRACE');
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).nativeCohort.collections,
+  ['documents','students_directory','teachers_directory']);
+ await assert.rejects(f.call({action:'managed/live/head',liveProtocol:1,collection:'school_notices'}),
+  e=>e.code==='LIVE_DEPENDENCY_PREPARING');
+});

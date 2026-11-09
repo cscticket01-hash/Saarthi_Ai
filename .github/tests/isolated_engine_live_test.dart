@@ -10,7 +10,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import '../../lib/windows_connect/central_school_cloud.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
 import '../../lib/windows_sync_engine.dart';
 import '../../lib/windows_pending_school_sync.dart';
@@ -52,17 +51,9 @@ void main() {
   final transport=OfflineBoundary();
   Future<Map<String,dynamic>> writeFixture(String stage,String action,Map<String,dynamic> body) async {
    report['fixtureWriteStage']=stage;
-   // Each caller supplies a stable operation ID or upload key. Only replay an
-   // explicitly retained Cloudflare operation, and still require the real ACK.
-   try {
-    return await ManagedSchoolSession.callForSchool(school,action,body);
-   } on CentralCloudException catch (error) {
-    if(error.status!=503 || error.diagnosticCode!='EDGE_DELIVERY_PENDING' ||
-        error.retryAfterMs>15000) rethrow;
-    report['retainedDeliveryRetriedAt']=stage;
-    await Future<void>.delayed(Duration(milliseconds:error.retryAfterMs.clamp(2000,15000).toInt()));
-    return ManagedSchoolSession.callForSchool(school,action,body);
-   }
+   return retryRetainedIsolatedWrite(
+     ()=>ManagedSchoolSession.callForSchool(school,action,body),
+     onRetry:()=>report['retainedDeliveryRetriedAt']=stage);
   }
   try{
    final authentication=OfflineBoundary();final authenticationClock=Stopwatch()..start();
