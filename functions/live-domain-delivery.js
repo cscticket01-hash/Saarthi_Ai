@@ -94,7 +94,7 @@ function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assert
   // Private RPC, reachable only after the broker's school-admin authorization.
   // The Worker must bind the returned original request to this school/receipt.
   const stored=await edge.rpc(school,'records',{command:'projection',id:descriptor.id});
-  if(stored?.id!==descriptor.id||!['pending','retry','processing','completed','needsAttention'].includes(stored.state))refuse(502,'DOMAIN_PROJECTION_UNVERIFIED');
+  if(stored?.id!==descriptor.id||!['pending','retry','processing','completed','needsAttention','superseded'].includes(stored.state))refuse(502,'DOMAIN_PROJECTION_UNVERIFIED');
   const request=stored.request||stored.identity;
   if(!request)refuse(503,'DOMAIN_PROJECTION_SOURCE_UNAVAILABLE');
   validate(school,request,!['pending','retry','processing'].includes(stored.state));
@@ -105,7 +105,7 @@ function createLiveDomainDelivery({edgeDelivery,edge,emitHint=async()=>{},assert
    // business tables, baselines, fee totals, presence counts or document jobs.
    return {...identity,disposition:'pending',authoritative:false,driveState:'pending',proposal:{operation:request.operation,expectedRecordRevision:request.expectedRecordRevision,...(request.operation==='write'?{data:request.data}:{})}};
   }
-  if(stored.state==='needsAttention')return {...identity,disposition:'review',authoritative:false,driveState:'review',proposal:null};
+  if(stored.state==='needsAttention'||stored.state==='superseded')return {...identity,disposition:'review',authoritative:false,driveState:'review',proposal:null};
   const receipt=await hydrateDomainReceipt(school,await edgeDelivery.status(school,'records',descriptor.id),readDrive);
   if(receipt?.success!==true||receipt.schoolId!==school||receipt.syncProtocol!==2||receipt.driveState!=='verified'||typeof receipt.recordRevision!=='string'||!receipt.recordRevision||/^(live-|cf-)/.test(receipt.recordRevision))refuse(502,'DOMAIN_RECEIPT_UNVERIFIED');
   let record=receipt.record;

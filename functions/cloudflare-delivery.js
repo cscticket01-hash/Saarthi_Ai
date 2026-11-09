@@ -50,7 +50,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
    return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
   }
-  if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
+  if(row.state==='needsAttention'||row.state==='superseded')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
