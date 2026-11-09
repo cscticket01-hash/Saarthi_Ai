@@ -20,6 +20,13 @@ test('positive control-plane status never pretends legacy collections are active
  assert.equal(result.collections.school_expenses,'active');assert.equal(result.collections.students_directory,'legacy');
  assert.ok(result.blockers.includes('UNSETTLED_WRITES_REQUIRE_RECONCILIATION'));
  assert.ok(result.blockers.includes('VERIFIED_COLLECTION_MIGRATION_REQUIRED'));assert.ok(!JSON.stringify(result).includes('not-returned'));
+ const retained=await rolloutStatus({...args,edge:{rpc:async(s,l)=>l==='live'
+  ?{schoolId:s,liveProtocol:1,cursor:0}
+  :{pending:0,needsAttention:l==='notices'?1:0,privatePayload:'not-returned'}}});
+ assert.equal(retained.needsAttention,1);
+ assert.deepEqual(retained.deliveryQueues,{records:{pending:0,needsAttention:0},notices:{pending:0,needsAttention:1}});
+ assert.ok(retained.blockers.includes('LEGACY_DELIVERY_PENDING'));
+ assert.ok(!JSON.stringify(retained).includes('not-returned'));
  const unknown=await rolloutStatus({...args,readDrive:async()=>({success:true,schoolId:B}),edge:{rpc:async()=>({})}});
  assert.equal(unknown.pending,null);assert.equal(unknown.queuesVerified,false);assert.equal(unknown.scriptVerified,false);assert.equal(unknown.workerVerified,false);
 });

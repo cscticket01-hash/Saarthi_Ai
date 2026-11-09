@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const REPO='cscticket01-hash/Saarthi_Ai';
 const GATES={
  cloud:{name:'Isolated TEST cloud prerequisites',branch:'feature/smart-sync-3',event:'push'},
+ disaster:{name:'Isolated TEST disaster recovery acceptance',branch:'feature/smart-sync-3',event:'push'},
  readiness:{name:'Sync 3 isolated TEST readiness',branch:'feature/live-sync-authority-v1-20261102',event:'pull_request'}
 };
 function selectGate(runs,kind,sha){

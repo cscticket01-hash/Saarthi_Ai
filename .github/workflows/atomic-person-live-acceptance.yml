@@ -5,11 +5,12 @@ on:
     paths:
       - '.github/workflows/atomic-person-live-acceptance.yml'
       - '.github/scripts/test_atomic_person_live.cjs'
+      - '.github/scripts/await_test_gate.cjs'
 permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: 1b0e0a985205dcdc01f554fd38cef64f106071ba
+  VS_EXPECTED_TEST_RUNTIME: 2811a4774bf1aeedac926335f1fc1495b32afff4
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
@@ -25,27 +26,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           node - <<'JS'
-          const assert=require('node:assert/strict');
-          const {setTimeout:delay}=require('node:timers/promises');
           const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
           const sha=process.env.VS_EXPECTED_TEST_RUNTIME,token=process.env.GITHUB_TOKEN;
           async function main(){
            await waitForTestGate({kind:'cloud',sha,token});
            await waitForTestGate({kind:'readiness',sha,token});
-           const url='https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/actions/runs/42618809231';
-           for(let n=0;n<60;n++){
-            const r=await fetch(url,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(20000)});
-            assert.equal(r.status,200);
-            const run=await r.json();
-            assert.equal(run.head_sha,sha);
-            assert.equal(run.name,'Isolated TEST disaster recovery acceptance');
-            if(run.status==='completed'){
-             assert.equal(run.conclusion,'success');
-             return;
-            }
-            await delay(15000);
-           }
-           throw Error('Verified isolated recovery was not completed');
+           await waitForTestGate({kind:'disaster',sha,token});
           }
           main().catch(error=>{console.error(error.message);process.exitCode=1});
           JS

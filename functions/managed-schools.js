@@ -1140,7 +1140,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    await reconcileAdmission(m);
    if(operation==='rollback-person-bundle'){
     const result=await liveMigration.rollbackGroup(m.schoolId,collections,
-      proof=>liveSync.rollback(m.schoolId,proof.collection,body=>signedRequest(m,body),proof.rollbackToken));
+      proof=>liveSync.rollback(m.schoolId,proof.collection,body=>signedRequest(m,body),proof.rollbackToken,{readCollection:true}));
     return {success:true,...result};
    }
    const result=await liveMigration.prepareGroup(m.schoolId,collections,deliveryDrained,

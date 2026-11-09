@@ -60,6 +60,7 @@ async function run() {
     queuesVerified: status.queuesVerified === true,
     pending: status.pending,
     needsAttention: status.needsAttention,
+    deliveryQueues: status.deliveryQueues,
     unsettledWrites: status.unsettledWrites,
     collections: Object.fromEntries(collections.map(name => [name, status.collections[name]])),
     scriptMatchesReviewedBundle: gs.scriptBundleVersion === '2026-11-04.4',
@@ -69,22 +70,23 @@ async function run() {
   assert.ok(collections.every(name => status.collections[name] === 'legacy'), 'A clean isolated cohort is required');
   assert.equal(gs.scriptBundleVersion, '2026-11-04.4');
   assert.equal(gs.uploadResumableVersion, 1);
-  // The rollback verifier performs an independent Drive point read per row.
-  // Bound that work before placing any write fence on the shared TEST school.
+  // Validate every complete signed baseline before the first migration write.
+  // The exact-runtime gate pins the broker with collection rollback readback.
   let baselineRows = 0;
   report.baselineCounts = {};
   for (const collection of collections) {
     const snapshot = await admin('managed/records', {collection, operation: 'read', syncProtocol: 2});
     assert.equal(snapshot.syncProtocol, 2);
     assert.ok(snapshot.records && !Array.isArray(snapshot.records) &&
-      !snapshot.partialRecords && !snapshot.partial && !snapshot.pointRead && !snapshot.unchanged,
+      !snapshot.partialRecords && !snapshot.partial && !snapshot.pointRead &&
+      !snapshot.unchanged && !snapshot.missingRecords?.length,
     'A complete signed TEST baseline is required');
     const count = Object.keys(snapshot.records).length;
     report.baselineCounts[collection] = count;
     baselineRows += count;
   }
   report.baselineRows = baselineRows;
-  if (status.needsAttention > 0) {
+  if (status.deliveryQueues?.records?.needsAttention > 0) {
     const health = await fetch(endpoint + '/healthz', {signal: AbortSignal.timeout(20000)}).then(r => r.json());
     assert.equal(health.runtimeCommit, process.env.VS_EXPECTED_TEST_RUNTIME);
     assert.match(health.adminCredentialFingerprint || '', /^[a-f0-9]{64}$/);
@@ -107,11 +109,17 @@ async function run() {
       }
     }
   }
-  assert.equal(status.pending, 0);
-  assert.equal(status.needsAttention, 0);
-  assert.equal(status.unsettledWrites, 0);
-  if (baselineRows > 24) throw Object.assign(
-    Error('The isolated school exceeds this rehearsal rollback budget'), {code: 'ATOMIC_TEST_ROLLBACK_BUDGET'});
+  assert.ok(Number.isSafeInteger(status.deliveryQueues?.records?.pending) &&
+    Number.isSafeInteger(status.deliveryQueues?.notices?.pending),
+  'The pinned broker must supply separate verified queue counts');
+  report.preflightBlockers = [];
+  if (status.pending !== 0 || status.needsAttention !== 0)
+    report.preflightBlockers.push('LIVE_LEGACY_DELIVERY_PENDING');
+  if (status.unsettledWrites !== 0)
+    report.preflightBlockers.push('UNSETTLED_WRITES_REQUIRE_RECONCILIATION');
+  if (report.preflightBlockers.length) throw Object.assign(
+    Error('The isolated migration remains fenced by its preflight requirements'),
+    {code: report.preflightBlockers[0]});
 
   const confirmation = {confirmIsolatedBundleTest: true};
   let active = false;
@@ -121,9 +129,9 @@ async function run() {
     for (let n = 0; n < 25; n++) {
       try {
         const result = await live('prepare-person-bundle', confirmation);
-        assert.equal(result.state, 'active');
+        active = result.state === 'active';
+        assert.ok(active);
         assert.deepEqual(result.collections, collections);
-        active = true;
         break;
       } catch (error) {
         if (error.code !== 'LIVE_LEGACY_DRAIN_GRACE') throw error;
