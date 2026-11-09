@@ -140,7 +140,7 @@ void main() {
           final person = 'synthetic-android-$run',
               token =
                   sha256.convert(utf8.encode('android-test/$run')).toString();
-          await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+          final seed = <String, dynamic>{
             'operation': 'write',
             'collection': 'students_directory',
             'id': person,
@@ -158,7 +158,13 @@ void main() {
               'mobileStableId': person,
               'mobileLinkToken': token
             }
-          });
+          };
+          final seedAck = await retryRetainedIsolatedWrite(
+              () => ManagedSchoolSession.callForSchool(
+                  school, 'managed/records', seed),
+              onRetry: () => metrics['retainedStudentSeedRetried'] = true);
+          expect(seedAck['schoolId'], school);
+          expect(seedAck['recordRevision'], isA<String>());
           final raw = SchoolLink.encodeCompact({
             'managed': true,
             'schoolId': school,
