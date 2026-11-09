@@ -9,6 +9,7 @@ on:
       - '.github/tests/isolated_engine_live_test.dart'
       - '.github/workflows/disaster-test.yml'
       - '.github/workflows/test-cloud-prerequisites.yml'
+      - '.github/scripts/run_android_live_test.sh'
       - '.github/scripts/test_runtime_identity.cjs'
       - 'functions/**'
       - 'school-backend/**'
