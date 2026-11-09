@@ -1,4 +1,4 @@
-name: Isolated TEST student slot conflict readback
+name: Isolated TEST student slot conflict settlement
 on:
   push:
     branches: [test/atomic-person-live-20261109]
@@ -8,6 +8,9 @@ permissions:
 jobs:
   signed-point-read:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
@@ -15,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify the accepted synthetic student from signed Drive storage
+      - name: Verify signed Drive and settle only the original synthetic conflict
         env:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
@@ -36,7 +39,7 @@ jobs:
             return r.json();
           }
           async function main() {
-            await waitForRuntime('2811a4774bf1aeedac926335f1fc1495b32afff4');
+            await waitForRuntime('4ba61b40b254bce6cd4a1b515926324c3b84df78');
             const key = fs.readFileSync('lib/platform/platform_config.dart', 'utf8')
               .match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
             const {idToken} = await post(
@@ -45,7 +48,6 @@ jobs:
             assert.ok(idToken);
             const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
             const call = (action, body = {}) => post(endpoint, {...body, schoolId, action}, idToken);
-            const status = await call('managed/live/rollout-status', {liveProtocol: 1});
             const reply = await call('managed/records', {
               collection: 'students_directory', operation: 'read', syncProtocol: 2, id,
             });
@@ -54,8 +56,23 @@ jobs:
             assert.ok(row && row.schoolId === schoolId && row.syntheticTest === true && row._syncDeleted !== true);
             const successorVerified = row._syncOperationId === 'VS100K2_000061_8e2b6e9f3d62a344' &&
               row._syncRevision === '32bbde59-9471-4324-9152-80bd6cfbc247';
-            console.log(JSON.stringify({successorVerified, deliveryQueues: status.deliveryQueues}));
             assert.ok(successorVerified);
+            const original = 'c8b5e223d257b2a99d6ad4da166dae4bdf2880a6155a8903aa7d15f4bee75ac4';
+            const successor = '012b3144ec2fc8d6569dfc182323611943c2f1f92f051e654ee4ca9c3f80012c';
+            const repair = await call('managed/live/settle-test-student-slot-review', {
+              liveProtocol: 1, id: original, successorId: successor, recordId: id,
+            });
+            assert.ok(repair.success && repair.schoolId === schoolId && repair.state === 'superseded');
+            assert.equal(repair.id, original);
+            assert.equal(repair.successorId, successor);
+            const current = await call('managed/records', {
+              collection: 'students_directory', operation: 'read', syncProtocol: 2, id,
+            });
+            assert.equal(current.pointRead, true);
+            assert.deepEqual(current.records[id], row);
+            const status = await call('managed/live/rollout-status', {liveProtocol: 1});
+            assert.equal(status.deliveryQueues?.records?.needsAttention, 0);
+            console.log(JSON.stringify({successorVerified, originalState: repair.state, deliveryQueues: status.deliveryQueues}));
           }
           main().catch(() => {console.error('Signed synthetic successor proof failed'); process.exitCode = 1;});
           JS
