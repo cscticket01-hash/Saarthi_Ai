@@ -1,0 +1,73 @@
+name: Isolated TEST Atomic Person cloud acceptance
+on:
+  push:
+    branches: [test/atomic-person-live-20261109]
+    paths:
+      - '.github/workflows/atomic-person-live-acceptance.yml'
+      - '.github/scripts/test_atomic_person_live.cjs'
+permissions:
+  actions: read
+  contents: read
+env:
+  VS_EXPECTED_TEST_RUNTIME: 1b0e0a985205dcdc01f554fd38cef64f106071ba
+jobs:
+  prerequisites:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require the exact runtime's isolated cloud, readiness and recovery passes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const assert=require('node:assert/strict');
+          const {setTimeout:delay}=require('node:timers/promises');
+          const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
+          const sha=process.env.VS_EXPECTED_TEST_RUNTIME,token=process.env.GITHUB_TOKEN;
+          async function main(){
+           await waitForTestGate({kind:'cloud',sha,token});
+           await waitForTestGate({kind:'readiness',sha,token});
+           const url='https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/actions/runs/42618809231';
+           for(let n=0;n<60;n++){
+            const r=await fetch(url,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(20000)});
+            assert.equal(r.status,200);
+            const run=await r.json();
+            assert.equal(run.head_sha,sha);
+            assert.equal(run.name,'Isolated TEST disaster recovery acceptance');
+            if(run.status==='completed'){
+             assert.equal(run.conclusion,'success');
+             return;
+            }
+            await delay(15000);
+           }
+           throw Error('Verified isolated recovery was not completed');
+          }
+          main().catch(error=>{console.error(error.message);process.exitCode=1});
+          JS
+  atomic-person:
+    needs: prerequisites
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify the deployed broker and Worker tree
+        run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+      - name: Publish synthetic TEST bundles and verify Drive before restoring legacy authority
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_atomic_person_live.cjs
