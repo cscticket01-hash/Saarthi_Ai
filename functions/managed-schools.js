@@ -1127,14 +1127,30 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    return {success:true,schoolId:m.schoolId,...result};
   }
   if(operation==='reconcile')return reconcileAdmission(m,25);
+  const deliveryDrained=async()=>{
+   const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
+   return stats.every(s=>s.pending===0&&s.needsAttention===0);
+  };
+  if(['prepare-person-bundle','rollback-person-bundle'].includes(operation)){
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+    fail(412,'Atomic person bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(b.confirmIsolatedBundleTest!==true||Object.hasOwn(b,'collection')||Object.hasOwn(b,'collections'))
+    fail(400,'Explicit confirmation of the fixed isolated person bundle group required');
+   const collections=['students_directory','teachers_directory','documents'];
+   await reconcileAdmission(m);
+   if(operation==='rollback-person-bundle'){
+    const result=await liveMigration.rollbackGroup(m.schoolId,collections,
+      proof=>liveSync.rollback(m.schoolId,proof.collection,body=>signedRequest(m,body),proof.rollbackToken));
+    return {success:true,...result};
+   }
+   const result=await liveMigration.prepareGroup(m.schoolId,collections,deliveryDrained,
+     collection=>liveSync.prepare(m.schoolId,collection,body=>signedRequest(m,body)));
+   return {success:true,...result};
+  }
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
    await reconcileAdmission(m);
-   const drained=async()=>{
-    const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
-    return stats.every(s=>s.pending===0&&s.needsAttention===0);
-   };
-   const prepared=await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)));
+   const prepared=await liveMigration.prepare(m.schoolId,b.collection,deliveryDrained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)));
    if(b.collection==='school_notices')await cloudflareSync.rpc(m.schoolId,'notices',{command:'retireNoticeCache'});
    return {success:true,...prepared};
   }
@@ -1143,13 +1159,19 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    await reconcileAdmission(m);
    return {success:true,...await liveMigration.rollback(m.schoolId,b.collection,proof=>liveSync.rollback(m.schoolId,b.collection,body=>signedRequest(m,body),proof.rollbackToken))};
   }
-  if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
+  if(operation==='grant'){
+   await liveMigration.assertCohortAdmission(m.schoolId);
+   return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
+  }
   const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory']);
   if(operation==='operationReceipt'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))fail(400,'Invalid live operation identity');
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
   // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
   const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor','createIntent','cachedBaseline'].filter(k=>b[k]!==undefined).map(k=>[k,['data','cachedBaseline'].includes(k)?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
+  if(['read','snapshot','changes','head'].includes(operation))
+   await liveMigration.assertCohortAdmission(m.schoolId,
+     ['read','snapshot'].includes(operation)?body.collection:undefined);
   const drive=record=>signedRequest(m,record);
   const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
     operation==='commit'?await liveMigration.live(m.schoolId,body.collection,()=>liveSync.commit(m.schoolId,body,drive),body):

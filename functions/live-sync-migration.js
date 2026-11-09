@@ -93,6 +93,10 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   try{const result=await run();completed=true;return result;}
   finally{await settleAttempt(r,'liveInflight',token,completed);}
  }
+ function checkedRollbackProof(proof,school,collection,rollbackToken){
+  if(!proof||proof.success!==true||proof.liveProtocol!==1||proof.schoolId!==school||proof.collection!==collection||proof.state!=='legacy'||proof.driveVerified!==true||proof.pending!==0||proof.needsAttention!==0||!Number.isSafeInteger(proof.cursor)||proof.cursor<0||proof.rollbackToken!==rollbackToken||typeof proof.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(proof.fingerprint))refuse('LIVE_ROLLBACK_UNVERIFIED');
+  return {cursor:proof.cursor,fingerprint:proof.fingerprint,driveVerified:true};
+ }
  async function rollback(school,collection,verifyAndSeal){
   if(!COLLECTIONS.has(collection))refuse('LIVE_COLLECTION_NOT_ADMITTED');
   const r=ref(school);
@@ -114,8 +118,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   // proof. No payloads, cursors, jobs or uncertain markers are deleted here.
   if(typeof verifyAndSeal!=='function')refuse('LIVE_ROLLBACK_VERIFIER_REQUIRED');
   const proof=await verifyAndSeal({schoolId:school,collection,rollbackToken:migration.rollbackToken});
-  if(!proof||proof.success!==true||proof.liveProtocol!==1||proof.schoolId!==school||proof.collection!==collection||proof.state!=='legacy'||proof.driveVerified!==true||proof.pending!==0||proof.needsAttention!==0||!Number.isSafeInteger(proof.cursor)||proof.cursor<0||proof.rollbackToken!==migration.rollbackToken||typeof proof.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(proof.fingerprint))refuse('LIVE_ROLLBACK_UNVERIFIED');
-  const rollbackProof={cursor:proof.cursor,fingerprint:proof.fingerprint,driveVerified:true};
+  const rollbackProof=checkedRollbackProof(proof,school,collection,migration.rollbackToken);
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{},current=state.collections?.[collection];
    if(current?.state!=='rolling_back'||current.rollbackToken!==migration.rollbackToken)refuse('LIVE_MIGRATION_STATE_CHANGED');
@@ -131,6 +134,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
    const current=(await tx.get(r)).data()||{},group=current.nativeCohort;
    if(group&&canonical(group.collections)!==canonical(ordered))refuse('LIVE_DEPENDENCY_GROUP_CHANGED');
    if(group?.state==='active')return true;
+   if(group&&group.state!=='preparing')refuse('LIVE_MIGRATION_REVIEW_REQUIRED');
    const states={...current.collections};
    for(const collection of ordered){
     const prior=states[collection];if(prior&&!['legacy','preparing','active'].includes(prior.state)||prior?.rollbackProof)refuse('LIVE_MIGRATION_REVIEW_REQUIRED');
@@ -148,6 +152,7 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   for(const collection of ordered){const result=await seed(collection);if(result.state!=='active')refuse('LIVE_BASELINE_UNVERIFIED');}
   await db.runTransaction(async tx=>{
    const latest=(await tx.get(r)).data()||{},group=latest.nativeCohort;
+   if(group?.state==='active'&&canonical(group.collections)===canonical(ordered))return;
    if(group?.state!=='preparing'||canonical(group.collections)!==canonical(ordered))refuse('LIVE_MIGRATION_STATE_CHANGED');
    if(Object.values(latest.inflight||{}).some(relevant)||Object.values(latest.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');
    const states={...latest.collections};for(const collection of ordered)states[collection]={state:'active',activatedAt:now()};
@@ -155,12 +160,57 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   });
   return {liveProtocol:1,schoolId:school,state:'active',collections:ordered};
  }
+ async function rollbackGroup(school,collections,verifyAndSeal){
+  const ordered=[...collections].sort(),r=ref(school);
+  const migration=await db.runTransaction(async tx=>{
+   const state=(await tx.get(r)).data()||{},group=state.nativeCohort;
+   if(!group||canonical(group.collections)!==canonical(ordered))refuse('LIVE_DEPENDENCY_GROUP_CHANGED');
+   if(group.state==='legacy')return group;
+   if(!['active','rolling_back'].includes(group.state))refuse('LIVE_MIGRATION_NOT_ACTIVE');
+   if(group.state==='rolling_back')return group;
+   if(ordered.some(name=>state.collections?.[name]?.state!=='active'))refuse('LIVE_MIGRATION_NOT_ACTIVE');
+   const next={...group,state:'rolling_back',rollbackToken:randomUUID()};
+   const states={...state.collections};
+   for(const name of ordered)states[name]={...states[name],state:'rolling_back'};
+   tx.set(r,{...state,collections:states,nativeCohort:next});
+   return next;
+  });
+  const response={liveProtocol:1,schoolId:school,state:'legacy',collections:ordered};
+  if(migration.state==='legacy')return response;
+  const relevant=item=>item.collection==='*'||ordered.includes(item.collection);
+  const requireIdle=state=>{
+   if(Object.values(state.inflight||{}).some(relevant))refuse('LIVE_LEGACY_WRITES_IN_FLIGHT');
+   if(Object.values(state.liveInflight||{}).some(relevant))refuse('LIVE_WRITES_IN_FLIGHT');
+  };
+  requireIdle((await r.get()).data()||{});
+  const proofs={};
+  // Worker seals are idempotent and each retry rechecks current Drive bytes.
+  // Keep all broker writes fenced until every collection has a signed proof.
+  for(const name of ordered){
+   const proof=await verifyAndSeal({schoolId:school,collection:name,rollbackToken:migration.rollbackToken});
+   proofs[name]=checkedRollbackProof(proof,school,name,migration.rollbackToken);
+  }
+  await db.runTransaction(async tx=>{
+   const state=(await tx.get(r)).data()||{},group=state.nativeCohort;
+   if(group?.state==='legacy'&&group.rollbackToken===migration.rollbackToken)return;
+   if(group?.state!=='rolling_back'||group.rollbackToken!==migration.rollbackToken||
+      ordered.some(name=>state.collections?.[name]?.state!=='rolling_back'))
+    refuse('LIVE_MIGRATION_STATE_CHANGED');
+   requireIdle(state);
+   const states={...state.collections};
+   for(const name of ordered)states[name]={state:'legacy',rolledBackAt:now(),rollbackProof:proofs[name]};
+   tx.set(r,{...state,collections:states,nativeCohort:{...group,state:'legacy',rolledBackAt:now()}});
+  });
+  return response;
+ }
  async function assertCohortAdmission(school,collection){
   const value=(await ref(school).get()).data()?.nativeCohort;
-  if(value?.state==='preparing'&&(!collection||value.collections.includes(collection)))refuse('LIVE_DEPENDENCY_PREPARING');
+  if(!value||collection&&!value.collections.includes(collection))return;
+  if(value.state==='preparing')refuse('LIVE_DEPENDENCY_PREPARING');
+  if(value.state==='rolling_back')refuse('LIVE_ROLLBACK_PENDING');
  }
  async function state(school,collection){return (await ref(school).get()).data()?.collections?.[collection]?.state||'legacy';}
  async function rolledBack(school,collection){const value=(await ref(school).get()).data()?.collections?.[collection];return value?.state==='legacy'&&!!value.rollbackProof;}
- return {legacy,prepare,prepareGroup,assertCohortAdmission,assertActive,live,rollback,state,rolledBack};
+ return {legacy,prepare,prepareGroup,assertCohortAdmission,assertActive,live,rollback,rollbackGroup,state,rolledBack};
 }
 module.exports={createLiveMigration,NATIVE_LIFECYCLE_COLLECTIONS};
