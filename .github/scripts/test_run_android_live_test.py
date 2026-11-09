@@ -21,6 +21,9 @@ class AndroidRunnerGuards(unittest.TestCase):
             flutter = '''#!/usr/bin/env python3
 import json,os,sys
 if sys.argv[1]=='build': sys.exit(0)
+assert sys.argv[1]=='drive'
+assert '--driver=integration_test/sync_v2_android_driver.dart' in sys.argv
+assert '--use-application-binary=build/app/outputs/flutter-apk/app-debug.apk' in sys.argv
 assert '--no-dds' in sys.argv and '--dds' not in sys.argv
 assert '--no-enable-impeller' in sys.argv
 assert '127.0.0.1' in os.environ['NO_PROXY']
@@ -58,7 +61,7 @@ sys.exit(1 if mode=='failed_test_with_proof' else 0)
                 self.assertNotEqual(code,0);self.assertIsNone(proof)
 
     def test_failed_process_cannot_be_hidden_by_pass_envelope(self):
-        code,_=self.run_case('failed_test_with_proof')
-        self.assertNotEqual(code,0)
+        code,proof=self.run_case('failed_test_with_proof')
+        self.assertNotEqual(code,0);self.assertIsNone(proof)
 
 if __name__=='__main__': unittest.main()

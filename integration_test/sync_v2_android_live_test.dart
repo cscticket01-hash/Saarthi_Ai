@@ -55,7 +55,7 @@ class _NetworkBoundary extends http.BaseClient {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
       'Android OS native SQLite and secure restore -> real TEST ACK -> production dashboard',
       (tester) async {
@@ -288,7 +288,7 @@ void main() {
                 '${(await getApplicationSupportDirectory()).path}/vs_android_evidence.json')
             .writeAsString(jsonEncode(metrics), flush: true);
       });
-      print('VS_ANDROID_OS_EVIDENCE ${jsonEncode(metrics)}');
+      binding.reportData = metrics;
     }
   }, timeout: const Timeout(Duration(minutes: 8)));
 }
