@@ -4,6 +4,7 @@ on:
     branches: [feature/smart-sync-3]
     paths:
       - '.github/scripts/await_test_gate*'
+      - '.github/scripts/isolated_live_sync.cjs'
       - '.github/workflows/sync3-isolated-readiness.yml'
       - '.github/scripts/test_disaster_live.cjs'
       - '.github/tests/isolated_engine_live_test.dart'
