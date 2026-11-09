@@ -10,6 +10,7 @@ on:
       - '.github/workflows/disaster-test.yml'
       - '.github/workflows/test-cloud-prerequisites.yml'
       - '.github/scripts/run_android_live_test.sh'
+      - '.github/tests/native_android_windows_readback_test.dart'
       - '.github/scripts/test_runtime_identity.cjs'
       - 'functions/**'
       - 'school-backend/**'
