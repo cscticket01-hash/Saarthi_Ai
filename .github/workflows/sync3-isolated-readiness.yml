@@ -8,6 +8,7 @@ on:
       - '.github/scripts/test_disaster_live.cjs'
       - '.github/tests/isolated_engine_live_test.dart'
       - '.github/workflows/disaster-test.yml'
+      - '.github/workflows/test-cloud-prerequisites.yml'
       - '.github/scripts/test_runtime_identity.cjs'
       - 'functions/**'
       - 'school-backend/**'

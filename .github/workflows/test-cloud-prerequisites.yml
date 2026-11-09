@@ -123,6 +123,9 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - name: Prepare the checksum-verified Windows SQLite DLL
+        shell: bash
+        run: bash .github/scripts/seed_windows_test_sqlite.sh
       - name: Run existing Windows outbox and mobile session classes against real TEST cloud
         env:
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
@@ -287,6 +290,9 @@ jobs:
         channel: stable
         cache: true
     - run: flutter pub get
+    - name: Prepare the checksum-verified Windows SQLite DLL
+      shell: bash
+      run: bash .github/scripts/seed_windows_test_sqlite.sh
     - uses: actions/download-artifact@v4
       with:
         name: android-os-real-cloud-evidence
