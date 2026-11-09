@@ -1,5 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
+const {createHash}=require('node:crypto');
+const {canonical}=require('../live-sync-canonical');
 const {createLiveSync,liveGrant}=require('../live-sync');
 const {fixture,A,B}=require('./helpers/managed-school-broker');
 test('new live authority is closed by default and normal school authorization is required',async()=>{
@@ -785,4 +787,49 @@ test('isolated person migration has a server-owned collection set and separate r
   ['documents','students_directory','teachers_directory']);
  await assert.rejects(f.call({action:'managed/live/head',liveProtocol:1,collection:'school_notices'}),
   e=>e.code==='LIVE_DEPENDENCY_PREPARING');
+});
+
+test('isolated cohort rollback verifies 730 current rows using one signed collection read',async()=>{
+ const collection='students_directory',cursor=12,records={};
+ const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+ const rows=Array.from({length:730},(_,index)=>{
+  const id='student-'+String(index).padStart(3,'0');
+  const data={schoolId:A,name:'Synthetic student '+index},deleted=index===0;
+  const driveRevision='drive-'+index,recordRevision='live-'+index;
+  records[id]={...data,_syncDeleted:deleted,_syncRevision:driveRevision};
+  return {id,recordRevision,driveRevision,payloadHash:hash({data,deleted})};
+ });
+ const seals=[];
+ const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async(s,l,b)=>{
+  if(b.command==='head')return {cursor};
+  if(b.command==='rollbackSeal'){
+   seals.push(b);
+   return {state:'legacy',driveVerified:true};
+  }
+  assert.equal(b.command,'rollbackSnapshot');
+  const offset=b.after?rows.findIndex(row=>row.id===b.after)+1:0;
+  const page=rows.slice(offset,offset+100);
+  return {schoolId:A,liveProtocol:1,cursor,records:page,next:page.at(-1)?.id??null};
+ }}});
+ let reads=0;
+ const source={success:true,schoolId:A,syncProtocol:2,collectionRevision:'current',records};
+ const rollback=change=>live.rollback(A,collection,async body=>{
+  reads++;
+  assert.deepEqual(body,{action:'managed_records',operation:'read',collection,syncProtocol:2});
+  return {...source,...change};
+ },'token',{readCollection:true});
+ assert.equal((await rollback()).driveVerified,true);
+ assert.equal(reads,1);
+ assert.deepEqual(seals,[{command:'rollbackSeal',collection,cursor,fingerprint:hash(rows)}]);
+ const first=rows[0].id;
+ for(const change of [
+  {schoolId:B},{partialRecords:true},{pointRead:true},{missingRecords:[first]},
+  {records:{...records,[first]:{...records[first],_syncDeleted:false}}},
+  {records:{...records,[first]:{...records[first],_syncRevision:'newer'}}},
+  {records:{...records,[first]:undefined,extra:records[first]}},
+  {records:{...records,extra:records[first]}},
+ ]){
+  await assert.rejects(rollback(change),error=>error.code==='LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+ }
+ assert.equal(seals.length,1);
 });

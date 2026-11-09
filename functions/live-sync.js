@@ -152,26 +152,46 @@ function createLiveSync({edge,schools=[],now=Date.now}){
    await finish({verified:false,review,retryAt:now()+Math.max(5000,Math.min(86400000,Number(error.retryAfterMs)||0))});return {processed:0};
   }
  }
- async function rollback(school,collection,readDrive,rollbackToken){
+ async function rollback(school,collection,readDrive,rollbackToken,{readCollection=false}={}){
   if(!COLLECTIONS.has(collection))refuse(412,'LIVE_COLLECTION_NOT_ADMITTED');
   const head=await command(school,{command:'head'});
+  let driveRecords;
+  if(readCollection){
+   // The isolated cohort uses one fresh signed Sheets export per collection.
+   // Every row still needs the exact Worker revision and payload hash below.
+   const source=await readDrive({action:'managed_records',operation:'read',collection,syncProtocol:2});
+   if(source?.success!==true||source.schoolId!==school||source.syncProtocol!==2||
+      typeof source.collectionRevision!=='string'||!source.records||
+      typeof source.records!=='object'||Array.isArray(source.records)||
+      source.partialRecords||source.partial||source.pointRead||source.unchanged||
+      source.missingRecords?.length)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+   driveRecords=source.records;
+  }
   const rows=[];let after='';
   do{
    const page=await command(school,{command:'rollbackSnapshot',collection,at:head.cursor,after});
-   if(!Array.isArray(page.records))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
+   if(!Array.isArray(page.records)||driveRecords&&(page.schoolId!==school||
+      page.liveProtocol!==1||page.cursor!==head.cursor))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
    for(const entry of page.records){
     // A 24h resident cache may already have exact verified Drive proof.
     // Rollback needs signed Drive readback, never a cache or merely an ACK.
     if(!entry.driveRevision||!entry.payloadHash)refuse(409,'LIVE_BACKUP_PENDING');
-    const reply=await readDrive({action:'managed_records',operation:'read',collection,id:entry.id,syncProtocol:2});
-    const record=reply?.records?.[entry.id];
-    if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true||!record||record.schoolId!==school||record._syncRevision!==entry.driveRevision||payloadHash(record)!==entry.payloadHash)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+    let record;
+    if(driveRecords){
+     record=Object.hasOwn(driveRecords,entry.id)?driveRecords[entry.id]:null;
+    }else{
+     const reply=await readDrive({action:'managed_records',operation:'read',collection,id:entry.id,syncProtocol:2});
+     if(reply?.success!==true||reply.schoolId!==school||reply.syncProtocol!==2||reply.pointRead!==true)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+     record=reply.records?.[entry.id];
+    }
+    if(!record||record.schoolId!==school||record._syncRevision!==entry.driveRevision||payloadHash(record)!==entry.payloadHash)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
     rows.push({id:entry.id,recordRevision:entry.recordRevision,driveRevision:entry.driveRevision,payloadHash:entry.payloadHash});
    }
    if(rows.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
    if(page.next!==null&&(typeof page.next!=='string'||page.next<=after))refuse(502,'LIVE_ROLLBACK_UNVERIFIED');
    after=page.next;
   }while(after!==null);
+  if(driveRecords&&Object.keys(driveRecords).length!==rows.length)refuse(503,'LIVE_ROLLBACK_DRIVE_UNVERIFIED');
   const fingerprint=createHash('sha256').update(canonical(rows)).digest('hex');
   const result=await command(school,{command:'rollbackSeal',collection,cursor:head.cursor,fingerprint});
   return {success:true,...result,rollbackToken};
