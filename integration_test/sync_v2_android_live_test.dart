@@ -140,6 +140,7 @@ void main() {
           final person = 'synthetic-android-$run',
               token =
                   sha256.convert(utf8.encode('android-test/$run')).toString();
+          final generation = 'p-${sha256.convert(utf8.encode(person))}';
           final seed = <String, dynamic>{
             'operation': 'write',
             'collection': 'students_directory',
@@ -155,7 +156,7 @@ void main() {
               'section': 'TEST-android-$run',
               'rollNo': '900002',
               'dob': '2015-01-01',
-              'mobileStableId': person,
+              'mobileStableId': generation,
               'mobileLinkToken': token
             }
           };
@@ -201,7 +202,7 @@ void main() {
               true);
           metrics['websiteNoticeReadOnNativeAndroid'] = true;
           final captured = DateTime.now().millisecondsSinceEpoch;
-          metrics['syntheticPersonId'] = person;
+          metrics['syntheticPersonId'] = generation;
           metrics['originalCapturedAt'] = captured;
           transport.offline = true;
           final save = Stopwatch()..start();
@@ -244,7 +245,7 @@ void main() {
           });
           expect(
               (cloud['records'] as Map).values.any((r) =>
-                  r['personId'] == person && r['entryCapturedAt'] == captured),
+                  r['personId'] == generation && r['entryCapturedAt'] == captured),
               true);
           metrics['androidQueueToVerifiedCloudReadMs'] =
               ack.elapsedMilliseconds;
