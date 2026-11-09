@@ -1,6 +1,7 @@
 import '../../lib/testing/isolated_admin_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
@@ -36,7 +37,9 @@ void main() {
       expect(proof['schoolId'], school);
       expect(proof['windowsNoticeReadOnNativeAndroid'], true);
       expect(proof['websiteNoticeReadOnNativeAndroid'], true);
-      expect(proof['syntheticPersonId'], 'synthetic-android-$run');
+      final documentId = 'synthetic-android-$run';
+      final generation = 'p-${sha256.convert(utf8.encode(documentId))}';
+      expect(proof['syntheticPersonId'], generation);
       expect(proof['originalCapturedAt'], isA<int>());
       final login = await authenticateIsolatedAdminFixture(
           Platform.environment['VS_TEST_LOGIN_EMAIL']!,
