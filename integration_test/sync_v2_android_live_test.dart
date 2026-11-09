@@ -62,14 +62,21 @@ void main() {
     const school = 'vs-db8afb01a3be46a983c8284714d06e5d';
     const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
     const run = String.fromEnvironment('VS_TEST_RUN_ID');
+    const websiteRun = String.fromEnvironment('VS_TEST_WEBSITE_RUN_ID');
     if (!Platform.isAndroid ||
         const String.fromEnvironment('VS_TEST_CONNECT_CONFIRM') != school ||
-        run.isEmpty) throw StateError('Isolated Android TEST runner required');
+        !RegExp(r'^\d+-[1-9]\d*$').hasMatch(run) ||
+        !RegExp(r'^\d+-[1-9]\d*$').hasMatch(websiteRun) ||
+        websiteRun.split('-').first != run.split('-').first) {
+      throw StateError('Isolated Android TEST runner required');
+    }
     HttpOverrides.global = null;
     final metrics = <String, dynamic>{
       'scope':
           'Android API 35 emulator, native SQLite/secure-storage plugins, actual production dashboard; injected offline network boundary',
       'schoolId': school,
+      'androidRunId': run,
+      'websiteRunId': websiteRun,
       'status': 'RUNNING'
     };
     try {
@@ -190,15 +197,13 @@ void main() {
               reason:
                   'Native Android must read the notice ACKed by the hosted Windows outbox in this same run');
           metrics['windowsNoticeReadOnNativeAndroid'] = true;
-          // Website publishes using GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT.
-          // The Android build's VS_TEST_RUN_ID already contains both.
-          // Windows notice is intentionally keyed by GITHUB_RUN_ID only.
-          final webNotice = 'synthetic-web-notice-$run';
+          // A retried Android job may consume an earlier successful Website job.
+          final webNotice = 'synthetic-web-notice-$websiteRun';
           expect(
               (session.dashboard['notices'] as List).any((row) =>
                   row['id'] == webNotice &&
                   row['title'] ==
-                      'Synthetic website exchange $run'),
+                      'Synthetic website exchange $websiteRun'),
               true);
           metrics['websiteNoticeReadOnNativeAndroid'] = true;
           final captured = DateTime.now().millisecondsSinceEpoch;

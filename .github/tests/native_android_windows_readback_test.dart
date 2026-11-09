@@ -14,11 +14,16 @@ void main() {
       () async {
     const school = 'vs-db8afb01a3be46a983c8284714d06e5d';
     const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
-    final run =
-        '${Platform.environment['GITHUB_RUN_ID']}-${Platform.environment['GITHUB_RUN_ATTEMPT']}';
+    final workflowRun = Platform.environment['GITHUB_RUN_ID'];
+    final run = Platform.environment['VS_TEST_ANDROID_RUN_ID'] ?? '';
+    final websiteRun = Platform.environment['VS_TEST_WEBSITE_RUN_ID'] ?? '';
+    final fixtureId = RegExp(r'^\d+-[1-9]\d*$');
     if (!Platform.isWindows ||
         Platform.environment['GITHUB_ACTIONS'] != 'true' ||
-        Platform.environment['VS_TEST_CONNECT_CONFIRM'] != school) {
+        Platform.environment['VS_TEST_CONNECT_CONFIRM'] != school ||
+        !fixtureId.hasMatch(run) || !fixtureId.hasMatch(websiteRun) ||
+        run.split('-').first != workflowRun ||
+        websiteRun.split('-').first != workflowRun) {
       throw StateError('Isolated hosted Windows TEST runner required');
     }
     HttpOverrides.global = null;
@@ -35,6 +40,8 @@ void main() {
               .readAsString()) as Map;
       expect(proof['status'], 'PASS');
       expect(proof['schoolId'], school);
+      expect(proof['androidRunId'], run);
+      expect(proof['websiteRunId'], websiteRun);
       expect(proof['windowsNoticeReadOnNativeAndroid'], true);
       expect(proof['websiteNoticeReadOnNativeAndroid'], true);
       final documentId = 'synthetic-android-$run';
@@ -52,13 +59,12 @@ void main() {
         'collection': 'school_notices',
         'syncProtocol': 2
       });
-      // The website and Android evidence use the same hosted run/attempt.
-      final webId = 'synthetic-web-notice-$run';
+      final webId = 'synthetic-web-notice-$websiteRun';
       final websiteRecords = web['records'] as Map;
       expect(websiteRecords[webId], isA<Map>(),
           reason: 'Website notice from this exact TEST attempt is missing');
       final webRow = Map<String, dynamic>.from(websiteRecords[webId] as Map);
-      expect(webRow['title'], 'Synthetic website exchange $run');
+      expect(webRow['title'], 'Synthetic website exchange $websiteRun');
       report['websiteNoticeReadOnHostedWindows'] = true;
       final watch = Stopwatch()..start();
       final reply = await ManagedSchoolSession.callForSchool(
