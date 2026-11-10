@@ -32,13 +32,13 @@ These statuses are a checkpoint, not inferred future results.
 | Gate | Run | Checkpoint status |
 | --- | --- | --- |
 | Platform Windows/Android/Web/backend/security | [42877158212](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158212) | **PASS** |
-| Cloud prerequisites and hosted clients | [42877158371](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158371) | Prerequisites, actual Windows engines and Website browser **PASS**; native Android/readback RUNNING |
-| TEST readiness | [42877158074](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158074) | WAITING for exact-source prerequisites |
-| Recovery | [42877158153](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158153) | WAITING for exact-source readiness |
+| Cloud prerequisites and hosted clients | [42877158371](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158371) | **PASS**, including actual Windows engines, Website browser, native Android emulator and Android→Windows readback |
+| TEST readiness | [42877158074](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158074) | **PASS** |
+| Recovery | [42877158153](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158153) | RUNNING |
 | Retained and fresh Delete Everywhere | [42877158125](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158125) | WAITING for exact-source prerequisites |
-| Atomic Person | [42877334494](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877334494) | WAITING for exact runtime cloud/readiness/recovery evidence |
+| Atomic Person | [42883783752](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42883783752) | WAITING for exact runtime cloud/readiness/recovery evidence |
 
-Atomic harness source is `90a0da79e9e2ed190c242ca184b9b5f120909e3a`; its runtime tree is pinned to the reviewed TEST source above.
+Atomic harness source is `a8bfd1854e3af229466bb164e3a95651dc2dcaf9`; its runtime tree is pinned to the reviewed TEST source above.
 
 ## Retained evidence and remaining blockers
 
@@ -49,6 +49,7 @@ Atomic harness source is `90a0da79e9e2ed190c242ca184b9b5f120909e3a`; its runtime
 - TEST logs correlated the student marker with `PERSON_GENERATION_INVALID` on 2026-11-09 13:53 UTC, and the unbound marker with a binary-inventory timeout at 17:39 UTC. Correlation is diagnostic context, not an immutable settlement proof. Their current reconciliation result remains to be measured.
 - Physical Android phone → physical Windows, actual 1/2/5-PC offline/restart/conflict/replay and representative media quality are **NOT TESTED** here. Hosted emulators and synthetic SQLite convergence do not certify them.
 - Current-source actual-engine evidence: Windows local save **16 ms**, queue-to-ACK **2,179 ms**, Windows-to-mobile API read **76,514 ms**, mobile API queue-to-Windows read **48,797 ms**, final Windows/mobile pending **0**. Five first-page Drive files passed hash/cache/recovery checks; full inventory remains PARTIAL. **The 2–5-second end-to-end target is NOT MET.** These are individual hosted/API samples, not physical-device or p95 guarantees.
-- Earlier native Android emulator evidence on source `f8e08c52`: durable ACK 39,714 ms, verified cloud read 52,109 ms and hosted Windows readback 16,908 ms. Current-source native emulator results are still pending.
+- Current-source native Android API 35 emulator: offline native save **32 ms**, durable ACK **38,281 ms**, verified cloud read **48,994 ms**, final cloud verification read **10,712 ms**. Hosted Windows read the exact Android capture in **14,092 ms**, rejected a foreign school and retained one deliberately newer pending local edit. Record integrity PASS; these are not physical devices or speed-target certification.
+- The first refreshed Atomic harness failed before provider access because its test-branch disaster gate entry was missing. The original gate support was restored on the test branch, with existing gate regression/disaster-support checks before prerequisites. The corrected run is linked above; no app/runtime source changed for that correction.
 
 Do not reset school data, clear uncertain work, weaken tenant/security guards, or declare full completion from builds alone. Continue from the exact runs and retained identities above.
