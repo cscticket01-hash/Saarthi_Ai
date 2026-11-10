@@ -11,6 +11,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../lib/windows_connect/managed_school_session.dart';
+import '../../lib/windows_connect/central_school_cloud.dart';
 import '../../lib/windows_sync_engine.dart';
 import '../../lib/windows_pending_school_sync.dart';
 import '../../lib/windows_local_firestore.dart';
@@ -66,6 +67,7 @@ void main() {
    final id='synthetic-hosted-notice-${Platform.environment['GITHUB_RUN_ID']}';
    final unique='${Platform.environment['GITHUB_RUN_ID']}-${Platform.environment['GITHUB_RUN_ATTEMPT']??'1'}';
    final person='synthetic-hosted-person-$unique';
+   final generation='p-${sha256.convert(utf8.encode(person))}';
    final linkToken=sha256.convert(utf8.encode('hosted-fresh/$unique')).toString();
    final portrait=img.Image(width:640,height:960)..textData={'Synthetic run':unique};
    img.fill(portrait,color:img.ColorRgb8(190,210,220));
@@ -106,7 +108,15 @@ void main() {
    }
    final binaryDirectory=Directory('${tmp.path}/isolated-binary-cache');
    final binaries=WindowsBinaryDownloads(schoolId:school,storageDirectory:binaryDirectory,currentSchool:()=>school,request:binaryRequest,jitter:()=>.5);
-   await binaries.refreshInventory();
+   report['fixtureReadStage']='binary-inventory';
+   try {
+    await binaries.refreshInventory();
+   } on CentralCloudException catch (error) {
+    if(error.status!=504||error.diagnosticCode!='SCRIPT_TIMEOUT'||error.retryAfterMs>30000)rethrow;
+    report['binaryInventoryTimeoutRetried']=true;
+    await Future<void>.delayed(Duration(milliseconds:error.retryAfterMs.clamp(2000,30000).toInt()));
+    await binaries.refreshInventory();
+   }
    expect(binaries.entries,isNotEmpty);
    final targets=binaries.entries.where((item)=>item['verification']=='bytes_hashed').toList();
    // A successful repair with the fault switch on would mean our interception
@@ -170,7 +180,7 @@ void main() {
    report['binaryInventoryCoverage']=binaries.summary['inventory'];
    report['binaryAcceptanceScope']='At most five first-page TEST Drive binaries; hashes/cache restart/missing cache/corrupt response checked. Remaining files and native Google documents not certified.';
 
-   await writeFixture('person','managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':person,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
+   await writeFixture('person','managed/records',{'collection':'students_directory','operation':'write','id':person,'syncProtocol':2,'operationId':'hosted-person-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'name':'Synthetic hosted TEST student','class':'1','section':'TEST-engine-$unique','rollNo':'900001','dob':'2015-01-01','mobileStableId':generation,'mobileLinkToken':linkToken,'photoUrl':preparedPortrait['photoUrl'],'photoFileId':preparedPortrait['photoFileId']}});
    // Each retry owns its PDF fixture; a successful prerequisite job can belong
    // to an earlier GITHUB_RUN_ATTEMPT and must not supply guessed identities.
    final fixturePdf=utf8.encode('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
@@ -182,7 +192,7 @@ void main() {
    final fixtureReadback=await ManagedSchoolSession.callForSchool(school,'managed/file/read',{'fileId':fixture['fileId']});
    expect(base64Decode(fixtureReadback['base64']),fixturePdf);
    report['attemptOwnedPdfVerified']=true;
-   await writeFixture('card','managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'personId':person,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixturePdf.length,'contentHash':fixtureHash,'documentRevision':fixtureHash}});
+   await writeFixture('card','managed/records',{'collection':'documents','operation':'write','id':'synthetic-hosted-card-$unique','syncProtocol':2,'operationId':'hosted-card-$unique','expectedRecordRevision':'','data':{'schoolId':school,'syntheticTest':true,'studentId':person,'personId':generation,'ownerRole':'student','documentKind':'idCard','documentName':'Synthetic private transport fixture','mimeType':'application/pdf','fileId':fixture['fileId'],'sizeBytes':fixturePdf.length,'contentHash':fixtureHash,'documentRevision':fixtureHash}});
    // The website intentionally consumes this run-stable notice ID. A retried
    // client must import its verified prior revision before creating a new edit.
    final priorNotices=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'school_notices','operation':'read','syncProtocol':2});
@@ -241,7 +251,7 @@ void main() {
    report['windowsToActualMobileReadMs']=clock.elapsedMilliseconds;
    final bytes=await mobile.publishedIdCard();expect(bytes,isNotNull);expect(bytes!.length,greaterThan(0));
    final existingAttendance=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
-   final priorRows=(existingAttendance['records'] as Map).values.where((row)=>row['personId']==person&&row['entryCapturedAt'] is int).toList();
+   final priorRows=(existingAttendance['records'] as Map).values.where((row)=>row['personId']==generation&&row['entryCapturedAt'] is int).toList();
    final captured=priorRows.isEmpty?DateTime.now().millisecondsSinceEpoch:priorRows.single['entryCapturedAt'] as int;
    report['attendanceAlreadyCompletedBeforeTest']=priorRows.isNotEmpty;
    expect(priorRows,isEmpty,reason:'Latency test must use a fresh attendance operation');
@@ -258,7 +268,7 @@ void main() {
    for(var attempt=0;attempt<24;attempt++){await restored.flushAttendance();await restored.refreshAttendanceStatus();if(restored.attendancePending==0&&restored.lastAttendanceAck!=null)break;await Future<void>.delayed(const Duration(seconds:5));}
    expect(restored.attendancePending,0);expect(restored.lastAttendanceAck,isNotNull);
    final fromMobile=await ManagedSchoolSession.callForSchool(school,'managed/records',{'collection':'attendance_records','operation':'read','syncProtocol':2});
-   expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==person&&row['entryCapturedAt']==captured),true);
+   expect((fromMobile['records'] as Map).values.any((row)=>row['personId']==generation&&row['entryCapturedAt']==captured),true);
    report['actualMobileQueueToWindowsReadMs']=reverse.elapsedMilliseconds;report['mobilePending']=0;
    await WindowsSyncEngine.instance.reportCurrentSyncMonitor();
    final monitor=await ManagedSchoolSession.callForSchool(school,'managed/sync/status',{});

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Isolated TEST runner: credentials stay in private emulator app storage.
 set -euo pipefail
+if [[ ! "${VS_TEST_WEBSITE_RUN_ID:-}" =~ ^[0-9]+-[1-9][0-9]*$ || "$VS_TEST_WEBSITE_RUN_ID" != "$GITHUB_RUN_ID-"* ]]; then
+  printf '%s\n' 'Missing or foreign Website fixture identity' >&2
+  exit 1
+fi
 apk=build/app/outputs/flutter-apk/app-debug.apk
-flutter build apk --debug -t integration_test/sync_v2_android_live_test.dart --dart-define=VS_TEST_CONNECT_CONFIRM=vs-db8afb01a3be46a983c8284714d06e5d --dart-define=VS_TEST_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+flutter build apk --debug -t integration_test/sync_v2_android_live_test.dart --dart-define=VS_TEST_CONNECT_CONFIRM=vs-db8afb01a3be46a983c8284714d06e5d --dart-define=VS_TEST_RUN_ID=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT --dart-define=VS_TEST_WEBSITE_RUN_ID="$VS_TEST_WEBSITE_RUN_ID" --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
 test_package="$(python -c 'import json; print(json.load(open("android/app/google-services.json"))["client"][0]["client_info"]["android_client_info"]["package_name"])')"
 [[ "$test_package" =~ ^[a-zA-Z0-9_.]+$ ]]
 # A single fresh app/VM discovery is required. This runner owns only this emulator.
@@ -32,13 +36,15 @@ if [ "$android_result" -ne 0 ]; then exit "$android_result"; fi
 mkdir -p build/cloud-prerequisites
 # The host driver prints the evidence returned by the successful native test.
 python - "$test_log" <<'PYPROOF'
-import json,sys,pathlib
+import json,os,sys,pathlib
 lines=pathlib.Path(sys.argv[1]).read_text(errors='replace').splitlines()
 proofs=[json.loads(line.split('VS_ANDROID_OS_EVIDENCE ',1)[1]) for line in lines if 'VS_ANDROID_OS_EVIDENCE {' in line]
 if len(proofs)!=1: raise SystemExit('Expected exactly one native Android evidence envelope')
 proof=proofs[0]
 if proof.get('schoolId')!='vs-db8afb01a3be46a983c8284714d06e5d' or proof.get('status')!='PASS' or proof.get('nativeCloudChecks')!='PASS':
   raise SystemExit('Native Android did not prove a successful isolated cloud check')
+if proof.get('androidRunId')!=os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'] or proof.get('websiteRunId')!=os.environ['VS_TEST_WEBSITE_RUN_ID']:
+  raise SystemExit('Native Android evidence does not match the selected fixture attempts')
 pathlib.Path('build/cloud-prerequisites/android-os.json').write_text(json.dumps(proof))
 PYPROOF
 exit $?

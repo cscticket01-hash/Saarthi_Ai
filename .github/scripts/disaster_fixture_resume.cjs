@@ -32,11 +32,15 @@ async function prepareDisasterFixture(call, identity, schoolId, pdf, report) {
  assert.ok(original.recordRevision);report.fixtureAckMode='fresh_durable_ack';
  return {id,op,upload,original};
 }
-function fixtureMonitorVerified(evidence,resumed) {
+function fixtureMonitorVerified(evidence,resumed,lastRead='managed_records') {
  if(!evidence || typeof evidence!=='object')return false;
- const accepted=resumed?['verified_response','durable_ack']:['durable_ack'];
- return accepted.includes(evidence.outcome) && evidence.stage==='managed_records' &&
-  evidence.protocol===2 && Number.isSafeInteger(evidence.observedAt) && evidence.observedAt>0 &&
+ // Resuming verifies the retained PDF bytes last. Its signed owned-file read
+ // legitimately replaces the preceding record-read monitor observation.
+ const read=resumed&&evidence.outcome==='verified_response'&&
+  ['managed_records','managed_file'].includes(lastRead)&&evidence.stage===lastRead&&
+  evidence.protocol===(lastRead==='managed_file'?1:2);
+ const ack=evidence.outcome==='durable_ack'&&evidence.stage==='managed_records'&&evidence.protocol===2;
+ return (read||ack) && evidence.version===1&&Number.isSafeInteger(evidence.observedAt) && evidence.observedAt>0 &&
   Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
 }
 module.exports={prepareDisasterFixture,fixtureMonitorVerified};

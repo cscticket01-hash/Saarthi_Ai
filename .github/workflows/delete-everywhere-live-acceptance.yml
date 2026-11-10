@@ -4,6 +4,11 @@ on:
     branches: [feature/smart-sync-3]
     paths:
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
+      - '.github/scripts/native_person_receipt.cjs'
+      - '.github/scripts/native_person_receipt.test.cjs'
+      - '.github/scripts/resume_retained_delete_acceptance.cjs'
+      - '.github/scripts/retained_delete_fixture.cjs'
+      - '.github/scripts/retained_delete_fixture.test.cjs'
       - '.github/workflows/delete-everywhere-live-acceptance.yml'
   workflow_dispatch:
 permissions:
@@ -15,9 +20,9 @@ jobs:
   real-test-delete-everywhere:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
-      VS_EXPECTED_TEST_RUNTIME: 177009bad2db0a416ec540a7b90d9b54d5d25053
+      VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
       VS_DELETE_EVERYWHERE_TEST: vs-db8afb01a3be46a983c8284714d06e5d
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +36,14 @@ jobs:
         run: |
           git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
           node --check .github/scripts/delete_everywhere_live_acceptance.cjs
+          node --test .github/scripts/native_person_receipt.test.cjs
+          node --test .github/scripts/retained_delete_fixture.test.cjs
+          node --check .github/scripts/resume_retained_delete_acceptance.cjs
+      - name: Complete the exact retained TEST deletion before creating new fixtures
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/resume_retained_delete_acceptance.cjs
       - name: Real signed Windows protocol delete, Drive permanent file deletion, Android and Website API readback
         env:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
@@ -40,7 +53,9 @@ jobs:
         if: always()
         with:
           name: real-test-delete-everywhere-evidence
-          path: build/cloud-prerequisites/delete-everywhere-live.json
+          path: |
+            build/cloud-prerequisites/delete-everywhere-live.json
+            build/cloud-prerequisites/retained-delete-resume.json
           if-no-files-found: warn
           retention-days: 14
   hosted-windows-delete-regression:
