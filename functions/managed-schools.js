@@ -323,6 +323,8 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    }
    if(state==='rolling_back')fail(503,'Verified rollback is pending; saved changes are retained','LIVE_ROLLBACK_PENDING');
   }
+  // Pure shape rejection cannot leave an uncertain provider-write admission.
+  if(liveSync.enabled(m.schoolId)&&personLifecycle.handled(body))personLifecycle.validate(m.schoolId,body);
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
  async function reconcileAdmission(m,limit=1){

@@ -130,10 +130,12 @@ test('mobile lifecycle remains available while admitted admin collections are ac
 });
 test('owned file reads never create uncertain write markers or block active collections',async()=>{
  const f=activeGate(),before=JSON.stringify(f.docs.get('school_live_migrations/'+A));
- await assert.rejects(f.gate.legacy(A,{action:'managed_file',fileId:'owned-file'},async()=>{throw Error('download unavailable');}),/download unavailable/);
+ for(const action of ['managed_file','managed_binary_inventory','managed_binary_download']){
+ await assert.rejects(f.gate.legacy(A,{action,fileId:'owned-file'},async()=>{throw Error('download unavailable');}),/download unavailable/);
  assert.equal(JSON.stringify(f.docs.get('school_live_migrations/'+A)),before);
- assert.equal(await f.gate.legacy(A,{action:'managed_file',fileId:'owned-file'},async()=>42),42);
+ assert.equal(await f.gate.legacy(A,{action,fileId:'owned-file'},async()=>42),42);
  assert.equal(JSON.stringify(f.docs.get('school_live_migrations/'+A)),before);
+ }
  await assert.rejects(f.gate.legacy(A,{action:'managed_file_delete',fileId:'owned-file'},async()=>42),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
 });
 test('uncertain retries reuse immutable operation markers instead of exhausting admission',async()=>{
