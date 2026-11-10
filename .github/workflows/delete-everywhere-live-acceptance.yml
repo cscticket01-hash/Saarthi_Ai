@@ -3,10 +3,12 @@ on:
   push:
     branches: [feature/smart-sync-3]
     paths:
-      - 'functions/live-person-lifecycle.js'
-      - 'functions/live-sync-migration.js'
-      - 'functions/live-sync-reconciliation.js'
-      - 'functions/managed-schools.js'
+      - 'functions/**'
+      - 'school-backend/**'
+      - 'staging-school-cloud/**'
+      - '.github/workflows/test-cloud-prerequisites.yml'
+      - '.github/workflows/sync3-isolated-readiness.yml'
+      - '.github/workflows/disaster-test.yml'
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
       - '.github/scripts/native_person_receipt.cjs'
       - '.github/scripts/native_person_receipt.test.cjs'
