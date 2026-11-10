@@ -51,7 +51,14 @@ async function run() {
   report.stage = 'preflight';
   const profile = await admin('managed/profile', {operation: 'read'});
   assert.equal(profile.profile?.schoolName, 'TEST Sync V2');
-  const status = await live('rollout-status');
+  let status = await live('rollout-status');
+  if (status.unsettledWrites > 0) {
+    // Use only the existing proof-based admission reconciler. It retains
+    // unbound, changed, newer, missing and unverifiable operations; this is
+    // not a queue reset or a time-based acknowledgement.
+    report.admissionReconciliation = await live('reconcile');
+    status = await live('rollout-status');
+  }
   const gs = await admin('managed/storage/check');
   report.preflight = {
     configured: status.configured === true,
