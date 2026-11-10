@@ -5205,7 +5205,7 @@ Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
     final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString());
+        qr: data['qrData'].toString(), previewOnly: true);
     if (mounted && bytes != null) {
       await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
         notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
@@ -14506,7 +14506,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       person: data,
     );
     final bytes = await WindowsDocumentTemplates.selected('teacherId',
-        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData,
+        previewOnly: true);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
           title: 'Teacher ID card • Front & back',
