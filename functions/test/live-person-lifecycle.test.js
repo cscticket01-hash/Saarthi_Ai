@@ -165,3 +165,13 @@ test('an old verified deletion never replays against a replacement person genera
  assert.equal(fixture.deletes,1);assert.equal(old.reconcileRequired,true);assert.equal(old.record,null);assert.equal(old.firebaseDeletionComplete,undefined);
  assert.equal(f.s.call({action:'managed_records',collection:'students_directory',id:S,operation:'read',syncProtocol:2}).records[S].mobileStableId,N);
 });
+
+test('teacher Delete Everywhere also forwards the verified generation-bound final receipt',async()=>{
+ const f=setup(),id='teacher-everywhere-1';
+ const created=await f.gate().execute(A,write('teachers_directory',id,{name:'Synthetic teacher',teacherId:'T1',mobileStableId:G}));
+ const fixture=everywhereFixture(f),request={action:'managed_records',collection:'teachers_directory',id,operation:'delete',syncProtocol:2,
+  operationId:'teacher-everywhere-delete-0001',expectedRecordRevision:created.recordRevision,deletedTeacherGeneration:G,deleteEverywhereVersion:1};
+ const ack=await fixture.gate.execute(A,request);
+ assert.equal(ack.firebaseDeletionComplete,true);assert.equal(ack.driveDeletionComplete,true);assert.equal(ack.record._syncDeletedOwner,G);
+ assert.equal(ack.deletionTargets[0].collection,'teachers_directory');assert.equal(ack.deletionTargets[0].id,id);
+});

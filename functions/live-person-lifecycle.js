@@ -114,7 +114,7 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
      !Array.isArray(targets)||targets.length<1||targets.length>5000||
      JSON.stringify(canonical._syncErasePlan.targets)!==JSON.stringify(targets)||
      !targets.some(target=>target.collection===body.collection&&target.id===body.id&&target.revision===record._syncRevision))
-   fail('PERSON_DELETE_RECEIPT_UNVERIFIED');
+   fail(503,'PERSON_DELETE_RECEIPT_UNVERIFIED');
   return ack;
  }
  async function execute(school,body){
