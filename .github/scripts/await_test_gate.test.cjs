@@ -12,6 +12,13 @@ test('only exact-source own-branch workflow can authorize the provider gate',()=
 test('unfinished newest exact-source run never falls back to an older success',async()=>{
  await assert.rejects(waitForTestGate({kind:'cloud',sha,token:'private',fetchImpl:fetchRuns([run({status:'in_progress',conclusion:null}),run({id:122})]),attempts:1}),/unfinished/);
 });
+test('serialized cloud chain can finish after the former 45-minute polling budget',async()=>{
+ let polls=0,waits=0;
+ const result=await waitForTestGate({kind:'cloud',sha,token:'private',
+  fetchImpl:async()=>({status:200,json:async()=>({workflow_runs:[run(++polls<200?{status:'in_progress',conclusion:null}:{})]})}),
+  delay:async ms=>{assert.equal(ms,15000);waits++;}});
+ assert.equal(result.runId,123);assert.equal(polls,200);assert.equal(waits,199);
+});
 test('failed or cancelled exact-source gate remains a failure',async()=>{
  for(const conclusion of ['failure','cancelled','skipped'])await assert.rejects(waitForTestGate({kind:'cloud',sha,token:'private',fetchImpl:fetchRuns([run({conclusion})]),attempts:1}),/did not pass/);
 });

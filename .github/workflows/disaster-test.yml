@@ -38,7 +38,7 @@ jobs:
   wait-for-readiness:
     if: github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

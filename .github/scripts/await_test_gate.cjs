@@ -13,7 +13,10 @@ function selectGate(runs,kind,sha){
    (kind==='readiness'&&run.head_branch==='feature/smart-sync-3'&&run.event==='push'))&&
   run.head_repository?.full_name===REPO)||null;
 }
-async function waitForTestGate({kind,sha,token,fetchImpl=fetch,delay=ms=>new Promise(r=>setTimeout(r,ms)),attempts=180}){
+// The serialized cloud chain took 49m46s including writer-lock queueing on
+// 2026-11-09. The old 45-minute poll budget expired before its verified PASS.
+// Keep the exact-source checks and allow one hour; callers need job headroom.
+async function waitForTestGate({kind,sha,token,fetchImpl=fetch,delay=ms=>new Promise(r=>setTimeout(r,ms)),attempts=240}){
  assert.ok(token);assert.ok(Object.hasOwn(GATES,kind));assert.match(sha||'',/^[a-f0-9]{40}$/);
  for(let n=0;n<attempts;n++){
   const response=await fetchImpl('https://api.github.com/repos/'+REPO+'/actions/runs?head_sha='+sha+'&per_page=100',
