@@ -28,7 +28,9 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   // owners and cannot mutate any admitted live collection. Public invalid
   // sessions must not consume permanent admin migration admission markers.
   if(body.action==='managed_mobile')return run();
-  const read=body.action==='managed_records'&&body.operation==='read'||['managed_health','managed_summary','managed_delta'].includes(body.action);
+  // managed_file only reads an owned Drive blob. A failed download must not
+  // leave an unbound write marker that permanently fences later migration.
+  const read=body.action==='managed_records'&&body.operation==='read'||['managed_health','managed_summary','managed_delta','managed_file'].includes(body.action);
   if(read)return run();
   let token=randomUUID();const r=ref(school),collection=body.action==='managed_records'?body.collection:null;
   await db.runTransaction(async tx=>{
