@@ -17,11 +17,35 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: sync3-verified-test-school-mutations
-  cancel-in-progress: false
+  actions: read
 jobs:
+  prerequisites:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require exact-source cloud and readiness before taking the school writer lock
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
+        run: |
+          node - <<'JS'
+          const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
+          async function main(){
+           for(const kind of ['cloud','readiness'])
+            await waitForTestGate({kind,sha:process.env.VS_EXPECTED_TEST_RUNTIME,token:process.env.GITHUB_TOKEN});
+          }
+          main().catch(error=>{console.error(error.message);process.exitCode=1;});
+          JS
   real-test-delete-everywhere:
+    needs: prerequisites
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
     timeout-minutes: 60
