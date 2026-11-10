@@ -108,3 +108,60 @@ test('existing addStaff shape uses stable staff ID without imposing an employee 
  const enrolled=await f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[{...row,active:true,employeeId:'E1'}]},retired.recordRevision,'legacy-staff-enroll-0001'));assert.equal(enrolled.record.staff[0].employeeId,'E1');
  await assert.rejects(f.gate().execute(A,write('school_settings','staff_payroll_directory',{staff:[{...row,employeeId:'E2'}]},enrolled.recordRevision,'legacy-staff-reassign-0001')),e=>e.code==='STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
 });
+
+function everywhereFixture(f,{alter,loseOnce=false}={}){
+ let deletes=0,lost=false;
+ const gate=createLivePersonLifecycle({db:f.f.db,rpc:async(school,body)=>{
+  const reply=await f.rpc(school,{...body,deleteEverywhereVersion:undefined});
+  if(body.operation!=='delete')return reply;
+  deletes++;
+  const record=f.s.call({action:'managed_records',collection:body.collection,id:body.id,operation:'read',syncProtocol:2}).records[body.id];
+  const targets=[{collection:body.collection,id:body.id,revision:record._syncRevision,generation:record._syncDeletedOwner}];
+  const receipt={...reply,deleteEverywhereVersion:1,driveDeletionComplete:true,firebaseDeletionComplete:true,
+   deletionTargets:targets,deletedFileIds:[],record:{...record,_syncErasePlan:{complete:true,targets}}};
+  if(loseOnce&&!lost){lost=true;throw Error('lost final delete receipt');}
+  return alter?alter(receipt):receipt;
+ }});
+ return {gate,get deletes(){return deletes;}};
+}
+function everywhereDelete(base){
+ return {action:'managed_records',collection:'students_directory',id:S,operation:'delete',syncProtocol:2,
+  operationId:'everywhere-delete-operation-0001',expectedRecordRevision:base,deletedStudentGeneration:G,deleteEverywhereVersion:1};
+}
+test('native lifecycle forwards the actual verified final deletion receipt without journaling payloads',async()=>{
+ const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f);
+ const ack=await fixture.gate.execute(A,everywhereDelete(created.recordRevision));
+ assert.equal(ack.deleteEverywhereVersion,1);assert.equal(ack.driveDeletionComplete,true);assert.equal(ack.firebaseDeletionComplete,true);
+ assert.equal(ack.deletionTargets[0].id,S);assert.equal(ack.record._syncDeletedOwner,G);
+ const journal=[...f.f.docs.entries()].find(([path,row])=>path.startsWith('school_person_lifecycle_operations/')&&row.operationId===ack.operationId)[1];
+ assert.equal(journal.state,'verified');assert.equal(Object.hasOwn(journal,'record'),false);assert.equal(Object.hasOwn(journal,'deletionTargets'),false);
+});
+test('lost final deletion response rechecks the original provider receipt before releasing the fence',async()=>{
+ const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f,{loseOnce:true}),request=everywhereDelete(created.recordRevision);
+ await assert.rejects(fixture.gate.execute(A,request),/lost final delete receipt/);
+ const ack=await fixture.gate.execute(A,request);
+ assert.equal(fixture.deletes,2);assert.equal(ack.firebaseDeletionComplete,true);assert.equal(ack.record._syncDeleted,true);
+});
+test('verified deletion replay retrieves original completion proof instead of fabricating flags from the journal',async()=>{
+ const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f),request=everywhereDelete(created.recordRevision);
+ const first=await fixture.gate.execute(A,request),again=await fixture.gate.execute(A,request);
+ assert.equal(fixture.deletes,2);assert.equal(again.recordRevision,first.recordRevision);assert.equal(again.firebaseDeletionComplete,true);
+ assert.deepEqual(again.deletionTargets,first.deletionTargets);
+});
+test('missing or mismatched final deletion proof retains the original lifecycle fence',async()=>{
+ for(const alter of [r=>({...r,driveDeletionComplete:false}),r=>({...r,firebaseDeletionComplete:false}),
+  r=>({...r,deletionTargets:[]}),r=>({...r,record:{...r.record,_syncOperationId:'another-delete-operation-0001'}}),
+  r=>({...r,record:{...r.record,_syncErasePlan:{complete:true,targets:[]}}})]){
+  const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f,{alter});
+  await assert.rejects(fixture.gate.execute(A,everywhereDelete(created.recordRevision)),e=>e.code==='PERSON_DELETE_RECEIPT_UNVERIFIED');
+  await assert.rejects(fixture.gate.assertDependency(A,S,G),e=>e.code==='PERSON_LIFECYCLE_IN_FLIGHT');
+ }
+});
+test('an old verified deletion never replays against a replacement person generation',async()=>{
+ const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f),request=everywhereDelete(created.recordRevision);
+ const removed=await fixture.gate.execute(A,request);
+ await f.gate().execute(A,write('students_directory',S,{name:'Replacement',class:'Class 1',rollNo:'1',mobileStableId:N,replacesStudentGeneration:G},removed.recordRevision,'everywhere-replacement-operation-0001'));
+ const old=await fixture.gate.execute(A,request);
+ assert.equal(fixture.deletes,1);assert.equal(old.reconcileRequired,true);assert.equal(old.record,null);assert.equal(old.firebaseDeletionComplete,undefined);
+ assert.equal(f.s.call({action:'managed_records',collection:'students_directory',id:S,operation:'read',syncProtocol:2}).records[S].mobileStableId,N);
+});
