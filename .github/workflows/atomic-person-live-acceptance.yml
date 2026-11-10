@@ -21,6 +21,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify existing gate regressions and disaster support
+        run: |
+          node --test .github/scripts/await_test_gate.test.cjs
+          node -e "require('./.github/scripts/await_test_gate.cjs').selectGate([], 'disaster', process.env.VS_EXPECTED_TEST_RUNTIME)"
       - name: Require the exact runtime's isolated cloud, readiness and recovery passes
         env:
           GITHUB_TOKEN: ${{ github.token }}
