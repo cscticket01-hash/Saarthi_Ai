@@ -20,10 +20,11 @@ async function http(url,body,token){
  return {http:r.status,data};
 }
 async function main(){
- ensure(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REF==='refs/heads/feature/smart-sync-3'
+ ensure(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REPOSITORY==='cscticket01-hash/Saarthi_Ai'&&process.env.GITHUB_REF==='refs/heads/feature/smart-sync-3'
    &&process.env.VS_DELETE_EVERYWHERE_TEST===SCHOOL,'strict isolated TEST-only opt-in');
  ensure(/^[a-f0-9]{40}$/.test(process.env.VS_EXPECTED_TEST_RUNTIME||''),'reviewed commit pin');
  ensure(Boolean(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD),'isolated TEST-only credentials exist');
+ await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME);
  const health=await http('https://saarthi-sync-v2-test.onrender.com/school-cloud/healthz');
  ensure(health.http===200&&health.data.ready===true&&health.data.projectId==='saarthi-ai-df12b'&&
    health.data.runtimeCommit===process.env.VS_EXPECTED_TEST_RUNTIME,'actual deployed TEST Render source matches reviewed commit');
@@ -53,7 +54,10 @@ async function main(){
  const rollNo=String((Number(run.slice(-6))%900000)+100000);
  const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n');
  const fileHash=digest(pdf),newOperation=()=>crypto.randomBytes(16).toString('hex');
- const delivery=async (initial,stage)=>{
+ const delivery=async (initial,stage,request)=>{
+  if(request&&require('./native_person_receipt.cjs').verifiedNativeReceipt(initial,request,SCHOOL)){
+   ensure(true,stage+' exact signed native person readback');return initial;
+  }
   ensure(initial.cloudflareAccepted===true,stage+' Cloudflare committed enqueue');
   if(!initial.delivery){ensure(initial.driveState==='verified',stage+' direct signed Drive commit');return initial;}
   const ticket=initial.delivery;
@@ -70,13 +74,15 @@ async function main(){
  report.fixtureIds={student,documentId,feeId}; // synthetic-only, no emails/tokens
  let parentRevision='',deleted=false;
  try{
-  const add=await delivery(await call({action:'managed/records',edgeDeliveryVersion:1,
+  const addRequest={action:'managed/records',edgeDeliveryVersion:1,
     operation:'write',collection:'students_directory',id:student,syncProtocol:2,
     operationId:newOperation(),expectedRecordRevision:'',data:{
       schoolId:SCHOOL,name:'SYNTHETIC TEST DELETE '+run,class:'1',section:'TEST_DEL_'+nonce,rollNo,dob:'2015-01-01',
       mobileStableId:generation,mobileLinkToken:linkToken,syntheticTest:true,
       parentName:'TEST ONLY',contact:'0000000000'
-    }},'synthetic student add'),'student add');
+    }};
+  report.fixtureIds.addOperationId=addRequest.operationId;
+  const add=await delivery(await call(addRequest,'synthetic student add'),'student add',addRequest);
   parentRevision=add.recordRevision;
   const before=await read('students_directory',student);
   ensure(before.records?.[student]?._syncDeleted!==true&&before.records?.[student]?._syncRevision===parentRevision,
@@ -118,10 +124,11 @@ async function main(){
     'Android mobile protocol gets original TEST PDF before delete');
   // This exact signed action/body is emitted by Windows Firebase Sync 3.0.
   const delOp=newOperation();fixtures.deleteOperationId=delOp;
-  const del=await delivery(await call({action:'managed/records',edgeDeliveryVersion:1,operation:'delete',
+  const deleteRequest={action:'managed/records',edgeDeliveryVersion:1,operation:'delete',
     collection:'students_directory',id:student,syncProtocol:2,
     operationId:delOp,expectedRecordRevision:parentRevision,
-    deletedStudentGeneration:generation,deleteEverywhereVersion:1},'Windows protocol delete'),'Delete Everywhere');
+    deletedStudentGeneration:generation,deleteEverywhereVersion:1};
+  const del=await delivery(await call(deleteRequest,'Windows protocol delete'),'Delete Everywhere',deleteRequest);
   ensure(del.deleteEverywhereVersion===1&&del.driveDeletionComplete===true&&del.firebaseDeletionComplete===true,
     'Drive deletion and Firebase deletion both fully verified');
   ensure(Array.isArray(del.deletionTargets)&&del.deletionTargets.some(x=>x.collection==='documents'&&x.id===documentId)
