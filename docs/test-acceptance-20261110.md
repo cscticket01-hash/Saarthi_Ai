@@ -21,7 +21,7 @@
 | Recovery monitor | Check the actual final signed owned-file read in resumed mode; distinguish read evidence from a new write ACK |
 | Pipeline ordering | Cloud/readiness must pass before deletion takes the shared school writer lock |
 | Pipeline trigger coverage | All four gates cover the ten shared workflow/harness paths; YAML and path coverage validated |
-| Backend | **860/860 PASS** locally on the final business-code tree |
+| Backend | **860/860 PASS** locally and in the current-source hosted backend job |
 | CI helpers | **70/70 PASS**; focused gate tests **8/8 PASS** |
 | Focused notice/reconciliation | **11/11 PASS**; overlapping groups are not added to invent a unique total |
 
@@ -31,8 +31,8 @@ These statuses are a checkpoint, not inferred future results.
 
 | Gate | Run | Checkpoint status |
 | --- | --- | --- |
-| Platform Windows/Android/Web/backend/security | [42877158212](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158212) | RUNNING |
-| Cloud prerequisites and hosted clients | [42877158371](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158371) | RUNNING |
+| Platform Windows/Android/Web/backend/security | [42877158212](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158212) | **PASS** |
+| Cloud prerequisites and hosted clients | [42877158371](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158371) | Prerequisites, actual Windows engines and Website browser **PASS**; native Android/readback RUNNING |
 | TEST readiness | [42877158074](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158074) | WAITING for exact-source prerequisites |
 | Recovery | [42877158153](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158153) | WAITING for exact-source readiness |
 | Retained and fresh Delete Everywhere | [42877158125](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42877158125) | WAITING for exact-source prerequisites |
@@ -48,6 +48,7 @@ Atomic harness source is `90a0da79e9e2ed190c242ca184b9b5f120909e3a`; its runtime
 - Read-only admission review [42842533012](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/42842533012) observed 14 retained markers: 12 notice writes, one rejected student write and one unbound action. No historical marker was erased by age or guessed success.
 - TEST logs correlated the student marker with `PERSON_GENERATION_INVALID` on 2026-11-09 13:53 UTC, and the unbound marker with a binary-inventory timeout at 17:39 UTC. Correlation is diagnostic context, not an immutable settlement proof. Their current reconciliation result remains to be measured.
 - Physical Android phone → physical Windows, actual 1/2/5-PC offline/restart/conflict/replay and representative media quality are **NOT TESTED** here. Hosted emulators and synthetic SQLite convergence do not certify them.
-- The 2–5-second target is **NOT MET** by retained individual emulator/readback measurements: Android durable ACK 39,714 ms, verified cloud read 52,109 ms, hosted Windows readback 16,908 ms on source `f8e08c52`. These are samples, not p95 guarantees.
+- Current-source actual-engine evidence: Windows local save **16 ms**, queue-to-ACK **2,179 ms**, Windows-to-mobile API read **76,514 ms**, mobile API queue-to-Windows read **48,797 ms**, final Windows/mobile pending **0**. Five first-page Drive files passed hash/cache/recovery checks; full inventory remains PARTIAL. **The 2–5-second end-to-end target is NOT MET.** These are individual hosted/API samples, not physical-device or p95 guarantees.
+- Earlier native Android emulator evidence on source `f8e08c52`: durable ACK 39,714 ms, verified cloud read 52,109 ms and hosted Windows readback 16,908 ms. Current-source native emulator results are still pending.
 
 Do not reset school data, clear uncertain work, weaken tenant/security guards, or declare full completion from builds alone. Continue from the exact runs and retained identities above.
