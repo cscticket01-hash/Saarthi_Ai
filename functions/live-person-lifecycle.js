@@ -117,8 +117,14 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
    fail(503,'PERSON_DELETE_RECEIPT_UNVERIFIED');
   return ack;
  }
- async function execute(school,body){
+ function validate(school,body){
   if(!/^vs-[a-f0-9]{32}$/.test(school)||!handled(body)||!validId(body.id)||body.syncProtocol!==2||!/^[A-Za-z0-9_-]{16,100}$/.test(body.operationId||'')||typeof body.expectedRecordRevision!=='string')fail(400,'PERSON_OPERATION_INVALID');
+  if(body.collection==='students_directory'&&body.operation==='write'&&body.data?.schoolId===school&&
+     !body.data._syncFieldPatch&&!/^p-[a-f0-9]{32,64}$/.test(body.data.mobileStableId||''))
+   fail(400,'PERSON_GENERATION_INVALID');
+ }
+ async function execute(school,body){
+  validate(school,body);
   const ownerId=hash([school,body.collection,body.id]),operationKey=hash([school,body.operationId]);
   const ownerRef=db.doc('school_person_lifecycle_owners/'+ownerId),operationRef=db.doc('school_person_lifecycle_operations/'+operationKey);
   const fingerprint=hash(body);
@@ -178,6 +184,6 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
   const parent=await read(school,'students_directory',parentId);
   if(!parent||parent._syncDeleted||parent.mobileStableId!==generation)fail(409,'PERSON_GENERATION_RETIRED');
  }
- return {handled,execute,assertDependency};
+ return {handled,validate,execute,assertDependency};
 }
 module.exports={createLivePersonLifecycle,studentOwns,STUDENT_CHILDREN};

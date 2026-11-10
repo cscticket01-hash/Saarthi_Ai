@@ -30,6 +30,11 @@ test('bounded deletion continuation replays only the immutable original generati
  calls=0;
  await assert.rejects(retryExactDelete(body,async()=>{calls++;throw Object.assign(Error('pending'),{code:'SCRIPT_TIMEOUT'});},{attempts:2,delay:async()=>{}}),/pending/);
  assert.equal(calls,2);
+ calls=0;
+ assert.equal(await retryExactDelete(body,async value=>{
+  assert.deepEqual(value,body);if(++calls===1)throw Object.assign(Error('timeout'),{name:'TimeoutError'});return 'verified';
+ },{delay:async()=>{}}),'verified');
+ assert.equal(calls,2);
  await assert.rejects(retryExactDelete({...body,deletedStudentGeneration:'other'},async()=>{throw Error('must not send');}),/generation-bound/);
 });
 test('native deletion requires both actual Drive and Firebase final completion',()=>{

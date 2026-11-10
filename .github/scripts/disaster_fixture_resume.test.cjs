@@ -36,6 +36,13 @@ test('resume monitor distinguishes a verified read from a new durable write ACK'
  assert.equal(fixtureMonitorVerified(read,true),true);
  assert.equal(fixtureMonitorVerified(read,false),false);
  assert.equal(fixtureMonitorVerified({...read,outcome:'durable_ack'},false),true);
+ const file={...read,stage:'managed_file',protocol:1};
+ assert.equal(fixtureMonitorVerified(file,true,'managed_file'),true);
+ assert.equal(fixtureMonitorVerified(file,false,'managed_file'),false);
+ assert.equal(fixtureMonitorVerified(file,true),false);
+ assert.equal(fixtureMonitorVerified({...file,protocol:2},true,'managed_file'),false);
+ assert.equal(fixtureMonitorVerified({...file,outcome:'durable_ack'},true,'managed_file'),false);
+ assert.equal(fixtureMonitorVerified({...file,version:2},true,'managed_file'),false);
  for(const bad of [{...read,outcome:'failed'},{...read,protocol:1},{...read,observedAt:0},{...read,stage:'managed_mobile'},{...read,unverifiedPayload:'forbidden'}])
   assert.equal(fixtureMonitorVerified(bad,true),false);
 });

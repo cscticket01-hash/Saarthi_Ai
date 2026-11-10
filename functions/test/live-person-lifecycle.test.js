@@ -12,6 +12,12 @@ function setup(){
 }
 const write=(collection,id,data,base='',operationId='domain-create-operation-0001')=>({action:'managed_records',collection,id,operation:'write',syncProtocol:2,operationId,expectedRecordRevision:base,data:{schoolId:A,...data}});
 const create=()=>write('students_directory',S,{name:'Synthetic domain pupil',class:'Class 1',rollNo:'1',mobileStableId:G});
+test('invalid legacy student generation is rejected before provider calls or write admission',async()=>{
+ const f=setup(),gate=f.gate(),body=create();body.data.mobileStableId='synthetic-old-invalid-generation';
+ assert.throws(()=>gate.validate(A,body),e=>e.code==='PERSON_GENERATION_INVALID');
+ await assert.rejects(gate.execute(A,body),e=>e.code==='PERSON_GENERATION_INVALID');
+ assert.equal(f.calls,0);assert.equal([...f.f.docs.keys()].some(k=>k.startsWith('school_live_migrations/')||k.startsWith('school_person_lifecycle_')),false);
+});
 test('durable student operation resumes lost GS ACK without duplicate write or record payload journal',async()=>{
  const f=setup();f.lose();await assert.rejects(f.gate().execute(A,create()),/lost ACK/);
  const pending=[...f.f.docs.entries()].find(([key])=>key.startsWith('school_person_lifecycle_operations/'))[1];
