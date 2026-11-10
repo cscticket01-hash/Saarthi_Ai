@@ -82,6 +82,8 @@ jobs:
     - run: flutter create --platforms=web --project-name saarthi_ai .
     - run: flutter pub get
     - name: Verify no-photo ID preview and preserved PDF generation
+      env:
+        APPDATA: ${{ runner.temp }}/id-preview-synthetic
       run: flutter test test/windows_id_card_preview_test.dart
     - name: Format platform source for review
       run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart
