@@ -3,6 +3,13 @@ on:
   push:
     branches: [feature/smart-sync-3]
     paths:
+      - '.github/workflows/delete-everywhere-live-acceptance.yml'
+      - '.github/scripts/delete_everywhere_live_acceptance.cjs'
+      - '.github/scripts/native_person_receipt.cjs'
+      - '.github/scripts/native_person_receipt.test.cjs'
+      - '.github/scripts/retained_delete_fixture.cjs'
+      - '.github/scripts/retained_delete_fixture.test.cjs'
+      - '.github/scripts/resume_retained_delete_acceptance.cjs'
       - '.github/scripts/await_test_gate*'
       - '.github/scripts/isolated_live_sync.cjs'
       - '.github/workflows/sync3-isolated-readiness.yml'

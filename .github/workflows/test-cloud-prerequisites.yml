@@ -4,6 +4,8 @@ on:
   push:
     branches: [windows/easy-connect-draft, feature/smart-sync-3]
     paths:
+      - '.github/scripts/native_person_receipt.test.cjs'
+      - '.github/scripts/retained_delete_fixture.test.cjs'
       - .github/scripts/test_cloud_readiness.cjs
       - .github/scripts/reviewed_script_version.cjs
       - .github/scripts/reviewed_script_version.test.cjs
