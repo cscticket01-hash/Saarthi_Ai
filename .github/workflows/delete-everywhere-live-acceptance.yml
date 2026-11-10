@@ -3,6 +3,10 @@ on:
   push:
     branches: [feature/smart-sync-3]
     paths:
+      - 'functions/live-person-lifecycle.js'
+      - 'functions/live-sync-migration.js'
+      - 'functions/live-sync-reconciliation.js'
+      - 'functions/managed-schools.js'
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
       - '.github/scripts/native_person_receipt.cjs'
       - '.github/scripts/native_person_receipt.test.cjs'

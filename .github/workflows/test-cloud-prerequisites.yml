@@ -37,6 +37,11 @@ on:
       - .github/tests/isolated_admin_fixture_test.dart
       - lib/school_qr_link.dart
       - .github/workflows/test-cloud-prerequisites.yml
+      - .github/workflows/delete-everywhere-live-acceptance.yml
+      - .github/scripts/delete_everywhere_live_acceptance.cjs
+      - .github/scripts/native_person_receipt.cjs
+      - .github/scripts/retained_delete_fixture.cjs
+      - .github/scripts/resume_retained_delete_acceptance.cjs
       - .github/workflows/disaster-test.yml
       - .github/workflows/sync3-isolated-readiness.yml
       - school-backend/managed/**
