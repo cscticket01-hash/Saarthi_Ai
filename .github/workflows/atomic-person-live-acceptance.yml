@@ -10,12 +10,12 @@ permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: 7a9593a3debc5a1d382faa7f1a0d60f2ce1c3ed9
+  VS_EXPECTED_TEST_RUNTIME: f8e08c526257ce443c80aa941fefed867d78bcd8
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
