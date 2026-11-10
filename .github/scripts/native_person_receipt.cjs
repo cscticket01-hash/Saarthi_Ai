@@ -26,7 +26,7 @@ async function retryExactDelete(request, submit, {attempts=12,delay=ms=>new Prom
   'SCRIPT_HTTP_ERROR','PERSON_ACK_UNVERIFIED','PERSON_DELETE_RECEIPT_UNVERIFIED']);
  for(let n=0;n<attempts;n++) {
   try{return await submit(JSON.parse(immutable));}
-  catch(error){if(!retryable.has(error.code)||n+1===attempts)throw error;}
+  catch(error){if(!(retryable.has(error.code)||error.name==='TimeoutError')||n+1===attempts)throw error;}
   await delay(5000);
  }
 }
