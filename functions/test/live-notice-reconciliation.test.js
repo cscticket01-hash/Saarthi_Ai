@@ -42,3 +42,10 @@ test('notice evidence cannot clear a marker replaced while its proof was read',a
  }}).reconcile(A);
  assert.equal(r.cleared,0);assert.equal(r.reasons.marker_changed,1);
 });
+test('cached idle notice proof never clears an active peer marker for the same operation',async()=>{
+ const f=fixture(),marker={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+ f.docs.set('school_live_migrations/'+A,{inflight:{idle:marker,active:{...marker,activeAttempts:1,startedAt:2}}});
+ const r=await createLiveReconciliation({db:f.db,readNoticeReceipt:async()=>proof()}).reconcile(A);
+ assert.equal(r.cleared,1);assert.equal(r.retained,1);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.active);
+});

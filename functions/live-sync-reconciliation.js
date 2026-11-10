@@ -60,7 +60,9 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceip
    if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');continue;}
    let verified=false;
    try{
-    const proofKey=canonical(binding);
+    // An idle notice proof must not be reused for a distinct marker with a
+    // still-active attempt, even when both bind the same immutable operation.
+    const proofKey=canonical([binding,marker.activeAttempts===0]);
     // Several lost responses for one immutable operation need one verified
     // lookup. The cache lasts only this bounded reconciliation invocation.
     if(!proofs.has(proofKey))proofs.set(proofKey,(async()=>{
