@@ -14,4 +14,20 @@ function verifiedNativeReceipt(reply, request, schoolId) {
    reply.deleteEverywhereVersion===1&&reply.driveDeletionComplete===true&&
    reply.firebaseDeletionComplete===true:request.operation==='write'&&row._syncDeleted!==true);
 }
-module.exports={verifiedNativeReceipt};
+async function retryExactDelete(request, submit, {attempts=12,delay=ms=>new Promise(r=>setTimeout(r,ms))}={}) {
+ if(request.operation!=='delete'||request.syncProtocol!==2||request.deleteEverywhereVersion!==1||
+    request.collection!=='students_directory'||typeof request.operationId!=='string'||
+    !/^[A-Za-z0-9_-]{16,100}$/.test(request.operationId)||
+    !/^p-[a-f0-9]{32,64}$/.test(request.deletedStudentGeneration||'')||
+    !Number.isSafeInteger(attempts)||attempts<1||attempts>12)
+  throw Error('Exact generation-bound TEST delete required');
+ const immutable=JSON.stringify(request);
+ const retryable=new Set(['SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_TIMEOUT',
+  'SCRIPT_HTTP_ERROR','PERSON_ACK_UNVERIFIED','PERSON_DELETE_RECEIPT_UNVERIFIED']);
+ for(let n=0;n<attempts;n++) {
+  try{return await submit(JSON.parse(immutable));}
+  catch(error){if(!retryable.has(error.code)||n+1===attempts)throw error;}
+  await delay(5000);
+ }
+}
+module.exports={verifiedNativeReceipt,retryExactDelete};

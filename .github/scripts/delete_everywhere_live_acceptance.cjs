@@ -34,7 +34,7 @@ async function main(){
  const token=signIn.data.idToken;
  const admin=body=>http(ENDPOINT,{...body,schoolId:SCHOOL},token);
  const call=async(body,stage)=>{const r=await admin(body);if(r.http!==200||r.data.success!==true||r.data.schoolId!==SCHOOL)
-   throw Error(stage+' HTTP '+r.http+' '+(/^[A-Z_]{2,90}$/.test(r.data.code||'')?r.data.code:'PROVIDER_REJECTED'));return r.data;};
+   throw Object.assign(Error(stage+' HTTP '+r.http+' '+(/^[A-Z_]{2,90}$/.test(r.data.code||'')?r.data.code:'PROVIDER_REJECTED')),{code:r.data.code,status:r.http});return r.data;};
  const mobile=request=>http(ENDPOINT,{action:'managed/mobile',schoolId:SCHOOL,request});
  const session=await call({action:'managed/session'},'TEST licence');
  ensure(session.allowed===true&&session.activated===true&&session.status==='licensed','active isolated TEST licence');
@@ -128,7 +128,9 @@ async function main(){
     collection:'students_directory',id:student,syncProtocol:2,
     operationId:delOp,expectedRecordRevision:parentRevision,
     deletedStudentGeneration:generation,deleteEverywhereVersion:1};
-  const del=await delivery(await call(deleteRequest,'Windows protocol delete'),'Delete Everywhere',deleteRequest);
+  const finalDelete=await require('./native_person_receipt.cjs').retryExactDelete(deleteRequest,
+    request=>call(request,'Windows protocol delete'));
+  const del=await delivery(finalDelete,'Delete Everywhere',deleteRequest);
   ensure(del.deleteEverywhereVersion===1&&del.driveDeletionComplete===true&&del.firebaseDeletionComplete===true,
     'Drive deletion and Firebase deletion both fully verified');
   ensure(Array.isArray(del.deletionTargets)&&del.deletionTargets.some(x=>x.collection==='documents'&&x.id===documentId)
