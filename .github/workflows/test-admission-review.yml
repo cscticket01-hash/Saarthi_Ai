@@ -1,0 +1,29 @@
+name: Read-only isolated TEST admission marker review
+on:
+  push:
+    branches: [test/admission-review-20261110]
+    paths:
+      - '.github/scripts/test_admission_review.cjs'
+      - '.github/workflows/test-admission-review.yml'
+permissions:
+  contents: read
+jobs:
+  read-only-admission:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm --prefix functions install --ignore-scripts --no-audit --no-fund
+      - run: node --check .github/scripts/test_admission_review.cjs
+      - name: Inspect only retained TEST admission markers and signed readbacks
+        env:
+          SCHOOL_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_admission_review.cjs
