@@ -1,7 +1,7 @@
-name: TEST read-only Delete Everywhere pending diagnostic
+name: Read-only retained TEST deletion progress
 on:
   push:
-    branches: [feature/smart-sync-3]
+    branches: [test/retained-delete-progress-20261111]
     paths:
       - '.github/scripts/delete_everywhere_pending_diagnostic.cjs'
       - '.github/workflows/delete-everywhere-pending-diagnostic.yml'
