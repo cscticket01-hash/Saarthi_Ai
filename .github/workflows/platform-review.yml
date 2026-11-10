@@ -46,7 +46,7 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
-        node --test ../.github/scripts/test_runtime_identity.test.cjs
+        node --test ../.github/scripts/*.test.cjs
     - name: Benchmark isolated durable attendance queue
       run: node .github/scripts/attendance_queue_load.cjs build/review-metrics/attendance-queue-load.json
     - uses: actions/upload-artifact@v4
@@ -500,6 +500,7 @@ jobs:
   pull_request:
     branches:
     - main
+    - feature/smart-sync-3
     - feature/smart-sync-3-finalization
   workflow_dispatch:
     inputs:
