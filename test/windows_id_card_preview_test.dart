@@ -42,4 +42,14 @@ void main() {
     expect(bytes.length, lessThanOrEqualTo(85 * 1024));
     expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
   });
+  test('a photo-backed ID keeps its interactive PDF preview', () async {
+    final bytes = await WindowsDocumentTemplates.selected('studentId', {
+      'schoolId': school, 'name': 'Synthetic TEST', 'class': '1',
+      'rollNo': '1', 'schoolName': 'TEST Sync V2',
+      'photoBase64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwaDgAAAJUAXHIMWMAAAAAAElFTkSuQmCC',
+    }, previewOnly: true);
+    expect(bytes, isNotNull);
+    expect(bytes!.length, lessThanOrEqualTo(85 * 1024));
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+  });
 }
