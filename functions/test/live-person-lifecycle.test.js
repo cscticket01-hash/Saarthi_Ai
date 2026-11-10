@@ -153,7 +153,7 @@ test('missing or mismatched final deletion proof retains the original lifecycle 
   r=>({...r,deletionTargets:[]}),r=>({...r,record:{...r.record,_syncOperationId:'another-delete-operation-0001'}}),
   r=>({...r,record:{...r.record,_syncErasePlan:{complete:true,targets:[]}}})]){
   const f=setup(),created=await f.gate().execute(A,create()),fixture=everywhereFixture(f,{alter});
-  await assert.rejects(fixture.gate.execute(A,everywhereDelete(created.recordRevision)),e=>e.code==='PERSON_DELETE_RECEIPT_UNVERIFIED');
+  await assert.rejects(fixture.gate.execute(A,everywhereDelete(created.recordRevision)),e=>{assert.equal(e.code,'PERSON_DELETE_RECEIPT_UNVERIFIED',String(alter));return true;});
   await assert.rejects(fixture.gate.assertDependency(A,S,G),e=>e.code==='PERSON_LIFECYCLE_IN_FLIGHT');
  }
 });
