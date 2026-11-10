@@ -1,7 +1,7 @@
 name: Isolated TEST Delete Everywhere real provider and hosted client acceptance
 on:
   push:
-    branches: [feature/smart-sync-3]
+    branches: [test/delete-everywhere-live-20261110]
     paths:
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
       - '.github/workflows/delete-everywhere-live-acceptance.yml'
@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   real-test-delete-everywhere:
-    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/delete-everywhere-live-20261110'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      VS_EXPECTED_TEST_RUNTIME: 177009bad2db0a416ec540a7b90d9b54d5d25053
+      VS_EXPECTED_TEST_RUNTIME: f8e08c526257ce443c80aa941fefed867d78bcd8
       VS_DELETE_EVERYWHERE_TEST: vs-db8afb01a3be46a983c8284714d06e5d
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
   hosted-windows-delete-regression:
-    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/delete-everywhere-live-20261110'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -59,7 +59,7 @@ jobs:
           APPDATA: ${{ runner.temp }}/delete-everywhere-windows
         run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s test/windows_student_lifecycle_test.dart test/windows_notice_delete_unknown_recovery_test.dart test/windows_multi_pc_sync_test.dart
   hosted-android-website-model-regression:
-    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/delete-everywhere-live-20261110'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

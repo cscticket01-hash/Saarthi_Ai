@@ -5,7 +5,7 @@
 const crypto=require('node:crypto'),fs=require('node:fs');
 const SCHOOL='vs-db8afb01a3be46a983c8284714d06e5d';
 const ENDPOINT='https://saarthi-sync-v2-test.onrender.com/school-cloud';
-const LOGIN='https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDherXWiNIbKzO8EFuf1VdpHvu7U6R-W3A';
+const LOGIN='https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+fs.readFileSync('lib/platform/platform_config.dart','utf8').match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
 const OUT='build/cloud-prerequisites/delete-everywhere-live.json';
 const digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const report={schoolId:SCHOOL,scope:'real signed TEST-school APIs / Google Drive / Cloudflare, no physical devices',sourceCommit:process.env.GITHUB_SHA,
@@ -20,7 +20,7 @@ async function http(url,body,token){
  return {http:r.status,data};
 }
 async function main(){
- ensure(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REF==='refs/heads/feature/smart-sync-3'
+ ensure(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REPOSITORY==='cscticket01-hash/Saarthi_Ai'&&process.env.GITHUB_REF==='refs/heads/test/delete-everywhere-live-20261110'
    &&process.env.VS_DELETE_EVERYWHERE_TEST===SCHOOL,'strict isolated TEST-only opt-in');
  ensure(/^[a-f0-9]{40}$/.test(process.env.VS_EXPECTED_TEST_RUNTIME||''),'reviewed commit pin');
  ensure(Boolean(process.env.VS_TEST_LOGIN_EMAIL&&process.env.VS_TEST_LOGIN_PASSWORD),'isolated TEST-only credentials exist');
