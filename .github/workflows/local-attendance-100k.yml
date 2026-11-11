@@ -1,0 +1,38 @@
+name: Local-only 100000 attendance simulation
+on:
+  push:
+    branches: [test/local-attendance-100k-20261111]
+    paths:
+      - .github/workflows/local-attendance-100k.yml
+permissions:
+  contents: read
+jobs:
+  simulate:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cloudflare-sync
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      ATTENDANCE_LOAD_RECORDS: '100000'
+      ATTENDANCE_LOAD_CONCURRENCY: '256'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - name: Compile only; this existing build script deploys with dry-run
+        run: |
+          node -e "const assert=require('node:assert/strict'),p=require('./package.json');assert.equal(p.scripts.build,'wrangler deploy --dry-run --outdir dist')"
+          npm run build
+      - name: Local workerd SQLite admission only, with every outbound request stubbed
+        run: node scripts/load-attendance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-only-100k-attendance-simulation
+          path: cloudflare-sync/build/attendance-load-report.json
+          retention-days: 14
