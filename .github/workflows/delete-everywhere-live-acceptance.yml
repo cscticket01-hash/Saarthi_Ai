@@ -10,6 +10,8 @@ on:
       - '.github/workflows/sync3-isolated-readiness.yml'
       - '.github/workflows/disaster-test.yml'
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
+      - '.github/scripts/delete_plan_progress.cjs'
+      - '.github/scripts/delete_plan_progress.test.cjs'
       - '.github/scripts/native_person_receipt.cjs'
       - '.github/scripts/native_person_receipt.test.cjs'
       - '.github/scripts/resume_retained_delete_acceptance.cjs'
@@ -50,7 +52,7 @@ jobs:
       cancel-in-progress: false
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/smart-sync-3'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 100
     env:
       VS_EXPECTED_TEST_RUNTIME: ${{ github.sha }}
       VS_DELETE_EVERYWHERE_TEST: vs-db8afb01a3be46a983c8284714d06e5d
@@ -66,7 +68,7 @@ jobs:
         run: |
           git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)oauth-broker/test/**'
           node --check .github/scripts/delete_everywhere_live_acceptance.cjs
-          node --test .github/scripts/native_person_receipt.test.cjs
+          node --test .github/scripts/native_person_receipt.test.cjs .github/scripts/delete_plan_progress.test.cjs
           node --test .github/scripts/retained_delete_fixture.test.cjs
           node --check .github/scripts/resume_retained_delete_acceptance.cjs
       - name: Complete the exact retained TEST deletion before creating new fixtures

@@ -37,7 +37,7 @@ test('resume monitor distinguishes a verified read from a new durable write ACK'
  assert.equal(fixtureMonitorVerified(read,false),false);
  assert.equal(fixtureMonitorVerified({...read,outcome:'durable_ack'},false),true);
  const file={...read,stage:'managed_file',protocol:1};
- assert.equal(fixtureMonitorVerified(file,true,'managed_file'),true);
+ assert.equal(fixtureMonitorVerified(file,true,'managed_file'),false);
  assert.equal(fixtureMonitorVerified(file,false,'managed_file'),false);
  assert.equal(fixtureMonitorVerified(file,true),false);
  assert.equal(fixtureMonitorVerified({...file,protocol:2},true,'managed_file'),false);
@@ -45,4 +45,23 @@ test('resume monitor distinguishes a verified read from a new durable write ACK'
  assert.equal(fixtureMonitorVerified({...file,version:2},true,'managed_file'),false);
  for(const bad of [{...read,outcome:'failed'},{...read,protocol:1},{...read,observedAt:0},{...read,stage:'managed_mobile'},{...read,unverifiedPayload:'forbidden'}])
   assert.equal(fixtureMonitorVerified(bad,true),false);
+});
+
+// Exercise the production broker rather than duplicating its monitoring rules.
+test('actual broker retains record-read evidence after verified fixture file read',async()=>{
+ const {fixture,A,time}=require('../../functions/test/helpers/managed-school-broker');
+ const retained={...row(),schoolId:A};
+ const f=fixture(async(_,options)=>{
+  const envelope=JSON.parse(options.body),body=JSON.parse(envelope.payload);
+  const result=body.action==='managed_records'
+   ?{syncProtocol:2,pointRead:true,records:{[identity.id]:retained}}
+   :{base64:pdf.toString('base64')};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
+ });
+ await prepareDisasterFixture(f.call,identity,A,pdf,{});
+ const monitor=await f.call({action:'managed/sync/status'});
+ assert.deepEqual(monitor.serverEvidence,{version:1,observedAt:time,
+  outcome:'verified_response',stage:'managed_records',protocol:2});
+ assert.equal(require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(monitor.serverEvidence,true),true);
+ assert.equal(monitor.latestWindowsReport,null);
 });
