@@ -267,9 +267,16 @@ void main(){
   },school,0));
   final entries=await store.pending();expect(entries.length,2);
   var reads=0;
+  final bothStarted=Completer<void>();
   final done=await store.reconcileBundle(entries,(action,body)async{
     expect(action,'managed/live/read');
     reads++;
+    if(reads==2)bothStarted.complete();
+    // A sequential implementation cannot pass this barrier. No wall-clock
+    // benchmark or fake live-latency claim is inferred from this test.
+    await bothStarted.future.timeout(const Duration(seconds: 2));
+    expect((await db.collection('students_directory').doc('person-1').get()).data(),isNull);
+    expect((await db.collection('documents').doc('card-1').get()).data(),isNull);
     final record=body['collection']=='students_directory'?parent:card;
     return {'success':true,'liveProtocol':1,'schoolId':school,
       'recordRevision':record['_syncRevision'],'record':record};
@@ -280,6 +287,38 @@ void main(){
   expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   await store.applied(entries);
   expect((await store.pending()).isEmpty,isTrue);
+ });
+ test('concurrent bundle reads retain all work if one response fails or belongs to another school',()async{
+  for(final failTransport in [true,false]) {
+   FlutterSecureStorage.setMockInitialValues({});
+   await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+   final db=FirebaseFirestore.instance;
+   await db.switchProfile('parallel-failure-$failTransport-${DateTime.now().microsecondsSinceEpoch}',
+     identity:{'schoolId':school,'schoolSyncId':school});
+   final store=WindowsLiveRuntimeLocalStore(db,school,db.activeProfileId);
+   const bundle='atomic-concurrent-failure-0001';
+   final events=<Map<String,dynamic>>[
+    for(var i=0;i<2;i++) {'sequence':i+1,'collection':i==0?'students_directory':'documents',
+     'id':i==0?'person':'card','record':{'schoolId':school,'_syncRevision':'live-${i+1}'},
+     'bundleId':bundle,'bundleSize':2,'bundleIndex':i},
+   ];
+   await store.retainPage(LiveSyncPage.parse({'success':true,'liveProtocol':1,'schoolId':school,
+     'cursor':2,'head':2,'more':false,'events':events},school,0));
+   var calls=0;final started=Completer<void>();
+   final result=store.reconcileBundle(await store.pending(),(action,body)async{
+    if(++calls==2)started.complete();
+    await started.future.timeout(const Duration(seconds:2));
+    final index=body['id']=='person'?0:1;
+    if(index==1&&failTransport)throw StateError('Transport interrupted');
+    return {'success':true,'liveProtocol':1,'schoolId':index==1?'vs-${'b'*32}':school,
+      'recordRevision':'live-${index+1}','record':events[index]['record']};
+   });
+   if(failTransport){await expectLater(result,throwsStateError);}else{expect(await result,false);}
+   expect(calls,2);
+   expect((await db.collection('students_directory').doc('person').get()).data(),isNull);
+   expect((await db.collection('documents').doc('card').get()).data(),isNull);
+   expect((await store.pending()).length,2);
+  }
  });
  test('pending local card edit blocks the entire incoming Person/Card transaction',()async{
   FlutterSecureStorage.setMockInitialValues({});
