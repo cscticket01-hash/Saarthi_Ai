@@ -72,3 +72,28 @@ test('private rejection proof binds school and every request field and excludes 
  }
  assert(!JSON.stringify(err).includes('Rejected synthetic edit'));
 });
+
+test('actual broker settles same-school transactional Cloudflare notice conflicts without a Script call',async()=>{
+ const {createCloudflareSync}=require('../cloudflare-sync');let calls=0;
+ const edge=createCloudflareSync({url:'https://edge.example/',key:'x'.repeat(32),schools:[A],fetchImpl:async(_,options)=>{
+  const wire=JSON.parse(options.body);calls++;
+  return wire.command==='snapshot'
+   ?new Response(JSON.stringify({success:true,schoolId:A,value:{initialized:true,records:{},revision:'cf-current'}}),{status:200})
+   :new Response(JSON.stringify({success:false,schoolId:A,message:'Record revision conflict'}),{status:409});
+ }});
+ const f=fixture(null,{cloudflareSync:edge,liveSyncSchools:[A]});
+ await assert.rejects(f.call({action:'managed/records',collection:body.collection,operation:body.operation,id:body.id,
+  syncProtocol:2,operationId:body.operationId,expectedRecordRevision:body.expectedRecordRevision,data:body.data}),e=>e.status===409);
+ assert.equal(calls,2);assert.equal(f.sent.length,0);assert.deepEqual(markers(f),{});
+});
+test('Cloudflare foreign replies, other lanes, delivery failures and notice deletes remain uncertain',async()=>{
+ const {createCloudflareSync}=require('../cloudflare-sync');
+ for(const patch of [{replySchool:B},{lane:'records'},{command:'finish'},{status:503},{operation:'delete'}]){
+  const request={...body,...(patch.operation?{operation:patch.operation}:{})};
+  const edge=createCloudflareSync({url:'https://edge.example/',key:'x'.repeat(32),schools:[A],fetchImpl:async()=>
+   new Response(JSON.stringify({success:false,schoolId:patch.replySchool||A,message:'Record revision conflict'}),{status:patch.status||409})});
+  const f=fixture(),gate=createLiveMigration({db:f.db});
+  await assert.rejects(gate.legacy(A,request,()=>edge.rpc(A,patch.lane||'notices',{command:patch.command||'write',request})));
+  assert.equal(Object.keys(markers(f)).length,1,JSON.stringify(patch));
+ }
+});

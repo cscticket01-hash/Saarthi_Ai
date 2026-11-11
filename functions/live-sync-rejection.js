@@ -3,7 +3,7 @@ const {createHash}=require('node:crypto');
 const {canonical}=require('./live-sync-canonical');
 const {bindOperation}=require('./live-sync-reconciliation');
 // A public error code alone never proves that a provider did not write.
-// Only the verified Script response path can attest one of these narrow
+// Only verified Script/Cloudflare owner response paths can attest these narrow
 // notice precondition rejections. Attestations are private process memory.
 const rejected=new WeakMap();
 function legacyFingerprint(school,body){

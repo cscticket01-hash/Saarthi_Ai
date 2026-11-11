@@ -36,9 +36,16 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
       ?reviewErrors[message]:message==='Replay history compacted; snapshot required'
       ?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT'
       :message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE';
-   throw Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{
+   const error=Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{
     status:r.status===409?409:503,code,publicMessage:true
    });
+   // Only this same-school notice owner's write command has a transactional
+   // precondition rejection. Never attest a foreign/malformed reply, a spool
+   // delivery failure or another lane's generic public conflict code.
+   if(r.status===409&&result.success===false&&result.schoolId===school&&
+      lane==='notices'&&body.command==='write')
+    require('./live-sync-rejection').markNoticeRejection(error,school,body.request);
+   throw error;
   }
   return result.value;
  }
