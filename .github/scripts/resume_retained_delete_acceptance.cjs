@@ -25,7 +25,9 @@ async function main(){
  const observe=require('./delete_plan_progress.cjs').observeDeletePlan(async(collection,id)=>{
   const reply=await read(collection,id);validateRetainedPerson(reply.records?.[id]);return reply;
  },f.schoolId,progress=>{report.progress=progress;console.log('RETAINED_TEST_DELETE_PROGRESS '+JSON.stringify(progress));});
- const ack=await retryExactDelete(body,request=>call(request),{attempts:48,observeProgress:observe});
+ // Large verified archive inventories can exceed thirty minutes while making
+ // durable progress. Keep the helper's forty-minute ceiling and stall fence.
+ const ack=await retryExactDelete(body,request=>call(request),{attempts:48,maxElapsedMs:40*60*1000,observeProgress:observe});
  assert.equal(verifiedNativeReceipt(ack,body,f.schoolId),true);
  assert.ok(ack.deletedFileIds?.includes(f.fileId));validateRetainedPerson(ack.record);
  report.checks.push('actual signed final Drive and Firebase completion receipt verified');
