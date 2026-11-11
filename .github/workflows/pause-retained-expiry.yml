@@ -1,0 +1,49 @@
+name: Pause waiting retained expiry probe before Atomic acceptance
+on:
+  push:
+    branches: [test/pause-retained-expiry-20261111]
+    paths:
+      - .github/workflows/pause-retained-expiry.yml
+permissions:
+  contents: read
+  actions: write
+jobs:
+  pause:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Cancel only the exact still-waiting expiry run; never interrupt an active probe
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const assert=require('node:assert/strict');
+          const repo='cscticket01-hash/Saarthi_Ai',run=43000006164;
+          const headers={Accept:'application/vnd.github+json',Authorization:'Bearer '+process.env.GITHUB_TOKEN,
+            'X-GitHub-Api-Version':'2026-03-10','User-Agent':'Vidya-Saarthi-TEST-acceptance'};
+          async function get(path){const r=await fetch('https://api.github.com/repos/'+repo+path,{headers,signal:AbortSignal.timeout(30000)});assert.equal(r.status,200);return r.json();}
+          (async()=>{
+            assert.equal(process.env.GITHUB_REPOSITORY,repo);
+            assert.equal(process.env.GITHUB_REF,'refs/heads/test/pause-retained-expiry-20261111');
+            const data=await get('/actions/runs/'+run);
+            assert.equal(data.name,'Exact retained TEST elapsed-day expiry verification');
+            assert.equal(data.head_repository.full_name,repo);
+            assert.equal(data.head_branch,'test/retained-day-check-20261111');
+            assert.equal(data.head_sha,'1811faeb228a318d771102b5bf2dd4ad766ea607');
+            assert.equal(data.event,'push');
+            if(data.status==='completed'){console.log('Exact expiry run already terminal; no action');return;}
+            const jobs=(await get('/actions/runs/'+run+'/jobs?filter=latest&per_page=100')).jobs;
+            assert.ok(jobs.some(j=>j.name==='prerequisites'&&['queued','in_progress'].includes(j.status)));
+            assert.ok(!jobs.some(j=>j.name==='retained-day'&&
+              (j.status==='in_progress'||j.status==='completed'&&!['skipped','cancelled'].includes(j.conclusion))),
+              'Actual expiry probe must remain untouched');
+            const r=await fetch('https://api.github.com/repos/'+repo+'/actions/runs/'+run+'/cancel',
+              {method:'POST',headers,signal:AbortSignal.timeout(30000)});
+            assert.equal(r.status,202);
+            console.log('Pause requested for the exact waiting expiry probe; all other workflows untouched');
+          })().catch(()=>{console.error('Exact waiting-probe scope not verified; no broader cancellation attempted');process.exitCode=1;});
+          JS
