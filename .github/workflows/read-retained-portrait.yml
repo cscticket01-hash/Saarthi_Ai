@@ -1,0 +1,38 @@
+name: Read-only original retained TEST portrait verification
+on:
+  push:
+    branches: [test/read-retained-portrait-20261111]
+    paths:
+      - .github/workflows/read-retained-portrait.yml
+      - .github/tests/retained_portrait_readback_test.dart
+permissions:
+  contents: read
+jobs:
+  readback:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Match the deployed business tree before reading the original receipt
+        shell: bash
+        run: git diff --exit-code 731bca40858285e9dc06450f9a6b9a41b6e461cc HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+      - run: flutter pub get
+      - name: Recover exact original photo identity locally; read existing receipt and Drive bytes only
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: flutter test .github/tests/retained_portrait_readback_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true --dart-define=SAARTHI_SCHOOL_CLOUD_URL=https://saarthi-sync-v2-test.onrender.com/school-cloud
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-retained-portrait-readback
+          path: build/cloud-prerequisites/retained-portrait.json
+          retention-days: 14
