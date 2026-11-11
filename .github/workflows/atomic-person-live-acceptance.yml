@@ -10,7 +10,7 @@ permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: 5bc93f6d28116269bc26db3ba939adcfbd564aec
+  VS_EXPECTED_TEST_RUNTIME: ec9ffb68f5d606c395f1ee7fb0f4c6b1f1a1e395
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
@@ -33,7 +33,7 @@ jobs:
           const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
           const sha=process.env.VS_EXPECTED_TEST_RUNTIME,token=process.env.GITHUB_TOKEN;
           async function main(){
-           for (const kind of ['cloud','readiness','disaster']) {
+           for (const kind of ['cloud','readiness','deletion','disaster']) {
             try { await waitForTestGate({kind,sha,token}); }
             catch (error) { throw new Error(kind + ' gate: ' + error.message); }
            }
@@ -62,3 +62,9 @@ jobs:
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
         run: node .github/scripts/test_atomic_person_live.cjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-atomic-person-live-evidence
+          path: build/cloud-prerequisites/atomic-person-live.json

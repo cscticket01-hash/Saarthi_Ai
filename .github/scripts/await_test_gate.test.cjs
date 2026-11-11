@@ -46,3 +46,14 @@ test('merged TEST branch readiness requires exact source, own repo and push even
  for(const conclusion of ['failure','skipped','cancelled'])
   await assert.rejects(waitForTestGate({kind:'readiness',sha,token:'private',fetchImpl:fetchRuns([{...readiness,conclusion}]),attempts:1}),/did not pass/);
 });
+
+test('atomic deletion and recovery gates require their own exact-source TEST push results',()=>{
+ const {selectGate}=require('./await_test_gate.cjs');
+ const sha='a'.repeat(40),repo='cscticket01-hash/Saarthi_Ai';
+ for(const [kind,name] of [['disaster','Isolated TEST disaster recovery acceptance'],['deletion','Isolated TEST Delete Everywhere real provider and hosted client acceptance']]){
+  const own={name,head_sha:sha,head_branch:'feature/smart-sync-3',event:'push',head_repository:{full_name:repo}};
+  assert.equal(selectGate([own],kind,sha),own);
+  for(const patch of [{head_sha:'b'.repeat(40)},{head_branch:'other'},{event:'pull_request'},{head_repository:{full_name:'foreign/repo'}}])
+   assert.equal(selectGate([{...own,...patch}],kind,sha),null);
+ }
+});

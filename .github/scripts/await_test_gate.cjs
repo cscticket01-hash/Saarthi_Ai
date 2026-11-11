@@ -2,9 +2,10 @@
 const assert=require('node:assert/strict');
 const REPO='cscticket01-hash/Saarthi_Ai';
 const GATES={
- disaster:{name:'Isolated TEST disaster recovery acceptance',branch:'feature/smart-sync-3',event:'push'},
  cloud:{name:'Isolated TEST cloud prerequisites',branch:'feature/smart-sync-3',event:'push'},
- readiness:{name:'Sync 3 isolated TEST readiness',branch:'feature/live-sync-authority-v1-20261102',event:'pull_request'}
+ readiness:{name:'Sync 3 isolated TEST readiness',branch:'feature/live-sync-authority-v1-20261102',event:'pull_request'},
+ disaster:{name:'Isolated TEST disaster recovery acceptance',branch:'feature/smart-sync-3',event:'push'},
+ deletion:{name:'Isolated TEST Delete Everywhere real provider and hosted client acceptance',branch:'feature/smart-sync-3',event:'push'}
 };
 function selectGate(runs,kind,sha){
  assert.ok(Object.hasOwn(GATES,kind));assert.match(sha||'',/^[a-f0-9]{40}$/);assert.ok(Array.isArray(runs));

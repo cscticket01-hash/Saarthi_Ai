@@ -41,7 +41,7 @@ async function run(){
  await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME||process.env.GITHUB_SHA);
  stage='test_authentication';
  const login=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+apiKey,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});assert.equal(login.http,200);const token=login.data.idToken;assert.ok(token);
- const call=async body=>{const r=await post(endpoint,{...body,schoolId},token);if(r.http!==200){const error=new Error('TEST request failed');error.http=r.http;error.category=r.data.code;throw error;}assert.equal(r.data.success,true);assert.equal(r.data.schoolId,schoolId);return r.data;};
+ const call=body=>require('./safe_test_read_retry.cjs').schoolCall({post,url:endpoint,schoolId,token,report},body);
  const pass=name=>{report.checks.push({name,status:'PASS'});console.log(JSON.stringify({check:name,status:'PASS'}));};
  // Wait only for this authorized TEST release to become available. No production
  // access, no fallback to old backup schemas and no deployment from CI.
@@ -55,9 +55,10 @@ async function run(){
  // Monitoring is independently checked; a metadata failure must not block
  // verification of the already acknowledged, immutable recovery checkpoint.
  try {
+  if(identity.resumed)await require('./disaster_fixture_resume.cjs').prepareMonitorProbe(call,schoolId,report);
   const monitoring=await call({action:'managed/sync/status'}),evidence=monitoring.serverEvidence||{};
   const shape=Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
-  const verified=require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(evidence,identity.resumed,identity.resumed?'managed_file':'managed_records')&&
+  const verified=require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(evidence,identity.resumed)&&
     (monitoring.latestWindowsReport===null||monitoring.latestWindowsReport.source==='latest_windows_client_report');
   const safeCodes=['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'];
   report.centralMonitor={verified,stage:'central_monitor_validation',backendStage:evidence.stage,backendProtocol:evidence.protocol,backendDurableAckObserved:evidence.outcome==='durable_ack',backendVerifiedReadObserved:evidence.outcome==='verified_response',fixtureAckMode:report.fixtureAckMode,evidenceShapeVerified:shape,

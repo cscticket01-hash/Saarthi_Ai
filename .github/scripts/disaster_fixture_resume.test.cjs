@@ -37,7 +37,7 @@ test('resume monitor distinguishes a verified read from a new durable write ACK'
  assert.equal(fixtureMonitorVerified(read,false),false);
  assert.equal(fixtureMonitorVerified({...read,outcome:'durable_ack'},false),true);
  const file={...read,stage:'managed_file',protocol:1};
- assert.equal(fixtureMonitorVerified(file,true,'managed_file'),true);
+ assert.equal(fixtureMonitorVerified(file,true,'managed_file'),false);
  assert.equal(fixtureMonitorVerified(file,false,'managed_file'),false);
  assert.equal(fixtureMonitorVerified(file,true),false);
  assert.equal(fixtureMonitorVerified({...file,protocol:2},true,'managed_file'),false);
@@ -45,4 +45,53 @@ test('resume monitor distinguishes a verified read from a new durable write ACK'
  assert.equal(fixtureMonitorVerified({...file,version:2},true,'managed_file'),false);
  for(const bad of [{...read,outcome:'failed'},{...read,protocol:1},{...read,observedAt:0},{...read,stage:'managed_mobile'},{...read,unverifiedPayload:'forbidden'}])
   assert.equal(fixtureMonitorVerified(bad,true),false);
+});
+
+// Exercise the production broker rather than duplicating its monitoring rules.
+test('actual broker retains record-read evidence after verified fixture file read',async()=>{
+ const {fixture,A,time}=require('../../functions/test/helpers/managed-school-broker');
+ const retained={...row(),schoolId:A};
+ const f=fixture(async(_,options)=>{
+  const envelope=JSON.parse(options.body),body=JSON.parse(envelope.payload);
+  const result=body.action==='managed_records'
+   ?{syncProtocol:2,pointRead:true,records:{[identity.id]:retained}}
+   :{base64:pdf.toString('base64')};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
+ });
+ await prepareDisasterFixture(f.call,identity,A,pdf,{});
+ const monitor=await f.call({action:'managed/sync/status'});
+ assert.deepEqual(monitor.serverEvidence,{version:1,observedAt:time,
+  outcome:'verified_response',stage:'managed_records',protocol:2});
+ assert.equal(require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(monitor.serverEvidence,true),true);
+ assert.equal(monitor.latestWindowsReport,null);
+});
+
+test('Cloudflare notice reads leave old failure evidence until an explicit signed settings probe',async()=>{
+ const {fixture,A,time}=require('../../functions/test/helpers/managed-school-broker');
+ const {createCloudflareSync}=require('../../functions/cloudflare-sync');
+ const {prepareMonitorProbe,fixtureMonitorVerified}=require('./disaster_fixture_resume.cjs');
+ const edge=createCloudflareSync({url:'https://edge.example/',key:'x'.repeat(32),schools:[A],fetchImpl:async()=>
+  new Response(JSON.stringify({success:true,schoolId:A,value:{initialized:true,records:{[identity.id]:{...row(),schoolId:A}},revision:'cf-current'}}),{status:200})});
+ const calls=[];
+ const f=fixture(async(_,options)=>{
+  const envelope=JSON.parse(options.body),request=JSON.parse(envelope.payload);calls.push(request);
+  const proof=request.action==='managed_file'?{base64:pdf.toString('base64')}:{syncProtocol:2,pointRead:true,records:{}};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...proof})};
+ },{cloudflareSync:edge,liveSyncSchools:[A]});
+ f.docs.get('platform_schools/'+A).syncServerEvidence={version:1,observedAt:time-1000,outcome:'failed',stage:'managed_records',code:'SCRIPT_UNVERIFIED'};
+ await prepareDisasterFixture(f.call,identity,A,pdf,{});
+ assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.outcome,'failed');
+ const report={};await prepareMonitorProbe(f.call,A,report);
+ const monitor=await f.call({action:'managed/sync/status'});
+ assert.equal(fixtureMonitorVerified(monitor.serverEvidence,true),true);
+ assert.equal(monitor.serverEvidence.code,undefined);assert.equal(monitor.latestWindowsReport,null);
+ assert.equal(report.monitorProbe.readOnly,true);
+ assert.deepEqual(calls.map(b=>b.action),['managed_file','managed_records']);
+ assert.equal(calls[1].collection,'school_settings');assert.equal(calls[1].operation,'read');
+});
+test('a signed monitor probe rejects missing point proof and foreign school without writing records',async()=>{
+ const {prepareMonitorProbe}=require('./disaster_fixture_resume.cjs');
+ for(const value of [{success:true,schoolId:school,syncProtocol:2,pointRead:false,records:{}},
+  {success:true,schoolId:'foreign',syncProtocol:2,pointRead:true,records:{}}])
+  await assert.rejects(prepareMonitorProbe(async request=>{assert.equal(request.operation,'read');return value;},school,{}));
 });

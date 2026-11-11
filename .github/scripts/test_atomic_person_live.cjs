@@ -236,4 +236,9 @@ async function run() {
 run().catch(error => {
   report.code = typeof error.code === 'string' ? error.code : 'ATOMIC_LIVE_CHECK_FAILED';
   process.exitCode = 1;
-}).finally(() => console.log(JSON.stringify(report)));
+}).finally(() => {
+  report.runtimeCommit=process.env.VS_EXPECTED_TEST_RUNTIME;
+  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
+  fs.writeFileSync('build/cloud-prerequisites/atomic-person-live.json',JSON.stringify(report,null,2));
+  console.log(JSON.stringify(report));
+});

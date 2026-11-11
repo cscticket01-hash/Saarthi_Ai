@@ -19,3 +19,17 @@ module.exports = async function safeRead(post, url, body, token, report, options
     elapsedMs += delay;
   }
 };
+
+// Shared signed TEST response check. Only the explicit record-read operation
+// above can be retried; uncertain writes and deletes are submitted once.
+module.exports.schoolCall=async function({post,url,schoolId,token,report,label='TEST request',retryOptions},body){
+ const assert=require('node:assert/strict');
+ assert.match(schoolId,/^vs-[a-f0-9]{32}$/);
+ const adapted=async(...args)=>{const r=await post(...args);return {...r,http:r.http??r.status};};
+ const r=await module.exports(adapted,url,{...body,schoolId},token,report,retryOptions);
+ if(r.http!==200||r.data?.success!==true||r.data.schoolId!==schoolId){
+  const code=/^[A-Z_]{2,90}$/.test(r.data?.code||'')?r.data.code:'SCHOOL_SCOPE_UNVERIFIED';
+  throw Object.assign(Error(label+' HTTP '+r.http+' '+code),{http:r.http,status:r.http,code,category:code});
+ }
+ return r.data;
+};

@@ -15,18 +15,17 @@ async function main(){
  const key=fs.readFileSync('lib/platform/platform_config.dart','utf8').match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
  const login=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+key,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  assert.equal(login.status,200);assert.ok(login.data.idToken);
- const call=async body=>{
-  const r=await post(API,{...body,schoolId:f.schoolId},login.data.idToken);
-  if(r.status!==200||r.data.success!==true||r.data.schoolId!==f.schoolId)
-   throw Object.assign(Error('Retained TEST request failed'),{code:r.data.code,http:r.status});return r.data;
- };
+ const call=body=>require('./safe_test_read_retry.cjs').schoolCall({post,url:API,schoolId:f.schoolId,token:login.data.idToken,report},body);
  const read=(collection,id)=>call({action:'managed/records',collection,id,operation:'read',syncProtocol:2});
  const before=await read('students_directory',f.student);assert.equal(before.pointRead,true);
  validateRetainedPerson(before.records?.[f.student]);report.checks.push('original retained generation and immutable delete scope verified');
  const body={action:'managed/records',edgeDeliveryVersion:1,operation:'delete',collection:'students_directory',id:f.student,
   syncProtocol:2,operationId:f.operationId,expectedRecordRevision:f.originalRevision,
   deletedStudentGeneration:f.generation,deleteEverywhereVersion:1};
- const ack=await retryExactDelete(body,request=>call(request));
+ const observe=require('./delete_plan_progress.cjs').observeDeletePlan(async(collection,id)=>{
+  const reply=await read(collection,id);validateRetainedPerson(reply.records?.[id]);return reply;
+ },f.schoolId,progress=>{report.progress=progress;console.log('RETAINED_TEST_DELETE_PROGRESS '+JSON.stringify(progress));});
+ const ack=await retryExactDelete(body,request=>call(request),{attempts:48,observeProgress:observe});
  assert.equal(verifiedNativeReceipt(ack,body,f.schoolId),true);
  assert.ok(ack.deletedFileIds?.includes(f.fileId));validateRetainedPerson(ack.record);
  report.checks.push('actual signed final Drive and Firebase completion receipt verified');
