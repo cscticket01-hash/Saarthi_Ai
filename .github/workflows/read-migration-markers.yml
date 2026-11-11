@@ -1,0 +1,27 @@
+name: Read-only isolated TEST migration marker diagnosis
+on:
+  push:
+    branches: [test/read-migration-markers-20261111]
+    paths:
+      - '.github/scripts/migration_marker_diagnostic.cjs'
+      - '.github/scripts/migration_marker_diagnostic.test.cjs'
+      - '.github/workflows/read-migration-markers.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify redaction and immutable diagnostic behavior
+        run: node --test .github/scripts/migration_marker_diagnostic.test.cjs
+      - run: npm --prefix functions install --ignore-scripts --no-package-lock
+      - name: Read only the exact existing isolated TEST migration document
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/migration_marker_diagnostic.cjs
