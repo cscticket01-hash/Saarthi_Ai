@@ -10,7 +10,7 @@ permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: ec9ffb68f5d606c395f1ee7fb0f4c6b1f1a1e395
+  VS_EXPECTED_TEST_RUNTIME: 731bca40858285e9dc06450f9a6b9a41b6e461cc
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
@@ -25,7 +25,7 @@ jobs:
         run: |
           node --test .github/scripts/await_test_gate.test.cjs
           node -e "require('./.github/scripts/await_test_gate.cjs').selectGate([], 'disaster', process.env.VS_EXPECTED_TEST_RUNTIME)"
-      - name: Require the exact runtime's isolated cloud, readiness and recovery passes
+      - name: Require exact runtime cloud, readiness, deletion and recovery passes
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
