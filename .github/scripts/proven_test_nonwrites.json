@@ -1,0 +1,705 @@
+{
+  "version": 1,
+  "scope": "Only exact historical TEST validation failures and read-only inventory timeout; no business writes",
+  "schoolId": "vs-db8afb01a3be46a983c8284714d06e5d",
+  "projectId": "saarthi-ai-df12b",
+  "runtimeCommit": "5bc93f6d28116269bc26db3ba939adcfbd564aec",
+  "gates": [
+    {
+      "id": 42943936478,
+      "name": "Isolated TEST cloud prerequisites"
+    },
+    {
+      "id": 42943936367,
+      "name": "Sync 3 isolated TEST readiness"
+    }
+  ],
+  "entries": [
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "2a0b09d73a93db29bdbd6f03dbdc61f524d6c18c3194573a27e7de27afc3533a",
+      "startedAt": 1794363291398,
+      "prefix": "isolated-v2-42943936478-1",
+      "recordHash": "d5c03436ee561689fce311601d8ef7822ab733ad73fe1c124b7f3f924a820119",
+      "operationHash": "90e252ba4bb8f2cf9edc3a8412f6a7863468a6c446c76d51a27ddbc6c34714db",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42943936478,
+      "attempt": 1,
+      "jobId": 130272060529,
+      "sourceSha": "5bc93f6d28116269bc26db3ba939adcfbd564aec",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1304,
+          "reference": "123e1963-0f7e-4568-9e2f-fe4897e432eb"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1697,
+          "reference": "f46b89e7-40ac-4ef9-9101-58fd8ffd4f8c"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 984,
+          "reference": "4b51353b-4597-4058-a90e-4a9e1ae7adab"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "a4953168f4263c641ec54c07e30073c1baffba58f6ebc85ea096a9eac2d016a9",
+      "startedAt": 1794363292677,
+      "prefix": "isolated-v2-42943936478-1",
+      "recordHash": "d5c03436ee561689fce311601d8ef7822ab733ad73fe1c124b7f3f924a820119",
+      "operationHash": "f4519c359c5d393d085ef08946437061ab7690fcc0b1f01519883d668bba28c1",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42943936478,
+      "attempt": 1,
+      "jobId": 130272060529,
+      "sourceSha": "5bc93f6d28116269bc26db3ba939adcfbd564aec",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1304,
+          "reference": "123e1963-0f7e-4568-9e2f-fe4897e432eb"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1697,
+          "reference": "f46b89e7-40ac-4ef9-9101-58fd8ffd4f8c"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 984,
+          "reference": "4b51353b-4597-4058-a90e-4a9e1ae7adab"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "efab706f8d6f4649ff6309417d44d90ba81c910a5a92a459e9de65086dca3045",
+      "startedAt": 1794336245917,
+      "prefix": "isolated-v2-42877158371-1",
+      "recordHash": "bf2caffcc542abdaef40b2d7f14ca72a06c2101374922c9027d4679fd81a1f3f",
+      "operationHash": "f9ad75514c335e9c4bcb8f686bc879b011e4d79a5dacad5ad0ccb47931d7ff95",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42877158371,
+      "attempt": 1,
+      "jobId": 130043934635,
+      "sourceSha": "4854a06ce8ba8e43f5b7334d5bd483dc39df99ef",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1396,
+          "reference": "2417402d-ba99-4b6a-b1f2-57cea8838f08"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1405,
+          "reference": "44a95782-694a-494c-91a2-61b30dc39cf8"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1001,
+          "reference": "b9b7bd10-c8f5-45d1-a75a-00d9a823bdd3"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "f1c788a5fe3ff461bd4fb969730a68b61eff5eda3a68f867d8cdc1aee9a98fe2",
+      "startedAt": 1794336247299,
+      "prefix": "isolated-v2-42877158371-1",
+      "recordHash": "bf2caffcc542abdaef40b2d7f14ca72a06c2101374922c9027d4679fd81a1f3f",
+      "operationHash": "4b7e99c0755d06ff5ebe238ef243b2ee9385d02ee4a3fc36950da95796c566c6",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42877158371,
+      "attempt": 1,
+      "jobId": 130043934635,
+      "sourceSha": "4854a06ce8ba8e43f5b7334d5bd483dc39df99ef",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1396,
+          "reference": "2417402d-ba99-4b6a-b1f2-57cea8838f08"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1405,
+          "reference": "44a95782-694a-494c-91a2-61b30dc39cf8"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1001,
+          "reference": "b9b7bd10-c8f5-45d1-a75a-00d9a823bdd3"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "95e1683f05e30ef39cea686f95885075a3b63035c20a61bfe19f375870d03edb",
+      "startedAt": 1794324148961,
+      "prefix": "isolated-v2-42842637359-1",
+      "recordHash": "9f1e4daab6c30be50c7b4dd604c5ade2da0808088b480f93d02e50eecead2e1c",
+      "operationHash": "e93fa42dd61d05906b5ee7ed6bec8522db2b465b49e21f75be26835c946cf6ce",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42842637359,
+      "attempt": 1,
+      "jobId": 129921593925,
+      "sourceSha": "4d2938e2e62b9736e8a98b5afb67141de65b8326",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 2056,
+          "reference": "72b81b39-e973-414f-8655-cfef0afbed23"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1597,
+          "reference": "c2db7095-7c5f-42e1-b69a-d170bb935ec4"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1131,
+          "reference": "63fa28ac-def6-4c25-8607-e0b7176abf82"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "cc8132a53f32b3db32425f5f8711aba4de95c84188f27bd62bca9fe6f275d0bb",
+      "startedAt": 1794324150749,
+      "prefix": "isolated-v2-42842637359-1",
+      "recordHash": "9f1e4daab6c30be50c7b4dd604c5ade2da0808088b480f93d02e50eecead2e1c",
+      "operationHash": "99894b81f9ec49c25ae308083b9b78948977b8349c1ca3887bc3d2e48b4c2e56",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42842637359,
+      "attempt": 1,
+      "jobId": 129921593925,
+      "sourceSha": "4d2938e2e62b9736e8a98b5afb67141de65b8326",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 2056,
+          "reference": "72b81b39-e973-414f-8655-cfef0afbed23"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1597,
+          "reference": "c2db7095-7c5f-42e1-b69a-d170bb935ec4"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1131,
+          "reference": "63fa28ac-def6-4c25-8607-e0b7176abf82"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "1a7dada4d9defd319921610da86a9068fe48f15c67b51e5e83d5ea5770bff7d0",
+      "startedAt": 1794320122175,
+      "prefix": "isolated-v2-42831271444-1",
+      "recordHash": "ac669221b9add4997660cfab51d41b723e570e52fb4b6c84146fbe71b00db178",
+      "operationHash": "99b2a67958c2187dcc920fa7de471a5f0ec8c7ee24237d60b21e2a97f3a903ab",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42831271444,
+      "attempt": 1,
+      "jobId": 129881628192,
+      "sourceSha": "f8e08c526257ce443c80aa941fefed867d78bcd8",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1397,
+          "reference": "6a6dec79-4d07-46c7-9ea9-5c105f9cd517"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1398,
+          "reference": "7c9d73c2-8900-4ac6-a2a8-f569cb7717f5"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1025,
+          "reference": "b5ce1199-32ec-48b2-ae0e-76e4cd4273cb"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "0d7f90d931181ea7fa0bc6abc38dde726fae58d8c26074bc8b9cabc2009babc1",
+      "startedAt": 1794320123559,
+      "prefix": "isolated-v2-42831271444-1",
+      "recordHash": "ac669221b9add4997660cfab51d41b723e570e52fb4b6c84146fbe71b00db178",
+      "operationHash": "2e5dc8d97f143e94ec96f0c5181bab7861feea6cca171921cc45ae12af058471",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42831271444,
+      "attempt": 1,
+      "jobId": 129881628192,
+      "sourceSha": "f8e08c526257ce443c80aa941fefed867d78bcd8",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1397,
+          "reference": "6a6dec79-4d07-46c7-9ea9-5c105f9cd517"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1398,
+          "reference": "7c9d73c2-8900-4ac6-a2a8-f569cb7717f5"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1025,
+          "reference": "b5ce1199-32ec-48b2-ae0e-76e4cd4273cb"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "649deeaa49cc41d2c6d06e1bebe4bafa9a630d27131afb087ac3b16db0ce7887",
+      "startedAt": 1794251069737,
+      "prefix": "isolated-v2-42676252203-1",
+      "recordHash": "b8d7034144aecd3bc0da09138314d3d42dcd2be94e9b0a5a9d14e9ad2d2ba4eb",
+      "operationHash": "b847518c5f7da7a407ba99e8ff38259bf5fd1fab629d5f9f5eb8e72db2639970",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42676252203,
+      "attempt": 1,
+      "jobId": 129367875358,
+      "sourceSha": "7a9593a3debc5a1d382faa7f1a0d60f2ce1c3ed9",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1316,
+          "reference": "fa763dbd-2320-424d-a7bc-866df254efd8"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1612,
+          "reference": "c0d6a1e2-4bf5-45f2-bc5d-ebe08e2571af"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 943,
+          "reference": "bb0f1028-fb19-4b8b-9198-84b7f1a4c0c9"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "702dd9594e890f653140cab4ab1bf0e2dab2e0e57d7c641199a8b54f9ee72fbd",
+      "startedAt": 1794251071354,
+      "prefix": "isolated-v2-42676252203-1",
+      "recordHash": "b8d7034144aecd3bc0da09138314d3d42dcd2be94e9b0a5a9d14e9ad2d2ba4eb",
+      "operationHash": "e7366cdce499a51326ef2860c60ca4ad17258f5f42cb1da7312599f762351052",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42676252203,
+      "attempt": 1,
+      "jobId": 129367875358,
+      "sourceSha": "7a9593a3debc5a1d382faa7f1a0d60f2ce1c3ed9",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1316,
+          "reference": "fa763dbd-2320-424d-a7bc-866df254efd8"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1612,
+          "reference": "c0d6a1e2-4bf5-45f2-bc5d-ebe08e2571af"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 943,
+          "reference": "bb0f1028-fb19-4b8b-9198-84b7f1a4c0c9"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "5010d413a31d671e448dde2bc1ea27d491728ae7b2a6c21082dcbf22539e7aa5",
+      "startedAt": 1794249114177,
+      "prefix": "isolated-v2-42673306291-1",
+      "recordHash": "6e3af1038ea062fa1b817e72fc31e661b2e860265dfd689ac5098417f5567171",
+      "operationHash": "97776cb624d1ac590cde3c1b8b41dc623b4d9947608f25438548af254cf91cb9",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42673306291,
+      "attempt": 1,
+      "jobId": 129351624454,
+      "sourceSha": "e7718f263f8ccfcb423eead05db9f9ed8a020de6",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1466,
+          "reference": "ae2a424a-c11f-4963-8f88-07b1bd6e33b9"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1373,
+          "reference": "e7903b6c-c31c-4396-9dac-07344fa58e16"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 981,
+          "reference": "0d1c5aa5-f79c-43de-ab5f-06f3eb309417"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "c6d5869343fe3591eb215bae466842f989a8b29556b03eda6c2d1a8ff18ae5d5",
+      "startedAt": 1794249115553,
+      "prefix": "isolated-v2-42673306291-1",
+      "recordHash": "6e3af1038ea062fa1b817e72fc31e661b2e860265dfd689ac5098417f5567171",
+      "operationHash": "b05432c5f7c1429d33d22c2b1ebc95d4b37bb6b9b5a9538c5d63a0c82df6a809",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42673306291,
+      "attempt": 1,
+      "jobId": 129351624454,
+      "sourceSha": "e7718f263f8ccfcb423eead05db9f9ed8a020de6",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1466,
+          "reference": "ae2a424a-c11f-4963-8f88-07b1bd6e33b9"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1373,
+          "reference": "e7903b6c-c31c-4396-9dac-07344fa58e16"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 981,
+          "reference": "0d1c5aa5-f79c-43de-ab5f-06f3eb309417"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "58a9d42874447b6f6f1b513534266d67b4cade87e13dc5f1ccec19f1d4a82ee0",
+      "startedAt": 1794246579183,
+      "prefix": "isolated-v2-42667437503-1",
+      "recordHash": "3d147bf72d8a155a13d091afdf5e97d45c5805e5bfffce12db94f52a604d5294",
+      "operationHash": "3ed09c165b8f9378c13ff31905545fb2774fdf1f347933eec9ba8a95e85ae715",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42667437503,
+      "attempt": 1,
+      "jobId": 129335315740,
+      "sourceSha": "931d56832232dcbc6f378fbefa689866077dfafd",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1325,
+          "reference": "3fa897e2-82bf-4351-9eae-fb10908d47c0"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1320,
+          "reference": "d7762552-2432-46ac-b40e-7d2527bff58a"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1357,
+          "reference": "b91b2124-c2e1-41ff-969e-ced69a61b7c9"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "e635ce7a67bc074d9fe8e1bf400c9e2e6c7e0a0b2368789a394d3788242177f3",
+      "startedAt": 1794246580481,
+      "prefix": "isolated-v2-42667437503-1",
+      "recordHash": "3d147bf72d8a155a13d091afdf5e97d45c5805e5bfffce12db94f52a604d5294",
+      "operationHash": "7d847e6b8bd602e51a8566078756625d31121dd67b915dc3637d9a2c733e4705",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42667437503,
+      "attempt": 1,
+      "jobId": 129335315740,
+      "sourceSha": "931d56832232dcbc6f378fbefa689866077dfafd",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1325,
+          "reference": "3fa897e2-82bf-4351-9eae-fb10908d47c0"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1320,
+          "reference": "d7762552-2432-46ac-b40e-7d2527bff58a"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1357,
+          "reference": "b91b2124-c2e1-41ff-969e-ced69a61b7c9"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "9991e6a1f334d568fb335392ccfe3b775190611c05e7ca3ccb6bb6d638fc2ce5",
+      "startedAt": 1794245655325,
+      "prefix": "isolated-v2-42664799823-1",
+      "recordHash": "a431a90dd67e233cead12f435cb3688c5b136683e974bc2ef26ec0059f9ae3c5",
+      "operationHash": "63cefde92e35236b87d2523bc3668156c4a640fae6478830f9aa005cbae03aa6",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42664799823,
+      "attempt": 1,
+      "jobId": 129326015972,
+      "sourceSha": "cb6f93ebf957f583591459b93c4ba3f1be25203f",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1279,
+          "reference": "47a0ddcd-589f-4457-9758-c2b172df7ad9"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1288,
+          "reference": "0ae604b0-5848-43f6-93cf-2c1d391ebfee"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1644,
+          "reference": "30946d54-5d60-4948-8907-3d8936d1017e"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "c60d5429fd58278c81d27c044b742d2715400e2cacc3d57cd11641d737d1e1b3",
+      "startedAt": 1794245656572,
+      "prefix": "isolated-v2-42664799823-1",
+      "recordHash": "a431a90dd67e233cead12f435cb3688c5b136683e974bc2ef26ec0059f9ae3c5",
+      "operationHash": "77df6e93d1aa0418ce4b90f623431253f9413e69f1f1bffb0c333c717f6fb66a",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42664799823,
+      "attempt": 1,
+      "jobId": 129326015972,
+      "sourceSha": "cb6f93ebf957f583591459b93c4ba3f1be25203f",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1279,
+          "reference": "47a0ddcd-589f-4457-9758-c2b172df7ad9"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1288,
+          "reference": "0ae604b0-5848-43f6-93cf-2c1d391ebfee"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1644,
+          "reference": "30946d54-5d60-4948-8907-3d8936d1017e"
+        }
+      ]
+    },
+    {
+      "kind": "notice_stale_rejection",
+      "markerHash": "6fe62a30cdf6756da364faa36e8c4c67e2256c9e17d5d6020f78e881620cb0c6",
+      "startedAt": 1794233485244,
+      "prefix": "isolated-v2-42631307311-1",
+      "recordHash": "8190555b8136f41f749b8a14131959b18d8d61fb614f07222266f33b2d912fa1",
+      "operationHash": "de84addc224cab764d652c40b773f39447273462da516f4abe86f6693de0f68e",
+      "requestHash": "def6d8dd7510e086601f1064c77affc66528dd9a5333949a7eb8598af0af770a",
+      "runId": 42631307311,
+      "attempt": 1,
+      "jobId": 129208007693,
+      "sourceSha": "4ba61b40b254bce6cd4a1b515926324c3b84df78",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1355,
+          "reference": "ae85854f-0530-4711-bee9-afb62a0a0590"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1345,
+          "reference": "bc2899c5-a033-4dcb-af1f-4c2a442043a3"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1316,
+          "reference": "68f519ef-8dc1-4c21-b625-643c8b07ce84"
+        }
+      ]
+    },
+    {
+      "kind": "notice_operation_rejection",
+      "markerHash": "9224cff7843d443deb9b1ff98ad2d25b14d4aef80442ce7f56d759fa3073b986",
+      "startedAt": 1794233486597,
+      "prefix": "isolated-v2-42631307311-1",
+      "recordHash": "8190555b8136f41f749b8a14131959b18d8d61fb614f07222266f33b2d912fa1",
+      "operationHash": "7656b954b391a832364e21fa7ed7364a9665dbf088eb4e3a5c0f6374ffcaf877",
+      "requestHash": "9dc5d0a72340eb023c39d69e0a8d9f7ee7ef2be028155bae1686dad2dd5b7129",
+      "runId": 42631307311,
+      "attempt": 1,
+      "jobId": 129208007693,
+      "sourceSha": "4ba61b40b254bce6cd4a1b515926324c3b84df78",
+      "requiredChecks": [
+        {
+          "name": "Real stale revision is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1355,
+          "reference": "ae85854f-0530-4711-bee9-afb62a0a0590"
+        },
+        {
+          "name": "Real operation ID reuse is HTTP 409 without ACK",
+          "status": "PASS",
+          "http": 409,
+          "elapsedMs": 1345,
+          "reference": "bc2899c5-a033-4dcb-af1f-4c2a442043a3"
+        },
+        {
+          "name": "Rejected conflicts preserve existing TEST notice",
+          "status": "PASS",
+          "http": 200,
+          "elapsedMs": 1316,
+          "reference": "68f519ef-8dc1-4c21-b625-643c8b07ce84"
+        }
+      ]
+    },
+    {
+      "kind": "invalid_generation",
+      "markerHash": "b0d38922d79fc22e4e20379368ce9cec0ad9c7b15fc433ffbde8d5ab27b1b99f",
+      "startedAt": 1794232409408,
+      "prefix": "isolated-v2-42629053990-1",
+      "recordHash": "d7722b5c04ac3130eeb94776505b54eb37ddc5cd906a7cb636fc46b7a8242520",
+      "operationHash": "ca0c475f551bf31a3d47b344207b61d96b5d84f903d264d65cbc55ed8bae6901",
+      "requestHash": "0a3303c2c268538568031614cdf0df3575d53cd94bd6ecc14437f9a95d401dd0",
+      "runId": 42629053990,
+      "attempt": 1,
+      "jobId": 129200670392,
+      "sourceSha": "2811a4774bf1aeedac926335f1fc1495b32afff4",
+      "requiredChecks": [
+        {
+          "name": "Real durable Script ACK students_directory",
+          "status": "FAIL",
+          "http": 400,
+          "elapsedMs": 7875,
+          "reference": "b52aa574-f6c4-42ff-9c18-0fd830347d96",
+          "code": "PERSON_GENERATION_INVALID"
+        }
+      ]
+    },
+    {
+      "kind": "read_only_inventory",
+      "markerHash": "993fa3a944c0ee3fd2268c109f562e88df137ddd1981d60a60a45032a0c588d1",
+      "startedAt": 1794245946971,
+      "runId": 42664799823,
+      "attempt": 1,
+      "jobId": 129330498457,
+      "sourceSha": "cb6f93ebf957f583591459b93c4ba3f1be25203f",
+      "requestId": "a68baae1-d0af-4140-9101-9d9e4856897a",
+      "renderResource": "srv-db3tgfu7bikc73abm7a0",
+      "renderOperation": "managed/file/inventory",
+      "renderFailureAt": "2026-11-09T17:40:37.239183155Z",
+      "http": 504,
+      "code": "SCRIPT_TIMEOUT"
+    }
+  ]
+}
