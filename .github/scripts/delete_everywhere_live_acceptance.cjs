@@ -127,8 +127,10 @@ async function main(){
     collection:'students_directory',id:student,syncProtocol:2,
     operationId:delOp,expectedRecordRevision:parentRevision,
     deletedStudentGeneration:generation,deleteEverywhereVersion:1};
+  // Large verified archive inventories can exceed thirty minutes while making
+  // durable progress. Keep the helper's forty-minute ceiling and stall fence.
   const finalDelete=await require('./native_person_receipt.cjs').retryExactDelete(deleteRequest,
-    request=>call(request,'Windows protocol delete'),{attempts:48,
+    request=>call(request,'Windows protocol delete'),{attempts:48,maxElapsedMs:40*60*1000,
      observeProgress:require('./delete_plan_progress.cjs').observeDeletePlan(read,SCHOOL,
       progress=>{report.deleteProgress=progress;console.log('TEST_DELETE_PROGRESS '+JSON.stringify(progress));})});
   const del=await delivery(finalDelete,'Delete Everywhere',deleteRequest);
