@@ -1,0 +1,30 @@
+name: Read-only TEST provider quota observation
+on:
+  push:
+    branches: [test/read-quota-20261111]
+    paths:
+      - .github/scripts/read_test_quota.cjs
+      - .github/workflows/read-test-quota.yml
+permissions:
+  contents: read
+jobs:
+  observe:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm --prefix functions install --ignore-scripts --no-package-lock
+      - name: Read existing project monitoring without provider workload or billing changes
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/read_test_quota.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-quota-read-only-observation
+          path: build/cloud-prerequisites/test-quota-observation.json
+          retention-days: 14
