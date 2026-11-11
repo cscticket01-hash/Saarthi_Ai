@@ -1,6 +1,7 @@
 'use strict';
 // Only repeat explicit read operations. Never replay an uncertain mutation.
 module.exports = async function safeRead(post, url, body, token, report, options = {}) {
+  const original = JSON.stringify(body);
   const read = body.action === 'managed/records' && body.operation === 'read';
   const attempts = options.attempts ?? 3;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 6)
@@ -9,7 +10,7 @@ module.exports = async function safeRead(post, url, body, token, report, options
   const random = options.random || Math.random;
   let elapsedMs = 0;
   for (let attempt = 0; ; attempt++) {
-    const result = await post(url, body, token);
+    const result = await post(url, JSON.parse(original), token);
     elapsedMs += result.elapsedMs || 0;
     const limit = result.http === 429 ? Math.min(attempts, 3) : attempts;
     if (!read || ![429, 502, 503, 504].includes(result.http) || attempt + 1 >= limit) {

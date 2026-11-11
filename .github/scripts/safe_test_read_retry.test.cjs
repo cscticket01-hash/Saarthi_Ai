@@ -58,3 +58,12 @@ test('extended settings preserve the original three-request quota stop',async()=
 test('a foreign HTTP200 response is rejected on the first extended read',async()=>{
  let calls=0;await assert.rejects(schoolCall({url,schoolId,report:{},retryOptions:{...retryOptions,attempts:6},post:async()=>{calls++;return {http:200,data:{success:true,schoolId:'vs-'+'b'.repeat(32)}};}},body));assert.equal(calls,1);
 });
+
+test('a transport cannot change the next retry or the caller request identity',async()=>{
+ const request={...body,filter:{original:true}},seen=[];
+ await schoolCall({url,schoolId,report:{},retryOptions,post:async(_,value)=>{
+  seen.push(structuredClone(value));value.id='replacement';value.filter.original=false;
+  return seen.length===1?{http:503,data:{}}:{http:200,data:{success:true,schoolId}};
+ }},request);
+ assert.deepEqual(seen[0],seen[1]);assert.equal(request.id,'original');assert.equal(request.filter.original,true);
+});

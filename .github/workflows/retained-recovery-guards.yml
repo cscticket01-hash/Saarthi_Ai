@@ -3,8 +3,7 @@ on:
   push:
     branches: [fix/bounded-test-recovery-20261111]
     paths:
-      - .github/scripts/safe_test_read_retry.cjs
-      - .github/scripts/safe_test_read_retry.test.cjs
+      - .github/scripts/**
       - lib/testing/isolated_admin_fixture.dart
       - .github/tests/isolated_admin_fixture_test.dart
       - .github/workflows/retained-recovery-guards.yml
@@ -18,9 +17,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test .github/scripts/safe_test_read_retry.test.cjs .github/scripts/native_person_receipt.test.cjs .github/scripts/delete_plan_progress.test.cjs .github/scripts/retained_delete_fixture.test.cjs
+      - run: node --test .github/scripts/*.test.cjs
       - run: node --check .github/scripts/delete_everywhere_live_acceptance.cjs
       - run: node --check .github/scripts/resume_retained_delete_acceptance.cjs
+      - run: node --check .github/scripts/resume_failed_delete_artifact.cjs
+      - run: node --check .github/scripts/test_atomic_person_live.cjs
   retained-fixture-guards:
     runs-on: windows-latest
     steps:
