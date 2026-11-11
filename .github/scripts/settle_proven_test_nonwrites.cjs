@@ -106,7 +106,7 @@ async function verifyRuntime(){
   assert.equal(run.head_branch,'feature/smart-sync-3');assert.equal(run.event,'push');
   assert.equal(run.head_repository.full_name,REPO);assert.equal(run.status,'completed');assert.equal(run.conclusion,'success');
  }
- await require('./test_runtime_identity.cjs').waitForRuntime(manifest.runtimeCommit,{attempts:1});
+ await require('./test_runtime_identity.cjs').waitForRuntime(manifest.runtimeCommit,{attempts:6});
 }
 async function main(){
  assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.GITHUB_REPOSITORY,REPO);assert.equal(process.env.GITHUB_REF,BRANCH);
