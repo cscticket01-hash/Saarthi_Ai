@@ -33,8 +33,7 @@ async function main(){
  ensure(signIn.http===200&&typeof signIn.data.idToken==='string','Firebase isolated TEST administrator');
  const token=signIn.data.idToken;
  const admin=body=>http(ENDPOINT,{...body,schoolId:SCHOOL},token);
- const call=async(body,stage)=>{const r=await admin(body);if(r.http!==200||r.data.success!==true||r.data.schoolId!==SCHOOL)
-   throw Object.assign(Error(stage+' HTTP '+r.http+' '+(/^[A-Z_]{2,90}$/.test(r.data.code||'')?r.data.code:'PROVIDER_REJECTED')),{code:r.data.code,status:r.http});return r.data;};
+ const call=(body,stage)=>require('./safe_test_read_retry.cjs').schoolCall({post:http,url:ENDPOINT,schoolId:SCHOOL,token,report,label:stage},body);
  const mobile=request=>http(ENDPOINT,{action:'managed/mobile',schoolId:SCHOOL,request});
  const session=await call({action:'managed/session'},'TEST licence');
  ensure(session.allowed===true&&session.activated===true&&session.status==='licensed','active isolated TEST licence');

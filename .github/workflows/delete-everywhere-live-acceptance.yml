@@ -3,6 +3,8 @@ on:
   push:
     branches: [feature/smart-sync-3]
     paths:
+      - '.github/scripts/safe_test_read_retry.cjs'
+      - '.github/scripts/safe_test_read_retry.test.cjs'
       - 'functions/**'
       - 'school-backend/**'
       - 'staging-school-cloud/**'
