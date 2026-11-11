@@ -57,7 +57,7 @@ async function run(){
  try {
   const monitoring=await call({action:'managed/sync/status'}),evidence=monitoring.serverEvidence||{};
   const shape=Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
-  const verified=require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(evidence,identity.resumed,identity.resumed?'managed_file':'managed_records')&&
+  const verified=require('./disaster_fixture_resume.cjs').fixtureMonitorVerified(evidence,identity.resumed)&&
     (monitoring.latestWindowsReport===null||monitoring.latestWindowsReport.source==='latest_windows_client_report');
   const safeCodes=['RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_TIMEOUT','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_HTTP_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_OPERATION_FAILED'];
   report.centralMonitor={verified,stage:'central_monitor_validation',backendStage:evidence.stage,backendProtocol:evidence.protocol,backendDurableAckObserved:evidence.outcome==='durable_ack',backendVerifiedReadObserved:evidence.outcome==='verified_response',fixtureAckMode:report.fixtureAckMode,evidenceShapeVerified:shape,

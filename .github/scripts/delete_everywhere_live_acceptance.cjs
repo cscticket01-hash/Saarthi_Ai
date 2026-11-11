@@ -129,7 +129,9 @@ async function main(){
     operationId:delOp,expectedRecordRevision:parentRevision,
     deletedStudentGeneration:generation,deleteEverywhereVersion:1};
   const finalDelete=await require('./native_person_receipt.cjs').retryExactDelete(deleteRequest,
-    request=>call(request,'Windows protocol delete'));
+    request=>call(request,'Windows protocol delete'),{attempts:48,
+     observeProgress:require('./delete_plan_progress.cjs').observeDeletePlan(read,SCHOOL,
+      progress=>{report.deleteProgress=progress;console.log('TEST_DELETE_PROGRESS '+JSON.stringify(progress));})});
   const del=await delivery(finalDelete,'Delete Everywhere',deleteRequest);
   ensure(del.deleteEverywhereVersion===1&&del.driveDeletionComplete===true&&del.firebaseDeletionComplete===true,
     'Drive deletion and Firebase deletion both fully verified');

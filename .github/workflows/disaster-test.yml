@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/delete-everywhere-live-acceptance.yml'
       - '.github/scripts/delete_everywhere_live_acceptance.cjs'
+      - '.github/scripts/delete_plan_progress.cjs'
+      - '.github/scripts/delete_plan_progress.test.cjs'
       - '.github/scripts/native_person_receipt.cjs'
       - '.github/scripts/native_person_receipt.test.cjs'
       - '.github/scripts/retained_delete_fixture.cjs'
