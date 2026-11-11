@@ -51,4 +51,47 @@ void main() {
     await expectLater(authenticateIsolatedAdminFixture('x', 'y',
       endpoint: 'https://production.example/school-cloud'), throwsStateError);
   });
+
+  test('one retained owner timeout retries the same fixture payload after its delay', () async {
+    final payload={'uploadKey':'same-original-upload'},seen=<Map<String,String>>[];
+    final waits=<Duration>[];var retries=0;
+    final result=await retryRetainedIsolatedWrite<String>(() async {
+      seen.add(Map<String,String>.from(payload));
+      if(seen.length==1) throw CentralCloudException(503,'school_cloud','retained',
+        diagnosticCode:'SCRIPT_TIMEOUT',retryAfterMs:30000);
+      return 'verified';
+    },onRetry:()=>retries++,wait:(delay)async{waits.add(delay);});
+    expect(result,'verified');expect(seen,[payload,payload]);
+    expect(retries,1);expect(waits,[const Duration(seconds:30)]);
+  });
+  test('native timeouts, foreign failures and excessive retention delays are not replayed', () async {
+    for(final error in [
+      CentralCloudException(504,'school_cloud','native',diagnosticCode:'SCRIPT_TIMEOUT'),
+      CentralCloudException(503,'school_cloud','foreign',diagnosticCode:'SCRIPT_IDENTITY_MISMATCH'),
+      CentralCloudException(503,'school_cloud','later',diagnosticCode:'SCRIPT_TIMEOUT',retryAfterMs:60001),
+      CentralCloudException(503,'school_cloud','later',diagnosticCode:'EDGE_DELIVERY_PENDING',retryAfterMs:15001),
+    ]) {
+      var calls=0;
+      await expectLater(retryRetainedIsolatedWrite<String>(() async {calls++;throw error;},
+        wait:(_)async{}),throwsA(same(error)));
+      expect(calls,1);
+    }
+  });
+  test('a second retained timeout stops after the original bounded retry', () async {
+    var calls=0;final error=CentralCloudException(503,'school_cloud','retained',
+      diagnosticCode:'SCRIPT_TIMEOUT',retryAfterMs:30000);
+    await expectLater(retryRetainedIsolatedWrite<String>(() async {calls++;throw error;},
+      wait:(_)async{}),throwsA(same(error)));
+    expect(calls,2);
+  });
+
+  test('the original short retained-pending retry remains supported', () async {
+    var calls=0;final waits=<Duration>[];
+    expect(await retryRetainedIsolatedWrite<String>(() async {
+      if(++calls==1) throw CentralCloudException(503,'school_cloud','retained',
+        diagnosticCode:'EDGE_DELIVERY_PENDING',retryAfterMs:15000);
+      return 'verified';
+    },wait:(delay)async{waits.add(delay);}), 'verified');
+    expect(calls,2);expect(waits,[const Duration(seconds:15)]);
+  });
 }

@@ -2,21 +2,26 @@
 // Only repeat explicit read operations. Never replay an uncertain mutation.
 module.exports = async function safeRead(post, url, body, token, report, options = {}) {
   const read = body.action === 'managed/records' && body.operation === 'read';
+  const attempts = options.attempts ?? 3;
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 6)
+    throw new RangeError('TEST read retry attempts must be between one and six');
   const wait = options.wait || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const random = options.random || Math.random;
   let elapsedMs = 0;
   for (let attempt = 0; ; attempt++) {
     const result = await post(url, body, token);
     elapsedMs += result.elapsedMs || 0;
-    if (!read || ![429, 502, 503, 504].includes(result.http) || attempt === 2) {
+    const limit = result.http === 429 ? Math.min(attempts, 3) : attempts;
+    if (!read || ![429, 502, 503, 504].includes(result.http) || attempt + 1 >= limit) {
       return {...result, elapsedMs};
     }
     report.readRetries ||= [];
     report.readRetries.push({attempt: attempt + 1, http: result.http,
       reference: result.data?.requestId || null});
     const delay = Math.round((result.http === 429 ? 15000 : 5000) * 2 ** attempt * (0.8 + random() * 0.4));
-    await wait(delay);
-    elapsedMs += delay;
+    const boundedDelay = attempts > 3 ? Math.min(delay, 60000) : delay;
+    await wait(boundedDelay);
+    elapsedMs += boundedDelay;
   }
 };
 
