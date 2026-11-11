@@ -3,6 +3,7 @@ const {randomUUID}=require('node:crypto');
 const {COLLECTIONS}=require('./live-sync');
 const {bindOperation}=require('./live-sync-reconciliation');
 const {canonical}=require('./live-sync-canonical');
+const {legacyFingerprint,isNoticeRejection}=require('./live-sync-rejection');
 const NATIVE_LIFECYCLE_COLLECTIONS=new Set(['students_directory','teachers_directory','documents','student_scan_index','fee_settings','fee_ledger','fee_payments','teacher_salary','attendance_records','attendance_logs','teacher_attendance','teacher_schedules','exams','exam_results','exam_center_results']);
 const refuse=code=>{throw Object.assign(Error('Sync migration is pending; saved changes are retained.'),{status:503,code,publicMessage:true});};
 // Durable admission markers intentionally do not expire. A process crash can
@@ -36,14 +37,15 @@ function createLiveMigration({db,now=Date.now,drainGraceMs=120000}){
   await db.runTransaction(async tx=>{
    const state=(await tx.get(r)).data()||{},collections=state.collections||{};
    if(Object.entries(collections).some(([name,value])=>value.state!=='legacy'&&(!collection||collection===name)))refuse('LIVE_LEGACY_WRITE_FENCED');
-   const operationBinding=bindOperation(school,'legacy',body);
+   const operationBinding=bindOperation(school,'legacy',body),requestFingerprint=legacyFingerprint(school,body);
    const inflight={...state.inflight};
-   if(operationBinding){const prior=Object.entries(inflight).find(([,marker])=>marker.operationBinding&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];inflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,inflight});return;}}
+   if(operationBinding){const prior=Object.entries(inflight).find(([,marker])=>marker.operationBinding&&marker.requestFingerprint===requestFingerprint&&canonical(marker.operationBinding)===canonical(operationBinding));if(prior){token=prior[0];inflight[token]={...prior[1],activeAttempts:(Number.isSafeInteger(prior[1].activeAttempts)?prior[1].activeAttempts:0)+1};tx.set(r,{...state,inflight});return;}}
    if(Object.keys(inflight).length>=100)refuse('LIVE_MIGRATION_ADMISSION_BUSY');
-   inflight[token]={collection:collection||'*',startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding}:{})};tx.set(r,{...state,inflight});
+   inflight[token]={collection:collection||'*',startedAt:now(),activeAttempts:1,...(operationBinding?{operationBinding,requestFingerprint}:{})};tx.set(r,{...state,inflight});
   });
   let completed=false;
   try{const result=await run();completed=true;return result;}
+  catch(error){completed=isNoticeRejection(error,school,body);throw error;}
   finally{await settleAttempt(r,'inflight',token,completed);}
  }
  async function prepare(school,collection,drained,seed){
