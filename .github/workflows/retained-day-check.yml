@@ -1,0 +1,67 @@
+name: Exact retained TEST elapsed-day expiry verification
+on:
+  push:
+    branches: [test/retained-day-check-20261111]
+    paths:
+      - .github/workflows/retained-day-check.yml
+permissions:
+  contents: read
+  actions: read
+env:
+  VS_EXPECTED_TEST_RUNTIME: ec9ffb68f5d606c395f1ee7fb0f4c6b1f1a1e395
+jobs:
+  prerequisites:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wait for exact deployed cloud, readiness, deletion and recovery
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
+          (async()=>{for(const kind of ['cloud','readiness','deletion','disaster'])
+            await waitForTestGate({kind,sha:process.env.VS_EXPECTED_TEST_RUNTIME,token:process.env.GITHUB_TOKEN});
+          })().catch(()=>{console.error('Exact-source gates unverified');process.exitCode=1});
+          JS
+  retained-day:
+    needs: prerequisites
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify unchanged deployed business tree and real-day guard tests
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --test .github/scripts/test_recycle_live_modes.test.cjs
+          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exitCode=1)"
+      - name: Verify original retained fixture without recreation, retiming or purge
+        env:
+          VS_TEST_RECYCLE_MODE: check-expiry
+          VS_TEST_RECYCLE_FIXTURE_ID: recycle-expiry-v1-20261011-resume-acceptance
+          VS_TEST_RECYCLE_DELETED_REVISION: 26d0800c-5f42-4022-bfc2-a959bc5c3c9a
+          VS_TEST_RECYCLE_DELETED_AT: '1791680719426'
+          VS_TEST_RECYCLE_RECOVER_UNTIL: '1791767119426'
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_recycle_live.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-retained-day-evidence
+          path: build/cloud-prerequisites/recycle-live.json
+          retention-days: 14
