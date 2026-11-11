@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {fixture,validatePerson,SCHOOL,SHA}=require('./resume_failed_delete_artifact.cjs');
+const {fixture,validatePerson,verifyDeletedLogin,SCHOOL,SHA}=require('./resume_failed_delete_artifact.cjs');
 function source(){
  const student='TEST_DELETE_42999713169_00000000',documentId='TEST_DELETE_CARD_42999713169_00000000',feeId='TEST_DELETE_FEE_42999713169_00000000',fileId='synthetic-unit-file';
  return {schoolId:SCHOOL,sourceCommit:SHA,verifiedRuntime:SHA,status:'FAIL',realProviderCalls:true,syntheticDeleted:false,
@@ -28,4 +28,17 @@ test('a retained tombstone must bind original targets, generation, source revisi
  validatePerson(row,f);
  for(const change of [{_syncOperationId:'other-operation'},{_syncDeletedOwner:'other-generation'},{_syncErasePlan:{...row._syncErasePlan,files:['other-file']}}])
   assert.throws(()=>validatePerson({...row,...change},f));
+});
+
+test('deleted mobile login proof uses the original public protocol without a bearer token',async()=>{
+ const f=fixture(source());let args;
+ await verifyDeletedLogin(async(...input)=>{args=input;return {http:403,data:{success:false}};},f);
+ assert.equal(args.length,2);assert.equal(args[1].action,'managed/mobile');
+ assert.equal(args[1].request.action,'mobile_login');assert.equal(args[1].request.personId,f.generation);
+});
+test('unavailability, malformed denial or successful login cannot become deletion proof',async()=>{
+ const f=fixture(source());
+ for(const reply of [{http:503,data:{success:false}},{http:401,data:{success:false}},{http:403,data:{}},
+  {http:200,data:{success:true,sessionToken:'synthetic'}},{http:403,data:{success:false,sessionToken:'synthetic'}}])
+  await assert.rejects(verifyDeletedLogin(async()=>reply,f),e=>e.code==='MOBILE_DELETE_DENIAL_UNVERIFIED');
 });

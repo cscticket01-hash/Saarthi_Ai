@@ -35,6 +35,14 @@ function validatePerson(row,f){
  assert.ok(p.targets.filter(t=>t.collection==='fee_payments').every(t=>t.id===f.feeId));
  assert.deepEqual(p.files,[f.fileId]);
 }
+async function verifyDeletedLogin(send,f){
+ // Match the original mobile client's public protocol. An admin bearer token
+ // must not turn an unrelated device/auth rejection into deletion proof.
+ const mobile=await send(API,{action:'managed/mobile',schoolId:SCHOOL,request:{action:'mobile_login',projectId:SCHOOL,role:'student',personId:f.generation,
+  linkToken:hash('test-mobile-link/'+f.student),studentClass:'1',rollNo:String((Number(RUN.slice(-6))%900000)+100000),dob:'2015-01-01'}});
+ if(mobile.http!==403||mobile.data?.success!==false||typeof mobile.data?.sessionToken==='string')
+  throw Object.assign(Error('Deleted mobile login denial unverified'),{code:'MOBILE_DELETE_DENIAL_UNVERIFIED'});
+}
 const result={status:'FAIL',originalOperationRetained:true,deletionReceiptVerified:false,
  originalRecordsVerified:false,pdfInaccessible:false,websiteReadback:false,deletedPersonLoginRejected:false};
 async function post(url,body,token){
@@ -73,16 +81,14 @@ async function main(){
  const web=await call({action:'managed/changes',collections:['students_directory','documents','fee_payments'],knownRevisions:{}});
  assert.equal(web.changes?.students_directory?.records?.[f.student]?._syncDeleted,true);
  assert.equal(web.changes?.documents?.records?.[f.documentId]?._syncDeleted,true);result.websiteReadback=true;
- const mobile=await post(API,{action:'managed/mobile',schoolId:SCHOOL,request:{action:'mobile_login',projectId:SCHOOL,role:'student',personId:f.generation,
-  linkToken:hash('test-mobile-link/'+f.student),studentClass:'1',rollNo:String((Number(RUN.slice(-6))%900000)+100000),dob:'2015-01-01'}},token);
- assert.equal(mobile.http,403);assert.notEqual(mobile.data.success,true);assert.notEqual(typeof mobile.data.sessionToken,'string');result.deletedPersonLoginRejected=true;
+ await verifyDeletedLogin(post,f);result.deletedPersonLoginRejected=true;
  const file=await post(API,{action:'managed/file/read',schoolId:SCHOOL,fileId:f.fileId},token);
  assert.equal(file.http,502);assert.ok(['SCRIPT_OPERATION_FAILED','SCRIPT_PERMISSION_DENIED'].includes(file.data.code));
  assert.notEqual(file.data.success,true);assert.ok(!file.data.base64);result.pdfInaccessible=true;
  result.status='PASS';
 }
 if(require.main===module)main().catch(error=>{
- const safe=new Set(['SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_TIMEOUT','SCRIPT_DELETE_BUDGET_EXHAUSTED','SCRIPT_DELETE_NO_PROGRESS','SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_QUOTA_EXCEEDED']);
+ const safe=new Set(['SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_TIMEOUT','SCRIPT_DELETE_BUDGET_EXHAUSTED','SCRIPT_DELETE_NO_PROGRESS','SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_QUOTA_EXCEEDED','MOBILE_DELETE_DENIAL_UNVERIFIED']);
  result.failureCode=safe.has(error.code)?error.code:'PROOF_OR_REQUEST_UNVERIFIED';process.exitCode=1;
 }).finally(()=>{
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
@@ -91,4 +97,4 @@ if(require.main===module)main().catch(error=>{
  // request references, credentials or record contents are published.
  console.log('ORIGINAL_TEST_DELETE_COMPLETION '+JSON.stringify(result));
 });
-module.exports={fixture,validatePerson,SCHOOL,SHA};
+module.exports={fixture,validatePerson,verifyDeletedLogin,SCHOOL,SHA};
