@@ -10,7 +10,7 @@ async function post(url,body,token){
 }
 async function main(){
  assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.GITHUB_REPOSITORY,'cscticket01-hash/Saarthi_Ai');
- assert.equal(process.env.GITHUB_REF,'refs/heads/feature/smart-sync-3');
+ assert.equal(process.env.GITHUB_REF,'refs/heads/test/resume-retained-delete-20261111');
  await require('./test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME);
  const key=fs.readFileSync('lib/platform/platform_config.dart','utf8').match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
  const login=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+key,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});

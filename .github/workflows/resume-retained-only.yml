@@ -1,0 +1,41 @@
+name: Exact retained TEST delete resume only
+on:
+  push:
+    branches: [test/resume-retained-delete-20261111]
+    paths:
+      - .github/workflows/resume-retained-only.yml
+      - .github/scripts/resume_retained_delete_acceptance.cjs
+permissions:
+  contents: read
+jobs:
+  resume:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 48
+    env:
+      VS_EXPECTED_TEST_RUNTIME: ec9ffb68f5d606c395f1ee7fb0f4c6b1f1a1e395
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact deployed business tree and original generation guards
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --test .github/scripts/native_person_receipt.test.cjs .github/scripts/delete_plan_progress.test.cjs .github/scripts/retained_delete_fixture.test.cjs
+      - name: Continue only the original retained delete; no fresh lifecycle generator
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/resume_retained_delete_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-retained-delete-resume-only
+          path: build/cloud-prerequisites/retained-delete-resume.json
+          retention-days: 14
