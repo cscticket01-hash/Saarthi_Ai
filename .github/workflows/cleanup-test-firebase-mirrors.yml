@@ -1,0 +1,41 @@
+name: TEST-only direct Firebase synthetic mirror cleanup
+
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/cleanup_test_firebase_mirrors.cjs'
+      - '.github/workflows/cleanup-test-firebase-mirrors.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+
+jobs:
+  cleanup-exact-synthetic-test-mirrors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install existing Firebase Admin SDK
+        run: npm --prefix functions install --ignore-scripts --no-audit --no-fund
+      - name: Delete only the three exact synthetic TEST mirrors and verify absence
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+          VS_CLEANUP_SYNTHETIC_TEST_FIRESTORE: TEST_DELETE_42222529247_8ce61a39
+        run: node .github/scripts/cleanup_test_firebase_mirrors.cjs
+      - name: Upload direct Firebase cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firebase-direct-cleanup-evidence
+          path: build/cloud-prerequisites/firebase-direct-cleanup.json
+          if-no-files-found: warn

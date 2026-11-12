@@ -93,6 +93,128 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='settleTestStudentSlotReview'){
+  const successorId=String(b.successorId||'');
+  demand(lane==='records'&&operationPattern.test(id)&&operationPattern.test(successorId)&&id!==successorId,
+    'Invalid student slot review receipts');
+  const failed=get(id),accepted=get(successorId);
+  demand(failed&&accepted&&accepted.seq>failed.seq&&accepted.state==='completed'&&
+    ['needsAttention','superseded'].includes(failed.state),'Original and successor receipts required',409);
+  const original=JSON.parse(failed.payload) as Json,next=JSON.parse(accepted.payload) as Json;
+  const failure=JSON.parse(failed.response||'{}') as Json,ack=(JSON.parse(accepted.response||'{}') as Json).result as Json;
+  const validCreate=(request:Json)=>request.action==='managed_records'&&
+    request.collection==='students_directory'&&request.operation==='write'&&request.syncProtocol===2&&
+    request.expectedRecordRevision===''&&request.id===b.recordId&&
+    (request.data as Json)?.schoolId===school&&(request.data as Json)?.syntheticTest===true&&
+    (request.data as Json)?.mobileStableId===b.generation;
+  demand(validCreate(original)&&validCreate(next)&&/^p-[a-f0-9]{32,64}$/.test(String(b.generation))&&
+    original.operationId!==next.operationId&&next.operationId===b.operationId&&
+    failure.failureCode==='STUDENT_SLOT_CONFLICT'&&failure.failureStatus===409&&
+    ack?.success===true&&ack.schoolId===school&&ack.syncProtocol===2&&ack.recordRevision===b.revision&&
+    (ack.record as Json)?._syncOperationId===b.operationId&&(ack.record as Json)?._syncRevision===b.revision,
+    'Verified synthetic student slot successor required',409);
+  const {rollNo:oldRoll,...oldIdentity}=original.data as Json;
+  const {rollNo:newRoll,...newIdentity}=next.data as Json;
+  demand(oldRoll!==undefined&&newRoll!==undefined&&oldRoll!==newRoll&&canonical(oldIdentity)===canonical(newIdentity),
+    'Successor must be the same synthetic student with a corrected roll number',409);
+  for(const row of [failed,accepted]){
+   const request=JSON.parse(row.payload) as Json;
+   demand(await digest(canonical(request))===row.fingerprint&&
+     await digest(JSON.stringify([school,request.action,[request.collection,request.id,request.operationId]]))===row.id,
+     'Immutable student slot receipt mismatch',409);
+  }
+  return storage.transactionSync(()=>{
+   const current=get(id),successor=get(successorId);
+   demand(current?.fingerprint===failed.fingerprint&&successor?.state==='completed'&&
+     successor.fingerprint===accepted.fingerprint&&successor.response===accepted.response,
+     'Student slot successor changed',409);
+   if(current.state==='superseded'){
+    demand(JSON.parse(current.response||'{}').supersededBy===successorId,'Student slot review successor changed',409);
+   }else{
+    demand(current.state==='needsAttention'&&current.response===failed.response,'Student slot review changed',409);
+    storage.sql.exec("UPDATE edge_ops SET state='superseded',response=? WHERE id=?",
+      JSON.stringify({...failure,supersededBy:successorId}),id);
+   }
+   return {schoolId:school,id,successorId,state:'superseded'};
+  });
+ }
+ if(action==='diagnoseDeleteReview'){
+  // TEST-only read-only owner diagnosis. No payload, private fields, raw
+  // service-account fingerprint, mutation or receipt retirement is returned.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  const request=JSON.parse(row.payload) as Json;
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+    request.operation==='delete'&&request.operationId===b.operationId&&
+    request.id===b.recordId&&request.expectedRecordRevision===b.expectedRecordRevision&&
+    request.deletedStudentGeneration===b.deletedStudentGeneration,
+    'Original delete review identity mismatch',409);
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  const count=Number(previous.reviewRetryCount||0);
+  const immutable=await digest(JSON.stringify([school,request.action,
+    [request.collection,request.id,request.operationId]]))===id&&
+    await digest(canonical(request))===row.fingerprint;
+  const known=new Set(['DELETE_EVERYWHERE_ACK_UNVERIFIED',
+    'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED']);
+  return {state:row.state,retryCount:Number.isInteger(count)&&count>=0?count:-1,
+    failureClass:typeof previous.failureCode==='string'&&known.has(previous.failureCode)?previous.failureCode:'OTHER',
+    failureStatus:Number.isInteger(previous.failureStatus)?previous.failureStatus:0,
+    sameRuntimeCredential:typeof previous.reviewCredentialFingerprint==='string'&&
+      previous.reviewCredentialFingerprint===b.credentialFingerprint,
+    previousCredentialBound:typeof previous.reviewCredentialFingerprint==='string',
+    immutable};
+ }
+ if(action==='retryDeleteReview'){
+  // One authenticated school-admin retry for the exact original synthetic or
+  // real student Delete Everywhere receipt. Never enqueue a replacement ID,
+  // alter the payload, or reopen a different review category.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  demand(row.state==='needsAttention','Only a review-needed delete may be reopened',409);
+  const request=JSON.parse(row.payload) as Json;
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+   request.operation==='delete'&&request.syncProtocol===2&&request.deleteEverywhereVersion===1&&
+   request.operationId===b.operationId&&request.id===b.recordId&&
+   request.expectedRecordRevision===b.expectedRecordRevision&&
+   request.deletedStudentGeneration===b.deletedStudentGeneration&&
+   typeof request.deletedStudentGeneration==='string'&&
+   /^p-[a-f0-9]{32,64}$/.test(request.deletedStudentGeneration),
+   'Original delete identity does not match the review request',409);
+  const retryCount=Number(previous.reviewRetryCount||0);
+  const credentialFingerprint=b.credentialFingerprint;
+  demand(typeof credentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(credentialFingerprint),
+   'Verified Render Firebase credential fingerprint required for review retry',409);
+  const firstAckReview=previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
+   previous.failureStatus===409&&retryCount===0;
+  // The first Render attempt can fail on Firebase IAM before any manual
+  // review counter has been written. After a verified runtime credential
+  // repair, permit exactly one same-operation retry at count 0. A subsequent
+  // permission-denied review is allowed only with a different bound key and
+  // only while count is 1; never accept a third attempt or a new operation.
+  const repairedCredentialReview=previous.failureCode==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
+   previous.failureStatus===503&&(
+    retryCount===0&&!previous.reviewCredentialFingerprint||
+    retryCount===1&&(!previous.reviewCredentialFingerprint||
+      previous.reviewCredentialFingerprint!==credentialFingerprint));
+  demand(firstAckReview||repairedCredentialReview,
+   'Only the original ACK retry or one retry after a changed Firebase credential is allowed',409);
+  demand(await digest(JSON.stringify([school,request.action,
+   [request.collection,request.id,request.operationId]]))===id&&
+   await digest(canonical(request))===row.fingerprint,
+   'Original immutable delete receipt fingerprint mismatch',409);
+  const at=Date.now(),response={...previous,reviewRetryCount:retryCount+1,reviewRetryAt:at,reviewCredentialFingerprint:credentialFingerprint};
+  storage.sql.exec("UPDATE edge_ops SET state='retry',due=?,claim='',claim_until=0,response=? WHERE id=? AND state='needsAttention'",
+   at,JSON.stringify(response),id);
+  const reopened=get(id);
+  demand(reopened.state==='retry'&&reopened.payload===row.payload&&
+   reopened.fingerprint===row.fingerprint&&
+   JSON.parse(reopened.response||'{}').reviewRetryCount===retryCount+1&&
+   JSON.parse(reopened.response||'{}').reviewCredentialFingerprint===credentialFingerprint,
+   'Original delete review retry was not durably committed',409);
+  await wake(at+250);
+  return receipt(reopened);
+ }
  if(action==='pending'){
   demand(b.limit===1||lane==='records'&&b.limit===2);
   if(lane==='records')return schedule(storage,Number(b.limit),Date.now()).ids.map(get);
@@ -108,7 +230,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   demand(await digest(JSON.stringify([school,request.action,identity]))===id,'Operation identity mismatch');
   const fingerprint=await digest(canonical(request));const old=get(id);
   if(old){demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));return receipt(old);}
-  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
+  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state NOT IN ('completed','superseded')").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
   const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
  if(action==='putSmall'){
@@ -271,7 +393,16 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    }),'Verified canonical source metadata required');
   }
   storage.transactionSync(()=>{
-   const stored=values.payloadPurged===true?{...values,partial:{}}:values;
+   const previousResponse=row.response?JSON.parse(row.response) as Json:{};
+   // A one-time owner-reviewed Delete retry is a durable safety fence. Later
+   // delivery failures must not erase that counter and enable another retry.
+   const reviewMetadata=Number.isSafeInteger(previousResponse.reviewRetryCount)&&
+    Number(previousResponse.reviewRetryCount)>=0
+     ?{reviewRetryCount:Number(previousResponse.reviewRetryCount),
+       ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{}),
+       ...(typeof previousResponse.reviewCredentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(previousResponse.reviewCredentialFingerprint)?{reviewCredentialFingerprint:previousResponse.reviewCredentialFingerprint}:{})}:{};
+   const nextValues={...values,...reviewMetadata} as Json;
+   const stored=nextValues.payloadPurged===true?{...nextValues,partial:{}}:nextValues;
    // An immutable Drive proof is required before the 24h retention timer
    // starts. Retry/needsAttention never acquires an expiry deadline.
    const verified=values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-'));

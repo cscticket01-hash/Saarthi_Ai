@@ -25,8 +25,10 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  // Existing non-synthetic calendar entries are never overwritten by write().
  await write('school_calendar',isolatedAttendanceDay(schoolId),{isOpen:true,purpose:'isolated-attendance-acceptance'});
  await write('school_settings','school_location',{latitude:24.8,longitude:92.7,radiusMeters:100});
- const personId=prefix+'-student',linkToken=createHash('sha256').update(prefix+'/synthetic-qr').digest('hex');
- await write('students_directory',personId,{name:'Synthetic TEST Student',class:'1',section:'TEST-protocol-'+prefix,rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
+ const studentId=prefix+'-student';
+ const personId='p-'+createHash('sha256').update(studentId).digest('hex');
+ const linkToken=createHash('sha256').update(prefix+'/synthetic-qr').digest('hex');
+ await write('students_directory',studentId,{name:'Synthetic TEST Student',class:'1',section:'TEST-protocol-'+prefix,rollNo:'900001',dob:'2015-01-01',mobileStableId:personId,mobileLinkToken:linkToken});
  r=await mobile({action:'mobile_login',projectId:schoolId,role:'student',personId,linkToken,studentClass:'1',rollNo:'900001',dob:'2015-01-01'});
  check('Real mobile protocol login',r,r.http===200&&typeof r.data.sessionToken==='string');
  const sessionToken=r.data.sessionToken;
@@ -44,7 +46,7 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await admin(upload);check('Real Drive upload ACK',r,r.http===200&&typeof r.data.fileId==='string');const fileId=r.data.fileId;
  r=await admin(upload);check('Drive duplicate retry returns same file',r,r.http===200&&r.data.fileId===fileId);
  const docId=prefix+'-card-fixture',digest=createHash('sha256').update(pdf).digest('hex');
- await write('documents',docId,{personId,ownerRole:'student',documentKind:'idCard',documentName:'Synthetic PDF transport fixture',mimeType:'application/pdf',fileId,sizeBytes:pdf.length,contentHash:digest,documentRevision:digest});
+ await write('documents',docId,{studentId,personId,ownerRole:'student',documentKind:'idCard',documentName:'Synthetic PDF transport fixture',mimeType:'application/pdf',fileId,sizeBytes:pdf.length,contentHash:digest,documentRevision:digest});
  r=await mobile({action:'mobile_document',sessionToken,documentId:docId});
  check('Mobile retrieves identical private Drive PDF bytes with Windows absent',r,r.http===200&&r.data.base64===pdf.toString('base64'));
  r=await mobile({action:'mobile_dashboard',sessionToken,knownRevisions:revisions});
@@ -69,11 +71,14 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  r=await mobile({action:'mobile_refresh',sessionToken,projectId:schoolId});
  check('Fresh capture-authorizing TEST permit',r,r.http===200&&typeof r.data.attendancePermit==='string');
  const capturePolicy=JSON.parse(Buffer.from(r.data.attendancePermit.split('.')[0],'base64url').toString('utf8'));
- check('TEST capture policy confirms dated school opening',r,capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId));
+ check('TEST capture policy binds school, day, student record and generation',r,
+  capturePolicy.open===true&&capturePolicy.day===isolatedAttendanceDay(schoolId)&&
+  capturePolicy.schoolId===schoolId&&capturePolicy.role==='student'&&
+  capturePolicy.documentId===studentId&&capturePolicy.personId===personId);
  permit=r.data.attendancePermit;
  const captured=priorEntry?priorEntry.entryCapturedAt:Date.now();
  report.attendanceSampleAlreadyCompleted=Boolean(priorEntry);
- const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
+ const attendance={action:'mobile_mark_attendance',sessionToken,attendancePermit:permit,projectId:schoolId,role:'student',personId:studentId,linkToken,latitude:24.8,longitude:92.7,accuracy:5,mode:'entry',clientCapturedAt:captured};
  r=await mobile(attendance);check('Actual isolated durable attendance acceptance',r,r.http===200&&r.data.accepted===true&&typeof r.data.operationId==='string');
  const op=r.data.operationId;report.attendanceOperationId=op;
  r=await mobile(attendance);check('Attendance identical retry deduplicated',r,r.http===200&&r.data.operationId===op&&r.data.duplicate===true);

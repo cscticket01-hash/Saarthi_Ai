@@ -128,6 +128,16 @@ test('concurrent immutable live retries prevent rollback while a peer still runs
 test('mobile lifecycle remains available while admitted admin collections are active',async()=>{
  const f=activeGate();assert.equal(await f.gate.legacy(A,{action:'managed_mobile',operation:'session'},async()=>42),42);
 });
+test('owned file reads never create uncertain write markers or block active collections',async()=>{
+ const f=activeGate(),before=JSON.stringify(f.docs.get('school_live_migrations/'+A));
+ for(const action of ['managed_file','managed_binary_inventory','managed_binary_download']){
+ await assert.rejects(f.gate.legacy(A,{action,fileId:'owned-file'},async()=>{throw Error('download unavailable');}),/download unavailable/);
+ assert.equal(JSON.stringify(f.docs.get('school_live_migrations/'+A)),before);
+ assert.equal(await f.gate.legacy(A,{action,fileId:'owned-file'},async()=>42),42);
+ assert.equal(JSON.stringify(f.docs.get('school_live_migrations/'+A)),before);
+ }
+ await assert.rejects(f.gate.legacy(A,{action:'managed_file_delete',fileId:'owned-file'},async()=>42),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+});
 test('uncertain retries reuse immutable operation markers instead of exhausting admission',async()=>{
  const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});
  const body={...write,syncProtocol:2,id:'one',operationId:'reused-durable-operation-001',expectedRecordRevision:'',data:{schoolId:A,amount:1}};
@@ -135,4 +145,41 @@ test('uncertain retries reuse immutable operation markers instead of exhausting 
  assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,1);
  assert.equal(await gate.legacy(A,body,async()=>42),42);
  assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,0);
+});
+
+test('person bundle cohort stays fenced through partial seed and rollback failures',async()=>{
+ const f=fixture(),gate=createLiveMigration({db:f.db,drainGraceMs:0});
+ const group=['students_directory','teachers_directory','documents'];
+ const state=()=>f.docs.get('school_live_migrations/'+A);
+ await assert.rejects(gate.prepareGroup(A,group,async()=>true,async name=>{
+  if(name==='teachers_directory')throw Error('Teacher baseline failed');
+  return {state:'active'};
+ }),/Teacher baseline failed/);
+ assert.equal(state().nativeCohort.state,'preparing');
+ for(const name of group){
+  assert.equal(await gate.state(A,name),'preparing');
+  await assert.rejects(gate.live(A,name,async()=>assert.fail('Premature live write')),e=>e.code==='LIVE_DEPENDENCY_PREPARING');
+ }
+ await gate.prepareGroup(A,group,async()=>true,async()=>({state:'active'}));
+ const proof=context=>({success:true,liveProtocol:1,schoolId:A,collection:context.collection,
+  state:'legacy',driveVerified:true,pending:0,needsAttention:0,cursor:0,
+  fingerprint:'a'.repeat(64),rollbackToken:context.rollbackToken});
+ await assert.rejects(gate.rollbackGroup(A,group,async context=>context.collection==='teachers_directory'
+  ?{...proof(context),driveVerified:false}:proof(context)),e=>e.code==='LIVE_ROLLBACK_UNVERIFIED');
+ const token=state().nativeCohort.rollbackToken;
+ for(const name of group){
+  assert.equal(await gate.state(A,name),'rolling_back');
+  await assert.rejects(gate.legacy(A,{...write,collection:name},async()=>assert.fail('Premature legacy write')),e=>e.code==='LIVE_LEGACY_WRITE_FENCED');
+ }
+ await assert.rejects(gate.assertCohortAdmission(A),e=>e.code==='LIVE_ROLLBACK_PENDING');
+ const result=await gate.rollbackGroup(A,group,async context=>{
+  assert.equal(context.rollbackToken,token);return proof(context);
+ });
+ assert.equal(result.state,'legacy');
+ for(const name of group){
+  assert.equal(await gate.state(A,name),'legacy');
+  assert.equal(state().collections[name].rollbackProof.driveVerified,true);
+ }
+ assert.deepEqual(await gate.rollbackGroup(A,group,async()=>assert.fail('Completed rollback resealed')),result);
+ assert.equal(await gate.state(B,'documents'),'legacy');
 });

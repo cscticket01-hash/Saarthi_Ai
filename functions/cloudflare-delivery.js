@@ -50,7 +50,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
    return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
   }
-  if(row.state==='needsAttention')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
+  if(row.state==='needsAttention'||row.state==='superseded')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
   return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
@@ -202,7 +202,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
-   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
+   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
    // Cloudflare preserves the operation, including partial verified receipts.

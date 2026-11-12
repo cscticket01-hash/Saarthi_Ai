@@ -1,5 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
+const {createHash}=require('node:crypto');
+const {canonical}=require('../live-sync-canonical');
 const {createLiveSync,liveGrant}=require('../live-sync');
 const {fixture,A,B}=require('./helpers/managed-school-broker');
 test('new live authority is closed by default and normal school authorization is required',async()=>{
@@ -767,4 +769,96 @@ test('signed 150 KiB published marksheet is read in full, not truncated by old 1
  assert.equal(result.sizeBytes,150*1024);
  assert.equal(result.base64.length,204800);
  assert.equal(Buffer.from(result.base64,'base64').compare(bytes),0);
+});
+
+test('isolated person migration has a server-owned collection set and separate rollout gate',async()=>{
+ const edge={enabled:()=>true,rpc:async()=>assert.fail('Early request reached Worker')};
+ const request={action:'managed/live/prepare-person-bundle',liveProtocol:1,confirmIsolatedBundleTest:true};
+ const base={cloudflareSync:edge,liveSyncSchools:[A]};
+ const disabled=fixture(null,base);
+ await assert.rejects(disabled.call(request),e=>e.code==='ATOMIC_BUNDLE_TEST_DISABLED');
+ const f=fixture(null,{...base,atomicBundleTestSchools:[A]});
+ await assert.rejects(f.call({...request,schoolId:B}),e=>e.status===403);
+ await assert.rejects(f.call({...request,collections:['documents']}),e=>e.status===400);
+ await assert.rejects(f.call({...request,confirmIsolatedBundleTest:false}),e=>e.status===400);
+ assert.equal(f.docs.has('school_live_migrations/'+A),false);
+ await assert.rejects(f.call(request),e=>e.code==='LIVE_LEGACY_DRAIN_GRACE');
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).nativeCohort.collections,
+  ['documents','students_directory','teachers_directory']);
+ await assert.rejects(f.call({action:'managed/live/head',liveProtocol:1,collection:'school_notices'}),
+  e=>e.code==='LIVE_DEPENDENCY_PREPARING');
+});
+
+test('isolated cohort rollback verifies 730 current rows using one signed collection read',async()=>{
+ const collection='students_directory',cursor=12,records={};
+ const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+ const rows=Array.from({length:730},(_,index)=>{
+  const id='student-'+String(index).padStart(3,'0');
+  const data={schoolId:A,name:'Synthetic student '+index},deleted=index===0;
+  const driveRevision='drive-'+index,recordRevision='live-'+index;
+  records[id]={...data,_syncDeleted:deleted,_syncRevision:driveRevision};
+  return {id,recordRevision,driveRevision,payloadHash:hash({data,deleted})};
+ });
+ const seals=[];
+ const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async(s,l,b)=>{
+  if(b.command==='head')return {cursor};
+  if(b.command==='rollbackSeal'){
+   seals.push(b);
+   return {state:'legacy',driveVerified:true};
+  }
+  assert.equal(b.command,'rollbackSnapshot');
+  const offset=b.after?rows.findIndex(row=>row.id===b.after)+1:0;
+  const page=rows.slice(offset,offset+100);
+  return {schoolId:A,liveProtocol:1,cursor,records:page,next:page.at(-1)?.id??null};
+ }}});
+ let reads=0;
+ const source={success:true,schoolId:A,syncProtocol:2,collectionRevision:'current',records};
+ const rollback=change=>live.rollback(A,collection,async body=>{
+  reads++;
+  assert.deepEqual(body,{action:'managed_records',operation:'read',collection,syncProtocol:2});
+  return {...source,...change};
+ },'token',{readCollection:true});
+ assert.equal((await rollback()).driveVerified,true);
+ assert.equal(reads,1);
+ assert.deepEqual(seals,[{command:'rollbackSeal',collection,cursor,fingerprint:hash(rows)}]);
+ const first=rows[0].id;
+ for(const change of [
+  {schoolId:B},{partialRecords:true},{pointRead:true},{missingRecords:[first]},
+  {records:{...records,[first]:{...records[first],_syncDeleted:false}}},
+  {records:{...records,[first]:{...records[first],_syncRevision:'newer'}}},
+  {records:{...records,[first]:undefined,extra:records[first]}},
+  {records:{...records,extra:records[first]}},
+ ]){
+  await assert.rejects(rollback(change),error=>error.code==='LIVE_ROLLBACK_DRIVE_UNVERIFIED');
+ }
+ assert.equal(seals.length,1);
+});
+
+test('student slot settlement needs the admitted TEST school and current signed point read',async()=>{
+ const id='TEST2-DEMO-000061',receipt='a'.repeat(64),successorId='b'.repeat(64);
+ const record={schoolId:A,syntheticTest:true,mobileStableId:'p-'+'1'.repeat(32),
+  _syncOperationId:'accepted-slot-operation-0001',_syncRevision:'drive-revision'};
+ const input={action:'managed/live/settle-test-student-slot-review',liveProtocol:1,id:receipt,successorId,recordId:id};
+ const calls=[];
+ const edge={enabled:()=>true,rpc:async(s,l,b)=>{
+  calls.push([s,l,b]);
+  return {schoolId:s,id:b.id,successorId:b.successorId,state:'superseded'};
+ }};
+ let row=record;
+ const read=async()=>({ok:true,status:200,text:async()=>JSON.stringify({
+  success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{[id]:row}
+ })});
+ const options={cloudflareSync:edge,liveSyncSchools:[A]};
+ await assert.rejects(fixture(read,options).call(input),e=>e.code==='ATOMIC_BUNDLE_TEST_DISABLED');
+ const f=fixture(read,{...options,atomicBundleTestSchools:[A]});
+ row={...record,schoolId:B};
+ await assert.rejects(f.call(input),e=>e.code==='STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+ row={...record,_syncDeleted:true};
+ await assert.rejects(f.call(input),e=>e.code==='STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+ assert.equal(calls.length,0);
+ row=record;
+ assert.equal((await f.call(input)).state,'superseded');
+ assert.deepEqual(calls,[[A,'records',{command:'settleTestStudentSlotReview',
+  id:receipt,successorId,recordId:id,generation:record.mobileStableId,
+  operationId:record._syncOperationId,revision:record._syncRevision}]]);
 });
