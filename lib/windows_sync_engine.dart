@@ -3038,6 +3038,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
     _syncing = true;
     final db = FirebaseFirestore.instance, origin = _activeProfileId;
+    bool reviewedSignature(Map<String,dynamic>? row) => documentRetry && row!=null &&
+      row['syncState']=='needsAttention' && row['failureCategory']=='configuration' &&
+      row['failureCode']=='SCRIPT_SIGNED_RESPONSE_UNVERIFIED' && row['deleted']!=true;
     bool valid(Map<String, dynamic>? row) =>
         row != null &&
         row[operationField] == expectedOperationId &&
@@ -3046,8 +3049,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         expectedSchoolId == _activeSchoolSyncId &&
         db.activeProfileId == origin &&
         _activeProfileId == origin &&
-        row['syncState'] == 'retry' &&
-        {'networkPath', 'timeout', 'server'}.contains(row['failureCategory']);
+        (reviewedSignature(row) || row['syncState'] == 'retry' &&
+        {'networkPath', 'timeout', 'server'}.contains(row['failureCategory']));
     try {
       final ref = db.collection(queueCollection).doc(queueId);
       final row = (await ref.get()).data();
@@ -3072,12 +3075,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         'managed/storage/check',
         {},
       );
-      if (health['recordSyncVersion'] != 2 ||
+      if (health['success'] != true || health['schoolId'] != expectedSchoolId ||
+          health['storageReady'] != true || health['recordSyncVersion'] != 2 ||
           health['brokerRecordSyncVersion'] != 2) {
         throw StateError('School sync protocol verification required.');
       }
       if (!valid((await ref.get()).data()))
         throw StateError('Operation changed during retry preparation.');
+      if(reviewedSignature(row)) {
+        final reopened=await db.resumeDocumentOutboxAfterReconnect(ref,row!,
+          schoolId:expectedSchoolId,retryAtMillis:DateTime.now().millisecondsSinceEpoch,
+          reviewedSignedResponse:true);
+        if(!reopened)throw StateError('Document changed; original work retained.');
+      }
       _admitBatch();
       bool admit() =>
           db.activeProfileId == origin &&

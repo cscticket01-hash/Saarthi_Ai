@@ -1462,6 +1462,20 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                                     }),
                                               child: const Text('Review'),
                                             )
+                                          : item['_queueCollection']=='_windows_document_outbox' &&
+                                              item['syncState']=='needsAttention' &&
+                                              item['failureCategory']=='configuration' &&
+                                              item['failureCode']=='SCRIPT_SIGNED_RESPONSE_UNVERIFIED' &&
+                                              item['deleted']!=true
+                                          ? TextButton(
+                                              onPressed: active || engine.isPaused ? null : () => _run(() async {
+                                                await engine.retryRecoverableOperation(
+                                                  queueCollection:'_windows_document_outbox',
+                                                  queueId:item['id'] as String,
+                                                  expectedOperationId:item['documentRevision'] as String,
+                                                  expectedSchoolId:item['schoolId'] as String);
+                                              }),
+                                              child:const Text('Verify storage & retry'))
                                           : item['_queueCollection'] == '_windows_firebase_outbox' &&
                                               item['syncState'] == 'needsAttention' &&
                                               (item['failureCategory'] == null || item['failureCategory'] == '')

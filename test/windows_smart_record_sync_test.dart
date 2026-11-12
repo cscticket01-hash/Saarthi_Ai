@@ -131,6 +131,24 @@ void main(){
    expect(networkRecoveryCandidate({'syncState':'needsAttention','failureCategory':category}),false);
   }
  });
+ test('reviewed unsigned-response upload retains original request and rejects stale or unrelated review',()async{
+  final ref=db.collection('_windows_document_outbox').doc('reviewed-original');
+  final row={'schoolId':school,'documentRevision':'original-document-revision',
+   'operationId':'original-upload-operation','localPath':'original.pdf',
+   'syncState':'needsAttention','failureCategory':'configuration',
+   'failureCode':'SCRIPT_SIGNED_RESPONSE_UNVERIFIED','retryCount':1};
+  await ref.set(row);
+  expect(await db.resumeDocumentOutboxAfterReconnect(ref,row,schoolId:school,retryAtMillis:123),false);
+  expect(await db.resumeDocumentOutboxAfterReconnect(ref,row,schoolId:school,retryAtMillis:123,reviewedSignedResponse:true),true);
+  final reopened=(await ref.get()).data()!;
+  expect(reopened['syncState'],'retry');expect(reopened['retryCount'],1);
+  for(final key in ['documentRevision','operationId','localPath'])expect(reopened[key],row[key]);
+  expect(await db.resumeDocumentOutboxAfterReconnect(ref,row,schoolId:school,retryAtMillis:124,reviewedSignedResponse:true),false);
+  for(final change in [{'failureCode':'SCRIPT_IDENTITY_MISMATCH'},{'deleted':true},{'failureCategory':'authorization'}]){
+   await ref.set({...row,...change});final current=(await ref.get()).data()!;
+   expect(await db.resumeDocumentOutboxAfterReconnect(ref,current,schoolId:school,retryAtMillis:125,reviewedSignedResponse:true),false);
+  }
+ });
  test('offline document reconnect cannot overwrite a newer Save, ACK or conflict',()async{
   final queue=db.collection('_windows_document_outbox'),ref=queue.doc('card-original');
   final original={'schoolId':school,'documentRevision':'original-001',
