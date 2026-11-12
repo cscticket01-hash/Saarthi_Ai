@@ -118,7 +118,7 @@ class WindowsLiveRuntimeLocalStore implements WindowsLiveRuntimeStore {
         group.first.bundleId==null) {
       throw StateError('Atomic incoming group identity invalid.');
     }
-    final rows=<Map<String,dynamic>>[];
+    final retained=<Map<String,dynamic>>[];
     for(var i=0;i<group.length;i++) {
       final entry=group[i];
       if(entry.bundleId!=group.first.bundleId ||
@@ -136,11 +136,24 @@ class WindowsLiveRuntimeLocalStore implements WindowsLiveRuntimeStore {
           stored['record'] is! Map) {
         throw StateError('Retained atomic bundle changed during verification.');
       }
+      retained.add(Map<String,dynamic>.from(stored));
+    }
+    // At most five independent authenticated reads. Verify every response
+    // before the existing single local transaction exposes any bundle member.
+    // Overlap network round trips, never business writes or acknowledgements.
+    final replies=await Future.wait(group.map((entry)async {
+      _check();
       final verified=await call('managed/live/read',{
         'liveProtocol':1,'schoolId':school,
         'collection':entry.collection,'id':entry.id,
       });
       _check();
+      return verified;
+    }));
+    _check();
+    final rows=<Map<String,dynamic>>[];
+    for(var i=0;i<group.length;i++) {
+      final entry=group[i], stored=retained[i], verified=replies[i];
       final record=verified['record'];
       if(verified['success']!=true || verified['schoolId']!=school ||
           verified['liveProtocol']!=1 || record is! Map ||

@@ -55,21 +55,28 @@ class _NetworkBoundary extends http.BaseClient {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
       'Android OS native SQLite and secure restore -> real TEST ACK -> production dashboard',
       (tester) async {
     const school = 'vs-db8afb01a3be46a983c8284714d06e5d';
     const endpoint = 'https://saarthi-sync-v2-test.onrender.com/school-cloud';
     const run = String.fromEnvironment('VS_TEST_RUN_ID');
+    const websiteRun = String.fromEnvironment('VS_TEST_WEBSITE_RUN_ID');
     if (!Platform.isAndroid ||
         const String.fromEnvironment('VS_TEST_CONNECT_CONFIRM') != school ||
-        run.isEmpty) throw StateError('Isolated Android TEST runner required');
+        !RegExp(r'^\d+-[1-9]\d*$').hasMatch(run) ||
+        !RegExp(r'^\d+-[1-9]\d*$').hasMatch(websiteRun) ||
+        websiteRun.split('-').first != run.split('-').first) {
+      throw StateError('Isolated Android TEST runner required');
+    }
     HttpOverrides.global = null;
     final metrics = <String, dynamic>{
       'scope':
           'Android API 35 emulator, native SQLite/secure-storage plugins, actual production dashboard; injected offline network boundary',
       'schoolId': school,
+      'androidRunId': run,
+      'websiteRunId': websiteRun,
       'status': 'RUNNING'
     };
     try {
@@ -140,7 +147,8 @@ void main() {
           final person = 'synthetic-android-$run',
               token =
                   sha256.convert(utf8.encode('android-test/$run')).toString();
-          await ManagedSchoolSession.callForSchool(school, 'managed/records', {
+          final generation = 'p-${sha256.convert(utf8.encode(person))}';
+          final seed = <String, dynamic>{
             'operation': 'write',
             'collection': 'students_directory',
             'id': person,
@@ -155,10 +163,16 @@ void main() {
               'section': 'TEST-android-$run',
               'rollNo': '900002',
               'dob': '2015-01-01',
-              'mobileStableId': person,
+              'mobileStableId': generation,
               'mobileLinkToken': token
             }
-          });
+          };
+          final seedAck = await retryRetainedIsolatedWrite(
+              () => ManagedSchoolSession.callForSchool(
+                  school, 'managed/records', seed),
+              onRetry: () => metrics['retainedStudentSeedRetried'] = true);
+          expect(seedAck['schoolId'], school);
+          expect(seedAck['recordRevision'], isA<String>());
           final raw = SchoolLink.encodeCompact({
             'managed': true,
             'schoolId': school,
@@ -183,19 +197,17 @@ void main() {
               reason:
                   'Native Android must read the notice ACKed by the hosted Windows outbox in this same run');
           metrics['windowsNoticeReadOnNativeAndroid'] = true;
-          // Website publishes by GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT.
-          // The native runner's VS_TEST_RUN_ID already contains both.
-          // Windows notice is intentionally keyed only by GITHUB_RUN_ID.
-          final webNotice = 'synthetic-web-notice-$run';
+          // A retried Android job may consume an earlier successful Website job.
+          final webNotice = 'synthetic-web-notice-$websiteRun';
           expect(
               (session.dashboard['notices'] as List).any((row) =>
                   row['id'] == webNotice &&
                   row['title'] ==
-                      'Synthetic website exchange $run'),
+                      'Synthetic website exchange $websiteRun'),
               true);
           metrics['websiteNoticeReadOnNativeAndroid'] = true;
           final captured = DateTime.now().millisecondsSinceEpoch;
-          metrics['syntheticPersonId'] = person;
+          metrics['syntheticPersonId'] = generation;
           metrics['originalCapturedAt'] = captured;
           transport.offline = true;
           final save = Stopwatch()..start();
@@ -219,16 +231,22 @@ void main() {
           expect(await store.pending('foreign-owner'), isEmpty);
           transport.offline = false;
           final ack = Stopwatch()..start();
-          for (var n = 0; n < 36; n++) {
+          for (var n = 0; n < 180; n++) {
             await restored.flushAttendance();
             await restored.refreshAttendanceStatus();
+            if (restored.attendanceAccepted > 0) {
+              metrics.putIfAbsent('androidQueueToAcceptanceObservedMs',
+                  () => ack.elapsedMilliseconds);
+            }
             if (restored.attendancePending == 0 &&
                 restored.lastAttendanceAck != null) break;
-            await Future<void>.delayed(const Duration(seconds: 5));
+            await Future<void>.delayed(const Duration(seconds: 1));
           }
           expect(restored.attendancePending, 0);
           expect(restored.lastAttendanceAck, isNotNull);
           metrics['androidQueueToDurableAckMs'] = ack.elapsedMilliseconds;
+          metrics['androidQueueToFinalDeliveryAckMs'] = ack.elapsedMilliseconds;
+          metrics['acceptanceIsNotDriveBackup'] = true;
           final verificationRead = Stopwatch()..start();
           final cloud = await ManagedSchoolSession.callForSchool(
               school, 'managed/records', {
@@ -238,7 +256,7 @@ void main() {
           });
           expect(
               (cloud['records'] as Map).values.any((r) =>
-                  r['personId'] == person && r['entryCapturedAt'] == captured),
+                  r['personId'] == generation && r['entryCapturedAt'] == captured),
               true);
           metrics['androidQueueToVerifiedCloudReadMs'] =
               ack.elapsedMilliseconds;
@@ -288,7 +306,7 @@ void main() {
                 '${(await getApplicationSupportDirectory()).path}/vs_android_evidence.json')
             .writeAsString(jsonEncode(metrics), flush: true);
       });
-      print('VS_ANDROID_OS_EVIDENCE ${jsonEncode(metrics)}');
+      binding.reportData = metrics;
     }
   }, timeout: const Timeout(Duration(minutes: 8)));
 }

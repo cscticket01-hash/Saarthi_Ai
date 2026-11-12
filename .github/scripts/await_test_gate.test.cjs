@@ -12,6 +12,13 @@ test('only exact-source own-branch workflow can authorize the provider gate',()=
 test('unfinished newest exact-source run never falls back to an older success',async()=>{
  await assert.rejects(waitForTestGate({kind:'cloud',sha,token:'private',fetchImpl:fetchRuns([run({status:'in_progress',conclusion:null}),run({id:122})]),attempts:1}),/unfinished/);
 });
+test('serialized cloud chain can finish after the former 45-minute polling budget',async()=>{
+ let polls=0,waits=0;
+ const result=await waitForTestGate({kind:'cloud',sha,token:'private',
+  fetchImpl:async()=>({status:200,json:async()=>({workflow_runs:[run(++polls<200?{status:'in_progress',conclusion:null}:{})]})}),
+  delay:async ms=>{assert.equal(ms,15000);waits++;}});
+ assert.equal(result.runId,123);assert.equal(polls,200);assert.equal(waits,199);
+});
 test('failed or cancelled exact-source gate remains a failure',async()=>{
  for(const conclusion of ['failure','cancelled','skipped'])await assert.rejects(waitForTestGate({kind:'cloud',sha,token:'private',fetchImpl:fetchRuns([run({conclusion})]),attempts:1}),/did not pass/);
 });
@@ -38,4 +45,15 @@ test('merged TEST branch readiness requires exact source, own repo and push even
   assert.equal(selectGate([{...readiness,...bad}],'readiness',sha),null);
  for(const conclusion of ['failure','skipped','cancelled'])
   await assert.rejects(waitForTestGate({kind:'readiness',sha,token:'private',fetchImpl:fetchRuns([{...readiness,conclusion}]),attempts:1}),/did not pass/);
+});
+
+test('atomic deletion and recovery gates require their own exact-source TEST push results',()=>{
+ const {selectGate}=require('./await_test_gate.cjs');
+ const sha='a'.repeat(40),repo='cscticket01-hash/Saarthi_Ai';
+ for(const [kind,name] of [['disaster','Isolated TEST disaster recovery acceptance'],['deletion','Isolated TEST Delete Everywhere real provider and hosted client acceptance']]){
+  const own={name,head_sha:sha,head_branch:'feature/smart-sync-3',event:'push',head_repository:{full_name:repo}};
+  assert.equal(selectGate([own],kind,sha),own);
+  for(const patch of [{head_sha:'b'.repeat(40)},{head_branch:'other'},{event:'pull_request'},{head_repository:{full_name:'foreign/repo'}}])
+   assert.equal(selectGate([{...own,...patch}],kind,sha),null);
+ }
 });

@@ -40,6 +40,17 @@ void main() {
         attempts: 20, now: created + 60000), const Duration(seconds: 30));
     }
   });
+  test('fast confirmation is bounded to the first five seconds, never a completion ACK', () {
+    expect(attendanceInitialConfirmationDelay, const Duration(seconds: 1));
+    for (final age in [0, 1000, 4999]) {
+      expect(attendanceConfirmationDelay(state: 'processing', createdAt: 100000,
+        attempts: 20, now: 100000 + age), const Duration(seconds: 1));
+    }
+    expect(attendanceConfirmationDelay(state: 'processing', createdAt: 100000,
+      attempts: 20, now: 105000), const Duration(seconds: 5));
+    expect(attendanceConfirmationDelay(state: 'retry', createdAt: 100000,
+      attempts: 20, now: 100001), const Duration(seconds: 30));
+  });
   test('retry, unknown and untrusted timestamps retain existing confirmation backoff', () {
     for (final state in ['pending', 'retry', 'unknown', null]) {
       expect(attendanceUsesFastConfirmation(state: state, createdAt: 100000,
@@ -458,9 +469,9 @@ void main() {
     final accepted = (await (await store.database).query('attendance')).single;
     expect(accepted['state'], 'accepted');
     expect(accepted['nextAt'] as int,
-        greaterThanOrEqualTo(acceptedResponseAt + 5000));
+        greaterThanOrEqualTo(acceptedResponseAt + 1000));
     expect(accepted['nextAt'] as int,
-        lessThanOrEqualTo(DateTime.now().millisecondsSinceEpoch + 5000));
+        lessThanOrEqualTo(DateTime.now().millisecondsSinceEpoch + 1000));
     await (await store.database).update('attendance', {'nextAt': 0});
     await session.flushAttendance();
     expect(refreshes, 0);
@@ -472,7 +483,7 @@ void main() {
     expect(processing['state'], 'accepted');
     expect(processing['operationId'], operation);
     expect(processing['attempts'], accepted['attempts']);
-    expect(processing['nextAt'] as int, greaterThanOrEqualTo(statusResponseAt + 5000));
+    expect(processing['nextAt'] as int, greaterThanOrEqualTo(statusResponseAt + 1000));
     await session.flushAttendance();
     expect(statuses, 1, reason: 'No eager loop before the confirmation deadline');
     for (var check = 0; check < 3; check++) {

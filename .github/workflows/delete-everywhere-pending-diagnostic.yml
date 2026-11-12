@@ -1,0 +1,25 @@
+name: TEST read-only Delete Everywhere pending diagnostic
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/scripts/delete_everywhere_pending_diagnostic.cjs'
+      - '.github/workflows/delete-everywhere-pending-diagnostic.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read retained original TEST student deletion plan without mutating it
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/delete_everywhere_pending_diagnostic.cjs
