@@ -233,13 +233,15 @@ class FirebaseFirestore {
     Map<String,dynamic> expected, {
     required String schoolId,
     required int retryAtMillis,
+    bool reviewedSignedResponse = false,
   }) {
     ref.requireOriginProfile();
     if(ref.collectionPath!='_windows_document_outbox') {
       throw ArgumentError('Document outbox reference required');
     }
     return _database.resumeDocumentOutboxAfterReconnect(
-      ref.id,expected,schoolId:schoolId,retryAtMillis:retryAtMillis);
+      ref.id,expected,schoolId:schoolId,retryAtMillis:retryAtMillis,
+      reviewedSignedResponse:reviewedSignedResponse);
   }
 
   /// Records a remote conflict only while the observed operation remains the
@@ -2438,7 +2440,8 @@ class _LocalSchoolDatabase {
   /// later local edits, an ACK and a manually reviewed conflict all win.
   Future<bool> resumeDocumentOutboxAfterReconnect(String queueId,
       Map<String,dynamic> expected, {
-      required String schoolId, required int retryAtMillis}) {
+      required String schoolId, required int retryAtMillis,
+      bool reviewedSignedResponse = false}) {
     final origin=_activeProfileId, school=_activeIdentity['schoolSyncId'];
     final encodedExpected=_encodeMap(expected);
     final done=Completer<bool>();
@@ -2458,11 +2461,19 @@ class _LocalSchoolDatabase {
         if(current is! Map||
            _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(encodedExpected)||
            !{'retry','needsAttention'}.contains(current['syncState'])||
-           !{'networkPath','timeout'}.contains(current['failureCategory'])) {
+           !({'networkPath','timeout'}.contains(current['failureCategory']) ||
+             reviewedSignedResponse && current['syncState']=='needsAttention' &&
+             current['failureCategory']=='configuration' &&
+             current['failureCode']=='SCRIPT_SIGNED_RESPONSE_UNVERIFIED' &&
+             current['deleted']!=true && current['documentRevision'] is String &&
+             (current['documentRevision'] as String).isNotEmpty)) {
           done.complete(false);return;
         }
         queue[queueId]={...Map<String,dynamic>.from(current),
-          'syncState':'retry','retryCount':0,'retryAtMillis':retryAtMillis};
+          'syncState':'retry','retryCount':reviewedSignedResponse?current['retryCount']:0,
+          'retryAtMillis':retryAtMillis,
+          if(reviewedSignedResponse)...{'failureCategory':'server',
+            'reviewedFailureCode':'SCRIPT_SIGNED_RESPONSE_UNVERIFIED'}};
         _storeCollections(root,collections);
         await _writeRoot(root);
         final signal=_signals['_windows_document_outbox'];
