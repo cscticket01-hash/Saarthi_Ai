@@ -6659,7 +6659,7 @@ function VS_inventoryManagedStorage() {
   return {schoolId:school,rootFolderId:root.getId(),workbookId:p.getProperty('VS_MANAGED_SHEET_ID')||null,
     inventoryVersion:1,partial:partial,folders:folders,files:files};
 }
-function VS_managedVerify(e) {
+function VS_managedVerify(e, onAuthenticated) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');
   if (!secret || b.schoolId !== school || !Number.isSafeInteger(b.timestamp) || Math.abs(Date.now()-b.timestamp)>120000 || !/^[a-f0-9]{48}$/.test(b.nonce||'') || typeof b.payload !== 'string' || b.payload.length > 28*1024*1024) throw new Error('Signed school request required');
@@ -6668,6 +6668,9 @@ function VS_managedVerify(e) {
   for(let n=0;n<64;n++) difference |= expected.charCodeAt(n)^b.signature.charCodeAt(n);
   if(difference) throw new Error('Invalid request signature');
   const payload=JSON.parse(b.payload);
+  // Identity is proven before nonce admission can fail on a busy Script lock.
+  // This callback never authorizes business dispatch or skips replay protection.
+  if(typeof onAuthenticated==='function')onAuthenticated();
   const lock=LockService.getScriptLock();lock.waitLock(payload.action==='managed_delta'&&payload.headOnly===true?1000:30000);
   try {
     const key='VS_NONCE_'+b.nonce;
@@ -7584,7 +7587,7 @@ function VS_managedHandle(e) {
   try {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
-    const b=VS_managedVerify(e);verified=true;let result;
+    const b=VS_managedVerify(e,()=>{verified=true;});verified=true;let result;
     if(b.action==='managed_backup_snapshot'){
       result=VS_managedBackupSnapshot(b);
     }else if(b.action==='managed_storage_quota'){
