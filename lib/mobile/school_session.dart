@@ -669,7 +669,8 @@ class SchoolSession {
             'attempts': attempts,
             // Acceptance is not completion. Check the same operation sooner,
             // without resubmitting it or shortening server-error backoff.
-            'nextAt': DateTime.now().millisecondsSinceEpoch + 5000,
+            'nextAt': DateTime.now().millisecondsSinceEpoch +
+                attendanceInitialConfirmationDelay.inMilliseconds,
             'error': '',
           });
         } else {

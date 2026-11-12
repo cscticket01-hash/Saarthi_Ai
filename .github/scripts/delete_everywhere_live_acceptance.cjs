@@ -33,7 +33,7 @@ async function main(){
  ensure(signIn.http===200&&typeof signIn.data.idToken==='string','Firebase isolated TEST administrator');
  const token=signIn.data.idToken;
  const admin=body=>http(ENDPOINT,{...body,schoolId:SCHOOL},token);
- const call=(body,stage)=>require('./safe_test_read_retry.cjs').schoolCall({post:http,url:ENDPOINT,schoolId:SCHOOL,token,report,label:stage},body);
+ const call=(body,stage,retryOptions)=>require('./safe_test_read_retry.cjs').schoolCall({post:http,url:ENDPOINT,schoolId:SCHOOL,token,report,label:stage,retryOptions},body);
  const mobile=request=>http(ENDPOINT,{action:'managed/mobile',schoolId:SCHOOL,request});
  const session=await call({action:'managed/session'},'TEST licence');
  ensure(session.allowed===true&&session.activated===true&&session.status==='licensed','active isolated TEST licence');
@@ -69,6 +69,9 @@ async function main(){
   throw Error(stage+' original work retained but verified completion timed out');
  };
  const read=async (collection,id)=>call({action:'managed/records',operation:'read',collection,id,syncProtocol:2},'exact '+collection+' read');
+ // An exact original delete can remain busy while its archive work settles.
+ // Extra retries apply only to this signed point read, never the mutation.
+ const readProgress=(collection,id)=>call({action:'managed/records',operation:'read',collection,id,syncProtocol:2},'original delete progress read',{attempts:6});
  const fixtures={student,documentId,feeId,fileId:null,deleteOperationId:null};
  report.fixtureIds={student,documentId,feeId}; // synthetic-only, no emails/tokens
  let parentRevision='',deleted=false;
@@ -131,7 +134,7 @@ async function main(){
   // durable progress. Keep the helper's forty-minute ceiling and stall fence.
   const finalDelete=await require('./native_person_receipt.cjs').retryExactDelete(deleteRequest,
     request=>call(request,'Windows protocol delete'),{attempts:48,maxElapsedMs:40*60*1000,
-     observeProgress:require('./delete_plan_progress.cjs').observeDeletePlan(read,SCHOOL,
+     observeProgress:require('./delete_plan_progress.cjs').observeDeletePlan(readProgress,SCHOOL,
       progress=>{report.deleteProgress=progress;console.log('TEST_DELETE_PROGRESS '+JSON.stringify(progress));})});
   const del=await delivery(finalDelete,'Delete Everywhere',deleteRequest);
   ensure(del.deleteEverywhereVersion===1&&del.driveDeletionComplete===true&&del.firebaseDeletionComplete===true,

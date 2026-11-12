@@ -73,7 +73,7 @@ void main() {
    img.fill(portrait,color:img.ColorRgb8(190,210,220));
    final originalPortrait=img.encodePng(portrait),rawPortrait='data:image/png;base64,${base64Encode(originalPortrait)}';
    final photoInput={'schoolId':school,'photoUrl':rawPortrait};
-   Future<Map<String,dynamic>> photoUpload(String action,Map<String,dynamic> body)=>ManagedSchoolSession.callForSchool(school,action,body);
+   Future<Map<String,dynamic>> photoUpload(String action,Map<String,dynamic> body)=>writeFixture('portrait',action,body);
    final preparedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
    final retriedPortrait=await prepareManagedRecord(photoInput,school,photoUpload);
    expect(retriedPortrait['photoFileId'],preparedPortrait['photoFileId']);
