@@ -1,3 +1,4 @@
+# Retry Windows publication from the current main HEAD after Android toolchain fix.
 # Public app release authorized 2026-11-12; validated source PR266.
 # User-authorized Smart Sync 3.0 publication (2026-10-11).
 # Existing backend 1383631a is live; school Apps Script migration is not executed.
