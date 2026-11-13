@@ -537,12 +537,15 @@ function VS_managedRecord(b) {
   if(timing)timing.lockWaitMs=Date.now()-waiting;
   try{
     if(timing)VS_TEST_SYNC_TIMING=timing;
-    const result=VS_managedRecordUnlocked(b);
+    // Reuse workbook ancestry/marker verification only within this locked
+    // request. The final canonical row is still independently read below.
+    const requestContext={};
+    const result=VS_managedRecordUnlocked(b,requestContext);
     // The canonical record and its revision are one receipt. Capture both
     // while the same writer lock is held; a later PC edit must not replace
     // this operation's record after its revision has already been selected.
     if(b.operation!=='read'&&result.recordRevision&&VS_sheetLifecycleEnabled()){
-      const saved=VS_sheetItem(VS_managedSheet(b.collection),b.id);
+      const saved=VS_sheetItem(VS_managedSheet(b.collection,requestContext),b.id);
       if(saved){
         if(saved.data._syncRevision!==result.recordRevision)throw new Error('School record verification failed');
         result.record=saved.data;
