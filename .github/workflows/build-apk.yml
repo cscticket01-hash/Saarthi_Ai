@@ -1,3 +1,6 @@
+# Release request: publish reviewed Cloudflare-first UI improvements from PR #277.
+# CI validated the source on main; release jobs remain subject to their existing signing and security gates.
+# This file-only change triggers the explicitly approved Windows/Android publication after hosting-only push.
 # Public app release authorized 2026-11-12; validated source PR266.
 # User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
 # PR #196: publish tested Android UX, QR gallery, DOB and update progress; Cloudflare/Firebase upgrades remain on hold.
