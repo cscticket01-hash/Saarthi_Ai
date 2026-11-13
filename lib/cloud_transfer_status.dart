@@ -51,3 +51,38 @@ List<String> driveSaveMessages(Map<String, dynamic>? status) {
   }
   return messages;
 }
+
+
+/// A percentage is available only for bytes acknowledged by Google Drive.
+/// Cloudflare staging bytes, elapsed time and retry counts are not progress.
+Map<String, dynamic>? measuredDriveProgress(Map<String, dynamic>? status) {
+  if (status == null || status['unavailable'] == true ||
+      status['driveHistoryLocal'] != true) return null;
+  final rows = status['driveSaveHistory'];
+  if (rows is! List || rows.length > 25) return null;
+  for (final item in rows) {
+    if (item is! Map || item['id'] is! String ||
+        item['state'] != 'pending' && item['state'] != 'completed') continue;
+    final duration = item['driveDurationMillis'];
+    if (item['state'] == 'completed') {
+      if (duration is int && duration >= 0 && duration <= 86400000) {
+        return {'state':'completed', 'percent':100,
+          'durationMillis':duration};
+      }
+      continue;
+    }
+    final progress = item['driveProgress'];
+    if (progress is Map && progress['version'] == 1 &&
+        progress['totalBytes'] is int && progress['totalBytes'] > 0 &&
+        progress['acknowledgedBytes'] is int &&
+        progress['acknowledgedBytes'] >= 0 &&
+        progress['acknowledgedBytes'] < progress['totalBytes']) {
+      final done=progress['acknowledgedBytes'] as int;
+      final total=progress['totalBytes'] as int;
+      return {'state':'uploading', 'percent':(done*100/total).floor(),
+        'acknowledgedBytes':done, 'totalBytes':total};
+    }
+    return {'state':'verifying'};
+  }
+  return null;
+}
