@@ -15,7 +15,7 @@ function fixture(){
   assert.equal(s,school);assert.equal(l,lane);
   if(b.command==='pending')return row.state==='pending'||row.state==='retry'?[row]:[];
   if(b.command==='claim')return true;
-  if(b.command==='readPart'){const chunk=bytes.subarray(b.offset);return {offset:b.offset,sizeBytes:chunk.length,base64:chunk.toString('base64'),chunkSha256:createHash('sha256').update(chunk).digest('hex')};}
+  if(b.command==='readPart'){const chunk=bytes.subarray(b.offset);return {offset:b.offset,sizeBytes:chunk.length,base64:chunk.toString('base64'),sha256:createHash('sha256').update(chunk).digest('hex')};}
   if(b.command==='finish'){row.state=b.values.state;row.response=b.values;return true;}
   if(b.command==='status')return row;
   throw Error('Unexpected command '+b.command);
