@@ -35,6 +35,15 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function statusFromRow(school,lane,id,row,readDrive){
   const timing=row.response?.timing;
   const measured=timing&&timing.version===1&&['deliveryMillis','observedAt'].every(k=>Number.isSafeInteger(timing[k])&&timing[k]>=0)?{deliveryTiming:{version:1,deliveryMillis:timing.deliveryMillis,observedAt:timing.observedAt,...(Number.isSafeInteger(timing.queueWaitMillis)&&timing.queueWaitMillis>=0?{queueWaitMillis:timing.queueWaitMillis}:{})}}:{};
+  // Google itself acknowledged this offset (Script's resumable 308 Range).
+  // Cloudflare's manifest.received is NOT Google Drive progress.
+  const source=row.response?.driveProgress, total=row.manifest?.sizeBytes;
+  const driveProgress=FILE.test(lane)&&Number.isSafeInteger(total)&&total>0&&
+   source?.version===1&&source.totalBytes===total&&Number.isSafeInteger(source.acknowledgedBytes)&&
+   source.acknowledgedBytes>=0&&source.acknowledgedBytes<total
+    ?{driveProgress:{version:1,acknowledgedBytes:source.acknowledgedBytes,totalBytes:total}}:{};
+  const verifiedDuration=FILE.test(lane)&&Number.isSafeInteger(timing?.totalElapsedMillis)&&
+   timing.totalElapsedMillis>=0?{driveDurationMillis:timing.totalElapsedMillis}:{};
   // Only a fully successful, immutable Google ACK can say Drive verified.
   // Historical completed batch receipts may include a rejected operation;
   // never turn those into a green Drive result (or clear a client's outbox).
@@ -48,11 +57,11 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const rejected=Array.isArray(result.acknowledgements)
     ?result.acknowledgements.find(ack=>ack?.success!==true):null;
    if(rejected)fail(409,terminal.has(rejected.code)?rejected.code:'EDGE_DELIVERY_REVIEW_REQUIRED');
-   return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured};
+   return {...await hydrate(school,result,readDrive),cloudflareAccepted:true,driveState:'verified',...measured,...verifiedDuration};
   }
   if(row.state==='needsAttention'||row.state==='superseded')fail(row.response?.failureStatus||409,row.response?.failureCode||'EDGE_DELIVERY_REVIEW_REQUIRED');
   if(row.response?.failureStatus===429)throw Object.assign(Error('Provider quota reached; staged work retained.'),{status:429,code:row.response.failureCode||'SCRIPT_QUOTA_EXCEEDED',retryAfterMs:Math.max(1000,row.due-now()),publicMessage:true});
-  return {...pending(school,lane,id),...measured,deliveryStatus:{state:row.state,
+  return {...pending(school,lane,id),...measured,...driveProgress,deliveryStatus:{state:row.state,
    ...(row.state==='retry'&&Number.isSafeInteger(row.due)?{retryAtMillis:row.due}:{}),
    ...(/^[A-Z_]{1,80}$/.test(row.response?.failureCode||'')?{failureCode:row.response.failureCode}:{})}};
  }
@@ -134,7 +143,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function drainOne(school,lane,deliver,job){
   const claim=randomUUID();if(!await edge.rpc(school,lane,{command:'claim',id:job.id,claim,expires:now()+120000}))return {processed:0};
   const started=now(),original=JSON.parse(job.payload);
-  const finish=values=>edge.rpc(school,lane,{command:'finish',id:job.id,claim,values:{...values,timing:{version:1,deliveryMillis:Math.max(0,now()-started),observedAt:now(),...(Number.isSafeInteger(job.created)&&job.created>0?{queueWaitMillis:Math.max(0,started-job.created)}:{})}}});
+  const finish=values=>edge.rpc(school,lane,{command:'finish',id:job.id,claim,values:{...values,timing:{version:1,deliveryMillis:Math.max(0,now()-started),observedAt:now(),...(Number.isSafeInteger(job.created)&&job.created>0?{queueWaitMillis:Math.max(0,started-job.created),totalElapsedMillis:Math.max(0,now()-job.created)}:{})}}});
   let phase='deliver',partial=job.response?JSON.parse(job.response).partial||{}:{};
   try{
    let result;
@@ -181,7 +190,13 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      const bytes=Buffer.from(chunk.base64,'base64');if(chunk.offset!==progress.offset||bytes.length!==chunk.sizeBytes||digest(bytes)!==chunk.sha256)fail(502,'EDGE_FILE_HASH_MISMATCH');
      progress=await deliver({...request,operation:'part',offset:progress.offset,base64:chunk.base64,chunkSha256:chunk.sha256});if(!valid(progress))fail(502,'UPLOAD_ACK_UNVERIFIED');
     }
-    if(!progress.committed){await finish({state:'retry',nextAttemptAt:now()+250});return {processed:0};}
+    if(!progress.committed){
+     // A real Google 308 Range acknowledgement is durable before reporting a
+     // measured percentage. A pending final readback is never called 100%.
+     await finish({state:'retry',nextAttemptAt:now()+250,
+      driveProgress:{version:1,acknowledgedBytes:progress.offset,totalBytes:original.sizeBytes}});
+     return {processed:0};
+    }
     result={...progress,fileUrl:'https://drive.google.com/file/d/'+progress.fileId+'/view'};
    }
    phase='commit';
@@ -231,6 +246,12 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const backoff=cleanupContinuation?5000:Math.min(300000,floor*2**(retryCount-1));
    await finish({state:review?'needsAttention':'retry',
     nextAttemptAt:review?Number.MAX_SAFE_INTEGER:now()+Math.max(backoff,providerDelay),
+    ...(lane!=='records'&&prior.driveProgress?.version===1&&
+     prior.driveProgress.totalBytes===original.sizeBytes&&
+     Number.isSafeInteger(prior.driveProgress.acknowledgedBytes)&&
+     prior.driveProgress.acknowledgedBytes>=0&&
+     prior.driveProgress.acknowledgedBytes<original.sizeBytes
+      ?{driveProgress:prior.driveProgress}:{}),
     ...(!review?{retryCount}:{}),...(cleanupContinuationCount?{cleanupContinuationCount}:{}),partial,
     failureStatus:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503,failureCode:typeof error.code==='string'&&/^[A-Z_]{1,80}$/.test(error.code)?error.code:'EDGE_DELIVERY_PENDING'});
    return {processed:0};
