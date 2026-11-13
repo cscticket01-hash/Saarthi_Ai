@@ -60,17 +60,14 @@ Map<String, dynamic>? measuredDriveProgress(Map<String, dynamic>? status) {
       status['driveHistoryLocal'] != true) return null;
   final rows = status['driveSaveHistory'];
   if (rows is! List || rows.length > 25) return null;
+  Map? latestCompleted;
   for (final item in rows) {
-    if (item is! Map || item['id'] is! String ||
-        item['state'] != 'pending' && item['state'] != 'completed') continue;
-    final duration = item['driveDurationMillis'];
+    if (item is! Map || item['id'] is! String) continue;
     if (item['state'] == 'completed') {
-      if (duration is int && duration >= 0 && duration <= 86400000) {
-        return {'state':'completed', 'percent':100,
-          'durationMillis':duration};
-      }
+      latestCompleted ??= item;
       continue;
     }
+    if (item['state'] != 'pending') continue;
     final progress = item['driveProgress'];
     if (progress is Map && progress['version'] == 1 &&
         progress['totalBytes'] is int && progress['totalBytes'] > 0 &&
@@ -83,6 +80,14 @@ Map<String, dynamic>? measuredDriveProgress(Map<String, dynamic>? status) {
         'acknowledgedBytes':done, 'totalBytes':total};
     }
     return {'state':'verifying'};
+  }
+  // Completed means an independently verified owner receipt, not a timer.
+  // Older completions may have no trustworthy total-duration measurement.
+  if (latestCompleted != null) {
+    final duration = latestCompleted['driveDurationMillis'];
+    return {'state':'completed', 'percent':100,
+      if (duration is int && duration >= 0 && duration <= 86400000)
+        'durationMillis':duration};
   }
   return null;
 }
