@@ -42,6 +42,28 @@ jobs:
           "platform-tools" \
           "platforms;android-36" \
           "build-tools;36.0.0"
+    - name: Install required Android NDK with bounded retries
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=28.2.13676358
+        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        for attempt in 1 2 3; do
+          if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
+          if sdkmanager --install "ndk;$version" &&
+             [ -f "$sdk_root/ndk/$version/source.properties" ]; then
+            exit 0
+          fi
+          # This is ONLY the ephemeral CI runner's incomplete Android NDK,
+          # never app data, schools, uploads, credentials or user backups.
+          if [ -d "$sdk_root/ndk/$version" ] &&
+             [ ! -f "$sdk_root/ndk/$version/source.properties" ]; then
+            rm -rf "$sdk_root/ndk/$version"
+          fi
+          sleep "$((attempt * 5))"
+        done
+        echo "::error::Required NDK installation failed after bounded retries"
+        exit 1
     - name: Show Build Environment
       shell: bash
       run: |
