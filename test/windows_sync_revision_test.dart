@@ -960,7 +960,7 @@ void main(){
    expect(find.text('Cloud verification failed'),findsOneWidget);
    final error=find.textContaining('Pending version changed');
    expect(error,findsOneWidget);
-   expect(tester.getRect(error).top,lessThan(tester.getRect(find.textContaining('Local pending version')).top));
+   expect(tester.getRect(error).top,lessThan(tester.getRect(find.text('Technical comparison (optional)')).top));
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Verify cloud version')).onPressed,isNotNull);
    expect(find.text('Use local version'),findsNothing);
    expect(tester.takeException(),isNull);
@@ -1000,6 +1000,8 @@ void main(){
     expect(find.text('Review sync conflict'),findsOneWidget);
     expect(find.text('Cloud verification: not performed'),findsOneWidget);
     expect(find.text('Close'),findsOneWidget);
+    await tester.tap(find.text('Technical comparison (optional)'));
+    await tester.pumpAndSettle();
     final previews = tester.widgetList<SelectableText>(find.byType(SelectableText)).map((w)=>w.data ?? '').join();
     expect(previews, isNot(contains('never-show-this-secret')));
     expect(item['data']['authorizationToken'], 'never-show-this-secret');
