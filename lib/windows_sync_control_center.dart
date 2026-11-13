@@ -1955,7 +1955,7 @@ Widget _driveProgressIndicator(Map<String, dynamic> progress) {
     padding: const EdgeInsets.only(top: 8,bottom: 8),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        const Expanded(child: Text('Google Drive upload',
+        const Expanded(child: Text('Google Drive delivery',
           style: TextStyle(fontFamily:'Segoe UI',fontSize:13))),
         Text(measured ? '$percent%$time' : 'Uploading / verifying',
           style: const TextStyle(fontFamily:'Segoe UI',fontSize:13)),
