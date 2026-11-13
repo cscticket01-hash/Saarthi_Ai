@@ -122,6 +122,13 @@ void main() {
    final reply=await WindowsFirebaseRemote.syncManagedRecord(item,school,batchReply:ack);
    expect(reply['recordRevision'],'cf-tombstone');
    expect(reply['driveState'],'pending');
+   final clientTiming=reply['clientSyncTiming'] as Map;
+   expect(clientTiming['source'],'batchReceipt');
+   expect(clientTiming['requestMicros'],0);
+   expect(clientTiming['preparationMicros'],greaterThanOrEqualTo(0));
+   expect(clientTiming['receiptProcessingMicros'],greaterThanOrEqualTo(0));
+   expect(ack.containsKey('clientSyncTiming'),isFalse);
+   expect((reply['record'] as Map).containsKey('clientSyncTiming'),isFalse);
    expect(reply.containsKey('firebaseDeletionComplete'),isFalse);
    expect(item['baseCloudRevision'],'old-gs-revision');
    final missingTombstone=Map<String,dynamic>.from(ack)

@@ -368,6 +368,7 @@ class WindowsFirebaseRemote {
       throw StateError(
         'School Script field-patch support is required for this saved request.',
       );
+    final stageWatch = Stopwatch()..start();
     final data = item['operation'] == 'delete'
         ? null
         : item['wireData'] is Map
@@ -408,6 +409,8 @@ class WindowsFirebaseRemote {
             'managed/records',
             requestBody,
           );
+    final preparationMicros = stageWatch.elapsedMicroseconds;
+    stageWatch.reset();
     Map<String, dynamic> result;
     try {
       result = await sendPrepared();
@@ -419,6 +422,8 @@ class WindowsFirebaseRemote {
       if (restored != 1) rethrow;
       result = await sendPrepared();
     }
+    final requestMicros = stageWatch.elapsedMicroseconds;
+    stageWatch.reset();
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
@@ -476,7 +481,17 @@ class WindowsFirebaseRemote {
         '_syncOperationId': item['operationId'],
       };
     }
-    return result;
+    // Local-only phase evidence. Do not mutate/relabel the provider receipt,
+    // persist these fields in canonical records, or count batch consumption as
+    // another network request. Successful verification remains mandatory above.
+    stageWatch.stop();
+    return {...result, 'clientSyncTiming': {
+      'version': 1,
+      'source': batchReply == null ? 'network' : 'batchReceipt',
+      'preparationMicros': preparationMicros,
+      'requestMicros': batchReply == null ? requestMicros : 0,
+      'receiptProcessingMicros': stageWatch.elapsedMicroseconds,
+    }};
   }
 
   static bool recordWriteBatchSupported = false;

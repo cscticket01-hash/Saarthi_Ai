@@ -3214,6 +3214,17 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _sample('cloudAckMicros', watch.elapsedMicroseconds);
         if (queuedMillis != null)
           _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
+        final clientTiming = reply['clientSyncTiming'];
+        if (clientTiming is Map && clientTiming['version'] == 1) {
+          for (final phase in ['preparationMicros', 'requestMicros', 'receiptProcessingMicros']) {
+            final value = clientTiming[phase];
+            if (value is int && value >= 0) {
+              final name = 'client${phase[0].toUpperCase()}${phase.substring(1)}';
+              metrics[name] = value;
+              _sample(name, value);
+            }
+          }
+        }
         final timing = reply['syncTiming'];
         final edgeTiming = reply['deliveryTiming'];
         if (edgeTiming is Map && edgeTiming['version'] == 1) {
