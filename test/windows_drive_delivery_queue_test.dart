@@ -60,11 +60,50 @@ void main() {
     await WindowsDriveDeliveryQueue.poll(school, call: (action, body) async {
       polls++; throw StateError('Staging receipt is serviced by its original outbox');
     });
-    expect(polls, 0);
+    expect(polls, 1, reason: 'Only the original read-only Cloudflare ticket is queried');
     await WindowsDriveDeliveryQueue.retainEdge(edgeNotice(completed: true));
     await WindowsDriveDeliveryQueue.retainEdge(edgeNotice());
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'], 'completed');
     expect((await db.collection('_windows_firebase_outbox').get()).docs, hasLength(1));
+  });
+  test('measured Google bytes progress and original verified completion persist separately', () async {
+    final notice = edgeNotice();
+    (notice['proof'] as Map)['delivery'] = {
+      'lane': 'file-${List.filled(64,'b').join()}',
+      'id': List.filled(64,'b').join(),
+    };
+    await WindowsDriveDeliveryQueue.retainEdge(notice);
+    var calls = 0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      calls++;
+      expect(action,'managed/cloudflare/operation');
+      return {
+        'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'pending','delivery':body,
+        'driveProgress':{'version':1,'acknowledgedBytes':512,'totalBytes':1024},
+      };
+    });
+    final history=await WindowsDriveDeliveryQueue.history(school);
+    expect(calls,1);
+    expect((history.single['driveProgress'] as Map)['acknowledgedBytes'],512);
+    await WindowsDriveDeliveryQueue.poll(school,
+      clock:()=>DateTime.now().add(const Duration(seconds:7)),
+      call:(action,body) async => {
+        'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','committed':true,'fileId':'verified-id',
+        'driveDurationMillis':12500,
+      });
+    final done=(await WindowsDriveDeliveryQueue.history(school)).single;
+    expect(done['state'],'completed');
+    expect(done['driveDurationMillis'],12500);
+    expect(done['driveProgress'],isNull);
+  });
+  test('foreign school status cannot mark Cloudflare backup completed', () async {
+    await WindowsDriveDeliveryQueue.retainEdge(edgeNotice());
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async => {
+      'success':true,'schoolId':other,'cloudflareAccepted':true,'driveState':'verified',
+    });
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'pending');
   });
   test('concurrent completed and pending receipts cannot regress the durable state', () async {
     await Future.wait([
