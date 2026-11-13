@@ -36,7 +36,7 @@ const pages=['dashboard','analytics','students','add-student','teachers','add-te
   await page.waitForFunction(n=>window.previewApplied?.page==='students'&&window.previewApplied?.mode==='dark'&&window.previewApplied?.navigation===n,navigation,{timeout:15000});
   const app=page.frameLocator('#app');
   await app.getByRole('button',{name:'Add Student',exact:false}).first().click();
-  const name=app.getByRole('textbox',{name:'Student Full Name *',exact:true});
+  // The Flutter 3.50 web engine exposes *two* inputs with the same accessible\n  // name: a transient transparentTextEditing editor plus its stable semantics\n  // textbox. Scope to the semantics field so Playwright strict mode never\n  // guesses between them, while keyboard events still use the real editor.\n  const name=app.locator('input[data-semantics-role="text-field"][placeholder="Student Full Name *"]');
   // Flutter exposes a semantics textbox as well as its native editing input.
   // Type through the focused editor, then blur/refocus to prove the framework
   // accepted the draft before testing a theme rebuild (DOM fill alone can be
