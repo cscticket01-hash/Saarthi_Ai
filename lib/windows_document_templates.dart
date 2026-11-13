@@ -684,6 +684,8 @@ class WindowsDocumentTemplates {
         'paidPaise':data['paidPaise']??0,
       },schoolName:schoolName);
     }
+    final brandingSources = [data['schoolLogoUrl'] ?? profile['logoUrl'],
+      data['principalSignatureUrl'] ?? profile['principalSignatureUrl'], profile['sealUrl']];
     final assets = await Future.wait<Uint8List?>([
       _personPhoto(data),
       _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
@@ -692,6 +694,12 @@ class WindowsDocumentTemplates {
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
+    for(var i=0;i<brandingSources.length;i++) {
+      if((brandingSources[i]?.toString().trim()??'').isNotEmpty &&
+          (assets[i+1]==null || assets[i+1]!.isEmpty)) {
+        throw StateError('Configured school logo, signature or seal is unavailable. Existing ID and pending work retained.');
+      }
+    }
     if ((v is String &&
             (v.startsWith('manifest:') || v.startsWith('reviewed:'))) ||
         kind == 'otherStaffId') {
