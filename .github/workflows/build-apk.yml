@@ -48,9 +48,17 @@ jobs:
         set -euo pipefail
         version=28.2.13676358
         sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        sdkmanager_bin="$(command -v sdkmanager || true)"
+        if [ -z "$sdkmanager_bin" ]; then
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+        fi
+        if [ ! -x "$sdkmanager_bin" ]; then
+          echo "::error::Android SDK cmdline-tools sdkmanager executable unavailable"
+          exit 1
+        fi
         for attempt in 1 2 3; do
           if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
-          if sdkmanager --install "ndk;$version" &&
+          if "$sdkmanager_bin" --install "ndk;$version" &&
              [ -f "$sdk_root/ndk/$version/source.properties" ]; then
             exit 0
           fi
