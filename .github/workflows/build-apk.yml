@@ -1,3 +1,6 @@
+# Release request: publish reviewed Cloudflare-first UI improvements from PR #277.
+# CI validated the source on main; release jobs remain subject to their existing signing and security gates.
+# This file-only change triggers the explicitly approved Windows/Android publication after hosting-only push.
 # Public app release authorized 2026-11-12; validated source PR266.
 # User-authorized live publication of regression-verified commit 61323fdb (2026-10-08).
 # PR #196: publish tested Android UX, QR gallery, DOB and update progress; Cloudflare/Firebase upgrades remain on hold.
@@ -39,6 +42,36 @@ jobs:
           "platform-tools" \
           "platforms;android-36" \
           "build-tools;36.0.0"
+    - name: Install required Android NDK with bounded retries
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=28.2.13676358
+        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        sdkmanager_bin="$(command -v sdkmanager || true)"
+        if [ -z "$sdkmanager_bin" ]; then
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+        fi
+        if [ ! -x "$sdkmanager_bin" ]; then
+          echo "::error::Android SDK cmdline-tools sdkmanager executable unavailable"
+          exit 1
+        fi
+        for attempt in 1 2 3; do
+          if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
+          if "$sdkmanager_bin" --install "ndk;$version" &&
+             [ -f "$sdk_root/ndk/$version/source.properties" ]; then
+            exit 0
+          fi
+          # This is ONLY the ephemeral CI runner's incomplete Android NDK,
+          # never app data, schools, uploads, credentials or user backups.
+          if [ -d "$sdk_root/ndk/$version" ] &&
+             [ ! -f "$sdk_root/ndk/$version/source.properties" ]; then
+            rm -rf "$sdk_root/ndk/$version"
+          fi
+          sleep "$((attempt * 5))"
+        done
+        echo "::error::Required NDK installation failed after bounded retries"
+        exit 1
     - name: Show Build Environment
       shell: bash
       run: |
