@@ -148,6 +148,9 @@ class WindowsDriveDeliveryQueue {
         'state': review ? 'needsAttention' : completed ? 'completed' : 'pending',
         'acceptedAt': old?['acceptedAt'] ?? now,
         'completedAt': completed && !review ? now : 0,
+        if (completed && !review && proof['driveDurationMillis'] is int &&
+            proof['driveDurationMillis'] >= 0)
+          'driveDurationMillis': proof['driveDurationMillis'],
       }),
     );
     _scope(school, profile);
