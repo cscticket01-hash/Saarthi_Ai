@@ -466,6 +466,28 @@ jobs:
     - run: flutter pub add mobile_scanner:7.3.0
     - name: Align resolved Android plugin SDKs
       run: python .github/scripts/configure_android_plugins.py
+    - name: Install required Android NDK with bounded retries
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=28.2.13676358
+        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        for attempt in 1 2 3; do
+          if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
+          if sdkmanager --install "ndk;$version" &&
+             [ -f "$sdk_root/ndk/$version/source.properties" ]; then
+            exit 0
+          fi
+          # This is ONLY the ephemeral CI runner's incomplete Android NDK,
+          # never app data, schools, uploads, credentials or user backups.
+          if [ -d "$sdk_root/ndk/$version" ] &&
+             [ ! -f "$sdk_root/ndk/$version/source.properties" ]; then
+            rm -rf "$sdk_root/ndk/$version"
+          fi
+          sleep "$((attempt * 5))"
+        done
+        echo "::error::Required NDK installation failed after bounded retries"
+        exit 1
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
