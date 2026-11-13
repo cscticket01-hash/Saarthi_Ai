@@ -42,6 +42,15 @@ void main() {
     expect(bytes.length, lessThanOrEqualTo(85 * 1024));
     expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
   });
+  for(final field in ['logoUrl','principalSignatureUrl','sealUrl']) {
+    test('unavailable configured $field cannot produce an incomplete replacement ID',()async {
+      await db.collection('school_config').doc('school_profile_cache').set({
+        'schoolId':school,'schoolName':'Synthetic TEST',field:'data:image/png;base64,%%%'});
+      await expectLater(WindowsDocumentTemplates.selected('studentId',{
+        'schoolId':school,'name':'Synthetic TEST','class':'1','rollNo':'1'}),throwsStateError);
+      expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+    });
+  }
   test('a photo-backed ID keeps its interactive PDF preview', () async {
     final bytes = await WindowsDocumentTemplates.selected('studentId', {
       'schoolId': school, 'name': 'Synthetic TEST', 'class': '1',
