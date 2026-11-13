@@ -66,6 +66,33 @@ void main() {
     expect(summary, contains('Google Drive transfer pending'));
   });
 
+  test('measured Drive progress never invents bytes or early completion', () {
+    Map<String,dynamic> status(Map<String,dynamic> row) => {
+      'driveHistoryLocal':true,
+      'driveSaveHistory':[{'id':'receipt012345678901','state':'pending',...row}],
+    };
+    expect(measuredDriveProgress(status({}))?['state'],'verifying');
+    expect(measuredDriveProgress(status({
+      'driveProgress':{'version':1,'acknowledgedBytes':512,'totalBytes':1024},
+    }))?['percent'],50);
+    expect(measuredDriveProgress(status({
+      'driveProgress':{'version':1,'acknowledgedBytes':1024,'totalBytes':1024},
+    }))?['percent'],isNull);
+    expect(measuredDriveProgress(status({
+      'driveProgress':{'version':1,'acknowledgedBytes':999,'totalBytes':1024},
+    }))?['percent'],97);
+    expect(measuredDriveProgress({
+      'unavailable':true,'driveHistoryLocal':true,
+      'driveSaveHistory':[{'id':'receipt012345678901','state':'pending',
+        'driveProgress':{'version':1,'acknowledgedBytes':512,'totalBytes':1024}}],
+    }),isNull);
+    expect(measuredDriveProgress({
+      'driveHistoryLocal':true,'driveSaveHistory':[{
+        'id':'receipt012345678901','state':'completed',
+        'driveDurationMillis':12500,
+      }],
+    }),{'state':'completed','percent':100,'durationMillis':12500});
+  });
   test('resolved transfers yield no alert when all queues are clear', () {
     expect(cloudTransferMessage({
       'enabled': true,
