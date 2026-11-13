@@ -1,3 +1,6 @@
+# Release request: publish reviewed Cloudflare-first UI improvements from PR #277.
+# CI validated the source on main; release jobs remain subject to their existing signing and security gates.
+# This file-only change triggers the explicitly approved Windows/Android publication after hosting-only push.
 # Retry Windows publication from the current main HEAD after Android toolchain fix.
 # Public app release authorized 2026-11-12; validated source PR266.
 # User-authorized Smart Sync 3.0 publication (2026-10-11).
