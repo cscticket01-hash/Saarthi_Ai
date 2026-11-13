@@ -194,9 +194,13 @@ async function run() {
       assert.equal(document.record.bundleId, bundleId);
       assert.equal(document.record.contentHash, hash(pdf));
       const peerReadMs = Math.round(performance.now() - started);
+      report.stage = 'client-quiet-window';
+      await delay(90000); // TEST only: no client API calls after durable publish.
+      const firstAfterQuiet = await live('bundle-receipt', wire);
       report.stage = 'drive-readback';
-      let verified = false;
-      for (let n = 0; n < 36; n++) {
+      let verified = firstAfterQuiet.driveVerified === true;
+      if (firstAfterQuiet.backups.some(item => item.backupState === 'needsAttention')) throw Error('A TEST bundle backup requires review');
+      for (let n = 0; !verified && n < 36; n++) {
         const result = await live('bundle-receipt', wire);
         if (result.backups.some(item => item.backupState === 'needsAttention')) throw Error('A TEST bundle backup requires review');
         if (result.driveVerified === true) { verified = true; break; }
@@ -210,7 +214,14 @@ async function run() {
         assert.ok(proof?.driveVerified && proof.fileId);
         archives.push({fileId: proof.fileId, sha256: item.sha256});
       }
+      const history = await live('backupHistory');
+      const measuredBackups = history.entries.filter(row => operations.some(op => op.operationId === row.operationId));
+      assert.equal(measuredBackups.length, operations.length);
+      assert.ok(measuredBackups.every(row => row.state === 'verified' && Number.isSafeInteger(row.acceptedAt) && row.verifiedAt >= row.acceptedAt));
       report.cases.push({withPhoto, cloudAckMs, peerReadMs,
+        clientQuietWindowMs: 90000, verifiedAtFirstReadAfterQuiet: firstAfterQuiet.driveVerified === true,
+        cloudflareRecordToGoogleVerifiedMs: Math.max(...measuredBackups.map(row => row.verifiedAt - row.acceptedAt)),
+        driveTimingScope: 'observed readback; per-record duration uses the Durable Object clock',
         fastSyncTargetMs: 5000, fastSyncTargetStatus: peerReadMs <= 5000 ? 'PASS' : 'FAIL',
         latencyScope: 'synthetic authenticated API readback, not physical client visibility',
         driveVerifiedMs: Math.round(performance.now() - started)});

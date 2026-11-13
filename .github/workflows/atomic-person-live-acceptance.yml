@@ -1,7 +1,7 @@
 name: Isolated TEST Atomic Person cloud acceptance
 on:
   push:
-    branches: [test/atomic-person-live-20261109]
+    branches: [test/atomic-person-live-20261113]
     paths:
       - '.github/workflows/atomic-person-live-acceptance.yml'
       - '.github/scripts/test_atomic_person_live.cjs'
@@ -10,7 +10,7 @@ permissions:
   actions: read
   contents: read
 env:
-  VS_EXPECTED_TEST_RUNTIME: 731bca40858285e9dc06450f9a6b9a41b6e461cc
+  VS_EXPECTED_TEST_RUNTIME: 9b0faf19b81f2d2258adb2a1b6d3b69209f56fe0
 jobs:
   prerequisites:
     if: github.repository == 'cscticket01-hash/Saarthi_Ai'
@@ -25,21 +25,41 @@ jobs:
         run: |
           node --test .github/scripts/await_test_gate.test.cjs
           node -e "require('./.github/scripts/await_test_gate.cjs').selectGate([], 'disaster', process.env.VS_EXPECTED_TEST_RUNTIME)"
-      - name: Require exact runtime cloud, readiness, deletion and recovery passes
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: '14059942279'
+          run-id: '43470463029'
+          repository: cscticket01-hash/Saarthi_Ai
+          github-token: ${{ github.token }}
+          path: verified-original-delete
+      - name: Require pinned cloud, readiness, recovery and exact resumed original-delete evidence
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           node - <<'JS'
-          const {waitForTestGate}=require('./.github/scripts/await_test_gate.cjs');
-          const sha=process.env.VS_EXPECTED_TEST_RUNTIME,token=process.env.GITHUB_TOKEN;
+          const assert=require('node:assert/strict'),fs=require('node:fs');
+          const repo='cscticket01-hash/Saarthi_Ai';
+          const gates=[
+            [43433698894,'9b0faf19b81f2d2258adb2a1b6d3b69209f56fe0','feature/smart-sync-3','Isolated TEST cloud prerequisites'],
+            [43433698858,'9b0faf19b81f2d2258adb2a1b6d3b69209f56fe0','feature/smart-sync-3','Sync 3 isolated TEST readiness'],
+            [43433699020,'9b0faf19b81f2d2258adb2a1b6d3b69209f56fe0','feature/smart-sync-3','Isolated TEST disaster recovery acceptance'],
+            [43470463029,'9ca2e06be2f499a17711a13efd198f7a88fe8a5b','test/resume-failed-delete-20261113','Complete only the exact failed TEST delete from verified evidence'],
+          ];
           async function main(){
-           for (const kind of ['cloud','readiness','deletion','disaster']) {
-            try { await waitForTestGate({kind,sha,token}); }
-            catch (error) { throw new Error(kind + ' gate: ' + error.message); }
-           }
+            for(const [id,sha,branch,name] of gates){
+              const r=await fetch('https://api.github.com/repos/'+repo+'/actions/runs/'+id,{headers:{Authorization:'Bearer '+process.env.GITHUB_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)});
+              assert.equal(r.status,200);const run=await r.json();
+              assert.equal(run.head_sha,sha);assert.equal(run.head_branch,branch);assert.equal(run.name,name);
+              assert.equal(run.event,'push');assert.equal(run.head_repository.full_name,repo);assert.equal(run.conclusion,'success');
+            }
+            const proof=JSON.parse(fs.readFileSync('verified-original-delete/original-delete-completion.json','utf8'));
+            assert.equal(proof.status,'PASS');
+            for(const key of ['originalOperationRetained','deletionReceiptVerified','originalRecordsVerified','pdfInaccessible','websiteReadback','deletedPersonLoginRejected'])assert.equal(proof[key],true);
+            console.log('Exact original-delete completion and pinned TEST prerequisites verified; this does not waive production gates.');
           }
-          main().catch(error=>{console.error(error.message);process.exitCode=1});
+          main().catch(()=>{console.error('Exact TEST prerequisite proof unavailable');process.exitCode=1});
           JS
+
   atomic-person:
     needs: prerequisites
     concurrency:
