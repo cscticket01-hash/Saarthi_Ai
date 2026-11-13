@@ -42,7 +42,7 @@ function edgeProofMatches(proof,binding){
  ])).digest('hex');
  const result=proof?.response?.result,record=result?.record;
  const revision=result?.recordRevision;
- return proof?.id===expectedId&&proof.state==='completed'&&
+ return Boolean(proof?.id===expectedId&&proof.state==='completed'&&
   result?.success===true&&result.schoolId===binding.schoolId&&
   result.syncProtocol===2&&typeof revision==='string'&&
   revision.length>0&&!/^(live-|cf-)/.test(revision)&&
@@ -54,7 +54,7 @@ function edgeProofMatches(proof,binding){
   record._syncRevision===revision&&
   (binding.operation==='delete'
    ? record._syncDeleted===true
-   : record._syncDeleted!==true);
+   : record._syncDeleted!==true));
 }
 function noticeProofMatches(proof,binding){
  if(binding.lane!=='legacy'||binding.collection!=='school_notices'||
