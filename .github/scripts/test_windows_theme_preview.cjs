@@ -36,7 +36,12 @@ const pages=['dashboard','analytics','students','add-student','teachers','add-te
   await page.waitForFunction(n=>window.previewApplied?.page==='students'&&window.previewApplied?.mode==='dark'&&window.previewApplied?.navigation===n,navigation,{timeout:15000});
   const app=page.frameLocator('#app');
   await app.getByRole('button',{name:'Add Student',exact:false}).first().click();
-  const name=app.getByRole('textbox',{name:'Student Full Name *',exact:true});
+  // Flutter 3.50 sometimes exposes both the transient native editing input
+  // and the semantics textbox under the exact same accessible name. Use the
+  // last matching accessible control (the semantics input when both exist);
+  // if only one is exposed, it is still the real school form field. This
+  // avoids a brittle DOM attribute selector across Flutter engine versions.
+  const name=app.getByRole('textbox',{name:'Student Full Name *',exact:true}).last();
   // Flutter exposes a semantics textbox as well as its native editing input.
   // Type through the focused editor, then blur/refocus to prove the framework
   // accepted the draft before testing a theme rebuild (DOM fill alone can be

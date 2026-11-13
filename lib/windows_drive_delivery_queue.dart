@@ -148,6 +148,9 @@ class WindowsDriveDeliveryQueue {
         'state': review ? 'needsAttention' : completed ? 'completed' : 'pending',
         'acceptedAt': old?['acceptedAt'] ?? now,
         'completedAt': completed && !review ? now : 0,
+        if (completed && !review && proof['driveDurationMillis'] is int &&
+            proof['driveDurationMillis'] >= 0)
+          'driveDurationMillis': proof['driveDurationMillis'],
       }),
     );
     _scope(school, profile);
@@ -280,6 +283,92 @@ class WindowsDriveDeliveryQueue {
         _scope(school, profile);
         if (quota) break;
       }
+      // Read-only status on the original, school-bound Cloudflare ticket.
+      // Never re-submit a mutation or clear the original business outbox.
+      final edgeDue = rows.where((row) {
+        final v = row.data();
+        return v['schoolId'] == school && v['edgeDeliveryVersion'] == 1 &&
+            v['state'] == 'pending' &&
+            (v['nextPollAt'] as num? ?? 0) <= now().millisecondsSinceEpoch;
+      }).toList()..sort((a,b) =>
+          (a.data()['nextPollAt'] as num? ?? 0)
+              .compareTo(b.data()['nextPollAt'] as num? ?? 0));
+      for (final row in edgeDue.take(3)) {
+        if (canAdmit?.call() == false) break;
+        _scope(school, profile);
+        final item = row.data(), id = item['ticketId'], lane = item['lane'];
+        if (id is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(id) ||
+            lane is! String ||
+            !(lane == 'records' || lane == 'file-$id')) continue;
+        Map<String,dynamic> values;
+        var quota = false;
+        try {
+          final proof = await call('managed/cloudflare/operation', {
+            'lane': lane, 'id': id,
+          });
+          _scope(school, profile);
+          if (proof['success'] != true || proof['schoolId'] != school ||
+              proof['cloudflareAccepted'] != true ||
+              !const ['pending', 'verified'].contains(proof['driveState'])) {
+            throw StateError('Unverified school Drive delivery progress.');
+          }
+          final ticket = proof['delivery'];
+          if (proof['driveState'] == 'pending' &&
+              (ticket is! Map || ticket['id'] != id || ticket['lane'] != lane)) {
+            throw StateError('Drive delivery ticket changed.');
+          }
+          values = {'nextPollAt': now().millisecondsSinceEpoch + 5000};
+          final progress = proof['driveProgress'];
+          if (lane == 'file-$id' && proof['driveState'] == 'pending' &&
+              progress is Map && progress['version'] == 1 &&
+              progress['acknowledgedBytes'] is int &&
+              progress['totalBytes'] is int &&
+              progress['totalBytes'] > 0 &&
+              progress['acknowledgedBytes'] >= 0 &&
+              progress['acknowledgedBytes'] < progress['totalBytes']) {
+            final old = item['driveProgress'];
+            if (old is! Map || old['totalBytes'] == progress['totalBytes'] &&
+                (old['acknowledgedBytes'] as num? ?? 0) <=
+                    progress['acknowledgedBytes']) {
+              values['driveProgress'] = Map<String,dynamic>.from(progress);
+            }
+          }
+          if (proof['driveState'] == 'verified') {
+            if (lane == 'file-$id' &&
+                (proof['committed'] != true ||
+                 proof['fileId'] is! String ||
+                 (proof['fileId'] as String).isEmpty)) {
+              throw StateError('Drive file completion unverified.');
+            }
+            values = {
+              'state': 'completed',
+              'completedAt': now().millisecondsSinceEpoch,
+              'nextPollAt': 0,
+              if (proof['driveDurationMillis'] is int &&
+                  proof['driveDurationMillis'] >= 0)
+                'driveDurationMillis': proof['driveDurationMillis'],
+              'driveProgress': null,
+            };
+          }
+        } catch (error) {
+          _scope(school, profile);
+          final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
+          quota = error is CentralCloudException && error.status == 429;
+          final backoff = (5000 * (1 << attempts.clamp(0, 8).toInt()))
+              .clamp(5000, 3600000).toInt();
+          final floor = error is CentralCloudException ? error.retryAfterMs : 0;
+          values = {
+            'attempts': attempts,
+            'nextPollAt': now().millisecondsSinceEpoch +
+                (floor > backoff ? floor : backoff),
+          };
+        }
+        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+          () => row.reference.set(values, const SetOptions(merge:true)),
+        );
+        _scope(school, profile);
+        if (quota) break;
+      }
     } finally {
       _busy = false;
     }
@@ -365,6 +454,9 @@ class WindowsDriveDeliveryQueue {
             'completedAt': row['completedAt'],
             'collection': row['collection'],
             'recordId': row['id'],
+            if (row['driveProgress'] is Map) 'driveProgress': row['driveProgress'],
+            if (row['driveDurationMillis'] is int)
+              'driveDurationMillis': row['driveDurationMillis'],
           },
         )
         .toList();

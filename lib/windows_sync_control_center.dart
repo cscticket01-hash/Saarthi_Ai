@@ -761,7 +761,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     return CloudflareTransferStatus(
       messages: messages.toList(),
       showTransfers: ownSchool,
-      panelBuilder: (messages) => Padding(
+      panelBuilder: (messages, progress) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: _panelBox(
         Column(
@@ -771,6 +771,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             const Text('Sync Errors & Alerts',
               style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16,
                 fontWeight: FontWeight.w600)),
+            if (progress != null)
+              _driveProgressIndicator(progress),
             for (final message in messages)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -1890,7 +1892,7 @@ class CloudflareTransferStatus extends StatefulWidget {
     this.showTransfers = true, this.panelBuilder});
   final List<String> messages;
   final bool showTransfers;
-  final Widget Function(List<String>)? panelBuilder;
+  final Widget Function(List<String>, Map<String, dynamic>?)? panelBuilder;
   @override State<CloudflareTransferStatus> createState() => _CloudflareTransferStatusState();
 }
 class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
@@ -1920,14 +1922,47 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     if (widget.panelBuilder != null) {
       final messages = <String>{...widget.messages, if (message != null) message,
         if (widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId) ...driveSaveMessages(_status)}.toList();
-      return messages.isEmpty ? const SizedBox.shrink() : widget.panelBuilder!(messages);
+      final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+          ? measuredDriveProgress(_status) : null;
+      return messages.isEmpty && progress == null ? const SizedBox.shrink()
+          : widget.panelBuilder!(messages, progress);
     }
     final history = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
         ? driveSaveMessages(_status) : const <String>[];
     final lines = [if (message != null) message, ...history];
-    if (lines.isEmpty) return const SizedBox.shrink();
-    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(lines.join('\n'),
-      style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
-        color: WindowsAppearance.foreground(Colors.orangeAccent))));
+    final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+        ? measuredDriveProgress(_status) : null;
+    if (lines.isEmpty && progress == null) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 10),
+      child: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        if (progress != null) _driveProgressIndicator(progress),
+        if (lines.isNotEmpty) Text(lines.join('\n'),
+          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
+            color: WindowsAppearance.foreground(Colors.orangeAccent))),
+      ]));
   }
+}
+
+/// Determinate only after a signed Google acknowledgement of actual bytes.
+Widget _driveProgressIndicator(Map<String, dynamic> progress) {
+  final percent = progress['percent'];
+  final measured = percent is int && percent >= 0 && percent <= 100;
+  final done = progress['state'] == 'completed' && measured && percent == 100;
+  final duration = progress['durationMillis'];
+  final time = done && duration is int && duration >= 0
+      ? ' · ${(duration / 1000).toStringAsFixed(2)} s' : '';
+  return Padding(
+    padding: const EdgeInsets.only(top: 8,bottom: 8),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Expanded(child: Text('Google Drive delivery',
+          style: TextStyle(fontFamily:'Segoe UI',fontSize:13))),
+        Text(measured ? '$percent%$time' : 'Uploading / verifying',
+          style: const TextStyle(fontFamily:'Segoe UI',fontSize:13)),
+      ]),
+      const SizedBox(height:6),
+      LinearProgressIndicator(value:measured ? percent / 100 : null,
+        minHeight:6),
+    ]),
+  );
 }
