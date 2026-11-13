@@ -7618,14 +7618,18 @@ function VS_managedHandle(e) {
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
       const lock=LockService.getScriptLock();lock.waitLock(30000);
       try {
-        const root=VS_managedRoot(),target=PropertiesService.getScriptProperties().getProperty('VS_LAYOUT_JOB')?VS_managedFolder(root,'Other_Files'):VS_managedFolder(VS_managedFolder(root,'Files'),b.mime.indexOf('image/')===0?'Photos':'Documents');let file=null,marker='';
+        const root=VS_managedRoot(),target=PropertiesService.getScriptProperties().getProperty('VS_LAYOUT_JOB')?VS_managedFolder(root,'Other_Files'):VS_managedFolder(VS_managedFolder(root,'Files'),b.mime.indexOf('image/')===0?'Photos':'Documents');let file=null,marker='',uploadDigest='';
         if(b.uploadKey!==undefined) {
           if(!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))throw new Error('Invalid upload key');
           const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes).map(v=>('0'+((v+256)%256).toString(16)).slice(-2)).join('');
           marker='VIDYA_UPLOAD:'+school+':'+b.uploadKey+':'+digest;
+          uploadDigest=digest;
+          file=VS_cachedOriginalUpload(school,root.getId(),b,marker,bytes.length,digest);
+          if(file)return jsonResponse({success:true,schoolId:school,fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'});
           for(const source of VS_layoutUploadFolders(root,target)){const matches=source.getFilesByName(b.name);if(matches.hasNext()){const found=matches.next();if(matches.hasNext()||found.getDescription()!==marker||(file&&file.getId()!==found.getId()))throw new Error('Upload key collision; existing file retained');file=found;}}
         }
         if(!file){file=target.createFile(Utilities.newBlob(bytes,b.mime,b.name));if(marker)file.setDescription(marker);}
+        if(marker)VS_rememberOriginalUpload(school,root.getId(),b,file,bytes.length,uploadDigest);
         result={fileId:file.getId(),fileUrl:'https://drive.google.com/file/d/'+file.getId()+'/view'};
       } finally {lock.releaseLock();}
 
@@ -8897,6 +8901,27 @@ function VS_eraseOneRecordArchive(file,targets,deletedFiles){
     let touched=false;function update(item,depth){if(!item||typeof item!=='object'||depth>12)return;if((item.fileId===file.getId()||item.id===file.getId())&&typeof item.hash==='string'){item.hash=hash;touched=true;}for(const child of Object.values(item))if(child&&typeof child==='object')update(child,depth+1);}update(state,0);if(touched)props.setProperty(key,JSON.stringify(state));
   }
   return true;
+}
+
+// A short-lived lookup hint, never authorization or a completion receipt.
+// The original school-owned Drive file is revalidated on every cache hit.
+function VS_uploadReceiptKey(school,rootId,uploadKey,digest){
+ return 'VS_UPLOAD_LOOKUP_V1_'+VS_layoutHash([school,rootId,uploadKey,digest]);
+}
+function VS_cachedOriginalUpload(school,rootId,b,marker,byteCount,digest){
+ try{
+  const raw=CacheService.getScriptCache().get(VS_uploadReceiptKey(school,rootId,b.uploadKey,digest));
+  if(!raw)return null;
+  const saved=JSON.parse(raw);
+  if(saved.name!==b.name||saved.mime!==b.mime||saved.size!==byteCount||typeof saved.id!=='string')return null;
+  const file=VS_managedFile(saved.id);
+  if(file.getName()!==b.name||file.getMimeType()!==b.mime||file.getSize()!==byteCount||file.getDescription()!==marker)return null;
+  return file;
+ }catch(_){return null;}
+}
+function VS_rememberOriginalUpload(school,rootId,b,file,byteCount,digest){
+ try{CacheService.getScriptCache().put(VS_uploadReceiptKey(school,rootId,b.uploadKey,digest),
+  JSON.stringify({id:file.getId(),name:b.name,mime:b.mime,size:byteCount}),600);}catch(_){}
 }
 
 /** Managed mobile bridge. Only called AFTER central server verification and
