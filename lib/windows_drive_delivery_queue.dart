@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'live_sync_protocol.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
@@ -7,6 +8,7 @@ import 'windows_local_firestore.dart';
 /// Drive completion never changes the canonical live revision or clears work.
 class WindowsDriveDeliveryQueue {
   static const collection = '_windows_drive_deliveries';
+  static final changed = ValueNotifier<int>(0);
   static bool _busy = false;
   static Future<void> _edgeWriteTail = Future<void>.value();
   static void _scope(String school, String profile) {
@@ -139,6 +141,7 @@ class WindowsDriveDeliveryQueue {
       () => ref.set({
         'schoolId': school, 'operationId': operationId, 'edgeDeliveryVersion': 1,
         'action': notice['action'], 'cloudflareAccepted': true,
+        if (notice['operation'] == 'write' || notice['operation'] == 'delete') 'operation': notice['operation'],
         'collection': notice['collection'] is String ? notice['collection'] : 'school_files',
         'id': notice['id'] is String ? notice['id'] : source.substring(0, 8),
         if (ticket is Map) 'ticketId': ticket['id'],
@@ -154,6 +157,7 @@ class WindowsDriveDeliveryQueue {
       }),
     );
     _scope(school, profile);
+    changed.value++;
   }
 
   /// Bind the separate Drive proof to the exact accepted cloud operation.
@@ -454,6 +458,7 @@ class WindowsDriveDeliveryQueue {
             'completedAt': row['completedAt'],
             'collection': row['collection'],
             'recordId': row['id'],
+            if (row['operation'] == 'write' || row['operation'] == 'delete') 'operation': row['operation'],
             if (row['driveProgress'] is Map) 'driveProgress': row['driveProgress'],
             if (row['driveDurationMillis'] is int)
               'driveDurationMillis': row['driveDurationMillis'],
