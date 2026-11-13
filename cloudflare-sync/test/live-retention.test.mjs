@@ -23,6 +23,7 @@ async function verificationClockWorker(t){
   'const b=await request.json();const sql=this.ctx.storage.sql;',
   'if(b.lane==="inspect"){const r=sql.exec("SELECT length(payload) AS bytes FROM edge_ops WHERE id=?",b.identity).toArray()[0];return Response.json({retained:!!r&&r.bytes>0});}',
   'const expired=Date.now()-24*60*60*1000-1000;',
+  'if(b.lane==="unknown-records"){sql.exec("UPDATE edge_ops SET created=0,purge_due=? WHERE id=?",Date.now()-1,b.identity);return new Response("ok");}',
   'if(b.lane==="accept-live"){sql.exec("UPDATE live_backup SET accepted_at=? WHERE operation_id=?",expired,b.identity);return new Response("ok");}',
   'if(b.lane==="accept-records"){sql.exec("UPDATE edge_ops SET created=? WHERE id=?",expired,b.identity);return new Response("ok");}',
   'if(b.lane==="live")sql.exec("UPDATE live_backup SET accepted_at=?,verified_at=? WHERE operation_id=? AND state=\\x27verified\\x27",expired,expired,b.identity);',
@@ -197,4 +198,10 @@ test('acceptance age and recent Google proof jointly gate operation-specific cle
  assert.equal(await stagedPayloadRetained(mf,first.delivery.id),false);
  assert.equal(await stagedPayloadRetained(mf,newer.delivery.id),true,'One operation cannot expire another');
  assert.equal((await delivery.status(school,'records',first.delivery.id,read)).driveState,'verified');
+ assert.equal((await delivery.drain(school,'records',read)).processed,1);
+ const ns=await mf.getDurableObjectNamespace('LANES'),stub=ns.get(ns.idFromName(school+'/records'));
+ assert.equal((await stub.fetch('https://clock.invalid/__verified_clock_test',{method:'POST',body:JSON.stringify({lane:'unknown-records',identity:newer.delivery.id})})).status,200);
+ assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,0);
+ assert.equal(await stagedPayloadRetained(mf,newer.delivery.id),true,'Unknown legacy acceptance is retained');
+ assert.equal((await edge.rpc(school,'records',{command:'retention'})).nextCleanupAt,null,'Unknown age cannot cause an expired-alarm busy loop');
 });

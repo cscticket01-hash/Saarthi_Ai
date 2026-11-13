@@ -72,7 +72,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   // This cleanup runs only from an authenticated existing school-lane alarm;
   // a stale unverified request can stay queued past 24h without data loss.
   return storage.transactionSync(()=>{
-   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
+   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
    let cleared=0;
    for(const row of eligible){
     if(!verifiedPayloadExpired(row.state,row.verified_at,row.purge_due,Date.now(),row.created))continue;
@@ -85,12 +85,12 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     }
     cleared++;
    }
-   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0").toArray()[0]?.due;
    return {expired:cleared,nextCleanupAt:next??null};
   });
  }
  if(action==='retention'){
-  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0").toArray()[0]?.due;
   return {retentionHours:24,nextCleanupAt:next??null};
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
