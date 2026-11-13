@@ -13,7 +13,7 @@ function fixture(){
  const row={id,state:'pending',created:5000,payload:JSON.stringify(original),response:null,manifest:original};
  const rpc=async (s,l,b)=>{
   assert.equal(s,school);assert.equal(l,lane);
-  if(b.command==='pending')return row.state==='pending'||row.state==='retry'?[row]:[];
+  if(b.command==='pending')return row.state==='pending'||row.state==='retry'?[{...row,response:row.response?JSON.stringify(row.response):null}]:[];
   if(b.command==='claim')return true;
   if(b.command==='readPart'){const chunk=bytes.subarray(b.offset);return {offset:b.offset,sizeBytes:chunk.length,base64:chunk.toString('base64'),sha256:createHash('sha256').update(chunk).digest('hex')};}
   if(b.command==='finish'){row.state=b.values.state;row.response=b.values;return true;}
