@@ -16,9 +16,11 @@ String? cloudTransferMessage(Map<String, dynamic>? status) {
   final noticeAttention = (notices['needsAttention'] as num).toInt();
   final allAttention = (delivery['needsAttention'] as num? ?? 0).toInt();
   final attention = noticeAttention > allAttention ? noticeAttention : allAttention;
-  if (attention > 0) return 'Cloudflare saved · $attention transfers need school review.';
+  if (attention > 0) return 'Cloudflare background backup · $attention transfers need school review.';
   if ((notices['pending'] as num) > 0 || (delivery['pendingPartitions'] as num) > 0) {
-    return 'Cloudflare saved · Google Drive transfer pending.';
+    // This is a school-wide backend queue, not proof that this PC's latest
+    // student/record mutation reached a durable Cloudflare ACK.
+    return 'Cloudflare background backup · Google Drive transfer pending.';
   }
   return null;
 }
