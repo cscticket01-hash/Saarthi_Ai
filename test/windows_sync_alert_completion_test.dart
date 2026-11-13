@@ -64,6 +64,8 @@ void main() {
       'delivery': {'pendingPartitions': 1, 'needsAttention': 0},
     });
     expect(summary, contains('Google Drive transfer pending'));
+    expect(summary, isNot(contains('Cloudflare saved')),
+        reason: 'Aggregate backend backlog must not falsely confirm the current student upload.');
   });
 
   test('measured Drive progress never invents bytes or early completion', () {
@@ -92,6 +94,13 @@ void main() {
         'driveDurationMillis':12500,
       }],
     }),{'state':'completed','percent':100,'durationMillis':12500});
+  });
+  test('background backup attention is not presented as current local upload success', () {
+    expect(cloudTransferMessage({
+      'enabled': true,
+      'notices': {'pending': 0, 'needsAttention': 1},
+      'delivery': {'pendingPartitions': 0, 'needsAttention': 1},
+    }), allOf(contains('need school review'), isNot(contains('Cloudflare saved'))));
   });
   test('resolved transfers yield no alert when all queues are clear', () {
     expect(cloudTransferMessage({
