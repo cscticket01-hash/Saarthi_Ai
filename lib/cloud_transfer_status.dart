@@ -51,3 +51,43 @@ List<String> driveSaveMessages(Map<String, dynamic>? status) {
   }
   return messages;
 }
+
+
+/// A percentage is available only for bytes acknowledged by Google Drive.
+/// Cloudflare staging bytes, elapsed time and retry counts are not progress.
+Map<String, dynamic>? measuredDriveProgress(Map<String, dynamic>? status) {
+  if (status == null || status['unavailable'] == true ||
+      status['driveHistoryLocal'] != true) return null;
+  final rows = status['driveSaveHistory'];
+  if (rows is! List || rows.length > 25) return null;
+  Map? latestCompleted;
+  for (final item in rows) {
+    if (item is! Map || item['id'] is! String) continue;
+    if (item['state'] == 'completed') {
+      latestCompleted ??= item;
+      continue;
+    }
+    if (item['state'] != 'pending') continue;
+    final progress = item['driveProgress'];
+    if (progress is Map && progress['version'] == 1 &&
+        progress['totalBytes'] is int && progress['totalBytes'] > 0 &&
+        progress['acknowledgedBytes'] is int &&
+        progress['acknowledgedBytes'] >= 0 &&
+        progress['acknowledgedBytes'] < progress['totalBytes']) {
+      final done=progress['acknowledgedBytes'] as int;
+      final total=progress['totalBytes'] as int;
+      return {'state':'uploading', 'percent':(done*100/total).floor(),
+        'acknowledgedBytes':done, 'totalBytes':total};
+    }
+    return {'state':'verifying'};
+  }
+  // Completed means an independently verified owner receipt, not a timer.
+  // Older completions may have no trustworthy total-duration measurement.
+  if (latestCompleted != null) {
+    final duration = latestCompleted['driveDurationMillis'];
+    return {'state':'completed', 'percent':100,
+      if (duration is int && duration >= 0 && duration <= 86400000)
+        'durationMillis':duration};
+  }
+  return null;
+}
