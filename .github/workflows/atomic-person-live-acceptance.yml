@@ -27,6 +27,7 @@ jobs:
           node -e "require('./.github/scripts/await_test_gate.cjs').selectGate([], 'disaster', process.env.VS_EXPECTED_TEST_RUNTIME)"
       - uses: actions/download-artifact@v4
         with:
+          merge-multiple: true
           artifact-ids: '14059942279'
           run-id: '43470463029'
           repository: cscticket01-hash/Saarthi_Ai
