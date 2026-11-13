@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {fixture,validatePerson,verifyDeletedLogin,SCHOOL,SHA}=require('./resume_failed_delete_artifact.cjs');
 function source(){
- const student='TEST_DELETE_42999713169_00000000',documentId='TEST_DELETE_CARD_42999713169_00000000',feeId='TEST_DELETE_FEE_42999713169_00000000',fileId='synthetic-unit-file';
+ const student='TEST_DELETE_43433698955_00000000',documentId='TEST_DELETE_CARD_43433698955_00000000',feeId='TEST_DELETE_FEE_43433698955_00000000',fileId='synthetic-unit-file';
  return {schoolId:SCHOOL,sourceCommit:SHA,verifiedRuntime:SHA,status:'FAIL',realProviderCalls:true,syntheticDeleted:false,
  checks:['actual Google Drive original PDF byte SHA-256','Website API delta sees student and document before delete','actual Android mobile protocol can authenticate synthetic student','Android mobile protocol gets original TEST PDF before delete'].map(name=>({name,status:'PASS'})),
  fixtureIds:{student,documentId,feeId,fileId},reviewRequired:{student,documentId,feeId,fileId,deleteOperationId:'d'.repeat(32),originalParentRevision:'original-revision-0001'}};

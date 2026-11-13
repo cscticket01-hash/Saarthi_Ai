@@ -2,7 +2,7 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const {retryExactDelete,verifiedNativeReceipt}=require('./native_person_receipt.cjs');
 const {observeDeletePlan}=require('./delete_plan_progress.cjs');
-const SCHOOL='vs-db8afb01a3be46a983c8284714d06e5d',SHA='731bca40858285e9dc06450f9a6b9a41b6e461cc',RUN='42999713169';
+const SCHOOL='vs-db8afb01a3be46a983c8284714d06e5d',SHA='9b0faf19b81f2d2258adb2a1b6d3b69209f56fe0',RUN='43433698955';
 const API='https://saarthi-sync-v2-test.onrender.com/school-cloud';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 function fixture(r){
@@ -12,7 +12,7 @@ function fixture(r){
  for(const name of ['actual Google Drive original PDF byte SHA-256','Website API delta sees student and document before delete','actual Android mobile protocol can authenticate synthetic student','Android mobile protocol gets original TEST PDF before delete'])
   assert.ok(r.checks.some(x=>x.name===name));
  const f=r.reviewRequired,ids=r.fixtureIds;assert.ok(f&&ids);
- const match=/^TEST_DELETE_42999713169_([a-f0-9]{8})$/.exec(f.student||'');assert.ok(match);
+ const match=/^TEST_DELETE_43433698955_([a-f0-9]{8})$/.exec(f.student||'');assert.ok(match);
  assert.equal(f.documentId,'TEST_DELETE_CARD_'+RUN+'_'+match[1]);
  assert.equal(f.feeId,'TEST_DELETE_FEE_'+RUN+'_'+match[1]);
  for(const key of ['student','documentId','feeId','fileId'])assert.equal(f[key],ids[key]);
@@ -51,13 +51,13 @@ async function post(url,body,token){
 }
 async function main(){
  assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.GITHUB_REPOSITORY,'cscticket01-hash/Saarthi_Ai');
- assert.equal(process.env.GITHUB_REF,'refs/heads/test/resume-failed-delete-20261111');
+ assert.equal(process.env.GITHUB_REF,'refs/heads/test/resume-failed-delete-20261113');
  assert.equal(process.env.VS_TEST_CONNECT_CONFIRM,SCHOOL);
  const base='https://api.github.com/repos/cscticket01-hash/Saarthi_Ai';
  async function get(path){const r=await fetch(base+path,{headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+process.env.GITHUB_TOKEN},signal:AbortSignal.timeout(30000)});assert.equal(r.status,200);return r.json();}
  const run=await get('/actions/runs/'+RUN);
  assert.equal(run.head_sha,SHA);assert.equal(run.head_branch,'feature/smart-sync-3');assert.equal(run.event,'push');assert.equal(run.conclusion,'failure');assert.equal(run.head_repository.full_name,process.env.GITHUB_REPOSITORY);
- const artifact=await get('/actions/artifacts/13849243695');assert.equal(artifact.workflow_run.id,Number(RUN));assert.equal(artifact.name,'real-test-delete-everywhere-evidence');assert.equal(artifact.expired,false);
+ const artifact=await get('/actions/artifacts/14053010390');assert.equal(artifact.workflow_run.id,Number(RUN));assert.equal(artifact.name,'real-test-delete-everywhere-evidence');assert.equal(artifact.expired,false);
  const f=fixture(JSON.parse(fs.readFileSync('evidence/delete-everywhere-live.json','utf8')));
  await require('./test_runtime_identity.cjs').waitForRuntime(SHA);
  const key=fs.readFileSync('lib/platform/platform_config.dart','utf8').match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
