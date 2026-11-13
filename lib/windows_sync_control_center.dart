@@ -1,3 +1,5 @@
+import 'windows_drive_delivery_queue.dart';
+import 'cloudflare_save_notice.dart';
 import 'windows_sync_flow.dart';
 import 'windows_sync_evidence.dart';
 import 'windows_ui_localization.dart';
@@ -771,8 +773,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             const Text('Sync Errors & Alerts',
               style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16,
                 fontWeight: FontWeight.w600)),
-            if (progress != null)
-              _driveProgressIndicator(progress),
             for (final message in messages)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -1914,8 +1914,22 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
   Map<String, dynamic>? _status;
   String? _profile;
   bool _busy = false;
-  @override void initState() { super.initState(); if (widget.showTransfers && ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
-  @override void dispose() { _timer?.cancel(); super.dispose(); }
+  @override void initState() { super.initState(); WindowsDriveDeliveryQueue.changed.addListener(_localReceiptChanged); if (widget.showTransfers && ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
+  @override void dispose() { WindowsDriveDeliveryQueue.changed.removeListener(_localReceiptChanged); _timer?.cancel(); super.dispose(); }
+  Future<void> _localReceiptChanged() async {
+    if (!widget.showTransfers) return;
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (school is! String) return;
+    try {
+      final rows = await WindowsDriveDeliveryQueue.history(school);
+      if (!mounted || db.activeProfileId != origin) return;
+      final prior = _profile == origin ? _status : null;
+      setState(() { _profile = origin; _status = {
+        ...(prior ?? {'enabled':false}), 'driveSaveHistory':rows, 'driveHistoryLocal':true,
+      }; });
+    } catch (_) { /* Display notifications never acknowledge or remove work. */ }
+  }
   Future<void> _refresh() async {
     if (_busy || !widget.showTransfers) return;
     _busy = true;
@@ -1938,8 +1952,16 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
         if (widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId) ...driveSaveMessages(_status)}.toList();
       final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
           ? measuredDriveProgress(_status) : null;
-      return messages.isEmpty && progress == null ? const SizedBox.shrink()
-          : widget.panelBuilder!(messages, progress);
+      return messages.isEmpty && progress == null &&
+          !((_status?['driveSaveHistory'] as List? ?? const []).any((r) => r is Map && r['cloudflareAccepted'] == true))
+          ? const SizedBox.shrink() : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              widget.panelBuilder!(messages, null),
+              CloudflareSaveNotice(key: ValueKey(_profile), rows:
+                widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+                  ? [for (final row in (_status?['driveSaveHistory'] as List? ?? const []))
+                      if (row is Map) Map<String,dynamic>.from(row)]
+                  : const []),
+            ]);
     }
     final history = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
         ? driveSaveMessages(_status) : const <String>[];
@@ -1949,34 +1971,9 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     if (lines.isEmpty && progress == null) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 10),
       child: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        if (progress != null) _driveProgressIndicator(progress),
         if (lines.isNotEmpty) Text(lines.join('\n'),
           style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
             color: WindowsAppearance.foreground(Colors.orangeAccent))),
       ]));
   }
-}
-
-/// Determinate only after a signed Google acknowledgement of actual bytes.
-Widget _driveProgressIndicator(Map<String, dynamic> progress) {
-  final percent = progress['percent'];
-  final measured = percent is int && percent >= 0 && percent <= 100;
-  final done = progress['state'] == 'completed' && measured && percent == 100;
-  final duration = progress['durationMillis'];
-  final time = done && duration is int && duration >= 0
-      ? ' · ${(duration / 1000).toStringAsFixed(2)} s' : '';
-  return Padding(
-    padding: const EdgeInsets.only(top: 8,bottom: 8),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Expanded(child: Text('Google Drive delivery',
-          style: TextStyle(fontFamily:'Segoe UI',fontSize:13))),
-        Text(measured ? '$percent%$time' : 'Uploading / verifying',
-          style: const TextStyle(fontFamily:'Segoe UI',fontSize:13)),
-      ]),
-      const SizedBox(height:6),
-      LinearProgressIndicator(value:measured ? percent / 100 : null,
-        minHeight:6),
-    ]),
-  );
 }

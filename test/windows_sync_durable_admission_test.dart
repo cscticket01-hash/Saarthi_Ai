@@ -131,7 +131,7 @@ void main() {
     ]) { expect(automaticDuplicateReadback(invalid,cloud),false); }
   });
 
-  test('fresh mutation advances long retry timer without duplicating dispatch', () {
+  test('fresh durable mutation dispatches immediately without duplicating or postponing work', () {
     var now = DateTime.utc(2026,10,11);
     var dispatches = 0;
     final timers = <_DispatchTimer>[];
@@ -146,13 +146,13 @@ void main() {
     // Ordinary polling retains the existing single admission timer.
     dispatch.request(const Duration(minutes:4));
     expect(timers,hasLength(1));
-    dispatch.request(const Duration(milliseconds:250),localMutation:true);
+    dispatch.request(Duration.zero,localMutation:true);
     expect(timers,hasLength(2));
     expect(timers.first.isActive,false);
-    expect(delays.last,const Duration(milliseconds:250));
+    expect(delays.last,Duration.zero);
     // More edits cannot move the admitted burst later or create another timer.
     now = now.add(const Duration(milliseconds:10));
-    dispatch.request(const Duration(milliseconds:250),localMutation:true);
+    dispatch.request(Duration.zero,localMutation:true);
     expect(timers,hasLength(2));
     timers.first.fire();expect(dispatches,0);
     timers.last.fire();expect(dispatches,1);

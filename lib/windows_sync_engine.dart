@@ -1394,6 +1394,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
 
     if (lastError == null) state.value = SchoolCloudState.syncPending;
+    // Durable local mutations start immediately; provider admission still wins.
+    if (localMutation) delay = Duration.zero;
     if (_nextRetry != null && _nextRetry!.isAfter(DateTime.now()))
       delay = _nextRetry!.difference(DateTime.now());
     // Fresh data can advance an already armed long retry timer. The durable

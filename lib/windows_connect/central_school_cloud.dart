@@ -523,6 +523,7 @@ class CentralSchoolCloud {
         'profileId': receiptProfile,
         if (body['collection'] is String) 'collection': body['collection'],
         if (body['id'] is String) 'id': body['id'],
+        if (body['operation'] == 'write' || body['operation'] == 'delete') 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
             'edgeDeliveryVersion', 'driveState', 'delivery', 'committed', 'fileId'])
