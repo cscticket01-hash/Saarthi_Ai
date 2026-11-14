@@ -6,6 +6,8 @@ on:
       - '.github/workflows/test-sync3-release-gates.yml'
       - '.github/scripts/sync3_current_original_proof_audit.cjs'
       - '.github/scripts/sync3_live_script_admission_readonly.cjs'
+      - '.github/scripts/cloudflare_delivery_acceptance.cjs'
+      - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,6 +43,7 @@ jobs:
           npm --prefix functions install --ignore-scripts --no-package-lock
           npm --prefix functions test
           node --test .github/scripts/sync3_capacity_budget.test.cjs
+          node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
 
   flutter-retry-and-isolation:
     name: Windows/Android local outbox, quota 507 and multi-PC SQLite
