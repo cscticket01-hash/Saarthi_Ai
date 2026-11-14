@@ -1,0 +1,47 @@
+name: TEST-only CAS retirement for exactly two authenticated original Drive proofs
+on:
+  push:
+    branches: [test/exact-original-2-proof-cas-20261114]
+    paths:
+      - '.github/scripts/test_exact_original_two_proofs_cas.cjs'
+      - '.github/workflows/test-exact-original-two-proofs-cas.yml'
+permissions:
+  contents: read
+concurrency:
+  # Same admission-mutation group as PR #300; never race its TEST-school writes.
+  group: sync3-20261114-safe-real-provider-gates
+  cancel-in-progress: false
+env:
+  VS_EXPECTED_TEST_RUNTIME: db191a1c252a9ffb35847a8df8b4d2720e016c59
+jobs:
+  exact-original-proofs-only:
+    name: TEST only: CAS-retire two proved original operations, preserve fourteen
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/exact-original-2-proof-cas-20261114'
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require exact deployed TEST business/Worker source
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node --check .github/scripts/test_exact_original_two_proofs_cas.cjs
+          node --test .github/scripts/sync3_original_release_gate.test.cjs
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
+      - name: Retire ONLY two exact prior signed Google Drive original proofs through existing CAS
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_exact_original_two_proofs_cas.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-only-original-two-exact-proof-cas-evidence
+          path: build/cloud-prerequisites/exact-original-2-cas.json
+          retention-days: 7
