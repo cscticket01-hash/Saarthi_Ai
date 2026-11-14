@@ -45,3 +45,12 @@ This PR is TEST-only initial private-R2 staging for school record + file lanes. 
 - Writes and deletion serialize per immutable object key. Different objects/schools can proceed concurrently. Failed R2 deletion retains its full byte charge and alarm recovery.
 - Atomic bundle intent is staged once before its all-or-nothing ACK. R2 verification requires every original event’s existing signed Google backup to verify; one completed child is insufficient.
 - This ledger controls this dedicated bucket through one namespace and actor. It cannot guarantee an account-wide billing cap against other buckets, credentials or external writers. Production must use the same authoritative ledger for any shared bucket; separate ledgers must never independently admit against one shared ceiling.
+
+
+## Real isolated TEST provider evidence
+
+[Run 43589246677](https://github.com/cscticket01-hash/Saarthi_Ai/actions/runs/43589246677) verified a synthetic file on Worker source 9204b986: Cloudflare durable ACK 4,185 ms, Google queue wait 864 ms, provider delivery 9,003 ms, combined Google duration 9,867 ms. Uploader process exited, no client API traffic occurred for 180 seconds, and a fresh process's first receipt read found verified Google delivery; independent byte readback matched. This is file-process-off acceptance, not physical device shutdown, whole person bundles or universal client Idle latency.
+
+An independent private R2 API read matched all 54 original PDF bytes and SHA-256. SQL ledger showed exactly 54 verified school bytes, final owner acceptance, ordered Google proof and 86,400,000 ms retention. No real 24-hour expiry has yet elapsed.
+
+Original-owner completion and quota verification notification now use an existing-lane durable notification outbox and alarm retry. Injected quota RPC failure retains the notification and R2 bytes; the owner's next alarm repairs it without a client or duplicate Google write.

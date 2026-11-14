@@ -19,6 +19,7 @@ export class SyncLane extends DurableObject<Env>{
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS lanes (name TEXT PRIMARY KEY,due INTEGER NOT NULL,attention INTEGER NOT NULL DEFAULT 0)');
   if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='attention'))ctx.storage.sql.exec('ALTER TABLE lanes ADD COLUMN attention INTEGER NOT NULL DEFAULT 0');
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY,body TEXT NOT NULL)');
+  ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS r2_verification_pending (school TEXT NOT NULL,lane TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(school,lane,id))');
  });}
  private meta(key:string):string|undefined{return this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM metadata WHERE key=?',key).toArray()[0]?.value;}
  private setMeta(key:string,value:string){this.ctx.storage.sql.exec('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,value);}
@@ -47,6 +48,23 @@ export class SyncLane extends DurableObject<Env>{
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
   this.setMeta('r2BudgetActor','v1');
   return r2BudgetStatus(this.ctx.storage);
+ }
+ private async queueR2Verification(school:string,lane:string,id:string){
+  // Completion in the original owner and notification to the quota actor
+  // are separate durable transactions. Retain a retry if the second RPC fails.
+  this.ctx.storage.sql.exec('INSERT OR IGNORE INTO r2_verification_pending VALUES(?,?,?)',school,lane,id);
+  await this.wake(Date.now()+60_000);
+  await this.flushR2Verifications();
+ }
+ private async flushR2Verifications(){
+  const rows=this.ctx.storage.sql.exec<{school:string;lane:string;id:string}>(
+   'SELECT * FROM r2_verification_pending LIMIT 25').toArray();
+  for(const row of rows){
+   try{
+    await this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1').r2OriginalVerified(row.school,row.lane,row.id);
+    this.ctx.storage.sql.exec('DELETE FROM r2_verification_pending WHERE school=? AND lane=? AND id=?',row.school,row.lane,row.id);
+   }catch{break;}
+  }
  }
  async command(school:string,lane:string,b:Json):Promise<unknown>{
   demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
@@ -193,7 +211,7 @@ export class SyncLane extends DurableObject<Env>{
    // revision, current claim, event and immutable original live operation.
    // Mark the R2 original only AFTER that verified transaction succeeds.
    if(staged&&verifiedLive&&verifiedOp&&result.accepted===true){
-    await budget().r2OriginalVerified(school,'live',
+    await this.queueR2Verification(school,'live',
      await digest(JSON.stringify([school,'live',verifiedOp])));
     const event=this.ctx.storage.sql.exec<{bundle_id:string|null}>(
       'SELECT bundle_id FROM live_events WHERE seq=?',Number(b.sequence)).toArray()[0];
@@ -201,7 +219,7 @@ export class SyncLane extends DurableObject<Env>{
      const rows=this.ctx.storage.sql.exec<{state:string}>(
        'SELECT b.state FROM live_backup b JOIN live_events e ON e.seq=b.seq WHERE e.bundle_id=?',event.bundle_id).toArray();
      if(rows.length>=2&&rows.every(row=>row.state==='verified'))
-      await budget().r2OriginalVerified(school,'live',
+      await this.queueR2Verification(school,'live',
         await digest(JSON.stringify([school,'bundle',event.bundle_id])));
     }
    }
@@ -282,7 +300,7 @@ export class SyncLane extends DurableObject<Env>{
        Array.isArray(ack.acknowledgements)&&(ack.acknowledgements as Json[]).every(x=>x.success===true));
     const fileAccepted=lane.startsWith('file-')&&ack?.success===true&&ack.schoolId===school&&
       ack.committed===true&&typeof ack.fileId==='string';
-    if(allAccepted||fileAccepted)await budget().r2OriginalVerified(school,lane,id);
+    if(allAccepted||fileAccepted)await this.queueR2Verification(school,lane,id);
    }
    return result;
   }
@@ -383,7 +401,7 @@ export class SyncLane extends DurableObject<Env>{
       revision.length>0&&!/^(live-|cf-)/.test(revision)&&
       typeof values.completedAt==='number'&&Number.isSafeInteger(values.completedAt);
     if(verifiedAttendance||verifiedNotice)
-     await budget().r2OriginalVerified(school,lane,id);
+     await this.queueR2Verification(school,lane,id);
    }
    return true;
   }
@@ -449,6 +467,8 @@ export class SyncLane extends DurableObject<Env>{
   socket.send(JSON.stringify(liveCommand(this.ctx.storage,grant.schoolId,{command:'head'})));
  }
  async alarm(){
+  try{
+   await this.flushR2Verifications();
   if(this.meta('r2BudgetActor')==='v1'){
    try{const result=await sweepR2Verified(this.ctx.storage,this.env.R2_STAGE);
     if(result.nextCleanupAt!==null)await this.wake(result.more?Date.now()+1000:result.nextCleanupAt);
@@ -493,6 +513,10 @@ export class SyncLane extends DurableObject<Env>{
   else this.ctx.storage.sql.exec('UPDATE lanes SET due=?,attention=? WHERE name=?',stats.pending===0?Number.MAX_SAFE_INTEGER:Math.max(Date.now()+delay,stats.due),stats.needsAttention,next.name);
   const due=this.ctx.storage.sql.exec<{due:number}>('SELECT min(due) AS due FROM lanes WHERE due < 9007199254740991').toArray()[0]?.due;
   if(due!==null&&due!==undefined)await this.ctx.storage.setAlarm(Math.max(Date.now()+100,due));
+  }finally{
+   if(this.ctx.storage.sql.exec<{n:number}>('SELECT count(*) AS n FROM r2_verification_pending').toArray()[0].n>0)
+    await this.wake(Date.now()+60_000);
+  }
  }
 
 }

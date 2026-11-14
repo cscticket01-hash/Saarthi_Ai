@@ -11,9 +11,22 @@ test('R2 actor deletes ONLY real Drive-verified original after 24h; uncertain by
  const base=await readFile(new URL('../dist/worker.js',import.meta.url),'utf8');
  const wrapper=`
 export class R2VerifiedTimeLane extends SyncLane {
+ async r2OriginalVerified(...args){
+  const sql=this.ctx.storage.sql;
+  if(sql.exec("SELECT value FROM metadata WHERE key='test_fail_verification'").toArray()[0]?.value==='1'){
+   sql.exec("DELETE FROM metadata WHERE key='test_fail_verification'");
+   throw Error('synthetic quota notification outage');
+  }
+  return super.r2OriginalVerified(...args);
+ }
  async fetch(request) {
   if(new URL(request.url).pathname==='/__private_retention_clock') {
    const b=await request.json(),sql=this.ctx.storage.sql;
+   if(b.mode==='fail_verification'){
+    sql.exec("INSERT OR REPLACE INTO metadata VALUES('test_fail_verification','1')");
+    return Response.json({configured:true});
+   }
+   if(b.mode==='pending_verification')return Response.json({pending:sql.exec('SELECT count(*) AS n FROM r2_verification_pending').toArray()[0].n});
    if(b.mode==='inspect') {
     const rows=sql.exec("SELECT key,state,accepted_at,accepted_final,verified_at,purge_due FROM r2_staged WHERE key=?",
       b.key).toArray();
@@ -103,6 +116,7 @@ export class R2VerifiedTimeLane extends SyncLane {
  const claim='synthetic-google-claim';
  const claimed=await rpc('claim',{id:verified.id,claim,expires:Date.now()+60000});
  assert.equal(claimed.value,true);
+ await inspect(verified.key,'fail_verification');
  const saved=await rpc('finish',{id:verified.id,claim,values:{
   state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,
   result:{success:true,schoolId:school,syncProtocol:2,
@@ -112,7 +126,14 @@ export class R2VerifiedTimeLane extends SyncLane {
  }});
  assert.equal(saved.status,200,JSON.stringify(saved));
  assert.equal(saved.value,true);
- assert.equal((await inspect(verified.key,'inspect')).rows[0].state,'verified');
+ assert.equal((await inspect(verified.key,'inspect')).rows[0].state,'stored',
+  'Original Google completion must survive a failed quota notification');
+ const originalOwner=ns.get(ns.idFromName(school+'/records'));
+ const pending=await originalOwner.fetch('https://owner.test/__private_retention_clock',{method:'POST',body:JSON.stringify({mode:'pending_verification'})});
+ assert.equal((await pending.json()).pending,1,'Failed notification is durably queued');
+ await originalOwner.fetch('https://owner.test/__private_retention_clock',{method:'POST',body:JSON.stringify({mode:'sweep'})});
+ assert.equal((await inspect(verified.key,'inspect')).rows[0].state,'verified',
+  'Owner alarm independently retries original proof notification');
  assert.equal((await inspect(uncertain.key,'inspect')).rows[0].state,'stored');
  // An unverified original must NOT be deleted even with a forged old age.
  await inspect(uncertain.key,'age_uncertain');
