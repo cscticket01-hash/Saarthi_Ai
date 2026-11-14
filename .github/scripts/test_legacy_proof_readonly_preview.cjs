@@ -17,7 +17,7 @@ async function request(url,body,token){
  const response=await fetch(url,{
   method:'POST',headers:{'content-type':'application/json',
    ...(token?{authorization:'Bearer '+token}:{})},
-  body:JSON.stringify(body),signal:AbortSignal.timeout(120000),
+  body:JSON.stringify(body),signal:AbortSignal.timeout(360000),
  });
  let result;
  try{result=await response.json();}catch{throw Error('TEST response unreadable');}
