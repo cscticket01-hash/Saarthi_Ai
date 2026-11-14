@@ -18,6 +18,8 @@ test('durable notice receipt precedes Drive delivery, survives retries, isolates
  assert.equal(uninitialized.status,409);assert.equal(Object.hasOwn(uninitialized,'schoolId'),false,'An unrelated 409 must not attest provider rejection');
  const stale=await rpc('write',{request:{...request,operationId:'operation-000000000002',data:{schoolId:school,title:'Bad overwrite'}}});assert.equal(stale.status,409);assert.equal(stale.schoolId,school);assert.equal(stale.message,'Record revision conflict');
  const conflict=await rpc('write',{request:{...request,data:{schoolId:school,title:'Changed replay'}}});assert.equal(conflict.status,409);assert.equal(conflict.schoolId,school);assert.equal(conflict.message,'Sync operation ID conflict');
+ const staleDelete=await rpc('write',{request:{...request,operation:'delete',operationId:'operation-000000000099'}});
+ assert.equal(staleDelete.status,409);assert.equal(Object.hasOwn(staleDelete,'schoolId'),false,'Notice delete conflicts must retain uncertain delete markers');
  const next=await rpc('write',{request:{...request,operationId:'operation-000000000003',expectedRecordRevision:first.value.recordRevision,data:{schoolId:school,title:'Second'}}});assert.equal(next.value.record.title,'Second');
  const pending=await rpc('pending',{limit:25});assert.equal(pending.value.length,1); // FIFO even with two edits.
  const job=pending.value[0];assert.equal(await rpc('claim',{id:job.id,claim:'claim-one',expires:Date.now()+10000}).then(r=>r.value),true);
