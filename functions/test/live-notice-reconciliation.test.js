@@ -77,3 +77,23 @@ test('a missing or foreign notice proof still retains a marker after upstream re
   assert.ok(f.docs.get('school_live_migrations/'+A).inflight.original);
  }
 });
+
+test('sanitized preview distinguishes a missing original notice job from a mismatched completed job',async()=>{
+ for(const [receipt,reason] of [
+  [{schoolId:A,lane:'notices',job:null},'notice_job_missing'],
+  [{...proof(),job:{...proof().job,kind:'other'}},'notice_receipt_mismatch'],
+ ]){
+  const f=fixture(),marker={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+  f.docs.set('school_live_migrations/'+A,{inflight:{original:marker}});
+  f.db.runTransaction=async()=>{throw Error('read-only inspection must not mutate');};
+  const result=await createLiveReconciliation({db:f.db,
+   readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{}}),
+   readNoticeReceipt:async()=>receipt,
+  }).reconcile(A,{previewOnly:true});
+  assert.equal(result.previewWouldClear,0);
+  assert.equal(result.proofSources[reason],1);
+  assert.equal(result.reasons.proof_unverified,1);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.original);
+  assert.ok(!JSON.stringify(result).includes(binding.operationId));
+ }
+});
