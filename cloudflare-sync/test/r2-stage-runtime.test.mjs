@@ -86,3 +86,58 @@ test('missing private bucket fails closed; no record is acknowledged as R2 stage
  assert.equal(response.success,false);
  assert.equal(response.schoolId,undefined);
 });
+
+test('original school notice is staged before ACK, and only a matching Drive-finished job releases verification',async t=>{
+ const {mf,rpc}=await harness(t);
+ assert.equal((await rpc('seed',{records:{},revision:'legacy'},'notices')).http,200);
+ const request={action:'managed_records',collection:'school_notices',operation:'write',
+  syncProtocol:2,id:'notice-r2',operationId:'r2-notice-original-operation-001',
+  expectedRecordRevision:'',data:{schoolId:school,title:'Private notice'}};
+ const first=await rpc('write',{request},'notices');
+ assert.equal(first.http,200,JSON.stringify(first));
+ const id=digest(JSON.stringify([school,request.operationId]));
+ const bucket=await mf.getR2Bucket('R2_STAGE'),
+  key='saarthi-v1/'+school+'/notices/'+id+'/0';
+ assert.deepEqual(JSON.parse(await (await bucket.get(key)).text()),request);
+ const actorNamespace=await mf.getDurableObjectNamespace('LANES'),
+  actor=actorNamespace.get(actorNamespace.idFromName('saarthi-account-r2-staging-budget-v1'));
+ const before=(await actor.r2CapacityStatus()).schoolBytes;
+ const replay=await rpc('write',{request},'notices');
+ assert.equal(replay.http,200);
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,before);
+ const conflict=await rpc('write',{request:{...request,data:{schoolId:school,title:'Different'}}},'notices');
+ assert.equal(conflict.http,409,'Same original operation ID cannot silently replace its R2 payload');
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,before);
+ const pending=await rpc('pending',{limit:2},'notices');
+ assert.equal(pending.value.length,1);
+ const claim='test-notice-verified-claim';
+ assert.equal((await rpc('claim',{id,claim,expires:Date.now()+60000},'notices')).value,true);
+ const end=await rpc('finish',{id,claim,values:{state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  completedAt:Date.now(),driveRevision:'gdrive-signed-original-revision'}},'notices');
+ assert.equal(end.http,200,JSON.stringify(end));
+ assert.ok(await bucket.head(key),'Verified original R2 bytes remain within 24h');
+});
+test('encrypted attendance is staged before its DO ACK, old completion with no owner proof stays unverified',async t=>{
+ const {mf,rpc}=await harness(t);
+ const id='a1'+'9'.repeat(62),lane='attendance-a1';
+ const row={operationId:id,schoolId:school,createdAt:Date.now(),
+  day:'2026-11-14',mode:'entry',payload:{encrypted:'opaque-example'},
+  state:'pending',attempts:0};
+ const first=await rpc('create',{id,row},lane);
+ assert.equal(first.http,200,JSON.stringify(first));assert.equal(first.value,true);
+ const key='saarthi-v1/'+school+'/'+lane+'/'+id+'/0';
+ const bucket=await mf.getR2Bucket('R2_STAGE');
+ assert.deepEqual(JSON.parse(await (await bucket.get(key)).text()),row);
+ const again=await rpc('create',{id,row},lane);
+ assert.equal(again.value,false,'Exact original attendance replay stays idempotent');
+ const actorNamespace=await mf.getDurableObjectNamespace('LANES'),
+  actor=actorNamespace.get(actorNamespace.idFromName('saarthi-account-r2-staging-budget-v1'));
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(row)));
+ const claim='attendance-claim';
+ assert.equal((await rpc('claim',{id,claim,expires:Date.now()+60000},lane)).value,true);
+ const finish=await rpc('finish',{id,claim,values:{state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER}},lane);
+ assert.equal(finish.http,200);
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(row)),
+  'No valid owner receipt means the R2 copy cannot be expired or released');
+ assert.ok(await bucket.head(key));
+});
