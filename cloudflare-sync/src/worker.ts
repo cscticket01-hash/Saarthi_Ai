@@ -47,6 +47,32 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
+   const staged=this.env.R2_STAGING_ENABLED==='true';
+   const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
+   if(staged&&b.command==='commit'){
+    demand(this.env.R2_STAGE!==undefined,'Private R2 bucket binding required',503);
+    demand(typeof b.operationId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId)&&
+     typeof b.collection==='string'&&typeof b.id==='string'&&b.id.length>0&&
+     ['write','delete','patch'].includes(String(b.operation))&&
+     typeof b.expectedRevision==='string','Invalid original live R2 admission',400);
+    const active=this.ctx.storage.sql.exec<{state:string}>(
+     'SELECT state FROM live_collections WHERE collection=?',String(b.collection)).toArray()[0];
+    demand(active?.state==='active','Verified live collection not active',412);
+    const prior=this.ctx.storage.sql.exec<{state:string}>(
+     "SELECT state FROM live_backup WHERE operation_id=? AND collection=? AND id=? ORDER BY seq DESC LIMIT 1",
+     String(b.operationId),String(b.collection),String(b.id)).toArray()[0];
+    if(prior?.state!=='verified'){
+     const encoded=new TextEncoder().encode(JSON.stringify(b));
+     demand(encoded.byteLength>0&&encoded.byteLength<=256000,'Original live record too large',413);
+     await budget().stageR2Object(school,'live',
+      await digest(JSON.stringify([school,'live',b.operationId])),0,encoded.buffer as ArrayBuffer);
+    }
+   }
+   const verifiedLive=b.command==='backupFinish'&&b.verified===true&&
+    Number.isSafeInteger(b.sequence)&&Number(b.sequence)>0;
+   const verifiedOp=verifiedLive?
+    this.ctx.storage.sql.exec<{operation_id:string}>(
+     "SELECT operation_id FROM live_backup WHERE seq=? AND state='processing'",Number(b.sequence)).toArray()[0]?.operation_id:null;
    if(b.command==='bundlePrepare'){
     // Read-only preflight on the existing per-file DOs. No new file queue,
     // no new record authority and, crucially, NO bundle commit/visible ACK.
@@ -137,6 +163,13 @@ export class SyncLane extends DurableObject<Env>{
    }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b,Date.now(),false,verifiedMedia);
+   // The signed backupFinish owner has already atomically checked Drive
+   // revision, current claim, event and immutable original live operation.
+   // Mark the R2 original only AFTER that verified transaction succeeds.
+   if(staged&&verifiedLive&&verifiedOp&&result.accepted===true){
+    await budget().r2OriginalVerified(school,'live',
+     await digest(JSON.stringify([school,'live',verifiedOp])));
+   }
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
     const head=liveCommand(this.ctx.storage,school,{command:'head'});
     if(Number(head.cursor)>10000)liveCommand(this.ctx.storage,school,{command:'compact',before:Number(head.cursor)-10000});
