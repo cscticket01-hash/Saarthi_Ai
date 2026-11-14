@@ -11,6 +11,13 @@ test('R2 actor deletes ONLY real Drive-verified original after 24h; uncertain by
  const base=await readFile(new URL('../dist/worker.js',import.meta.url),'utf8');
  const wrapper=`
 export class R2VerifiedTimeLane extends SyncLane {
+ async stageR2Object(...args){
+  const sql=this.ctx.storage.sql;
+  if(sql.exec("SELECT value FROM metadata WHERE key='test_fail_stage'").toArray()[0]?.value==='1'){
+   sql.exec("DELETE FROM metadata WHERE key='test_fail_stage'");throw Error('synthetic R2 staging RPC outage');
+  }
+  return super.stageR2Object(...args);
+ }
  async r2OriginalVerified(...args){
   const sql=this.ctx.storage.sql;
   if(sql.exec("SELECT value FROM metadata WHERE key='test_fail_verification'").toArray()[0]?.value==='1'){
@@ -22,6 +29,9 @@ export class R2VerifiedTimeLane extends SyncLane {
  async fetch(request) {
   if(new URL(request.url).pathname==='/__private_retention_clock') {
    const b=await request.json(),sql=this.ctx.storage.sql;
+   if(b.mode==='fail_stage'){
+    sql.exec("INSERT OR REPLACE INTO metadata VALUES('test_fail_stage','1')");return Response.json({configured:true});
+   }
    if(b.mode==='fail_verification'){
     sql.exec("INSERT OR REPLACE INTO metadata VALUES('test_fail_verification','1')");
     return Response.json({configured:true});
@@ -169,5 +179,17 @@ export class R2VerifiedTimeLane extends SyncLane {
  const sealed=(await inspect(firstKey,'inspect')).rows[0];
  assert.equal(sealed.accepted_final,1);
  assert.ok(sealed.accepted_at>=sealedAt,'Earlier chunks retain at least 24h from final original acceptance');
+
+ // A lost R2 RPC before acceptance must keep the first encrypted envelope in
+ // the existing durable attendance owner, even if the broker re-encrypts retry.
+ const attendanceId='a2'+'5'.repeat(62),attendanceLane='attendance-a2';
+ const firstCapture={schoolId:school,operationId:attendanceId,day:'2026-11-14',mode:'entry',createdAt:Date.now(),payload:{iv:'first-IV',body:'first-ciphertext'}};
+ await inspect(verified.key,'fail_stage');
+ assert.equal((await rpc('create',{id:attendanceId,row:firstCapture},attendanceLane)).status,503);
+ const resumed=await rpc('create',{id:attendanceId,row:{...firstCapture,createdAt:Date.now()+1,payload:{iv:'new-IV',body:'new-ciphertext'}}},attendanceLane);
+ assert.equal(resumed.status,200,JSON.stringify(resumed));assert.equal(resumed.value,true);
+ const originalKey='saarthi-v1/'+school+'/'+attendanceLane+'/'+attendanceId+'/0';
+ assert.deepEqual(JSON.parse(await (await bucket.get(originalKey)).text()),firstCapture,
+  'Recovery stages the pinned original, never a regenerated retry envelope');
 
 });

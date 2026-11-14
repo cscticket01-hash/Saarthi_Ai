@@ -343,10 +343,28 @@ export class SyncLane extends DurableObject<Env>{
     demand(row&&row.schoolId===school&&row.operationId===id&&
      /^[a-f0-9]{64}$/.test(id)&&id.slice(0,2)===lane.slice(-2),
      'Invalid original attendance R2 admission',400);
-    const encoded=new TextEncoder().encode(JSON.stringify(row));
-    demand(encoded.byteLength>0&&encoded.byteLength<=300000,
-     'Original attendance request too large',413);
-    await budget().stageR2Object(school,lane,id,0,encoded.buffer as ArrayBuffer);
+    const prior=this.job(id);
+    if(prior){
+     // Attendance identity is one person/day/mode. An identical client retry
+     // is re-encrypted with a fresh nonce and timestamps by the broker. Keep
+     // the FIRST durable original; never stage the retry envelope as a write.
+     const original=JSON.parse(prior.payload) as Json;
+     demand(prior.kind==='attendance'&&original.schoolId===school&&
+      original.operationId===id&&original.day===row.day&&original.mode===row.mode,
+      'Attendance original identity conflict',409);
+    }else{
+     const original=JSON.stringify(row),size=new TextEncoder().encode(original).byteLength;
+     demand(size>0&&size<=300000,'Original attendance request too large',413);
+     // Pin the first encrypted envelope before the cross-object R2 await.
+     // A failed put or process restart retries THIS envelope, not fresh IVs.
+     this.ctx.storage.sql.exec("INSERT INTO jobs(id,kind,payload,state,due,created) VALUES(?,'attendance',?,'staging',?,?)",
+      id,original,Number.MAX_SAFE_INTEGER,Number(row.createdAt));
+    }
+    const staged=this.job(id);
+    if(staged?.state==='staging'){
+     const encoded=new TextEncoder().encode(staged.payload);
+     await budget().stageR2Object(school,lane,id,0,encoded.buffer as ArrayBuffer);
+    }
    }
   }
   if(action==='retireNoticeCache'){
@@ -407,7 +425,14 @@ export class SyncLane extends DurableObject<Env>{
   }
   if(action==='create'){
    demand(lane.startsWith('attendance-')&&operationPattern.test(id));const row=b.row as Json;demand(row&&row.schoolId===school&&row.operationId===id&&id.slice(0,2)===lane.slice(-2));
-   if(this.job(id)){if(stageOther)await budget().r2OriginalAccepted(school,lane,id);return false;}
+   const prior=this.job(id);
+   if(prior){
+    const firstAccepted=stageOther&&prior.state==='staging';
+    if(firstAccepted)this.ctx.storage.sql.exec("UPDATE jobs SET state='pending',due=? WHERE id=? AND state='staging'",Date.now(),id);
+    if(stageOther)await budget().r2OriginalAccepted(school,lane,id);
+    if(firstAccepted)await this.wake(Date.now()+250);
+    return firstAccepted;
+   }
    this.ctx.storage.sql.exec('INSERT INTO jobs(id,kind,payload,state,due,created) VALUES(?,\'attendance\',?,\'pending\',?,?)',id,JSON.stringify(row),Date.now(),Number(row.createdAt));if(stageOther)await budget().r2OriginalAccepted(school,lane,id);await this.wake(Date.now()+250);return true;
   }
   demand(lane==='notices');
