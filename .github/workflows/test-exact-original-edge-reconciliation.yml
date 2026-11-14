@@ -5,6 +5,11 @@ on:
     paths:
       - '.github/workflows/test-exact-original-edge-reconciliation.yml'
       - '.github/scripts/test_exact_original_edge_reconciliation.cjs'
+  pull_request:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/workflows/test-exact-original-edge-reconciliation.yml'
+      - '.github/scripts/test_exact_original_edge_reconciliation.cjs'
 permissions:
   contents: read
 concurrency:
