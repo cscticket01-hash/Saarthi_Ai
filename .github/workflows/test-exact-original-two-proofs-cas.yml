@@ -15,7 +15,7 @@ env:
   VS_EXPECTED_TEST_RUNTIME: db191a1c252a9ffb35847a8df8b4d2720e016c59
 jobs:
   exact-original-proofs-only:
-    name: TEST only: CAS-retire two proved original operations, preserve fourteen
+    name: "TEST only: CAS-retire two proved original operations, preserve fourteen"
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/exact-original-2-proof-cas-20261114'
     runs-on: ubuntu-latest
     timeout-minutes: 22
