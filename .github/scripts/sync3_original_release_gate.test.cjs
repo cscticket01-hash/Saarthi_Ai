@@ -31,6 +31,17 @@ test('14 unresolved original operations block release even with zero queue and g
  assert.equal(r.unresolvedOriginalCount,14);
  assert.ok(r.blockerCodes.includes('UNSETTLED_ORIGINAL_OPERATIONS'));
 });
+test('16 authentic unresolved originals report a release blocker without mislabeling valid read-only evidence',()=>{
+ const f=fixture();
+ f.audit.status='READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED';
+ f.audit.before.unsettledWrites=16;f.audit.after.unsettledWrites=16;
+ f.audit.reconciliation.scanned=16;f.audit.reconciliation.retained=16;
+ const result=evaluateEvidence(f);
+ assert.equal(result.status,'RELEASE_BLOCKED');
+ assert.equal(result.productionAuthorized,false);
+ assert.equal(result.unresolvedOriginalCount,16);
+ assert.deepEqual(result.blockerCodes,['UNSETTLED_ORIGINAL_OPERATIONS']);
+});
 test('incomplete or changed read-only scan fails closed',()=>{
  for(const change of [
   f=>{f.audit.status='READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED'},
