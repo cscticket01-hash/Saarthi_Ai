@@ -11,6 +11,16 @@ async function transport(url,body,token){
   ...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(120000)});
  return {status:response.status,data:await response.json()};
 }
+// Protected person writes use a signed lifecycle/Drive proof, whereas
+// ordinary records use a durable Cloudflare ticket plus a signed Drive ACK.
+// Never mistake a direct person receipt for a Cloudflare staging receipt.
+function verifiedRecordRoute(result,route){
+ const revision=result?.recordRevision;
+ if(typeof revision!=='string'||!revision||/^(cf-|live-)/.test(revision)||result.delivery)return false;
+ if(route==='person')return result.personLifecycleVersion===1&&result.syncProtocol===2&&result.cloudflareAccepted!==true;
+ if(route==='edge')return result.cloudflareAccepted===true&&result.driveState==='verified';
+ return false;
+}
 async function acceptance({env=process.env,request=transport}={}){
  const report={scope:'Synthetic TEST school only, retained fixtures',schoolId:SCHOOL,checks:[],productionLoadCertified:false};
  let stage='explicit acceptance opt-in',token;
@@ -62,13 +72,17 @@ async function acceptance({env=process.env,request=transport}={}){
   async function record(collection,id,data,extra={}){
    const body={action:'managed/records',operation:'write',syncProtocol:2,collection,id,
     operationId:hash(SCHOOL+':'+collection+':'+id),expectedRecordRevision:'',data:{...data,schoolId:SCHOOL},edgeDeliveryVersion:1,...extra};
+   const route=collection==='teachers_directory'?'person':'edge';
    let result=await call(body);
-   if(result.delivery)result=await settle(result);
-   requireCheck(result.cloudflareAccepted===true&&result.driveState==='verified'&&typeof result.recordRevision==='string'&&!result.recordRevision.startsWith('cf-'));
-   const replay=await call(body);requireCheck(replay.recordRevision===result.recordRevision&&replay.driveState==='verified');
+   if(route==='edge'&&result.delivery)result=await settle(result);
+   requireCheck(verifiedRecordRoute(result,route));
+   const replay=await call(body);
+   requireCheck(replay.recordRevision===result.recordRevision&&verifiedRecordRoute(replay,route));
    const read=await call({action:'managed/records',operation:'read',syncProtocol:2,collection,id});
    const saved=read.records?.[id];
-   requireCheck(saved?.schoolId===SCHOOL&&saved?._syncRevision===result.recordRevision);
+   requireCheck(saved?.schoolId===SCHOOL&&saved?._syncRevision===result.recordRevision&&saved?._syncOperationId===body.operationId);
+   report.verifiedRoutes??=[];
+   report.verifiedRoutes.push({collection,route:route==='person'?'signed-person-lifecycle-Drive':'Cloudflare-ACK-then-Drive'});
    if(collection==='documents')
     requireCheck(saved.fileId===data.fileId&&saved.contentHash===data.contentHash
       &&saved.documentKind===data.documentKind);
@@ -80,6 +94,11 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='staff record edge acceptance and verified Drive write';
   const staff='CF_TEST_STAFF_'+run;
   await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
+  // Teacher/staff use the protected person-lifecycle path. Independently
+  // prove Cloudflare durable ACK -> verified Drive delivery for a non-person.
+  stage='calendar record Cloudflare acceptance and signed Google Drive readback';
+  const calendar='CF_TEST_CALENDAR_'+run;
+  await record('school_calendar',calendar,{title:'SYNTHETIC CLOUD DELIVERY TEST',syntheticTest:true});
   // Valid bounded synthetic PDF container. Original provider bytes are retained,
   // not a real student's report card or a generated template.
   const bytes=Buffer.alloc(768*1024,32);
@@ -128,4 +147,4 @@ if(require.main===module)acceptance().then(report=>{
  fs.writeFileSync('build/cloud-prerequisites/cloudflare-delivery.json',JSON.stringify(report,null,2));
  console.log(JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;
 });
-module.exports={acceptance,SCHOOL,ENDPOINT,LOGIN};
+module.exports={acceptance,verifiedRecordRoute,SCHOOL,ENDPOINT,LOGIN};
