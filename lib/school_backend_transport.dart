@@ -20,7 +20,7 @@ void requireSchoolProjectId(String project) {
 class SchoolApiFailure implements Exception {
   SchoolApiFailure(this.status, {String code = '', String requestId = '', int retryAfterMs = 0})
       : _retryAfterMs = retryAfterMs,
-        code = RegExp(r'^[A-Z_]{1,80}$').hasMatch(code) ? code : '',
+        code = RegExp(r'^[A-Z_][A-Z0-9_]{0,79}$').hasMatch(code) ? code : '',
         requestId = RegExp(r'^[a-f0-9-]{36}$').hasMatch(requestId) ? requestId : '';
   final int status;
   final int _retryAfterMs;
