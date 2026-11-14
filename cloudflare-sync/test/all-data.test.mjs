@@ -256,3 +256,11 @@ test('signed TEST readback settles only the exact superseded student roll confli
  assert.equal((await delivery.status(school,'records',successor.delivery.id)).driveState,'verified');
  await assert.rejects(delivery.record(school,original),e=>e.code==='STUDENT_SLOT_CONFLICT');
 });
+test('missing original record receipt is explicit absence, never an internal crash or a completion',async()=>{
+ const id=hash('missing-original-receipt');
+ const reply=await rpc(A,'records',{command:'status',id});
+ assert.equal(reply.status,404);assert.equal(reply.success,false);
+ assert.equal(reply.message,'Delivery receipt unavailable');
+ await assert.rejects(edge.rpc(A,'records',{command:'status',id}),e=>e.status===404&&e.code==='EDGE_RECEIPT_NOT_FOUND');
+ const stats=await edge.rpc(A,'records',{command:'stats'});assert.equal(stats.needsAttention,0);
+});

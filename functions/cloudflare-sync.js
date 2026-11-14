@@ -31,6 +31,11 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
     'Original immutable delete receipt fingerprint mismatch':'DELETE_REVIEW_HASH_MISMATCH',
     'Original delete review retry was not durably committed':'DELETE_REVIEW_COMMIT_FAILED'
    };
+   // An authenticated lookup may legitimately have no retained receipt.
+   // Keep absence distinct from provider failure; neither proves completion.
+   if(r.status===404&&result.success===false&&(result.schoolId===undefined||result.schoolId===school)&&
+      lane==='records'&&body.command==='status'&&message==='Delivery receipt unavailable')
+    throw Object.assign(Error('Delivery receipt unavailable'),{status:404,code:'EDGE_RECEIPT_NOT_FOUND',publicMessage:true});
    const code=body.command==='retryDeleteReview'&&r.status===409&&
      Object.prototype.hasOwnProperty.call(reviewErrors,message)
       ?reviewErrors[message]:message==='Replay history compacted; snapshot required'
