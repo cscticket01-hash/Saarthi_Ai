@@ -48,6 +48,34 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='new delivery capability';
   requireCheck(health.brokerEdgeDeliveryVersion===1&&health.recordSyncVersion===2&&health.uploadResumableVersion===1);
   report.checks.push({name:stage,status:'PASS'});
+  if(env.VS_CF_OFFLINE_PHASE!==undefined){
+   stage='explicit isolated offline file phase';
+   requireCheck(['accept','verify'].includes(env.VS_CF_OFFLINE_PHASE));
+   requireCheck(env.GITHUB_ACTIONS==='true'&&env.GITHUB_REPOSITORY==='cscticket01-hash/Saarthi_Ai'&&env.GITHUB_REF==='refs/heads/test/r2-final-provider-20261114');
+   requireCheck(health.brokerAtomicSmallFilesVersion===1);
+   const bytes=Buffer.from('%PDF-1.4\n% SYNTHETIC OFFLINE DELIVERY TEST ONLY\n%%EOF\n');
+   const uploadKey='cf_offline_'+run,sha256=hash(bytes),id=hash(JSON.stringify([SCHOOL,uploadKey]));
+   const identity={schoolId:SCHOOL,runtimeCommit:env.VS_EXPECTED_RUNTIME,run,uploadKey,sha256,sizeBytes:bytes.length,lane:'file-'+id,id};
+   const evidencePath='build/cloud-prerequisites/offline-accepted.json';
+   if(env.VS_CF_OFFLINE_PHASE==='accept'){
+    stage='durable file acceptance before terminating uploader';const started=Date.now();
+    const accepted=await call({action:'managed/file/upload',edgeDeliveryVersion:1,uploadKey,name:uploadKey+'.pdf',mime:'application/pdf',base64:bytes.toString('base64')});
+    requireCheck(accepted.cloudflareAccepted===true&&accepted.driveState==='pending'&&!accepted.fileId&&accepted.delivery?.id===id&&accepted.delivery?.lane===identity.lane);
+    const proof={...identity,acceptedAtClient:Date.now(),ackMillis:Date.now()-started,phase:'accepted'};
+    fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync(evidencePath,JSON.stringify(proof));
+    return {...report,status:'ACCEPTED',phase:'uploader_exits_after_this_receipt',ackMillis:proof.ackMillis};
+   }
+   stage='exact retained acceptance identity and client-offline interval';
+   const proof=JSON.parse(fs.readFileSync(evidencePath,'utf8'));
+   requireCheck(Object.entries(identity).every(([key,value])=>proof[key]===value)&&proof.phase==='accepted'&&Number.isSafeInteger(proof.acceptedAtClient)&&Date.now()-proof.acceptedAtClient>=180000);
+   stage='first read-only receipt after uploader process exit';
+   const receipt=await call({action:'managed/cloudflare/operation',lane:identity.lane,id,waitMillis:0});
+   requireCheck(receipt.cloudflareAccepted===true&&receipt.driveState==='verified'&&!receipt.delivery&&receipt.committed===true&&receipt.sha256===sha256&&receipt.sizeBytes===bytes.length&&typeof receipt.fileId==='string');
+   stage='independent exact Google Drive byte readback';
+   const file=await call({action:'managed/file/read',fileId:receipt.fileId});
+   requireCheck(file.mime==='application/pdf'&&Buffer.from(file.base64||'','base64').equals(bytes));
+   return {...report,status:'PASS',phase:'verified_by_new_process',uploaderProcessExited:true,minimumNoClientRequestsMillis:180000,firstReceiptAfterQuietVerified:true,bytesReadbackVerified:true,ackMillis:proof.ackMillis,...(receipt.deliveryTiming?{deliveryTiming:receipt.deliveryTiming}:{}),...(Number.isSafeInteger(receipt.driveDurationMillis)?{driveDurationMillis:receipt.driveDurationMillis}:{}),scope:'real Google file delivery while synthetic uploader process is stopped; not physical Windows shutdown or atomic person bundle'};
+  }
   async function settle(result){
    const ticket=result.delivery;requireCheck(result.cloudflareAccepted===true&&result.driveState==='pending'&&ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&/^(records|file-[a-f0-9]{64})$/.test(ticket.lane));
    requireCheck(!result.fileId&&!result.recordRevision);
@@ -126,6 +154,6 @@ async function acceptance({env=process.env,request=transport}={}){
 if(require.main===module)acceptance().then(report=>{
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
  fs.writeFileSync('build/cloud-prerequisites/cloudflare-delivery.json',JSON.stringify(report,null,2));
- console.log(JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;
+ console.log(JSON.stringify(report));if(!['PASS','ACCEPTED'].includes(report.status))process.exitCode=1;
 });
 module.exports={acceptance,SCHOOL,ENDPOINT,LOGIN};

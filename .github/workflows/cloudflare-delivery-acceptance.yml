@@ -1,3 +1,4 @@
+# R2 TEST Worker verified source: c90c105891b7f34a658b94d658aee813c4fa6b0a / d29b315b-a580-41aa-89e7-fa8fbb7e7bfb
 name: Cloudflare delivery isolated synthetic acceptance
 on:
   workflow_dispatch:
@@ -6,7 +7,7 @@ on:
       - '.github/scripts/cloudflare_delivery_acceptance*'
       - '.github/workflows/cloudflare-delivery-acceptance.yml'
   push:
-    branches: [verify/cloudflare-delivery-live, feature/smart-sync-3]
+    branches: [verify/cloudflare-delivery-live, feature/smart-sync-3, test/r2-final-provider-20261114]
     paths:
       - '.github/scripts/cloudflare_delivery_acceptance.cjs'
       - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
@@ -90,4 +91,47 @@ jobs:
           name: isolated-test-cloudflare-drive-ack-readback
           path: build/cloud-prerequisites/cloudflare-delivery.json
           if-no-files-found: warn
+          retention-days: 14
+
+  isolated-client-offline-file:
+    if: github.event_name == 'push' && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/r2-final-provider-20261114'
+    needs: harness-safeguards
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VS_EXPECTED_RUNTIME: 0ae6ce7cfe4af72383564233468884fc6752b0b3
+      VS_CF_DELIVERY_ACCEPTANCE: '1'
+      VS_CF_DELIVERY_RUN_ID: offline-${{ github.run_id }}-${{ github.run_attempt }}
+      VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+      VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Preserve the deployed TEST business tree
+        run: git diff --exit-code "$VS_EXPECTED_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+      - name: Accept synthetic file and terminate upload process
+        env:
+          VS_CF_OFFLINE_PHASE: accept
+        run: |
+          node .github/scripts/cloudflare_delivery_acceptance.cjs
+          cp build/cloud-prerequisites/cloudflare-delivery.json build/cloud-prerequisites/offline-uploader-exit.json
+      - name: No uploader process or client API traffic for three minutes
+        run: sleep 180
+      - name: New process verifies Google receipt and exact bytes without triggering drain
+        env:
+          VS_CF_OFFLINE_PHASE: verify
+        run: node .github/scripts/cloudflare_delivery_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-client-offline-google-evidence
+          path: build/cloud-prerequisites/*.json
           retention-days: 14
