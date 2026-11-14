@@ -18,20 +18,25 @@ void requireSchoolProjectId(String project) {
 
 /// Safe, typed transport evidence. Never includes raw server response text.
 class SchoolApiFailure implements Exception {
-  SchoolApiFailure(this.status, {String code = '', String requestId = '', this.retryAfterMs = 0})
-      : code = RegExp(r'^[A-Z_]{1,80}$').hasMatch(code) ? code : '',
+  SchoolApiFailure(this.status, {String code = '', String requestId = '', int retryAfterMs = 0})
+      : _retryAfterMs = retryAfterMs,
+        code = RegExp(r'^[A-Z_][A-Z0-9_]{0,79}$').hasMatch(code) ? code : '',
         requestId = RegExp(r'^[a-f0-9-]{36}$').hasMatch(requestId) ? requestId : '';
   final int status;
-  final int retryAfterMs;
+  final int _retryAfterMs;
+  bool get storageFull => status == 507 || status >= 500 && code == 'R2_CAPACITY_EXCEEDED';
+  int get retryAfterMs => storageFull ? max(3600000, _retryAfterMs) : _retryAfterMs;
   final String code, requestId;
-  bool get retryable => {429, 502, 503, 504}.contains(status) &&
+  bool get retryable => {429, 502, 503, 504, 507}.contains(status) &&
       !{'SCRIPT_TYPE_ERROR', 'SCRIPT_PARSE_ERROR', 'SCRIPT_DOCUMENT_REVISION_REQUIRED',
         'SCRIPT_IDENTITY_MISMATCH', 'SCRIPT_MIGRATION_CONFLICT', 'SCRIPT_MISSING_MIGRATED_TAB',
         'SCRIPT_RECORD_VERIFY_FAILED', 'SCRIPT_STORAGE_NOT_PREPARED',
         'SCRIPT_WORKBOOK_IDENTITY_MISMATCH', 'SCRIPT_DOCUMENT_REVISION_CONFLICT',
         'SCRIPT_WORKBOOK_REVIEW_REQUIRED', 'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
         'SCRIPT_PERMISSION_DENIED'}.contains(code);
-  String get userMessage => code.startsWith('SCRIPT_')
+  String get userMessage => storageFull
+      ? 'Cloudflare school storage reached the 8 GB limit. Local pending data is safe and will retry after verified cleanup.'
+      : code.startsWith('SCRIPT_')
       ? 'School Google storage could not complete the request. Cached data is retained; contact the school if this continues.'
       : 'School server is temporarily unavailable (HTTP $status). Cached data is retained.';
   @override
