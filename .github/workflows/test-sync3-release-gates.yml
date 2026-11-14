@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/test-sync3-release-gates.yml'
       - '.github/scripts/sync3_current_original_proof_audit.cjs'
+      - '.github/scripts/sync3_live_script_admission_readonly.cjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -87,11 +88,14 @@ jobs:
           echo "VS_EXPECTED_TEST_SCRIPT_VERSION=$(node -e "process.stdout.write(require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion())")" >> "$GITHUB_ENV"
           node .github/scripts/test_cloud_readiness.cjs
           node -e "const r=require('./build/cloud-prerequisites/report.json');if(r.status!=='PASS'||r.deployedScriptEvidence?.matchesReviewedSource!==true) {console.error('Provider BLOCKED or Script deployed version mismatch');process.exit(1)}"
+          node .github/scripts/sync3_live_script_admission_readonly.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sync3-real-test-read-only-current-provider
-          path: build/cloud-prerequisites/report.json
+          path: |
+            build/cloud-prerequisites/report.json
+            build/cloud-prerequisites/script-admission-capability.json
           retention-days: 7
 
   original-marker-zero-write:
@@ -140,7 +144,7 @@ jobs:
           node-version: '24'
       - name: Only reviewed exact deployed TEST business source may write synthetic records
         run: |
-          git diff --exit-code "$VS_EXPECTED_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
           node --check .github/scripts/cloudflare_delivery_acceptance.cjs
       - name: Synthetic TEST teacher/staff records and original PDF bytes Google Drive readback
         env:
