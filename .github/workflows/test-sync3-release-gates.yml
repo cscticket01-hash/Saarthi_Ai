@@ -104,6 +104,7 @@ jobs:
 
   original-marker-zero-write:
     name: Real TEST school 14 historical marker preview (never retire)
+    needs: [synthetic-teacher-readonly]
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -134,7 +135,7 @@ jobs:
 
   synthetic-test-google-delivery:
     name: Real synthetic TEST school R2 Cloudflare ACK -> signed Google Drive readback
-    needs: [read-only-test-cloud, original-marker-zero-write]
+    needs: [read-only-test-cloud, synthetic-teacher-readonly, original-marker-zero-write]
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.read-only-test-cloud.result == 'success' && needs.original-marker-zero-write.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -166,6 +167,7 @@ jobs:
 
   synthetic-teacher-readonly:
     name: Read-only failed synthetic teacher original receipt and Drive point-read diagnostic
+    needs: [read-only-test-cloud]
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 8
