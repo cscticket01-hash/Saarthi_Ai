@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {bindOperation,legacyRequestHash,createLiveReconciliation}=require('../live-sync-reconciliation');
+const {bindOperation,legacyRequestHash,edgeProofMatches,createLiveReconciliation}=require('../live-sync-reconciliation');
+const {createHash}=require('node:crypto');
 const {fixture,A,B}=require('./helpers/managed-school-broker');
 const {storage}=require('./helpers/managed-storage');
 const request={action:'managed_records',collection:'school_expenses',id:'expense-one',operation:'write',operationId:'uncertain-operation-00001',syncProtocol:2,expectedRecordRevision:'',data:{schoolId:A,amount:15}};
@@ -60,4 +61,96 @@ test('repeated lost responses for the same operation share one proof lookup',asy
  const f=fixture(),value=marker('live');save(f,'liveInflight',value);f.docs.get('school_live_migrations/'+A).liveInflight.other={...value,startedAt:2};let reads=0;
  const result=await createLiveReconciliation({db:f.db,readLiveReceipt:async()=>{reads++;return liveProof(value.operationBinding);}}).reconcile(A);
  assert.equal(reads,1);assert.equal(result.cleared,2);
+});
+
+function exactEdgeProof(binding){
+ const id=createHash('sha256').update(JSON.stringify([binding.schoolId,
+   'managed_records',[binding.collection,binding.id,binding.operationId]])).digest('hex');
+ return {id,state:'completed',response:{result:{
+   success:true,schoolId:binding.schoolId,syncProtocol:2,
+   recordRevision:'verified-original-revision',record:{
+    id:binding.id,schoolId:binding.schoolId,
+    _syncOperationId:binding.operationId,
+    _syncRequestHash:binding.requestHash,
+    _syncRevision:'verified-original-revision',_syncDeleted: false,
+   },
+ }}};
+}
+test('a completed *exact original* Cloudflare receipt safely reconciles a superseded Sheet row',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const binding=value.operationBinding;
+ let reads=0;
+ const result=await createLiveReconciliation({db:f.db,
+   readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,
+     records:{[binding.id]:{schoolId:A,_syncOperationId:'newer-operation-revision',
+       _syncRevision:'newer-sheet-revision',_syncRequestHash:'f'.repeat(64)}}}),
+   readEdgeReceipt:async(s,b)=>{reads++;assert.equal(s,A);assert.deepEqual(b,binding);return exactEdgeProof(binding);},
+ }).reconcile(A);
+ assert.equal(reads,1);
+ assert.equal(result.cleared,1);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{});
+});
+test('staged edge job, active legacy attempts, wrong original proof, or GC-purged records NEVER clear',async()=>{
+ const value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding,good=exactEdgeProof(binding);
+ const corrupt=[
+  p=>({...p,state:'pending'}),
+  p=>({...p,state:'needsAttention'}),
+  p=>({...p,id:'f'.repeat(64)}),
+  p=>({...p,response:{result:{...p.response.result,schoolId:B}}}),
+  p=>({...p,response:{result:{...p.response.result,recordRevision:'cf-fake'}}}),
+  p=>({...p,response:{result:{...p.response.result,record:null,recordSource:{version:1}}}}),
+  p=>({...p,response:{result:{...p.response.result,record:{...p.response.result.record,schoolId:B}}}}),
+  p=>({...p,response:{result:{...p.response.result,record:{...p.response.result.record,_syncOperationId:'another-operation-0001'}}}}),
+  p=>({...p,response:{result:{...p.response.result,record:{...p.response.result.record,_syncRequestHash:'0'.repeat(64)}}}}),
+  p=>({...p,response:{result:{...p.response.result,record:{...p.response.result.record,_syncRevision:'unrelated'}}}}),
+  p=>({...p,response:{result:{...p.response.result,record:{...p.response.result.record,_syncDeleted:true}}}}),
+ ];
+ for(const damage of corrupt){
+  const f=fixture();save(f,'inflight',{...value});
+  const proof=damage(good);
+  assert.equal(edgeProofMatches(proof,binding),false);
+  const result=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>proof}).reconcile(A);
+  assert.equal(result.cleared,0);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ }
+ const f=fixture();save(f,'inflight',{...value,activeAttempts:1});
+ const result=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>good}).reconcile(A);
+ assert.equal(result.cleared,0);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+});
+test('a Google point-read timeout can fall back to original completed edge proof, never to a pending ticket',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const result=await createLiveReconciliation({db:f.db,
+  readDrive:async()=>{throw Error('Google quota timeout');},
+  readEdgeReceipt:async()=>exactEdgeProof(value.operationBinding),
+ }).reconcile(A);
+ assert.equal(result.cleared,1);
+ const g=fixture();save(g,'inflight',value);
+ const failed=await createLiveReconciliation({db:g.db,
+  readDrive:async()=>{throw Error('Google quota timeout');},
+  readEdgeReceipt:async()=>({...exactEdgeProof(value.operationBinding),state:'retry'}),
+ }).reconcile(A);
+ assert.equal(failed.cleared,0);
+ assert.equal(failed.reasons.proof_unavailable,1);
+});
+test('lost Google response plus unavailable original Cloudflare receipt retains marker for review',async()=>{
+ for(const reason of [
+  Object.assign(Error('original receipt unavailable'),{status:404,code:'CLOUDFLARE_SYNC_UNAVAILABLE'}),
+  Object.assign(Error('provider quota'),{status:503,code:'CLOUDFLARE_QUOTA_EXCEEDED'}),
+ ]){
+  const f=fixture(),value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding;
+  save(f,'inflight',value);
+  let edgeReads=0;
+  const outcome=await createLiveReconciliation({db:f.db,
+   readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,
+    records:{[binding.id]:{schoolId:A,_syncOperationId:'newer-operation-revision',
+     _syncRequestHash:'f'.repeat(64),_syncRevision:'newer-sheet-revision'}}}),
+   readEdgeReceipt:async()=>{edgeReads++;throw reason;},
+  }).reconcile(A);
+  assert.equal(edgeReads,1);
+  assert.equal(outcome.cleared,0);
+  assert.equal(outcome.retained,1);
+  assert.equal(outcome.reasons.proof_unavailable,1);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ }
 });
