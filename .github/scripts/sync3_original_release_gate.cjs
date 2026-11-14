@@ -6,7 +6,13 @@ const needed=['school_calendar:Cloudflare-ACK-then-Drive',
  'documents:Cloudflare-ACK-then-Drive','teachers_directory:signed-person-lifecycle-Drive'];
 function evaluateEvidence({audit,cloud,script,delivery}){
  const blockers=[],block=x=>{if(!blockers.includes(x))blockers.push(x);};
- if(audit?.status!=='NO_BLOCKERS'||audit?.stage!=='complete'||audit.exactRuntimeVerified!==true||
+ // A successful read-only diagnosis of unresolved originals is valid audit
+ // evidence, NOT a successful release. Differentiate real missing-proof
+ // blockers from malformed/untrusted audit data without relaxing either.
+ const remaining=audit?.after?.unsettledWrites;
+ const consistentAuditStatus=(audit?.status==='NO_BLOCKERS'&&remaining===0)||
+   (audit?.status==='READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED'&&nonneg(remaining)&&remaining>0);
+ if(!consistentAuditStatus||audit?.stage!=='complete'||audit.exactRuntimeVerified!==true||
    audit.previewResponseShape?.previewOnly!==true||audit.previewResponseShape?.cleared!==0||
    audit.reconciliation?.cleared!==0||audit.reconciliation?.more!==false||
    audit.concurrentMarkerChange===true)block('ORIGINAL_AUDIT_UNVERIFIED');
