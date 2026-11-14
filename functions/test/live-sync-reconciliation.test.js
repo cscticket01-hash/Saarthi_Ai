@@ -133,3 +133,24 @@ test('a Google point-read timeout can fall back to original completed edge proof
  assert.equal(failed.cleared,0);
  assert.equal(failed.reasons.proof_unavailable,1);
 });
+test('lost Google response plus unavailable original Cloudflare receipt retains marker for review',async()=>{
+ for(const reason of [
+  Object.assign(Error('original receipt unavailable'),{status:404,code:'CLOUDFLARE_SYNC_UNAVAILABLE'}),
+  Object.assign(Error('provider quota'),{status:503,code:'CLOUDFLARE_QUOTA_EXCEEDED'}),
+ ]){
+  const f=fixture(),value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding;
+  save(f,'inflight',value);
+  let edgeReads=0;
+  const outcome=await createLiveReconciliation({db:f.db,
+   readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,
+    records:{[binding.id]:{schoolId:A,_syncOperationId:'newer-operation-revision',
+     _syncRequestHash:'f'.repeat(64),_syncRevision:'newer-sheet-revision'}}}),
+   readEdgeReceipt:async()=>{edgeReads++;throw reason;},
+  }).reconcile(A);
+  assert.equal(edgeReads,1);
+  assert.equal(outcome.cleared,0);
+  assert.equal(outcome.retained,1);
+  assert.equal(outcome.reasons.proof_unavailable,1);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ }
+});
