@@ -288,8 +288,21 @@ export default {
    demand(await authenticated(env.EDGE_KEY,raw,request.headers),'Sync authorization rejected',401);
    const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
    demand(raw.length<=(/^file-[a-f0-9]{64}$/.test(lane)?800000:400000),'Request too large',413);
-   const value=await env.LANES.getByName(school+'/'+lane).command(school,lane,body);
-   return Response.json({success:true,schoolId:school,value},{headers});
+   try{
+    const value=await env.LANES.getByName(school+'/'+lane).command(school,lane,body);
+    return Response.json({success:true,schoolId:school,value},{headers});
+   }catch(error){
+    // Only an authenticated, routed notice WRITE can attest that this exact
+    // attempt failed a precondition before writing. The broker requires this
+    // school binding; without it a known rejection leaves an uncertain marker.
+    // Do not attach this proof to auth, delete, delivery or other-lane errors.
+    const e=error as Error&{status?:number},notice=body.request as Json|undefined;
+    if(lane==='notices'&&body.command==='write'&&notice?.collection==='school_notices'&&
+       notice.operation==='write'&&e.status===409&&
+       ['Record revision conflict','Sync operation ID conflict'].includes(e.message))
+     return Response.json({success:false,schoolId:school,message:e.message},{status:409,headers});
+    throw error;
+   }
   }catch(error){const e=error as Error&{status?:number};const status=e.status||503;return Response.json({success:false,message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});}
  }
 } satisfies ExportedHandler<Env>;
