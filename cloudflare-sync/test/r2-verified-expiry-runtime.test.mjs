@@ -62,8 +62,8 @@ export class R2VerifiedTimeLane extends SyncLane {
   assert.equal(first.status,200,JSON.stringify(first));
   return {id,key:'saarthi-v1/'+school+'/records/'+id+'/0',req};
  };
- const uncertain=await request('original-r2-uncertain-00001'),
-  verified=await request('original-r2-verified-00002');
+ const verified=await request('original-r2-verified-00002'),
+  uncertain=await request('original-r2-uncertain-00001');
  const bucket=await mf.getR2Bucket('R2_STAGE');
  assert.ok(await bucket.head(uncertain.key));
  assert.ok(await bucket.head(verified.key));
