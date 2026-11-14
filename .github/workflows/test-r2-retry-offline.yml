@@ -1,0 +1,55 @@
+name: TEST PR302 real uploader-offline Google delivery
+on:
+  push:
+    branches: [test/r2-retry-provider-20261114]
+    paths:
+      - '.github/workflows/test-r2-retry-offline.yml'
+      - '.github/scripts/cloudflare_delivery_acceptance*'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-20261114-safe-real-provider-gates
+  cancel-in-progress: false
+jobs:
+  isolated-client-offline-file:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/r2-retry-provider-20261114'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VS_EXPECTED_RUNTIME: db191a1c252a9ffb35847a8df8b4d2720e016c59
+      VS_EXPECTED_WORKER_SOURCE: 168c1cbf80e10b5651aa4914b8c7ecec216e90b7
+      VS_CF_DELIVERY_ACCEPTANCE: '1'
+      VS_CF_DELIVERY_RUN_ID: retry-offline-${{ github.run_id }}-${{ github.run_attempt }}
+      VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+      VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Pin exact reviewed broker and TEST-only Worker source separately
+        run: |
+          git diff --exit-code "$VS_EXPECTED_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_WORKER_SOURCE" HEAD -- cloudflare-sync
+          node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
+      - name: Accept original synthetic file and exit uploader process
+        env:
+          VS_CF_OFFLINE_PHASE: accept
+        run: |
+          node .github/scripts/cloudflare_delivery_acceptance.cjs
+          cp build/cloud-prerequisites/cloudflare-delivery.json build/cloud-prerequisites/offline-uploader-exit.json
+      - name: No uploader process or client API calls for three minutes
+        run: sleep 180
+      - name: Fresh process reads existing Google receipt and independently checks exact bytes
+        env:
+          VS_CF_OFFLINE_PHASE: verify
+        run: node .github/scripts/cloudflare_delivery_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr302-real-offline-google-evidence
+          path: build/cloud-prerequisites/*.json
+          retention-days: 14
