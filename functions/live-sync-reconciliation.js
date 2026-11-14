@@ -75,11 +75,11 @@ function noticeProofMatches(proof,binding){
   response.driveRevision.length>0&&!/^(live-|cf-)/.test(response.driveRevision);
 }
 function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
- async function reconcile(school,{limit=25}={}){
-  if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
+ async function reconcile(school,{limit=25,previewOnly=false}={}){
+  if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100||typeof previewOnly!=='boolean')throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
   const ref=db.doc('school_live_migrations/'+school),snapshot=(await ref.get()).data()||{};
   const candidates=['inflight','liveInflight'].flatMap(map=>Object.entries(snapshot[map]||{}).map(([token,marker])=>({map,token,marker}))).sort((a,b)=>(Number(a.marker.startedAt)||0)-(Number(b.marker.startedAt)||0));
-  let cleared=0;const reasons={},proofs=new Map();
+  let cleared=0,previewWouldClear=0;const reasons={},proofs=new Map();
   // Aggregated diagnostic counters only; never emit record IDs, hashes,
   // Google payloads, signed receipts, or school credentials.
   const proofSources={},note=kind=>{proofSources[kind]=(proofSources[kind]||0)+1;};
@@ -142,6 +142,9 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
     verified=await proofs.get(proofKey);
    }catch{retain('proof_unavailable');continue;}
    if(!verified){retain('proof_unverified');continue;}
+   // Read-only diagnostic. Do not open a Firestore transaction when previewing.
+   // Proof conditions are unchanged; only actual reconciliation can CAS-retire a marker.
+   if(previewOnly){previewWouldClear++;continue;}
    const removed=await db.runTransaction(async tx=>{
     const current=(await tx.get(ref)).data()||{},markers={...current[map]};
     // A proof for an old request can never clear a replacement marker, even
@@ -151,7 +154,7 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
    });
    if(removed)cleared++;else retain('marker_changed');
   }
-  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons,proofSources};
+  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons,proofSources,previewOnly,previewWouldClear};
  }
  return {reconcile};
 }
