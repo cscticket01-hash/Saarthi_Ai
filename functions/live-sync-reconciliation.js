@@ -111,6 +111,21 @@ function noticeMismatchReason(proof,binding){
   return 'drive_completion';
  return 'unclassified';
 }
+// Read-only diagnosis for a mismatched ORIGINAL notice binding. The coarse
+// verifier must still reject the receipt; these fixed strings expose no data.
+function noticeBindingMismatchDimension(proof,binding){
+ try{
+  const original=JSON.parse(proof.job.payload)?.request;
+  const found=bindOperation(binding.schoolId,'legacy',original);
+  if(!found)return 'invalid_original_request';
+  if(found.collection!==binding.collection)return 'collection';
+  if(found.id!==binding.id)return 'record_id';
+  if(found.operation!==binding.operation)return 'operation_kind';
+  if(found.operationId!==binding.operationId)return 'operation_id';
+  if(found.requestHash!==binding.requestHash)return 'intent_hash';
+  return 'other';
+ }catch{return 'unreadable_request';}
+}
 function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
  async function reconcile(school,{limit=25,previewOnly=false}={}){
   if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100||typeof previewOnly!=='boolean')throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
@@ -175,7 +190,10 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
         else if(!proof.job.payload||!proof.job.response)note('notice_job_purged');
         else{
          note('notice_receipt_mismatch');
-         note('notice_mismatch_'+noticeMismatchReason(proof,binding));
+         const cause=noticeMismatchReason(proof,binding);
+         note('notice_mismatch_'+cause);
+         if(cause==='original_request_binding')
+          note('notice_original_binding_'+noticeBindingMismatchDimension(proof,binding));
         }
        }catch(error){note('notice_read_error');readError??=error;}
       }
