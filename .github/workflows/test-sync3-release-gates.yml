@@ -8,6 +8,8 @@ on:
       - '.github/scripts/sync3_live_script_admission_readonly.cjs'
       - '.github/scripts/cloudflare_delivery_acceptance.cjs'
       - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
+      - '.github/scripts/sync3_original_release_gate.cjs'
+      - '.github/scripts/sync3_original_release_gate.test.cjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -44,6 +46,7 @@ jobs:
           npm --prefix functions test
           node --test .github/scripts/sync3_capacity_budget.test.cjs
           node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
+          node --test .github/scripts/sync3_original_release_gate.test.cjs
 
   flutter-retry-and-isolation:
     name: Windows/Android local outbox, quota 507 and multi-PC SQLite
@@ -193,4 +196,44 @@ jobs:
         with:
           name: sync3-synthetic-teacher-readonly-diagnostic
           path: build/cloud-prerequisites/synthetic-teacher-postmortem.json
+          retention-days: 7
+
+  original-proof-release-fence:
+    name: BLOCK production promotion on unresolved original receipts
+    needs: [original-worker-and-backend, flutter-retry-and-isolation, read-only-test-cloud, synthetic-teacher-readonly, original-marker-zero-write, synthetic-test-google-delivery]
+    if: always() && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read original signed Script capability evidence
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-real-test-read-only-current-provider
+          path: build/cloud-prerequisites
+      - name: Read authenticated exact-original zero-write audit
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-current-original-marker-zero-write
+          path: build/cloud-prerequisites
+      - name: Read independently verified synthetic Google bytes
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-current-real-test-synthetic-google-delivery
+          path: build/cloud-prerequisites
+      - name: Refuse production readiness when originals lack proof
+        run: node .github/scripts/sync3_original_release_gate.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-original-release-fence-status
+          path: build/cloud-prerequisites/sync3-release-readiness.json
           retention-days: 7
