@@ -123,13 +123,19 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
         if(ok)return true;
        }catch(error){note('edge_read_error');readError??=error;}
       }else note(marker.activeAttempts===0?'edge_reader_missing':'edge_skipped_active_attempt');
-      if(readError){note('source_error_retained');throw readError;}
       // Notice patches are expanded before owner delivery, so their original
       // request hash can differ from the signed final row. The retained edge
       // job binds the ORIGINAL request and its verified signed completion.
-      // Superseded rows alone remain insufficient. Purged/missing jobs fail.
-      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function')
-       return noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
+      // A Google point-read or unrelated records-lane error must not suppress
+      // checking the exact notice-lane original receipt.
+      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function'){
+       try{
+        const ok=noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
+        note(ok?'notice_exact':'notice_nonmatching');
+        if(ok)return true;
+       }catch(error){note('notice_read_error');readError??=error;}
+      }
+      if(readError){note('source_error_retained');throw readError;}
      }
      return false;
     })());
