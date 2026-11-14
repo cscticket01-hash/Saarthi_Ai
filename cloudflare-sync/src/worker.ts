@@ -1,4 +1,6 @@
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
+import {stageR2,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
+import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
 import {initLive,liveCommand} from './live-records';
 import {liveSchoolEnabled} from './live-rollout';
@@ -21,6 +23,24 @@ export class SyncLane extends DurableObject<Env>{
  private meta(key:string):string|undefined{return this.ctx.storage.sql.exec<{value:string}>('SELECT value FROM metadata WHERE key=?',key).toArray()[0]?.value;}
  private setMeta(key:string,value:string){this.ctx.storage.sql.exec('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,value);}
  private job(id:string):Job|undefined{return this.ctx.storage.sql.exec<Job>('SELECT * FROM jobs WHERE id=?',id).toArray()[0];}
+ // One account-wide Durable Object coordinates all TEST bucket reservations.
+ // These are internal Durable Object RPC methods, never public HTTP routes.
+ async stageR2Object(school:string,lane:string,id:string,offset:number,bytes:ArrayBuffer){
+  demand(!this.meta('identity'),'R2 budget actor cannot be a school data lane',403);
+  demand(!this.meta('r2BudgetActor')||this.meta('r2BudgetActor')==='v1','R2 budget identity rejected',403);
+  this.setMeta('r2BudgetActor','v1');
+  return stageR2(this.ctx.storage,this.env.R2_STAGE,school,lane,id,offset,bytes);
+ }
+ async r2OriginalVerified(school:string,lane:string,id:string){
+  demand(this.meta('r2BudgetActor')==='v1'&&!this.meta('identity'),'R2 budget actor is unavailable',403);
+  const result=await markR2Verified(this.ctx.storage,school,lane,id);
+  if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
+  return result;
+ }
+ async r2CapacityStatus(){
+  demand(this.meta('r2BudgetActor')==='v1'&&!this.meta('identity'),'R2 budget actor is unavailable',403);
+  return r2BudgetStatus(this.ctx.storage);
+ }
  async command(school:string,lane:string,b:Json):Promise<unknown>{
   demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
   const identity=school+'/'+lane;demand(!this.meta('identity')||this.meta('identity')===identity,'School scope rejected',403);this.setMeta('identity',identity);
@@ -127,7 +147,73 @@ export class SyncLane extends DurableObject<Env>{
    }
    return result;
   }
-  if(spoolLane(lane))return spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
+  if(spoolLane(lane)){
+   const cmd=String(b.command||''),id=String(b.id||'');
+   const staged=this.env.R2_STAGING_ENABLED==='true';
+   const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
+   if(staged){
+    demand(this.env.R2_STAGE!==undefined,'Private R2 bucket binding required',503);
+    if(lane==='records'&&cmd==='enqueue'){
+     const request=b.request as Json|undefined;
+     demand(request&&typeof request==='object'&&
+      ['managed_records','managed_records_batch'].includes(String(request.action))&&
+      /^[a-f0-9]{64}$/.test(id),'Invalid original record R2 admission',400);
+     const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
+     demand(Array.isArray(ops)&&ops.length>0&&ops.length<=10&&ops.every(op=>
+      op&&op.syncProtocol===2&&['write','delete'].includes(String(op.operation))&&
+      typeof op.id==='string'&&typeof op.collection==='string'&&
+      /^[A-Za-z0-9_-]{16,100}$/.test(String(op.operationId))&&
+      (op.operation!=='write'||(op.data as Json)?.schoolId===school)),
+      'Invalid original school record',400);
+     const identity=request.action==='managed_records_batch'?
+      ops.map(op=>[op.collection,op.id,op.operationId]):[request.collection,request.id,request.operationId];
+     demand(await digest(JSON.stringify([school,request.action,identity]))===id,'Original R2 identity mismatch',409);
+     const encoded=new TextEncoder().encode(JSON.stringify(request));
+     demand(encoded.byteLength>0&&encoded.byteLength<=300000,'Original record too large',413);
+     await budget().stageR2Object(school,lane,id,0,encoded.buffer as ArrayBuffer);
+    }
+    if(lane.startsWith('file-')&&(cmd==='putSmall'||cmd==='part')){
+     demand(/^file-[a-f0-9]{64}$/.test(lane)&&lane==='file-'+id&&
+      typeof b.base64==='string'&&b.base64.length>0&&b.base64.length<=699052&&
+      /^[A-Za-z0-9+/]*={0,2}$/.test(b.base64),'Invalid original file R2 chunk',400);
+     const bytes=Buffer.from(b.base64 as string,'base64');
+     demand(bytes.length>0&&bytes.length<=512*1024&&bytes.toString('base64')===b.base64,
+      'Invalid original file bytes',400);
+     const offset=cmd==='putSmall'?0:Number(b.offset);
+     demand(Number.isSafeInteger(offset)&&offset>=0,'Invalid original file offset',400);
+     const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].
+      map(x=>x.toString(16).padStart(2,'0')).join('');
+     if(cmd==='putSmall'){
+      const manifest=b.manifest as Json|undefined;
+      demand(manifest&&typeof manifest.uploadKey==='string'&&
+       id===await digest(JSON.stringify([school,manifest.uploadKey]))&&
+       hash===manifest.sha256&&bytes.length===manifest.sizeBytes&&bytes.length<=256*1024,
+       'Small original file digest mismatch',409);
+     }else{
+      const original=this.ctx.storage.sql.exec<{payload:string;state:string}>(
+       'SELECT payload,state FROM edge_ops WHERE id=?',id).toArray()[0];
+      demand(original&&original.state==='receiving'&&
+       hash===b.chunkSha256,'Original file part rejected',409);
+      const manifest=JSON.parse(original.payload) as Json;
+      demand(offset+bytes.length<=Number(manifest.sizeBytes),
+       'Original file chunk exceeds manifest',409);
+     }
+     await budget().stageR2Object(school,lane,id,offset,
+      bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength) as ArrayBuffer);
+    }
+   }
+   const result=await spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
+   if(staged&&cmd==='finish'&&result===true&&(b.values as Json)?.state==='completed'){
+    const values=b.values as Json,ack=values.result as Json|undefined;
+    const allAccepted=lane==='records'&&ack?.success===true&&ack.schoolId===school&&
+      (ack.recordWriteBatchVersion!==1||
+       Array.isArray(ack.acknowledgements)&&(ack.acknowledgements as Json[]).every(x=>x.success===true));
+    const fileAccepted=lane.startsWith('file-')&&ack?.success===true&&ack.schoolId===school&&
+      ack.committed===true&&typeof ack.fileId==='string';
+    if(allAccepted||fileAccepted)await budget().r2OriginalVerified(school,lane,id);
+   }
+   return result;
+  }
   const action=String(b.command||''),id=String(b.id||'');
   if(action==='retireNoticeCache'){
    demand(lane==='notices'&&liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Isolated live notice owner required',412);
@@ -232,6 +318,12 @@ export class SyncLane extends DurableObject<Env>{
   socket.send(JSON.stringify(liveCommand(this.ctx.storage,grant.schoolId,{command:'head'})));
  }
  async alarm(){
+  if(this.meta('r2BudgetActor')==='v1'){
+   try{const result=await sweepR2Verified(this.ctx.storage,this.env.R2_STAGE);
+    if(result.nextCleanupAt!==null)await this.wake(result.more?Date.now()+1000:result.nextCleanupAt);
+   }catch{await this.wake(Date.now()+60_000);} // Retry, never delete unverified data.
+   return;
+  }
   const identity=this.meta('identity');if(!identity)return;const [school,lane]=identity.split('/');
   if(lane==='live'){
    const raw=JSON.stringify({action:'managed/live/drain',schoolId:school}),time=String(Date.now());
