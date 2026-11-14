@@ -21,6 +21,27 @@ function verifiedRecordRoute(result,route){
  if(route==='edge')return result.cloudflareAccepted===true&&result.driveState==='verified';
  return false;
 }
+// Re-submit only the EXACT same immutable original request after an authenticated
+// broker SCRIPT_TIMEOUT. Both the original operation ID (or exact status ticket)
+// and its serialized request must remain unchanged. One bounded retry only.
+async function retryOriginalTimeout(run,body,{sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),delayMs=12000}={}){
+ const original=JSON.stringify(body);
+ const record=body?.action==='managed/records'&&body.operation==='write'&&
+   /^[a-f0-9]{64}$/.test(body.operationId||'')&&body.syncProtocol===2;
+ const status=body?.action==='managed/cloudflare/operation'&&
+   /^(records|file-[a-f0-9]{64})$/.test(body.lane||'')&&
+   /^[a-f0-9]{64}$/.test(body.id||'');
+ for(let attempt=0;attempt<2;attempt++){
+  if(JSON.stringify(body)!==original)throw Error('Immutable original request changed');
+  try{return await run(body);}
+  catch(error){
+   if(error?.status!==504||error?.code!=='SCRIPT_TIMEOUT'||attempt!==0||!(record||status))
+    throw error;
+   await sleep(delayMs);
+  }
+ }
+ throw Error('Original request remains unverified');
+}
 async function acceptance({env=process.env,request=transport}={}){
  const report={scope:'Synthetic TEST school only, retained fixtures',schoolId:SCHOOL,checks:[],productionLoadCertified:false};
  let stage='explicit acceptance opt-in',token;
@@ -44,7 +65,11 @@ async function acceptance({env=process.env,request=transport}={}){
   async function call(body){
    const r=await request(ENDPOINT,{...body,schoolId:SCHOOL},token);
    if(r.status!==200||r.data?.success!==true||r.data.schoolId!==SCHOOL){
-    report.failure={http:r.status,...(/^[A-Z_]{1,80}$/.test(r.data?.code||'')?{code:r.data.code}:{})};throw Error(stage);
+    report.failure={http:r.status,...(/^[A-Z_]{1,80}$/.test(r.data?.code||'')?{code:r.data.code}:{})};
+    const error=new Error(stage);
+    error.status=r.status;
+    error.code=report.failure.code;
+    throw error;
    }
    return r.data;
   }
@@ -62,38 +87,35 @@ async function acceptance({env=process.env,request=transport}={}){
    const ticket=result.delivery;requireCheck(result.cloudflareAccepted===true&&result.driveState==='pending'&&ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&/^(records|file-[a-f0-9]{64})$/.test(ticket.lane));
    requireCheck(!result.fileId&&!result.recordRevision);
    for(let attempt=0;attempt<24;attempt++){
-    result=await call({action:'managed/cloudflare/operation',...ticket,waitMillis:20000});
+    result=await originalRequest({action:'managed/cloudflare/operation',...ticket,waitMillis:20000});
     if(result.deliveryStatus)report.lastDeliveryStatus=result.deliveryStatus;
     if(!result.delivery){requireCheck(result.driveState==='verified');return result;}
     requireCheck(result.delivery.id===ticket.id&&result.delivery.lane===ticket.lane);
    }
    throw Error(stage);
   }
-  // One bounded retry is permitted only for a known signed Script timeout,
-  // using the original immutable request. An uncertain outcome is never
-  // rewritten as success; the same operation must still produce exact proof.
-  async function originalPersonRequest(body){
-   for(let attempt=0;attempt<2;attempt++){
-    try {
-     const answer=await call(body);
-     if(report.failure?.code==='SCRIPT_TIMEOUT')delete report.failure;
-     return answer;
-    } catch(error){
-     if(report.failure?.code!=='SCRIPT_TIMEOUT'||attempt!==0)throw error;
-     report.originalTimeoutRetryCount=(report.originalTimeoutRetryCount||0)+1;
-     await new Promise(resolve=>setTimeout(resolve,12000));
-    }
-   }
-   throw Error('Original person operation could not be verified');
+  // Every status poll or record retry is tied to its original immutable
+  // operation, never a new ID or guessed receipt. Timeouts remain failures
+  // until the exact signed Drive proof and readback are obtained.
+  async function originalRequest(body){
+   const wrapped=async original=>{
+    const answer=await call(original);
+    if(report.failure?.code==='SCRIPT_TIMEOUT')delete report.failure;
+    return answer;
+   };
+   return retryOriginalTimeout(wrapped,body,{
+    sleep:async ms=>{report.originalTimeoutRetryCount=(report.originalTimeoutRetryCount||0)+1;
+     await new Promise(resolve=>setTimeout(resolve,ms));},
+   });
   }
   async function record(collection,id,data,extra={}){
    const body={action:'managed/records',operation:'write',syncProtocol:2,collection,id,
     operationId:hash(SCHOOL+':'+collection+':'+id),expectedRecordRevision:'',data:{...data,schoolId:SCHOOL},edgeDeliveryVersion:1,...extra};
    const route=collection==='teachers_directory'?'person':'edge';
-   let result=route==='person'?await originalPersonRequest(body):await call(body);
+   let result=await originalRequest(body);
    if(route==='edge'&&result.delivery)result=await settle(result);
    requireCheck(verifiedRecordRoute(result,route));
-   const replay=route==='person'?await originalPersonRequest(body):await call(body);
+   const replay=await originalRequest(body);
    requireCheck(replay.recordRevision===result.recordRevision&&verifiedRecordRoute(replay,route));
    const read=await call({action:'managed/records',operation:'read',syncProtocol:2,collection,id});
    const saved=read.records?.[id];
@@ -164,4 +186,4 @@ if(require.main===module)acceptance().then(report=>{
  fs.writeFileSync('build/cloud-prerequisites/cloudflare-delivery.json',JSON.stringify(report,null,2));
  console.log(JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;
 });
-module.exports={acceptance,verifiedRecordRoute,SCHOOL,ENDPOINT,LOGIN};
+module.exports={acceptance,verifiedRecordRoute,retryOriginalTimeout,SCHOOL,ENDPOINT,LOGIN};
