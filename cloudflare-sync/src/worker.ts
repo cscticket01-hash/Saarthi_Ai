@@ -215,6 +215,50 @@ export class SyncLane extends DurableObject<Env>{
    return result;
   }
   const action=String(b.command||''),id=String(b.id||'');
+  // Legacy notices and encrypted attendance have their own already-durable
+  // school-lane owner. Stage exactly their immutable original request before
+  // their existing visible Cloudflare ACK, not before Google Drive delivery.
+  const stageOther=this.env.R2_STAGING_ENABLED==='true'&&
+   ((lane==='notices'&&action==='write')||(lane.startsWith('attendance-')&&action==='create'));
+  const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
+  if(stageOther){
+   demand(this.env.R2_STAGE!==undefined,'Private R2 bucket binding required',503);
+   if(lane==='notices'){
+    const request=b.request as Json|undefined;
+    demand(!this.meta('retired')&&!!this.meta('initialized')&&request&&
+     request.action==='managed_records'&&request.collection==='school_notices'&&
+     ['write','delete'].includes(String(request.operation))&&request.syncProtocol===2&&
+     typeof request.id==='string'&&request.id.length>0&&request.id.length<=200&&
+     !request.id.includes('/')&&typeof request.operationId==='string'&&
+     /^[A-Za-z0-9_-]{16,100}$/.test(request.operationId)&&
+     typeof request.expectedRecordRevision==='string'&&
+     (request.operation==='delete'||(request.data as Json)?.schoolId===school),
+     'Invalid original notice R2 admission',400);
+    const key=await digest(JSON.stringify([school,request.operationId]));
+    const prior=this.job(key);
+    if(prior){
+     const saved=JSON.parse(prior.payload) as Json;
+     demand(saved.fingerprint===await digest(JSON.stringify(request)),
+      'Sync operation ID conflict',409);
+    }
+    const encoded=new TextEncoder().encode(JSON.stringify(request));
+    demand(encoded.byteLength>0&&encoded.byteLength<=300000,'Original notice too large',413);
+    // A replay of a completed, Drive-verified job must not resurrect expired
+    // 24h staged bytes or consume fresh capacity.
+    if(prior?.state!=='completed'||!(prior.response&&
+       typeof (JSON.parse(prior.response) as Json)?.driveRevision==='string'))
+     await budget().stageR2Object(school,lane,key,0,encoded.buffer as ArrayBuffer);
+   }else{
+    const row=b.row as Json|undefined;
+    demand(row&&row.schoolId===school&&row.operationId===id&&
+     /^[a-f0-9]{64}$/.test(id)&&id.slice(0,2)===lane.slice(-2),
+     'Invalid original attendance R2 admission',400);
+    const encoded=new TextEncoder().encode(JSON.stringify(row));
+    demand(encoded.byteLength>0&&encoded.byteLength<=300000,
+     'Original attendance request too large',413);
+    await budget().stageR2Object(school,lane,id,0,encoded.buffer as ArrayBuffer);
+   }
+  }
   if(action==='retireNoticeCache'){
    demand(lane==='notices'&&liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Isolated live notice owner required',412);
    const owner=await this.env.LANES.getByName(school+'/live').command(school,'live',{command:'head'}) as {collections:{collection:string;state:string}[]};
@@ -254,7 +298,22 @@ export class SyncLane extends DurableObject<Env>{
     this.ctx.storage.sql.exec('UPDATE jobs SET state=?,due=?,claim=\'\',claim_until=0,response=? WHERE id=?',String(values.state),Number(values.nextAttemptAt),JSON.stringify(values),id);
     if(clearedPayload!==undefined)this.ctx.storage.sql.exec('UPDATE jobs SET payload=? WHERE id=?',clearedPayload,id);
    });
-   if(values.state==='retry')await this.wake(Number(values.nextAttemptAt));return true;
+   if(values.state==='retry')await this.wake(Number(values.nextAttemptAt));
+   // Only the already-checked original attendance owner proof may release R2
+   // retention; a generic completed job, or a notice with no Drive revision,
+   // is NOT verification and must stay staged.
+   if(this.env.R2_STAGING_ENABLED==='true'&&values.state==='completed'){
+    const verifiedAttendance=lane.startsWith('attendance-')&&
+      values.attendancePayloadPurged===true&&
+      (values.attendanceOwnerReceipt as Json|undefined)?.driveVerified===true;
+    const revision=String(values.driveRevision||'');
+    const verifiedNotice=lane==='notices'&&
+      revision.length>0&&!/^(live-|cf-)/.test(revision)&&
+      typeof values.completedAt==='number'&&Number.isSafeInteger(values.completedAt);
+    if(verifiedAttendance||verifiedNotice)
+     await budget().r2OriginalVerified(school,lane,id);
+   }
+   return true;
   }
   if(action==='create'){
    demand(lane.startsWith('attendance-')&&operationPattern.test(id));const row=b.row as Json;demand(row&&row.schoolId===school&&row.operationId===id&&id.slice(0,2)===lane.slice(-2));
