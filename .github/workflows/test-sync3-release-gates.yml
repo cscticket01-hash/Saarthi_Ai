@@ -89,7 +89,10 @@ jobs:
           node-version: '22'
       - name: Confirm exact TEST provider source without production data or writes
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          # Standby file is un-deployed; Worker runtime, broker and default
+          # production config MUST still exactly match verified TEST source.
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
           node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME,{attempts:3}).catch(()=>process.exit(1))"
       - name: Read only TEST signed school and expected reviewed GS version
         env:
@@ -125,7 +128,7 @@ jobs:
           node-version: '22'
       - name: Enforce exact deployed TEST business source, no production substitution
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
           node --check .github/scripts/sync3_current_original_proof_audit.cjs
       - name: Authenticated original-only reconciliation PREVIEW (zero writes)
         env:
@@ -156,7 +159,7 @@ jobs:
           node-version: '24'
       - name: Only reviewed exact deployed TEST business source may write synthetic records
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
           node --check .github/scripts/cloudflare_delivery_acceptance.cjs
       - name: Synthetic TEST teacher/staff records and original PDF bytes Google Drive readback
         env:
@@ -188,7 +191,7 @@ jobs:
           node-version: '22'
       - name: Enforce actual deployed TEST broker source and no production endpoints
         run: |
-          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
           node --check .github/scripts/sync3_synthetic_teacher_postmortem.cjs
       - name: Authenticated read-only original synthetic teacher receipt and Drive point-read
         env:
