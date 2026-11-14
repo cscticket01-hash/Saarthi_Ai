@@ -123,3 +123,33 @@ test('read-only proof diagnostics explain missing original fields without cleari
   assert.ok(!JSON.stringify(result).includes(request.id),reason);
  }
 });
+
+test('original receipt mismatch breakdown is fixed-string only and never clears an unverified marker',async()=>{
+ const cases=[
+  ['intent_hash',r=>{r.data._syncFieldPatch.set.title='different-synthetic-intent';}],
+  ['record_id',r=>{r.id='another-synthetic-notice';}],
+  ['collection',r=>{r.collection='school_calendar';}],
+  ['operation_kind',r=>{r.operation='delete';}],
+  ['operation_id',r=>{r.operationId='different-synthetic-operation-002';}],
+  ['invalid_original_request',r=>{r.operationId='';}],
+ ];
+ for(const [reason,mutate] of cases){
+  const f=fixture(),original={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+  f.docs.set('school_live_migrations/'+A,{inflight:{original}});
+  f.db.runTransaction=async()=>{throw Error('read-only proof check must never mutate data');};
+  const receipt=proof(),payload=JSON.parse(receipt.job.payload);mutate(payload.request);
+  payload.fingerprint=hash(JSON.stringify(payload.request));
+  receipt.job.payload=JSON.stringify(payload);
+  const result=await createLiveReconciliation({db:f.db,readNoticeReceipt:async()=>receipt}).reconcile(A,{previewOnly:true});
+  assert.equal(result.cleared,0,reason);
+  assert.equal(result.previewWouldClear,0,reason);
+  assert.equal(result.reasons.proof_unverified,1,reason);
+  assert.equal(result.proofSources.notice_mismatch_original_request_binding,1,reason);
+  assert.equal(result.proofSources['notice_original_binding_'+reason],1,reason);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.original,reason);
+  const diagnostics=JSON.stringify(result);
+  assert.equal(diagnostics.includes(binding.operationId),false,reason);
+  assert.equal(diagnostics.includes(binding.requestHash),false,reason);
+  assert.equal(diagnostics.includes(binding.id),false,reason);
+ }
+});
