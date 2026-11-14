@@ -395,6 +395,12 @@ export default {
      return Response.json({success:false,schoolId:school,message:e.message},{status:409,headers});
     throw error;
    }
-  }catch(error){const e=error as Error&{status?:number};const status=e.status||503;return Response.json({success:false,message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});}
+  }catch(error){
+  const e=error as Error&{status?:number};const status=e.status||503;
+  // Fixed, non-sensitive fail-closed signal. A 507 is never a cloud ACK.
+  if(status===507)return Response.json({success:false,code:'R2_CAPACITY_EXCEEDED',
+    message:'Cloudflare 8 GB school data capacity reached; local work retained.'},{status:507,headers});
+  return Response.json({success:false,message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});
+ }
  }
 } satisfies ExportedHandler<Env>;
