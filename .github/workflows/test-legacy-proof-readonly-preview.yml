@@ -1,0 +1,46 @@
+name: Isolated TEST read-only legacy proof preview
+on:
+  push:
+    branches: [test/legacy-proof-readonly-audit-20261114]
+    paths:
+      - '.github/workflows/test-exact-original-edge-reconciliation.yml'
+      - '.github/scripts/test_legacy_proof_readonly_preview.cjs'
+  pull_request:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/workflows/test-exact-original-edge-reconciliation.yml'
+      - '.github/scripts/test_legacy_proof_readonly_preview.cjs'
+permissions:
+  contents: read
+concurrency:
+  group: sync3-original-proof-readonly-preview
+  cancel-in-progress: false
+env:
+  VS_EXPECTED_TEST_RUNTIME: 8f5e5ad072421b9dc9a3a4c8b82515043cc26df0
+jobs:
+  original-proofs:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify backend sources EXACTLY match deployed isolated TEST broker
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --check .github/scripts/test_legacy_proof_readonly_preview.cjs
+      - name: Inspect authenticated original operation proofs without writes
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/test_legacy_proof_readonly_preview.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-test-legacy-proof-readonly-preview
+          path: build/cloud-prerequisites/edge-original-reconciliation.json
