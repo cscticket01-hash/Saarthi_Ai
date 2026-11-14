@@ -12,7 +12,7 @@ async function harness(t,enabled=true,bucket=true){
   outboundService:()=>new Response('{}',{status:503}),
   durableObjects:{LANES:{className:'SyncLane',useSQLite:true}},
   bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud',
-   ...(enabled?{R2_STAGING_ENABLED:'true'}:{})},
+   LIVE_SYNC_TEST_SCHOOL_ID:school,...(enabled?{R2_STAGING_ENABLED:'true'}:{})},
   ...(bucket?{r2Buckets:['R2_STAGE']}:{})};
  const mf=new Miniflare(convertV4MiniflareOptions({workers:[worker]}));
  t.after(()=>mf.dispose());
@@ -140,4 +140,36 @@ test('encrypted attendance is staged before its DO ACK, old completion with no o
  assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(row)),
   'No valid owner receipt means the R2 copy cannot be expired or released');
  assert.ok(await bucket.head(key));
+});
+
+test('native live school record reaches private R2 before Cloudflare ACK and verified Google backfill is independent',async t=>{
+ const {mf,rpc}=await harness(t);
+ const fingerprint=digest('{}');
+ assert.equal((await rpc('seedBegin',{collection:'school_expenses',fingerprint,count:0,sourceRevision:'original-drive-empty'},'live')).http,200);
+ const baseline=await rpc('seedSeal',{collection:'school_expenses',fingerprint},'live');
+ assert.equal(baseline.http,200,JSON.stringify(baseline));
+ assert.equal(baseline.value.state,'active');
+ const original={collection:'school_expenses',id:'expense-r2-original',operation:'write',
+  operationId:'r2-live-original-operation-001',expectedRevision:'',
+  data:{schoolId:school,amount:17,description:'synthetic-private-live-record'}};
+ const accepted=await rpc('commit',original,'live');
+ assert.equal(accepted.http,200,JSON.stringify(accepted));
+ assert.equal(accepted.value.cloudState,'committed');
+ const receipt=digest(JSON.stringify([school,'live',original.operationId]));
+ const path='saarthi-v1/'+school+'/live/'+receipt+'/0';
+ const bucket=await mf.getR2Bucket('R2_STAGE');
+ const staged=await bucket.get(path);
+ assert.ok(staged,'Private R2 must contain original live operation before ACK');
+ const source=JSON.parse(await staged.text());
+ assert.equal(source.operationId,original.operationId);
+ assert.equal(source.data.amount,17);
+ const claim=await rpc('backupClaim',{},'live');
+ assert.equal(claim.http,200,JSON.stringify(claim));
+ assert.ok(claim.value.job,'Cloudflare durable alarm owns Google delivery');
+ const job=claim.value.job;
+ const proof=await rpc('backupFinish',{sequence:job.seq,claim:job.claim,
+  verified:true,driveRevision:'google-signed-original-backup-revision'},'live');
+ assert.equal(proof.http,200,JSON.stringify(proof));
+ assert.equal(proof.value.accepted,true,'Only matching signed original Google delivery completes backup');
+ assert.ok(await bucket.head(path),'The verified original R2 copy stays 24h minimum');
 });
