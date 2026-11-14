@@ -36,13 +36,23 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
    if(r.status===404&&result.success===false&&(result.schoolId===undefined||result.schoolId===school)&&
       lane==='records'&&body.command==='status'&&message==='Delivery receipt unavailable')
     throw Object.assign(Error('Delivery receipt unavailable'),{status:404,code:'EDGE_RECEIPT_NOT_FOUND',publicMessage:true});
-   const code=body.command==='retryDeleteReview'&&r.status===409&&
+   // Only a signed, school-bound R2 budget result can report a full staged
+   // bucket. No 507 may be interpreted as a completed Cloudflare ACK.
+   const r2Capacity=r.status===507&&result.success===false&&
+    result.code==='R2_CAPACITY_EXCEEDED'&&
+    (result.schoolId===school||result.schoolId===undefined)&&
+    ['enqueue','putSmall','part'].includes(String(body.command));
+   const code=r2Capacity?'R2_CAPACITY_EXCEEDED':
+     body.command==='retryDeleteReview'&&r.status===409&&
      Object.prototype.hasOwnProperty.call(reviewErrors,message)
       ?reviewErrors[message]:message==='Replay history compacted; snapshot required'
       ?'LIVE_SNAPSHOT_REQUIRED':message==='Record revision conflict'?'RECORD_REVISION_CONFLICT'
       :message==='Sync operation ID conflict'?'OPERATION_ID_CONFLICT':'CLOUDFLARE_SYNC_UNAVAILABLE';
-   const error=Object.assign(Error(message==='Record revision conflict'||message==='Sync operation ID conflict'?message:'Cloudflare sync unavailable; pending work retained'),{
-    status:r.status===409?409:503,code,publicMessage:true
+   const error=Object.assign(Error(r2Capacity?
+    'Cloudflare school storage is at its 8 GB limit; original local data is retained.':
+    message==='Record revision conflict'||message==='Sync operation ID conflict'?
+     message:'Cloudflare sync unavailable; pending work retained'),{
+    status:r2Capacity?507:r.status===409?409:503,code,publicMessage:true
    });
    // Only this same-school notice owner's write command has a transactional
    // precondition rejection. Never attest a foreign/malformed reply, a spool
