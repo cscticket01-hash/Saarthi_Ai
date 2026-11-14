@@ -20,6 +20,21 @@ void main() {
     expect(decision.delay(1, jitter: 0), const Duration(minutes: 15));
   });
 
+  test('R2 8GB capacity fence retains original Windows/Android outbox until storage frees', () {
+    for (final decision in [
+      SyncRecoveryDecision.classify(status: 507, code: 'R2_CAPACITY_EXCEEDED'),
+      SyncRecoveryDecision.classify(status: 503, code: 'R2_CAPACITY_EXCEEDED'),
+    ]) {
+      expect(decision.kind, SyncFailureKind.r2StorageFull);
+      expect(decision.retry, isTrue);
+      expect(decision.review, isFalse);
+      expect(decision.independentRecords, isFalse);
+      expect(decision.delay(1, jitter: 0), const Duration(hours: 1));
+      expect(decision.message, contains('8 GB'));
+      expect(decision.message, contains('Local pending data is safe'));
+    }
+  });
+
   test('notice delete after wrapped card conflict dispatches automatically; idle and shared failures do not', () {
     fakeAsync((clock) {
       var runs = 0;
