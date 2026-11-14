@@ -739,7 +739,7 @@ class SchoolSession {
             error is SchoolAccessDenied ||
             (error is SchoolApiFailure && !error.retryable) ||
             error is StateError && error.message.contains('school review');
-        final quota = error is SchoolApiFailure && error.status == 429;
+        final quota = error is SchoolApiFailure && (error.status == 429 || error.storageFull);
         final delay = min(3600000, (quota ? 60000 : 5000) * pow(2, min(attempts, 9)).toInt());
         await _attendanceStore.finish(owner, id, lease, {
           'attempts': attempts,
@@ -748,6 +748,8 @@ class SchoolSession {
           if (review) 'state': 'needsAttention',
           'error': error is AttendanceRejected
               ? error.retainedMessage
+              : error is SchoolApiFailure && error.storageFull
+              ? error.userMessage
               : review
               ? 'Attendance needs school review; capture retained.'
               : 'Attendance unavailable; capture retained for automatic retry.',

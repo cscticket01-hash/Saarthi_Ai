@@ -41,7 +41,11 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
    const r2Capacity=r.status===507&&result.success===false&&
     result.code==='R2_CAPACITY_EXCEEDED'&&
     (result.schoolId===school||result.schoolId===undefined)&&
-    ['enqueue','putSmall','part'].includes(String(body.command));
+    (lane==='records'&&body.command==='enqueue'||
+     /^file-[a-f0-9]{64}$/.test(lane)&&['putSmall','part'].includes(String(body.command))||
+     lane==='notices'&&body.command==='write'||
+     /^attendance-[a-f0-9]{2}$/.test(lane)&&body.command==='create'||
+     lane==='live'&&['commit','bundleCommit','bundlePublish'].includes(String(body.command)));
    const code=r2Capacity?'R2_CAPACITY_EXCEEDED':
      body.command==='retryDeleteReview'&&r.status===409&&
      Object.prototype.hasOwnProperty.call(reviewErrors,message)
