@@ -173,3 +173,35 @@ test('native live school record reaches private R2 before Cloudflare ACK and ver
  assert.equal(proof.value.accepted,true,'Only matching signed original Google delivery completes backup');
  assert.ok(await bucket.head(path),'The verified original R2 copy stays 24h minimum');
 });
+
+test('atomic bundle original intent is private R2 durable before ACK and retained until EVERY original backup verifies',async t=>{
+ const {mf,rpc}=await harness(t),fingerprint=digest('{}');
+ assert.equal((await rpc('seedBegin',{collection:'school_expenses',fingerprint,count:0,sourceRevision:'drive-empty'},'live')).http,200);
+ assert.equal((await rpc('seedSeal',{collection:'school_expenses',fingerprint},'live')).http,200);
+ const bundleId='r2-atomic-original-bundle-0001';
+ const operations=['first','second'].map(id=>({collection:'school_expenses',id,
+  operation:'write',operationId:'r2-atomic-'+id+'-operation-0001',expectedRevision:'',
+  data:{schoolId:school,amount:19,description:'synthetic original bundle'}}));
+ const accepted=await rpc('bundleCommit',{bundleId,operations},'live');
+ assert.equal(accepted.http,200,JSON.stringify(accepted));
+ assert.equal(accepted.value.cloudState,'committed');
+ const id=digest(JSON.stringify([school,'bundle',bundleId]));
+ const path='saarthi-v1/'+school+'/live/'+id+'/0',bucket=await mf.getR2Bucket('R2_STAGE');
+ const original=await bucket.get(path);assert.ok(original);
+ assert.deepEqual(JSON.parse(await original.text()).operations,operations);
+ const ns=await mf.getDurableObjectNamespace('LANES');
+ const quota=ns.get(ns.idFromName('saarthi-account-r2-staging-budget-v1'));
+ const bytes=(await quota.r2CapacityStatus()).schoolBytes;
+ assert.equal((await rpc('bundleCommit',{bundleId,operations},'live')).http,200);
+ assert.equal((await quota.r2CapacityStatus()).schoolBytes,bytes);
+ for(let i=0;i<2;i++){
+  const claim=await rpc('backupClaim',{},'live'),job=claim.value.job;
+  assert.ok(job);
+  const completed=await rpc('backupFinish',{sequence:job.seq,claim:job.claim,
+   verified:true,driveRevision:'signed-bundle-original-'+i},'live');
+  assert.equal(completed.http,200,JSON.stringify(completed));
+  assert.equal(completed.value.accepted,true);
+  assert.equal((await quota.r2CapacityStatus()).verifiedBytes,i===0?0:bytes);
+ }
+ assert.ok(await bucket.head(path),'Verified bundle remains for minimum retention');
+});

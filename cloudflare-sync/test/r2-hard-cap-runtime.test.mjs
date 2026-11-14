@@ -52,9 +52,19 @@ export class R2HardFenceTestLane extends SyncLane {
  const used=(await actor.r2CapacityStatus()).schoolBytes;
  assert.ok(used>0&&used<8000000000);
  const injected=await actor.fetch('https://quota.test/__test_private_full_budget',{method:'POST',
-  body:JSON.stringify({bytes:8000000000-used})});
+  body:JSON.stringify({bytes:8000000000-used-100})});
  assert.equal(injected.status,200);
+ const bytes=new Uint8Array(64).fill(7).buffer;
+ const concurrent=await Promise.allSettled([
+  actor.stageR2Object(school,'records','e'.repeat(64),0,bytes),
+  actor.stageR2Object(other,'records','f'.repeat(64),0,bytes),
+ ]);
+ assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,1,
+  'Only one concurrent multi-school reservation may fit');
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,7999999964);
+ await actor.stageR2Object(school,'records','9'.repeat(64),0,new Uint8Array(36).buffer);
  assert.equal((await actor.r2CapacityStatus()).schoolBytes,8000000000);
+ await assert.rejects(actor.stageR2Object(other,'records','8'.repeat(64),0,new Uint8Array(1).buffer));
  const blocked=await rpc(other,'second','This must stay on device');
  assert.equal(blocked.status,507,JSON.stringify(blocked.response));
  assert.equal(blocked.response.success,false);

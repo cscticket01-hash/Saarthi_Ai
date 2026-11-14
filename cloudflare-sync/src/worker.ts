@@ -1,5 +1,5 @@
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
-import {stageR2,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
+import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
 import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
 import {initLive,liveCommand} from './live-records';
@@ -31,14 +31,21 @@ export class SyncLane extends DurableObject<Env>{
   this.setMeta('r2BudgetActor','v1');
   return stageR2(this.ctx.storage,this.env.R2_STAGE,school,lane,id,offset,bytes);
  }
+ async r2OriginalAccepted(school:string,lane:string,id:string){
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
+  return acceptR2Original(this.ctx.storage,school,lane,id);
+ }
  async r2OriginalVerified(school:string,lane:string,id:string){
-  demand(this.meta('r2BudgetActor')==='v1'&&!this.meta('identity'),'R2 budget actor is unavailable',403);
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
   const result=await markR2Verified(this.ctx.storage,school,lane,id);
   if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
   return result;
  }
  async r2CapacityStatus(){
-  demand(this.meta('r2BudgetActor')==='v1'&&!this.meta('identity'),'R2 budget actor is unavailable',403);
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
   return r2BudgetStatus(this.ctx.storage);
  }
  async command(school:string,lane:string,b:Json):Promise<unknown>{
@@ -154,21 +161,49 @@ export class SyncLane extends DurableObject<Env>{
     const prior=liveCommand(this.ctx.storage,school,{command:'bundleReceipt',
       bundleId:b.bundleId,operations:b.operations,media:b.media,
       mediaManifestHash:b.mediaManifestHash});
-    if(prior.found===true)return prior.receipt;
+    if(prior.found===true){
+     if(staged)await budget().r2OriginalAccepted(school,'live',await digest(JSON.stringify([school,'bundle',b.bundleId])));
+     return prior.receipt;
+    }
     verifiedMedia=await this.command(school,'live',{command:'bundlePrepare',
       bundleId:b.bundleId,media:b.media,requireDrive:false}) as Json;
     demand(verifiedMedia.mediaReady===true&&
       verifiedMedia.manifestHash===b.mediaManifestHash,'Staged media manifest changed',409);
     b={...b,command:'bundleCommit'};
    }
+   if(staged&&b.command==='bundleCommit'){
+    demand(typeof b.bundleId==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId)&&
+      Array.isArray(b.operations)&&b.operations.length>=2&&b.operations.length<=5,
+      'Invalid original R2 bundle',400);
+    // The existing atomic owner remains authoritative. Preserve the original
+    // request (including data, CAS and media links) before publishing its ACK.
+    const encoded=new TextEncoder().encode(canonical({bundleId:b.bundleId,
+      operations:b.operations,media:b.media??[],mediaManifestHash:b.mediaManifestHash??null}));
+    demand(encoded.byteLength<=300000,'Original R2 bundle too large',413);
+    await budget().stageR2Object(school,'live',
+      await digest(JSON.stringify([school,'bundle',b.bundleId])),0,encoded.buffer as ArrayBuffer);
+   }
    if(b.command==='commit'||b.command==='bundleCommit'||b.command==='backupFinish')await this.wake(Date.now()+250);
    const result=liveCommand(this.ctx.storage,school,b,Date.now(),false,verifiedMedia);
+   if(staged&&b.command==='commit')await budget().r2OriginalAccepted(school,'live',
+     await digest(JSON.stringify([school,'live',b.operationId])));
+   if(staged&&b.command==='bundleCommit')await budget().r2OriginalAccepted(school,'live',
+     await digest(JSON.stringify([school,'bundle',b.bundleId])));
    // The signed backupFinish owner has already atomically checked Drive
    // revision, current claim, event and immutable original live operation.
    // Mark the R2 original only AFTER that verified transaction succeeds.
    if(staged&&verifiedLive&&verifiedOp&&result.accepted===true){
     await budget().r2OriginalVerified(school,'live',
      await digest(JSON.stringify([school,'live',verifiedOp])));
+    const event=this.ctx.storage.sql.exec<{bundle_id:string|null}>(
+      'SELECT bundle_id FROM live_events WHERE seq=?',Number(b.sequence)).toArray()[0];
+    if(event?.bundle_id){
+     const rows=this.ctx.storage.sql.exec<{state:string}>(
+       'SELECT b.state FROM live_backup b JOIN live_events e ON e.seq=b.seq WHERE e.bundle_id=?',event.bundle_id).toArray();
+     if(rows.length>=2&&rows.every(row=>row.state==='verified'))
+      await budget().r2OriginalVerified(school,'live',
+        await digest(JSON.stringify([school,'bundle',event.bundle_id])));
+    }
    }
    if(b.command==='backupFinish'&&b.verified===true&&result.accepted===true){
     const head=liveCommand(this.ctx.storage,school,{command:'head'});
@@ -236,6 +271,10 @@ export class SyncLane extends DurableObject<Env>{
     }
    }
    const result=await spoolCommand(this.ctx.storage,school,lane,b,at=>this.wake(at));
+   if(staged&&(lane==='records'&&cmd==='enqueue'||lane.startsWith('file-')&&
+      ['part','putSmall','status','bundleProof'].includes(cmd)&&
+      this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM edge_ops WHERE id=?',id).toArray()[0]?.state!=='receiving'))
+    await budget().r2OriginalAccepted(school,lane,id);
    if(staged&&cmd==='finish'&&result===true&&(b.values as Json)?.state==='completed'){
     const values=b.values as Json,ack=values.result as Json|undefined;
     const allAccepted=lane==='records'&&ack?.success===true&&ack.schoolId===school&&
@@ -350,8 +389,8 @@ export class SyncLane extends DurableObject<Env>{
   }
   if(action==='create'){
    demand(lane.startsWith('attendance-')&&operationPattern.test(id));const row=b.row as Json;demand(row&&row.schoolId===school&&row.operationId===id&&id.slice(0,2)===lane.slice(-2));
-   if(this.job(id))return false;
-   this.ctx.storage.sql.exec('INSERT INTO jobs(id,kind,payload,state,due,created) VALUES(?,\'attendance\',?,\'pending\',?,?)',id,JSON.stringify(row),Date.now(),Number(row.createdAt));await this.wake(Date.now()+250);return true;
+   if(this.job(id)){if(stageOther)await budget().r2OriginalAccepted(school,lane,id);return false;}
+   this.ctx.storage.sql.exec('INSERT INTO jobs(id,kind,payload,state,due,created) VALUES(?,\'attendance\',?,\'pending\',?,?)',id,JSON.stringify(row),Date.now(),Number(row.createdAt));if(stageOther)await budget().r2OriginalAccepted(school,lane,id);await this.wake(Date.now()+250);return true;
   }
   demand(lane==='notices');
   demand(!this.meta('retired')||!['seed','snapshot','write'].includes(action),'Legacy notice cache retired; use verified school owner',412);
@@ -371,7 +410,7 @@ export class SyncLane extends DurableObject<Env>{
   if(action==='write'){
    demand(this.meta('initialized'),'Notice baseline required',409);const request=b.request as Json;demand(request&&['write','delete'].includes(String(request.operation))&&request.syncProtocol===2&&typeof request.id==='string'&&request.id.length>0&&request.id.length<=200&&!request.id.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(request.id)&&/^[A-Za-z0-9_-]{16,100}$/.test(String(request.operationId)));
    const key=await digest(JSON.stringify([school,request.operationId]));const fingerprint=await digest(JSON.stringify(request));const prior=this.job(key);
-   if(prior){const saved=JSON.parse(prior.payload) as Json;demand(saved.fingerprint===fingerprint,'Sync operation ID conflict',409);return saved.ack;}
+   if(prior){const saved=JSON.parse(prior.payload) as Json;demand(saved.fingerprint===fingerprint,'Sync operation ID conflict',409);if(stageOther)await budget().r2OriginalAccepted(school,lane,key);return saved.ack;}
    const revision='cf-'+crypto.randomUUID(),collectionRevision='cf-'+crypto.randomUUID();
    const ack=this.ctx.storage.transactionSync(()=>{
     const currentRow=this.ctx.storage.sql.exec<{body:string}>('SELECT body FROM records WHERE id=?',String(request.id)).toArray()[0];const current=currentRow?JSON.parse(currentRow.body) as Json:null;
@@ -386,7 +425,7 @@ export class SyncLane extends DurableObject<Env>{
     const payload={request,fingerprint,ack:result,record,baseRevision:request.expectedRecordRevision};
     this.ctx.storage.sql.exec('INSERT INTO jobs(id,kind,payload,state,due,created,revision) VALUES(?,\'notice\',?,\'pending\',?,?,?)',key,JSON.stringify(payload),Date.now(),Date.now(),revision);
     this.ctx.storage.sql.exec('INSERT INTO records(id,body) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',String(request.id),JSON.stringify(record));this.setMeta('revision',collectionRevision);return result;
-   });await this.wake(Date.now()+250);return ack;
+   });if(stageOther)await budget().r2OriginalAccepted(school,lane,key);await this.wake(Date.now()+250);return ack;
   }
   throw Object.assign(new Error('Unknown sync command'),{status:400});
  }

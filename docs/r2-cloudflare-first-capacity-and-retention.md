@@ -5,7 +5,7 @@ Windows and Android persist original operations in their existing durable local 
 
 The existing Cloudflare Worker alarm and signed Render/Apps Script owner complete Google delivery asynchronously, independently of whether the app is still open. A Cloudflare ACK is NEVER a Google Drive completion ACK.
 
-After an exact original signed Google completion, private R2 bytes remain available at least 24 hours from first accepted staging; only then can the R2 actor delete them. Pending, failed, unverified, foreign or mismatched original receipts cannot trigger deletion at 24 hours or afterward. The original identity and receipt are retained.
+After an exact original signed Google completion, private R2 bytes remain available at least 24 hours from the original owner’s durable acceptance (multipart seal for files); only then can the R2 actor delete them. Pending, failed, unverified, foreign or mismatched original receipts cannot trigger deletion at 24 hours or afterward. The original identity and receipt are retained.
 
 ## Decimal GB admission barriers
 - School data ceiling: 8,000,000,000 bytes, across all schools in this dedicated TEST R2 bucket.
@@ -27,7 +27,7 @@ The TEST bucket is saarthi-sync-r2-test (private, Standard, APAC). Never set a b
 - lib/sync_recovery_policy.dart: local operations retained on capacity and network failures
 
 ## Release hold
-This PR is TEST-only initial private-R2 staging for school record + file lanes. It does NOT yet cover all notices, attendance, mobile or atomic live bundles, physical Windows/Android offline/restart, 2–5 second latency, or production rollout. Issue #279 has 14 historical unverified markers (7 missing original jobs, 7 conflicting original payload hashes). No new stage or R2 object is proof those historical operations were backed up. Do not merge migration PR #282 or deploy this R2 staging to production from CI alone.
+This PR is TEST-only initial private-R2 staging for school record + file lanes. Automated private-R2 coverage includes records, files, notices, encrypted attendance, native live commits and atomic bundle intent. Physical Windows/Android offline/restart, real-provider R2 client-offline delivery and 2–5 second latency still require acceptance; production rollout remains blocked. Issue #279 has 14 historical unverified markers (7 missing original jobs, 7 conflicting original payload hashes). No new stage or R2 object is proof those historical operations were backed up. Do not merge migration PR #282 or deploy this R2 staging to production from CI alone.
 
 ## Required verification before activation
 1. Worker type-check and full Miniflare R2 replay/409/507/fail-closed tests PASS.
@@ -36,3 +36,12 @@ This PR is TEST-only initial private-R2 staging for school record + file lanes. 
 4. Extend all remaining data lanes and signed app quota display while preserving existing local outbox semantics.
 5. Recover every historical release marker with its original proof; pass real Windows/Android plus Google Drive delivery and 2–5 second Cloudflare ACK-to-Idle gates.
 6. Only then allocate separate production private bucket and reviewed production R2 bindings, deploy production Worker/broker, and release signed app updates.
+
+
+## Recovery and cleanup corrections — 14 Nov 2026
+
+- R2 reservations and owner acceptance are separate: failed puts retain quota; acceptance is sealed only after the original lane accepts. Partial file chunks do not start a completed upload’s retention clock.
+- Purged objects retain an immutable hash/size tombstone, with zero active R2 byte charge. An identical delayed retry cannot resurrect R2 bytes or double-count capacity. Tombstones live in Durable Object SQLite and are outside the R2 byte ledger; their metadata growth needs separate monitoring.
+- Writes and deletion serialize per immutable object key. Different objects/schools can proceed concurrently. Failed R2 deletion retains its full byte charge and alarm recovery.
+- Atomic bundle intent is staged once before its all-or-nothing ACK. R2 verification requires every original event’s existing signed Google backup to verify; one completed child is insufficient.
+- This ledger controls this dedicated bucket through one namespace and actor. It cannot guarantee an account-wide billing cap against other buckets, credentials or external writers. Production must use the same authoritative ledger for any shared bucket; separate ledgers must never independently admit against one shared ceiling.

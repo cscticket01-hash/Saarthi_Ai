@@ -15,9 +15,16 @@ export class R2VerifiedTimeLane extends SyncLane {
   if(new URL(request.url).pathname==='/__private_retention_clock') {
    const b=await request.json(),sql=this.ctx.storage.sql;
    if(b.mode==='inspect') {
-    const rows=sql.exec("SELECT key,state,accepted_at,verified_at,purge_due FROM r2_staged WHERE key=?",
+    const rows=sql.exec("SELECT key,state,accepted_at,accepted_final,verified_at,purge_due FROM r2_staged WHERE key=?",
       b.key).toArray();
     return Response.json({rows});
+   }
+   if(b.mode==='fail_put'){
+    const bucket=this.env.R2_STAGE;
+    this.env.R2_STAGE={head:bucket.head.bind(bucket),put:async()=>{throw Error('synthetic R2 outage');}};
+    try{await super.stageR2Object(b.school,'records',b.id,0,new Uint8Array([1,2,3]).buffer);}
+    catch{return Response.json({failed:true});}finally{this.env.R2_STAGE=bucket;}
+    return Response.json({failed:false});
    }
    const before=Date.now()-24*60*60*1000-4000;
    if(b.mode==='age_verified'){
@@ -27,6 +34,11 @@ export class R2VerifiedTimeLane extends SyncLane {
    if(b.mode==='age_uncertain'){
     sql.exec("UPDATE r2_staged SET accepted_at=?,purge_due=? WHERE key=? AND state='stored'",
      before,Date.now()-1000,b.key);
+   }
+   if(b.mode==='fail_delete'){
+    const bucket=this.env.R2_STAGE;
+    this.env.R2_STAGE={...bucket,delete:async()=>{throw Error('synthetic delete interruption');}};
+    try{await super.alarm();}finally{this.env.R2_STAGE=bucket;}
    }
    if(b.mode==='sweep')await super.alarm();
    return Response.json({success:true});
@@ -62,6 +74,20 @@ export class R2VerifiedTimeLane extends SyncLane {
   assert.equal(first.status,200,JSON.stringify(first));
   return {id,key:'saarthi-v1/'+school+'/records/'+id+'/0',req};
  };
+ const failedId='4'.repeat(64),failedKey='saarthi-v1/'+school+'/records/'+failedId+'/0';
+ const failed=await quota.fetch('https://quota.test/__private_retention_clock',{method:'POST',
+  body:JSON.stringify({mode:'fail_put',school,id:failedId})});
+ assert.equal((await failed.json()).failed,true,'Provider put failure returns no staged success');
+ assert.equal((await quota.r2CapacityStatus()).reservedBytes,3,'Failed put remains fully reserved');
+ const retryStarted=Date.now();
+ await quota.stageR2Object(school,'records',failedId,0,new Uint8Array([1,2,3]).buffer);
+ assert.equal((await quota.r2CapacityStatus()).reservedBytes,0);
+ assert.equal((await quota.r2CapacityStatus()).schoolBytes,3,'Exact retry counts reservation once');
+ const inspectFailed=await quota.fetch('https://quota.test/__private_retention_clock',{method:'POST',
+  body:JSON.stringify({mode:'inspect',key:failedKey})});
+ const retryRow=(await inspectFailed.json()).rows[0];
+ assert.ok(retryRow.accepted_at>=retryStarted,'Retention never starts at failed reservation');
+ assert.equal(retryRow.accepted_final,0,'Staged bytes alone do not seal original owner acceptance');
  const verified=await request('original-r2-verified-00002'),
   uncertain=await request('original-r2-uncertain-00001');
  const bucket=await mf.getR2Bucket('R2_STAGE');
@@ -91,10 +117,36 @@ export class R2VerifiedTimeLane extends SyncLane {
  // An unverified original must NOT be deleted even with a forged old age.
  await inspect(uncertain.key,'age_uncertain');
  await inspect(verified.key,'age_verified');
+ const beforeCleanup=(await quota.r2CapacityStatus()).schoolBytes;
+ await inspect(verified.key,'fail_delete');
+ assert.ok(await bucket.head(verified.key),'Failed deletion keeps original bytes');
+ assert.equal((await quota.r2CapacityStatus()).schoolBytes,beforeCleanup,'Failed cleanup never releases quota');
  await inspect(uncertain.key,'sweep');
  assert.ok(await bucket.head(uncertain.key),'Unknown Google delivery never permits R2 deletion');
  assert.equal(await bucket.head(verified.key),null,'Only matching signed Drive-verified bytes expire');
  const rows=await inspect(verified.key,'inspect');
- assert.equal(rows.rows.length,0,'Quota can be reclaimed only after R2 confirmed deletion');
+ assert.equal(rows.rows.length,1,'Immutable replay tombstone is retained');
+ assert.equal(rows.rows[0].state,'purged');
+ const beforeReplay=(await quota.r2CapacityStatus()).schoolBytes;
+ const replay=await rpc('enqueue',{id:verified.id,request:verified.req});
+ assert.equal(replay.status,200);
+ assert.equal(await bucket.head(verified.key),null,'Original replay cannot resurrect expired R2 bytes');
+ assert.equal((await quota.r2CapacityStatus()).schoolBytes,beforeReplay);
  assert.ok((await quota.r2CapacityStatus()).schoolBytes>0,'Pending school bytes remain in quota');
+ // Multipart originals acquire one owner-acceptance time only after sealing.
+ const file=Buffer.alloc(512*1024+17,7),uploadKey='r2-partial-retention-original-001';
+ const fileId=hash(JSON.stringify([school,uploadKey])),lane='file-'+fileId;
+ const manifest={uploadKey,name:'synthetic-partial.bin',mime:'application/octet-stream',sizeBytes:file.length,sha256:hash(file)};
+ assert.equal((await rpc('begin',{id:fileId,manifest},lane)).status,200);
+ const send=async(offset,bytes)=>rpc('part',{id:fileId,offset,base64:bytes.toString('base64'),chunkSha256:hash(bytes)},lane);
+ assert.equal((await send(0,file.subarray(0,512*1024))).status,200);
+ const firstKey='saarthi-v1/'+school+'/'+lane+'/'+fileId+'/0';
+ assert.equal((await inspect(firstKey,'inspect')).rows[0].accepted_final,0,
+  'Incomplete upload has no final acceptance and cannot expire');
+ const sealedAt=Date.now();
+ assert.equal((await send(512*1024,file.subarray(512*1024))).status,200);
+ const sealed=(await inspect(firstKey,'inspect')).rows[0];
+ assert.equal(sealed.accepted_final,1);
+ assert.ok(sealed.accepted_at>=sealedAt,'Earlier chunks retain at least 24h from final original acceptance');
+
 });
