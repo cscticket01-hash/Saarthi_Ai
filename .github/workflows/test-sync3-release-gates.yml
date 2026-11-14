@@ -10,6 +10,9 @@ on:
       - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
       - '.github/scripts/sync3_original_release_gate.cjs'
       - '.github/scripts/sync3_original_release_gate.test.cjs'
+      - '.github/scripts/sync3_production_r2_standby.test.cjs'
+      - 'cloudflare-sync/wrangler.production-standby.jsonc'
+      - 'docs/sync3-production-r2-standby.md'
   workflow_dispatch:
 permissions:
   contents: read
@@ -47,6 +50,7 @@ jobs:
           node --test .github/scripts/sync3_capacity_budget.test.cjs
           node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
           node --test .github/scripts/sync3_original_release_gate.test.cjs
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
 
   flutter-retry-and-isolation:
     name: Windows/Android local outbox, quota 507 and multi-PC SQLite
