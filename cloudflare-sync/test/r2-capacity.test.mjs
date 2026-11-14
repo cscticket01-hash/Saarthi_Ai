@@ -24,7 +24,7 @@ test('24h cache may be purged only after actual Drive verification',()=>{
  const accepted=Date.now()-R2_VERIFIED_RETENTION_MS-1000;
  const pending={state:'pending',accepted_at:accepted,verified_at:0,purge_due:0};
  assert.equal(r2MayPurge(pending,Date.now()),false);
- assert.equal(verifiedR2PurgeDue(accepted,Date.now()),Date.now()-0); // verified after minimum age
+ const now=Date.now();assert.equal(verifiedR2PurgeDue(accepted,now),now); // verified after minimum age
  const verified=accepted+1000;
  const due=verifiedR2PurgeDue(accepted,verified);
  const record={state:'verified',accepted_at:accepted,verified_at:verified,purge_due:due};
