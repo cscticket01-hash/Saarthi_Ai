@@ -133,3 +133,21 @@ test('a Google point-read timeout can fall back to original completed edge proof
  assert.equal(failed.cleared,0);
  assert.equal(failed.reasons.proof_unavailable,1);
 });
+
+test('source diagnostics count unavailable original proofs without exposing operation identities',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding;
+ save(f,'inflight',value);
+ const result=await createLiveReconciliation({db:f.db,
+  readDrive:async()=>{throw Error('Google source read unavailable');},
+  readEdgeReceipt:async()=>{throw Error('Original edge receipt missing');}
+ }).reconcile(A);
+ assert.equal(result.cleared,0);
+ assert.equal(result.reasons.proof_unavailable,1);
+ assert.deepEqual(result.proofSources,{
+  legacy_marker:1,drive_read_error:1,edge_read_error:1,source_error_retained:1
+ });
+ assert.ok(!JSON.stringify(result).includes(binding.operationId));
+ assert.ok(!JSON.stringify(result).includes(binding.id));
+ assert.ok(!JSON.stringify(result).includes(binding.requestHash));
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+});

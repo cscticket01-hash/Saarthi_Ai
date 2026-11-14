@@ -80,10 +80,14 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
   const ref=db.doc('school_live_migrations/'+school),snapshot=(await ref.get()).data()||{};
   const candidates=['inflight','liveInflight'].flatMap(map=>Object.entries(snapshot[map]||{}).map(([token,marker])=>({map,token,marker}))).sort((a,b)=>(Number(a.marker.startedAt)||0)-(Number(b.marker.startedAt)||0));
   let cleared=0;const reasons={},proofs=new Map();
+  // Aggregated diagnostic counters only; never emit record IDs, hashes,
+  // Google payloads, signed receipts, or school credentials.
+  const proofSources={},note=kind=>{proofSources[kind]=(proofSources[kind]||0)+1;};
   const retain=reason=>{reasons[reason]=(reasons[reason]||0)+1;};
   for(const {map,token,marker}of candidates.slice(0,limit)){
    const lane=map==='liveInflight'?'live':'legacy',binding=marker.operationBinding;
-   if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');continue;}
+   note(lane==='live'?'live_marker':'legacy_marker');
+   if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');note('invalid_binding');continue;}
    let verified=false;
    try{
     // An idle notice proof must not be reused for a distinct marker with a
@@ -92,30 +96,46 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
     // Several lost responses for one immutable operation need one verified
     // lookup. The cache lasts only this bounded reconciliation invocation.
     if(!proofs.has(proofKey))proofs.set(proofKey,(async()=>{
-     if(lane==='live'&&typeof readLiveReceipt==='function')return liveProofMatches(await readLiveReceipt(school,binding.operationId),binding);
+     if(lane==='live'&&typeof readLiveReceipt==='function'){
+      try{
+       const ok=liveProofMatches(await readLiveReceipt(school,binding.operationId),binding);
+       note(ok?'live_exact':'live_nonmatching');return ok;
+      }catch(error){note('live_read_error');throw error;}
+     }
      if(lane==='legacy'){
       let readError=null;
       if(typeof readDrive==='function'){
        try{
-        if(driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;
-       }catch(error){readError=error;}
-      }
+        const ok=driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding);
+        note(ok?'drive_exact':'drive_nonmatching');
+        if(ok)return true;
+       }catch(error){note('drive_read_error');readError=error;}
+      }else note('drive_reader_missing');
       // A verified old edge job may retain a signed original Google receipt
       // even after a newer Sheet revision superseded the same record ID.
       // Require a fully settled marker, exactly-bound operation and original
       // canonical Google row. Never clear from staging success alone.
       if(marker.activeAttempts===0&&typeof readEdgeReceipt==='function'){
        try{
-        if(edgeProofMatches(await readEdgeReceipt(school,binding),binding))return true;
-       }catch(error){readError??=error;}
-      }
-      if(readError)throw readError;
+        const proof=await readEdgeReceipt(school,binding);
+        const ok=edgeProofMatches(proof,binding);
+        note(ok?'edge_exact':proof?.state==='completed'?'edge_completed_nonmatching':'edge_nonmatching');
+        if(ok)return true;
+       }catch(error){note('edge_read_error');readError??=error;}
+      }else note(marker.activeAttempts===0?'edge_reader_missing':'edge_skipped_active_attempt');
       // Notice patches are expanded before owner delivery, so their original
       // request hash can differ from the signed final row. The retained edge
       // job binds the ORIGINAL request and its verified signed completion.
-      // Superseded rows alone remain insufficient. Purged/missing jobs fail.
-      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function')
-       return noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
+      // A Google point-read or unrelated records-lane error must not suppress
+      // checking the exact notice-lane original receipt.
+      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function'){
+       try{
+        const ok=noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
+        note(ok?'notice_exact':'notice_nonmatching');
+        if(ok)return true;
+       }catch(error){note('notice_read_error');readError??=error;}
+      }
+      if(readError){note('source_error_retained');throw readError;}
      }
      return false;
     })());
@@ -131,7 +151,7 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
    });
    if(removed)cleared++;else retain('marker_changed');
   }
-  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons};
+  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons,proofSources};
  }
  return {reconcile};
 }

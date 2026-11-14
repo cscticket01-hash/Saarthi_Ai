@@ -49,3 +49,31 @@ test('cached idle notice proof never clears an active peer marker for the same o
  assert.equal(r.cleared,1);assert.equal(r.retained,1);
  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.active);
 });
+
+test('a matching original notice receipt can recover despite Google and records-lane read errors',async()=>{
+ const f=fixture(),marker={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+ f.docs.set('school_live_migrations/'+A,{inflight:{original:marker}});
+ const result=await createLiveReconciliation({db:f.db,
+  readDrive:async()=>{throw Error('Google read quota');},
+  readEdgeReceipt:async()=>{throw Error('unrelated records-lane source unavailable');},
+  readNoticeReceipt:async()=>proof(),
+ }).reconcile(A);
+ assert.equal(result.cleared,1);
+ assert.equal(result.reasons.proof_unavailable,undefined);
+ assert.equal(result.proofSources.notice_exact,1);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{});
+});
+test('a missing or foreign notice proof still retains a marker after upstream read errors',async()=>{
+ for(const response of [null,{...proof(),schoolId:B}]){
+  const f=fixture(),marker={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+  f.docs.set('school_live_migrations/'+A,{inflight:{original:marker}});
+  const result=await createLiveReconciliation({db:f.db,
+   readDrive:async()=>{throw Error('Google read quota');},
+   readEdgeReceipt:async()=>{throw Error('records source unavailable');},
+   readNoticeReceipt:async()=>response,
+  }).reconcile(A);
+  assert.equal(result.cleared,0);
+  assert.equal(result.reasons.proof_unavailable,1);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.original);
+ }
+});
