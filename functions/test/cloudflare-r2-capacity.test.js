@@ -18,6 +18,6 @@ test('foreign or unrelated R2 507 cannot forge same-school capacity state',async
  for(const options of [
   {responseSchool:foreign},{status:409},{code:'ANOTHER_ERROR'},
  ]){
-  await assert.rejects(edge(options),e=>e.status===503&&e.code==='CLOUDFLARE_SYNC_UNAVAILABLE');
+  await assert.rejects(edge(options),e=>e.status===(options.status===409?409:503)&&e.code==='CLOUDFLARE_SYNC_UNAVAILABLE');
  }
 });
