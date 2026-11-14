@@ -26,7 +26,7 @@ export async function stageR2(storage:DurableObjectStorage,bucket:R2Bucket|undef
   Number.isSafeInteger(segment)&&segment>=0&&segment<=20*1024*1024&&
   buffer instanceof ArrayBuffer&&buffer.byteLength>0&&buffer.byteLength<=512*1024,
   'Invalid private R2 staging identity',400);
- if(!bucket)fail('Private R2 bucket unavailable');
+ if(!bucket)throw Object.assign(Error('Private R2 bucket unavailable'),{status:503});
  init(storage);
  const key='saarthi-v1/'+school+'/'+lane+'/'+receiptId+'/'+segment;
  const bytes=new Uint8Array(buffer),sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -75,7 +75,7 @@ export async function markR2Verified(storage:DurableObjectStorage,school:string,
  return {verifiedObjects:rows.length,nextCleanupAt:due};
 }
 export async function sweepR2Verified(storage:DurableObjectStorage,bucket:R2Bucket|undefined,now=Date.now()){
- if(!bucket)fail('Private R2 bucket unavailable');
+ if(!bucket)throw Object.assign(Error('Private R2 bucket unavailable'),{status:503});
  init(storage);const rows=storage.sql.exec<StageRow>("SELECT * FROM r2_staged WHERE state='verified' AND purge_due>0 AND purge_due<=? ORDER BY purge_due LIMIT 100",now).toArray();
  let removed=0;
  for(const row of rows){
