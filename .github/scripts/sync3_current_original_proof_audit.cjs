@@ -83,6 +83,19 @@ async function run(){
   pending:after.pending,needsAttention:after.needsAttention};
  report.stage='complete';
  report.status=after.unsettledWrites===0?'NO_BLOCKERS':'READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED';
+ // Aggregate-only authenticated forensics. Never log operation IDs, student
+ // records, original request hashes, signed credentials or raw provider data.
+ const counts=source=>Object.fromEntries(Object.entries(source||{}).filter(
+  ([key,value])=>/^[a-z_]{1,80}$/.test(key)&&Number.isSafeInteger(value)&&value>=0));
+ console.log(JSON.stringify({
+  scope:'isolated_TEST_readonly_original_marker_aggregate',
+  status:report.status,previewOnly:true,cleared:result.cleared,
+  before:report.before,after:report.after,
+  scanned:result.scanned,previewWouldClear:result.previewWouldClear,
+  retained:result.retained,reasons:counts(result.reasons),
+  proofSources:counts(result.proofSources),
+  concurrentMarkerChange:report.concurrentMarkerChange
+ }));
 }
 run().catch(error=>{
  report.status='DIAGNOSTIC_FAILED';
