@@ -60,3 +60,49 @@ test('client-offline alarms retry a lost Google ACK with the immutable original 
  assert.equal(result.driveState,'verified');assert.equal(result.recordRevision,firstRevision);
  assert.equal(result.record.amount,25);
 });
+
+
+test('broker Retry-After persists across another lane wake without client polling',async t=>{
+ const school='vs-'+'b'.repeat(32),key='broker-retry-fixture-only-key-0000001';
+ const file=new URL('../dist/retry-alarm-'+randomUUID()+'.mjs',import.meta.url);
+ const base=await readFile(new URL('../dist/worker.js',import.meta.url),'utf8');
+ await writeFile(file,base+`\nexport class RetryLane extends SyncLane {
+  async alarm(){}
+  async fetch(r){
+   if(new URL(r.url).pathname==='/__alarm'){
+    await super.alarm();
+    return Response.json({backoff:Number(this.meta('deliveryBackoff')||0),alarm:await this.ctx.storage.getAlarm()});
+   }
+   return super.fetch(r);
+  }
+ }`);
+ t.after(()=>unlink(file).catch(()=>{}));
+ let calls=0;
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'retry-alarm',modules:true,scriptPath:file.pathname,
+  compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],
+  durableObjects:{LANES:{className:'RetryLane',useSQLite:true}},
+  bindings:{EDGE_KEY:key,BROKER_URL:'https://broker.invalid/school-cloud'},
+  outboundService:async r=>{calls++;assert.equal(JSON.parse(await r.text()).schoolId,school);
+   return new Response('temporary quota',{status:429,headers:{'Retry-After':'120'}});
+  }}]}));
+ t.after(()=>mf.dispose());
+ const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
+ const owner=createCloudflareDelivery({edge});
+ const accepted=await owner.record(school,{action:'managed_records',collection:'school_expenses',id:'expense-retry',operation:'write',syncProtocol:2,operationId:'broker-throttle-original-operation',expectedRecordRevision:'',data:{schoolId:school,amount:25}});
+ assert.equal(accepted.driveState,'pending');
+ const ns=await mf.getDurableObjectNamespace('LANES');
+ const delivery=ns.get(ns.idFromName(school+'/delivery'));
+ const before=Date.now();
+ await delivery.command(school,'delivery',{command:'schedule',sourceLane:'records'});
+ const first=await (await delivery.fetch('https://fixture.invalid/__alarm')).json();
+ assert.equal(calls,1);
+ assert.ok(first.backoff>=before+120000,'provider minimum must be durably retained');
+ assert.ok(first.alarm>=first.backoff);
+ // A second source lane can wake the shared school scheduler. It must not
+ // erase the broker throttle or send any new request before that minimum.
+ await delivery.command(school,'delivery',{command:'schedule',sourceLane:'notices'});
+ const second=await (await delivery.fetch('https://fixture.invalid/__alarm')).json();
+ assert.equal(calls,1);
+ assert.equal(second.backoff,first.backoff);
+ assert.ok(second.alarm>=first.backoff);
+});

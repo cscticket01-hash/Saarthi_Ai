@@ -1,3 +1,4 @@
+import {brokerRetryDelay} from './broker-retry.mjs';
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
 import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
 import {Buffer} from 'node:buffer';
@@ -531,7 +532,7 @@ export class SyncLane extends DurableObject<Env>{
   if(!next)return;if(next.due>Date.now()){await this.ctx.storage.setAlarm(next.due);return;}
   const raw=JSON.stringify({action:'managed/cloudflare/drain',schoolId:school,lane:next.name}),time=String(Date.now());
   let delay=30_000;
-  try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});if(response.ok)delay=250;await response.body?.cancel();}catch{ /* Durable rows remain; retry after broker outage. */ }
+  try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});delay=brokerRetryDelay(response.status,response.headers.get('retry-after'),Date.now());await response.body?.cancel();}catch{ /* Durable rows remain; retry after broker outage. */ }
   if(delay>=30000)this.setMeta('deliveryBackoff',String(Date.now()+delay));else this.setMeta('deliveryBackoff','0');
   const stats=await this.env.LANES.getByName(school+'/'+next.name).command(school,next.name,{command:'stats'}) as {pending:number;due:number;needsAttention:number};
   if(stats.pending===0&&stats.needsAttention===0)this.ctx.storage.sql.exec('DELETE FROM lanes WHERE name=?',next.name);
