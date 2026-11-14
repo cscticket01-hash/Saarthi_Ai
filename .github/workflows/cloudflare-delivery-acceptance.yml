@@ -1,3 +1,4 @@
+# R2 TEST Worker verified source: c90c105891b7f34a658b94d658aee813c4fa6b0a / d29b315b-a580-41aa-89e7-fa8fbb7e7bfb
 name: Cloudflare delivery isolated synthetic acceptance
 on:
   workflow_dispatch:
