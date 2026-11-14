@@ -107,7 +107,7 @@ function VS_inventoryManagedStorage() {
   return {schoolId:school,rootFolderId:root.getId(),workbookId:p.getProperty('VS_MANAGED_SHEET_ID')||null,
     inventoryVersion:1,partial:partial,folders:folders,files:files};
 }
-function VS_managedVerify(e) {
+function VS_managedVerify(e,onAuthenticated) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');
   if (!secret || b.schoolId !== school || !Number.isSafeInteger(b.timestamp) || Math.abs(Date.now()-b.timestamp)>120000 || !/^[a-f0-9]{48}$/.test(b.nonce||'') || typeof b.payload !== 'string' || b.payload.length > 28*1024*1024) throw new Error('Signed school request required');
@@ -116,6 +116,10 @@ function VS_managedVerify(e) {
   for(let n=0;n<64;n++) difference |= expected.charCodeAt(n)^b.signature.charCodeAt(n);
   if(difference) throw new Error('Invalid request signature');
   const payload=JSON.parse(b.payload);
+  // School binding is established only after the complete valid HMAC.
+  // Nonce/lock admission may still fail: that must remain a retryable error,
+  // never a successful write receipt or an unauthenticated response.
+  if(typeof onAuthenticated==='function')onAuthenticated(school);
   const lock=LockService.getScriptLock();lock.waitLock(payload.action==='managed_delta'&&payload.headOnly===true?1000:30000);
   try {
     const key='VS_NONCE_'+b.nonce;
@@ -1028,11 +1032,11 @@ function VS_managedBackupSnapshot(b) {
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
-  let verified=false;
+  let verified=false,authenticated=false;
   try {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
-    const b=VS_managedVerify(e);verified=true;let result;
+    const b=VS_managedVerify(e,()=>{authenticated=true;});verified=true;let result;
     if(b.action==='managed_backup_snapshot'){
       result=VS_managedBackupSnapshot(b);
     }else if(b.action==='managed_storage_quota'){
@@ -1047,7 +1051,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,requestAdmissionErrorVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -1122,7 +1126,7 @@ function VS_managedHandle(e) {
     // exceptions, payloads, identities, signatures, paths or credentials.
     const diagnostic=VS_managedDiagnostic(error);
     const site=String(error&&error.stack||'').match(/(?:Code|SaarthiManagedAll)(?:\.gs)?:(\d+)/);
-    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
+    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':authenticated?'authenticated_admission':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
     if(typeof console!=='undefined')console.info(JSON.stringify(trace));
     // Anonymous web-app executions may not expose logs in the default Cloud
     // project. Keep only the same non-sensitive trace in a short-lived cache.
@@ -1133,8 +1137,8 @@ function VS_managedHandle(e) {
     if(verified){
       try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
     }
-    const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
-    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified?{schoolId:school}:{}));
+    const code=verified||authenticated?diagnostic:'SCRIPT_OPERATION_FAILED';
+    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified||authenticated?{schoolId:school}:{}));
   }
 }
 
