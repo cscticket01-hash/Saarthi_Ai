@@ -119,7 +119,7 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
        try{
         const proof=await readEdgeReceipt(school,binding);
         const ok=edgeProofMatches(proof,binding);
-        note(ok?'edge_exact':proof?.state==='completed'?'edge_completed_nonmatching':'edge_nonmatching');
+        note(ok?'edge_exact':proof==null?'edge_job_missing':proof.state==='completed'?'edge_completed_nonmatching':'edge_nonmatching');
         if(ok)return true;
        }catch(error){note('edge_read_error');readError??=error;}
       }else note(marker.activeAttempts===0?'edge_reader_missing':'edge_skipped_active_attempt');

@@ -173,3 +173,10 @@ test('read-only preview cannot alter the normal reconciliation CAS behavior',asy
  assert.equal((await reconcile.reconcile(A)).cleared,1);
  assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{});
 });
+test('missing historical record job is diagnosed and original marker remains untouched',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const result=await createLiveReconciliation({db:f.db,readDrive:async()=>({}),readEdgeReceipt:async()=>null}).reconcile(A,{previewOnly:true});
+ assert.equal(result.cleared,0);assert.equal(result.previewWouldClear,0);assert.equal(result.retained,1);
+ assert.equal(result.proofSources.edge_job_missing,1);assert.equal(result.proofSources.edge_read_error,undefined);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight.token,value);
+});

@@ -329,10 +329,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  }
  async function reconcileAdmission(m,limit=1,previewOnly=false){
   return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),
-   readEdgeReceipt:(school,binding)=>cloudflareSync.rpc(school,'records',{
-    command:'status',id:hash(JSON.stringify([school,'managed_records',
-     [binding.collection,binding.id,binding.operationId]])),
-   }),
+   readEdgeReceipt:async(school,binding)=>{
+    try{return await cloudflareSync.rpc(school,'records',{
+     command:'status',id:hash(JSON.stringify([school,'managed_records',
+      [binding.collection,binding.id,binding.operationId]])),
+    });}catch(error){if(error.code==='EDGE_RECEIPT_NOT_FOUND')return null;throw error;}
+   },
    readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit,previewOnly});
  }
  async function signedLegacy(m,body){
