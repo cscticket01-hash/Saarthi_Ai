@@ -151,3 +151,25 @@ test('source diagnostics count unavailable original proofs without exposing oper
  assert.ok(!JSON.stringify(result).includes(binding.requestHash));
  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
 });
+
+test('read-only original proof preview never writes Firestore, even when an exact receipt is found',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ f.db.runTransaction=async()=>{throw Error('preview attempted forbidden transaction');};
+ const result=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>exactEdgeProof(value.operationBinding)}).reconcile(A,{previewOnly:true});
+ assert.equal(result.previewOnly,true);
+ assert.equal(result.previewWouldClear,1);
+ assert.equal(result.cleared,0);
+ assert.equal(result.scanned,1);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ const none=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>null}).reconcile(A,{previewOnly:true});
+ assert.equal(none.previewWouldClear,0);
+ assert.equal(none.reasons.proof_unverified,1);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+});
+test('read-only preview cannot alter the normal reconciliation CAS behavior',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const reconcile=createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>exactEdgeProof(value.operationBinding)});
+ await assert.rejects(reconcile.reconcile(A,{previewOnly:'yes'}),e=>e.status===400);
+ assert.equal((await reconcile.reconcile(A)).cleared,1);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{});
+});
