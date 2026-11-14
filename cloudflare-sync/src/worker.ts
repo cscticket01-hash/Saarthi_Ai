@@ -276,6 +276,10 @@ export class SyncLane extends DurableObject<Env>{
 export default {
  async fetch(request:Request,env:Env):Promise<Response>{
   const headers={'Cache-Control':'no-store','Content-Type':'application/json','X-Content-Type-Options':'nosniff'};
+  // Only an authenticated, school-bound original notice write may attest a
+  // transactional precondition rejection. Do not expose tenant identity for
+  // unauthenticated requests or unrelated failures.
+  let noticeWriteSchool:string|undefined;
   try{
    const url=new URL(request.url);if(url.pathname==='/healthz'&&request.method==='GET')return Response.json({service:'vidya-saarthi-cloudflare-sync',version:2,edgeDeliveryVersion:1,attendancePartitions:256},{headers});
    if(url.pathname==='/live'&&request.method==='GET'){
@@ -288,8 +292,19 @@ export default {
    demand(await authenticated(env.EDGE_KEY,raw,request.headers),'Sync authorization rejected',401);
    const body=JSON.parse(raw) as Json,school=String(body.schoolId||''),lane=String(body.lane||'');demand(schoolPattern.test(school)&&(/^(?:attendance-[a-f0-9]{2}|notices|delivery|live)$/.test(lane)||spoolLane(lane)));
    demand(raw.length<=(/^file-[a-f0-9]{64}$/.test(lane)?800000:400000),'Request too large',413);
+   const original=body.request as Json|undefined;
+   if(lane==='notices'&&body.command==='write'&&original?.action==='managed_records'&&
+      original.collection==='school_notices'&&original.operation==='write'&&original.syncProtocol===2)
+    noticeWriteSchool=school;
    const value=await env.LANES.getByName(school+'/'+lane).command(school,lane,body);
    return Response.json({success:true,schoolId:school,value},{headers});
-  }catch(error){const e=error as Error&{status?:number};const status=e.status||503;return Response.json({success:false,message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});}
+  }catch(error){
+   const e=error as Error&{status?:number};const status=e.status||503;
+   const exactNoticeRejection=status===409&&noticeWriteSchool!==undefined&&
+    (e.message==='Record revision conflict'||e.message==='Sync operation ID conflict');
+   return Response.json({success:false,
+    ...(exactNoticeRejection?{schoolId:noticeWriteSchool}:{}),
+    message:status<500?e.message:'Cloudflare sync unavailable; pending work retained.'},{status,headers});
+  }
  }
 } satisfies ExportedHandler<Env>;
