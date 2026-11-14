@@ -97,3 +97,29 @@ test('sanitized preview distinguishes a missing original notice job from a misma
   assert.ok(!JSON.stringify(result).includes(binding.operationId));
  }
 });
+
+test('read-only proof diagnostics explain missing original fields without clearing or revealing identities',async()=>{
+ const mutations=[
+  ['job_identity',p=>{p.job.id='not-the-original-job';return p;}],
+  ['original_request_binding',p=>{const x=JSON.parse(p.job.payload);x.request.data._syncFieldPatch.set.title='changed-original';x.fingerprint=hash(JSON.stringify(x.request));p.job.payload=JSON.stringify(x);return p;}],
+  ['request_fingerprint',p=>{const x=JSON.parse(p.job.payload);x.fingerprint='f'.repeat(64);p.job.payload=JSON.stringify(x);return p;}],
+  ['cloudflare_ack',p=>{const x=JSON.parse(p.job.payload);x.ack.schoolId=B;p.job.payload=JSON.stringify(x);return p;}],
+  ['ack_original_record',p=>{const x=JSON.parse(p.job.payload);x.ack.record._syncOperationId='wrong-original';p.job.payload=JSON.stringify(x);return p;}],
+  ['drive_completion',p=>{const x=JSON.parse(p.job.response);x.driveRevision='cf-not-yet-verified';p.job.response=JSON.stringify(x);return p;}],
+  ['unparseable_payload',p=>{p.job.response='{invalid-json';return p;}],
+ ];
+ for(const [reason,change] of mutations){
+  const f=fixture(),marker={collection:'school_notices',activeAttempts:0,startedAt:1,operationBinding:binding};
+  f.docs.set('school_live_migrations/'+A,{inflight:{original:marker}});
+  f.db.runTransaction=async()=>{throw Error('Read-only mismatch audit must not write');};
+  const result=await createLiveReconciliation({db:f.db,readNoticeReceipt:async()=>change(proof())}).reconcile(A,{previewOnly:true});
+  assert.equal(result.cleared,0,reason);
+  assert.equal(result.previewWouldClear,0,reason);
+  assert.equal(result.proofSources.notice_receipt_mismatch,1,reason);
+  assert.equal(result.proofSources['notice_mismatch_'+reason],1,reason);
+  assert.equal(result.reasons.proof_unverified,1,reason);
+  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.original,reason);
+  assert.ok(!JSON.stringify(result).includes(request.operationId),reason);
+  assert.ok(!JSON.stringify(result).includes(request.id),reason);
+ }
+});

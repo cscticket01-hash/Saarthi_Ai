@@ -74,6 +74,43 @@ function noticeProofMatches(proof,binding){
   response?.state==='completed'&&typeof response.driveRevision==='string'&&
   response.driveRevision.length>0&&!/^(live-|cf-)/.test(response.driveRevision);
 }
+// Diagnostic classification only. This function does not authorize marker
+// retirement; noticeProofMatches remains the sole positive receipt verifier.
+// Never return operation IDs, hashes, student data or raw provider payloads.
+function noticeMismatchReason(proof,binding){
+ const job=proof?.job;
+ const expectedId=createHash('sha256').update(JSON.stringify([binding.schoolId,binding.operationId])).digest('hex');
+ if(proof?.schoolId!==binding.schoolId||proof?.lane!=='notices')
+  return 'school_scope';
+ if(job?.id!==expectedId||job.kind!=='notice')
+  return 'job_identity';
+ if(job.state!=='completed')
+  return 'job_unsettled';
+ if(typeof job.payload!=='string'||typeof job.response!=='string')
+  return 'job_missing_payload';
+ let payload,response;
+ try{payload=JSON.parse(job.payload);response=JSON.parse(job.response);}
+ catch{return 'unparseable_payload';}
+ const request=payload?.request,ack=payload?.ack;
+ try{
+  if(canonical(bindOperation(binding.schoolId,'legacy',request))!==canonical(binding))
+   return 'original_request_binding';
+  if(payload.fingerprint!==createHash('sha256').update(JSON.stringify(request)).digest('hex'))
+   return 'request_fingerprint';
+ }catch{return 'unparseable_request';}
+ if(ack?.success!==true||ack.schoolId!==binding.schoolId||ack.syncProtocol!==2||
+    typeof ack.recordRevision!=='string'||!ack.recordRevision.startsWith('cf-'))
+  return 'cloudflare_ack';
+ if(ack.record?.schoolId!==binding.schoolId||ack.record.id!==binding.id||
+    ack.record._syncOperationId!==binding.operationId||
+    ack.record._syncRevision!==ack.recordRevision||
+    (binding.operation==='delete'?ack.record._syncDeleted!==true:ack.record._syncDeleted===true))
+  return 'ack_original_record';
+ if(response?.state!=='completed'||typeof response.driveRevision!=='string'||
+    !response.driveRevision||/^(live-|cf-)/.test(response.driveRevision))
+  return 'drive_completion';
+ return 'unclassified';
+}
 function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
  async function reconcile(school,{limit=25,previewOnly=false}={}){
   if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100||typeof previewOnly!=='boolean')throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
@@ -132,11 +169,14 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
        try{
         const proof=await readNoticeReceipt(school,binding.operationId);
         const ok=noticeProofMatches(proof,binding);
-        note(ok?'notice_exact':!proof?.job?'notice_job_missing'
-         :proof.job.state!=='completed'?'notice_job_unsettled'
-         :!proof.job.payload||!proof.job.response?'notice_job_purged'
-         :'notice_receipt_mismatch');
-        if(ok)return true;
+        if(ok){note('notice_exact');return true;}
+        if(!proof?.job)note('notice_job_missing');
+        else if(proof.job.state!=='completed')note('notice_job_unsettled');
+        else if(!proof.job.payload||!proof.job.response)note('notice_job_purged');
+        else{
+         note('notice_receipt_mismatch');
+         note('notice_mismatch_'+noticeMismatchReason(proof,binding));
+        }
        }catch(error){note('notice_read_error');readError??=error;}
       }
       if(readError){note('source_error_retained');throw readError;}
