@@ -123,21 +123,33 @@ test('encrypted attendance is staged before its DO ACK, old completion with no o
  const row={operationId:id,schoolId:school,createdAt:Date.now(),
   day:'2026-11-14',mode:'entry',payload:{encrypted:'opaque-example'},
   state:'pending',attempts:0};
- const first=await rpc('create',{id,row},lane);
- assert.equal(first.http,200,JSON.stringify(first));assert.equal(first.value,true);
+ const competing={...row,createdAt:row.createdAt+1,payload:{encrypted:'concurrent-new-nonce'}};
+ const attempts=await Promise.all([rpc('create',{id,row},lane),rpc('create',{id,row:competing},lane)]);
+ assert.ok(attempts.every(r=>r.http===200),JSON.stringify(attempts));
+ assert.equal(attempts.filter(r=>r.value===true).length,1);
+ assert.equal(attempts.filter(r=>r.value===false).length,1);
  const key='saarthi-v1/'+school+'/'+lane+'/'+id+'/0';
  const bucket=await mf.getR2Bucket('R2_STAGE');
- assert.deepEqual(JSON.parse(await (await bucket.get(key)).text()),row);
+ const original=JSON.parse(await (await bucket.get(key)).text());
+ assert.ok([row,competing].some(value=>JSON.stringify(value)===JSON.stringify(original)));
  const again=await rpc('create',{id,row},lane);
  assert.equal(again.value,false,'Exact original attendance replay stays idempotent');
+ const reencrypted=await rpc('create',{id,row:{...row,createdAt:row.createdAt+50,
+  nextAttemptAt:Date.now(),payload:{encrypted:'fresh-nonce-and-ciphertext'}}},lane);
+ assert.equal(reencrypted.http,200,JSON.stringify(reencrypted));
+ assert.equal(reencrypted.value,false,'Re-encryption does not turn one attendance into another upload');
+ assert.deepEqual(JSON.parse(await (await bucket.get(key)).text()),original,'First R2 original stays byte-for-byte intact');
+ assert.equal((await rpc('create',{id,row:{...row,day:'2026-11-15'}},lane)).http,409);
+ assert.equal((await rpc('create',{id,row:{...row,mode:'exit'}},lane)).http,409);
+
  const actorNamespace=await mf.getDurableObjectNamespace('LANES'),
   actor=actorNamespace.get(actorNamespace.idFromName('saarthi-account-r2-staging-budget-v1'));
- assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(row)));
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(original)));
  const claim='attendance-claim';
  assert.equal((await rpc('claim',{id,claim,expires:Date.now()+60000},lane)).value,true);
  const finish=await rpc('finish',{id,claim,values:{state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER}},lane);
  assert.equal(finish.http,200);
- assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(row)),
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,Buffer.byteLength(JSON.stringify(original)),
   'No valid owner receipt means the R2 copy cannot be expired or released');
  assert.ok(await bucket.head(key));
 });
