@@ -1,5 +1,5 @@
 import {checkedR2Admission,verifiedR2PurgeDue,r2MayPurge,R2_SCHOOL_DATA_BYTES,R2_SYSTEM_RESERVE_BYTES,R2_TOTAL_BYTES} from './r2-capacity.mjs';
-import {demand,digest} from './protocol';
+import {demand} from './protocol';
 type StageRow={key:string,school:string,lane:string,receipt_id:string,bytes:number,sha256:string,category:string,state:string,accepted_at:number,verified_at:number,purge_due:number};
 const schoolPattern=/^vs-[a-f0-9]{32}$/;
 const hex=/^[a-f0-9]{64}$/;
@@ -29,7 +29,7 @@ export async function stageR2(storage:DurableObjectStorage,bucket:R2Bucket|undef
  if(!bucket)fail('Private R2 bucket unavailable');
  init(storage);
  const key='saarthi-v1/'+school+'/'+lane+'/'+receiptId+'/'+segment;
- const bytes=new Uint8Array(buffer),sha256=await digest(buffer);
+ const bytes=new Uint8Array(buffer),sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(x=>x.toString(16).padStart(2,'0')).join('');
  let existing=storage.sql.exec<StageRow>('SELECT * FROM r2_staged WHERE key=?',key).toArray()[0];
  if(existing){
   demand(existing.school===school&&existing.lane===lane&&existing.receipt_id===receiptId&&
@@ -50,8 +50,8 @@ export async function stageR2(storage:DurableObjectStorage,bucket:R2Bucket|undef
  // durable reservation remains. On identical retry it rechecks/reputs R2.
  try{
   const current=await bucket.head(key);
-  if(!current||current.size!==bytes.byteLength){
-   const stored=await bucket.put(key,buffer,{customMetadata:{schema:'saarthi-r2-stage-v1'}});
+  if(!current||current.size!==bytes.byteLength||current.customMetadata?.sha256!==sha256){
+   const stored=await bucket.put(key,buffer,{customMetadata:{schema:'saarthi-r2-stage-v1',sha256}});
    if(!stored||stored.size!==bytes.byteLength)fail('R2 staging did not confirm bytes');
   }
   storage.sql.exec("UPDATE r2_staged SET state='stored' WHERE key=? AND state='reserved'",key);
