@@ -130,8 +130,12 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
       // checking the exact notice-lane original receipt.
       if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function'){
        try{
-        const ok=noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
-        note(ok?'notice_exact':'notice_nonmatching');
+        const proof=await readNoticeReceipt(school,binding.operationId);
+        const ok=noticeProofMatches(proof,binding);
+        note(ok?'notice_exact':!proof?.job?'notice_job_missing'
+         :proof.job.state!=='completed'?'notice_job_unsettled'
+         :!proof.job.payload||!proof.job.response?'notice_job_purged'
+         :'notice_receipt_mismatch');
         if(ok)return true;
        }catch(error){note('notice_read_error');readError??=error;}
       }
