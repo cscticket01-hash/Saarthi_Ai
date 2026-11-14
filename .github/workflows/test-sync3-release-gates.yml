@@ -160,3 +160,32 @@ jobs:
           name: sync3-current-real-test-synthetic-google-delivery
           path: build/cloud-prerequisites/cloudflare-delivery.json
           retention-days: 7
+
+  synthetic-teacher-readonly:
+    name: Read-only failed synthetic teacher original receipt and Drive point-read diagnostic
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enforce actual deployed TEST broker source and no production endpoints
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --check .github/scripts/sync3_synthetic_teacher_postmortem.cjs
+      - name: Authenticated read-only original synthetic teacher receipt and Drive point-read
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/sync3_synthetic_teacher_postmortem.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-synthetic-teacher-readonly-diagnostic
+          path: build/cloud-prerequisites/synthetic-teacher-postmortem.json
+          retention-days: 7
