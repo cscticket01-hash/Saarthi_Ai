@@ -69,14 +69,31 @@ async function acceptance({env=process.env,request=transport}={}){
    }
    throw Error(stage);
   }
+  // One bounded retry is permitted only for a known signed Script timeout,
+  // using the original immutable request. An uncertain outcome is never
+  // rewritten as success; the same operation must still produce exact proof.
+  async function originalPersonRequest(body){
+   for(let attempt=0;attempt<2;attempt++){
+    try {
+     const answer=await call(body);
+     if(report.failure?.code==='SCRIPT_TIMEOUT')delete report.failure;
+     return answer;
+    } catch(error){
+     if(report.failure?.code!=='SCRIPT_TIMEOUT'||attempt!==0)throw error;
+     report.originalTimeoutRetryCount=(report.originalTimeoutRetryCount||0)+1;
+     await new Promise(resolve=>setTimeout(resolve,12000));
+    }
+   }
+   throw Error('Original person operation could not be verified');
+  }
   async function record(collection,id,data,extra={}){
    const body={action:'managed/records',operation:'write',syncProtocol:2,collection,id,
     operationId:hash(SCHOOL+':'+collection+':'+id),expectedRecordRevision:'',data:{...data,schoolId:SCHOOL},edgeDeliveryVersion:1,...extra};
    const route=collection==='teachers_directory'?'person':'edge';
-   let result=await call(body);
+   let result=route==='person'?await originalPersonRequest(body):await call(body);
    if(route==='edge'&&result.delivery)result=await settle(result);
    requireCheck(verifiedRecordRoute(result,route));
-   const replay=await call(body);
+   const replay=route==='person'?await originalPersonRequest(body):await call(body);
    requireCheck(replay.recordRevision===result.recordRevision&&verifiedRecordRoute(replay,route));
    const read=await call({action:'managed/records',operation:'read',syncProtocol:2,collection,id});
    const saved=read.records?.[id];
@@ -88,17 +105,14 @@ async function acceptance({env=process.env,request=transport}={}){
       &&saved.documentKind===data.documentKind);
    report.checks.push({name:stage,status:'PASS'});return result;
   }
-  stage='teacher record edge acceptance, verified Drive write and exact replay';
-  const teacher='CF_TEST_TEACHER_'+run;
-  await record('teachers_directory',teacher,{teacherId:teacher,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'teacher'});
-  stage='staff record edge acceptance and verified Drive write';
-  const staff='CF_TEST_STAFF_'+run;
-  await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
-  // Teacher/staff use the protected person-lifecycle path. Independently
-  // prove Cloudflare durable ACK -> verified Drive delivery for a non-person.
+  // Test a real Cloudflare-backed collection BEFORE direct person writes.
+  // The test is incomplete unless both this and protected person paths PASS.
   stage='calendar record Cloudflare acceptance and signed Google Drive readback';
   const calendar='CF_TEST_CALENDAR_'+run;
   await record('school_calendar',calendar,{title:'SYNTHETIC CLOUD DELIVERY TEST',syntheticTest:true});
+  stage='teacher signed lifecycle, verified Drive write and exact replay';
+  const teacher='CF_TEST_TEACHER_'+run;
+  await record('teachers_directory',teacher,{teacherId:teacher,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'teacher'});
   // Valid bounded synthetic PDF container. Original provider bytes are retained,
   // not a real student's report card or a generated template.
   const bytes=Buffer.alloc(768*1024,32);
@@ -138,7 +152,10 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='another school cannot poll the accepted receipt';
   const foreign=await request(ENDPOINT,{action:'managed/cloudflare/operation',schoolId:'vs-'+'0'.repeat(32),lane:'records',id:hash('foreign')},token);requireCheck(foreign.status===403);
   report.checks.push({name:stage,status:'PASS'});
-  report.status='PASS';report.retainedFixtures={teacher,staff,document:'CF_TEST_IDCARD_'+run,fileId,sha256:meta.sha256};
+  stage='staff signed lifecycle, verified Drive write and exact replay';
+  const staff='CF_TEST_STAFF_'+run;
+  await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
+  report.status='PASS';report.retainedFixtures={teacher,staff,calendar,document:'CF_TEST_IDCARD_'+run,fileId,sha256:meta.sha256};
  }catch(_){report.status='FAIL';report.failedStage=stage;}
  return report;
 }
