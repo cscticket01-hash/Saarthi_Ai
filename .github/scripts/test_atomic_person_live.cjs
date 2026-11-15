@@ -60,6 +60,33 @@ async function run() {
     status = await live('rollout-status');
   }
   const gs = await admin('managed/storage/check');
+  if(process.env.VS_ATOMIC_SEED_DIAGNOSE_ONLY==='true'){
+   report.stage='read_only_seed_validation';report.validation=[];
+   for(const collection of collections){
+    const snapshot=await admin('managed/records',{collection,operation:'read',syncProtocol:2});
+    assert.equal(snapshot.syncProtocol,2);assert.ok(snapshot.records&&!snapshot.partial&&!snapshot.partialRecords&&!snapshot.pointRead);
+    const reasons={};let invalid=0;const add=code=>{reasons[code]=(reasons[code]||0)+1;};
+    function check(v,depth=0){
+     if(depth>12){add('depth_limit');return;}
+     if(Array.isArray(v)){for(const x of v)check(x,depth+1);return;}
+     if(v&&typeof v==='object')for(const [key,x] of Object.entries(v)){
+      if(['__proto__','prototype','constructor'].includes(key))add('prototype_key');
+      if(/password|token|secret|private_key|base64|localpath/i.test(key)&&key!=='mobileLinkToken')add('blocked_key_'+key.replace(/[^A-Za-z0-9_]/g,'').slice(0,60));
+      check(x,depth+1);
+     }
+     if(typeof v==='string'&&v.startsWith('data:'))add('inline_data_uri');
+    }
+    for(const [id,data] of Object.entries(snapshot.records)){
+     const before=JSON.stringify(reasons);
+     if(!id||id.length>200||id.includes('/')||['.','..','__proto__','prototype','constructor'].includes(id))add('invalid_record_id');
+     if(data.schoolId!==schoolId)add('wrong_school');
+     if(typeof data._syncRevision!=='string'||!data._syncRevision||/^(live-|cf-)/.test(data._syncRevision))add('unverified_source_revision');
+     check(data);if(JSON.stringify(reasons)!==before)invalid++;
+    }
+    report.validation.push({collection,rows:Object.keys(snapshot.records).length,invalid,reasons});
+   }
+   report.status='READ_ONLY_DIAGNOSTIC_COMPLETE';return;
+  }
   report.preflight = {
     configured: status.configured === true,
     workerVerified: status.workerVerified === true,
