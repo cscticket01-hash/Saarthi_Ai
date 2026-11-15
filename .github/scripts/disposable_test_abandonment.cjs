@@ -12,6 +12,14 @@ async function run(){
  const call=async(action,extra={})=>{const r=await send(url,{...extra,action,schoolId:school},login.data.idToken);assert.equal(r.http,200,'TEST request unavailable');assert.equal(r.data.success,true);assert.equal(r.data.schoolId,school);return r.data;};
  assert.equal((await call('managed/profile',{operation:'read'})).profile?.schoolName,'TEST Sync V2');
  const confirmDisposableTest='owner-disposable-test-20261115';
+ if(process.env.VS_CLEANUP_PHASE==='verified_reconcile'){
+  const before=await call('managed/live/rollout-status',{liveProtocol:1});assert.equal(before.abandonedTestOperations,14);
+  const preview=await call('managed/live/reconcile',{liveProtocol:1,previewOnly:true,limit:100});assert.equal(preview.previewOnly,true);assert.equal(preview.cleared,0);
+  const result=await call('managed/live/reconcile',{liveProtocol:1,limit:100});
+  const after=await call('managed/live/rollout-status',{liveProtocol:1});assert.equal(after.abandonedTestOperations,14);assert.equal(after.originalHistoryVerified,false);
+  Object.assign(report,{status:after.unsettledWrites===0?'NEW_TEST_ORIGINALS_EXACT_PROOF_RECONCILED':'NEW_TEST_PROOFS_STILL_PENDING',before:before.unsettledWrites,clearedWithProof:result.cleared,remaining:after.unsettledWrites,priorAbandoned:14});
+  assert.equal(after.unsettledWrites,0);return;
+ }
  if(process.env.VS_CLEANUP_PHASE==='disabled'){
   const r=await send(url,{action:'managed/test-originals',schoolId:school,operation:'preview',confirmDisposableTest},login.data.idToken);assert.equal(r.http,403);report.status='TEMPORARY_TEST_MAINTENANCE_DISABLED';return;
  }
