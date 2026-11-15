@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      VS_EXPECTED_TEST_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
+      VS_EXPECTED_TEST_RUNTIME: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
       VS_CLEANUP_PHASE: verified_reconcile
       VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
       VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
@@ -33,7 +33,7 @@ jobs:
           git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
           npm --prefix functions install --ignore-scripts --no-package-lock
           node --test functions/test/test-original-abandonment.test.js
-      - name: Preview then archive only the exact disposable TEST cohort
+      - name: Reconcile originals only with matching verified proof
         run: node .github/scripts/disposable_test_abandonment.cjs
       - uses: actions/upload-artifact@v4
         if: always()
