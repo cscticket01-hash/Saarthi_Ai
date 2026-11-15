@@ -24,7 +24,7 @@ async function main(){
  assert.equal(external.schoolId,school);assert.equal(external.namespace,'978917e1b620408392a3c27b3ab783e6');assert.deepEqual(external.rows,[[0,0]]);assert.ok(Date.now()>=external.at&&Date.now()-external.at<15*60*1000,'Fresh connected Cloudflare SQL observation required');
  // This is an operator's independently observed no-write preparation proof,
  // never a user-data ACK, Google receipt, or a marker-clear authorization.
- const head={collections:collections.map(collection=>({collection,cursor:0}))};report.externalNoLiveWritesObservedAt=external.at;
+ report.externalNoLiveWritesObservedAt=external.at;
  const credentials=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||'{}');assert.equal(credentials.project_id,project);
  const req=require('node:module').createRequire(require('node:path').resolve('functions/package.json'));
  const {initializeApp,cert,deleteApp}=req('firebase-admin/app'),{getFirestore}=req('firebase-admin/firestore');
@@ -39,7 +39,7 @@ async function main(){
    assert.equal(group.state,'preparing');assert.deepEqual([...group.collections].sort(),collections);assert.ok(Date.now()-group.startedAt>=120000);
    assert.equal(Object.keys(state.inflight||{}).length,0);assert.equal(Object.keys(state.liveInflight||{}).length,0);
    const states={...state.collections};for(const name of collections){assert.equal(states[name]?.state,'preparing');states[name]={state:'legacy'};}
-   tx.set(audit,{schoolId:school,at:Date.now(),actor:login.localId,reason:'ABORT_UNPUBLISHED_PREPARATION_TO_RESUME_EXACT_ORIGINAL_DELETE',before:state,liveCollectionCursors:head.collections.filter(x=>collections.includes(x.collection)),backupVerified:false});
+   tx.set(audit,{schoolId:school,at:Date.now(),actor:login.localId,reason:'ABORT_UNPUBLISHED_PREPARATION_TO_RESUME_EXACT_ORIGINAL_DELETE',before:state,cloudflareNoBusinessWrites:external,backupVerified:false});
    const next={...state,collections:states};delete next.nativeCohort;tx.set(ref,next);return 'AUDITED_NO_LIVE_WRITES_PREPARATION_ABORT';
   });
  }finally{await deleteApp(app);}
