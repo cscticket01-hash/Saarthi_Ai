@@ -45,7 +45,10 @@ async function main(){
  }finally{await deleteApp(app);}
  const original={action:'managed/records',schoolId:school,edgeDeliveryVersion:1,operation:'delete',collection:'students_directory',id,syncProtocol:2,operationId:row._syncOperationId,expectedRecordRevision:root.sourceRevision,deletedStudentGeneration:row._syncDeletedOwner,deleteEverywhereVersion:1};
  const send=async body=>{const r=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+login.idToken},body:JSON.stringify(body),signal:AbortSignal.timeout(120000)});const data=await r.json();if(r.status!==200||data.success===false)throw Object.assign(Error('Original delete remains pending'),{http:r.status,status:r.status,code:data.code,retryAfterMs:data.retryAfterMs});return data;};
- const observe=async()=>{const p=await call('managed/records',{operation:'read',collection:'students_directory',id,syncProtocol:2});const current=p.records?.[id];assert.equal(current?._syncOperationId,row._syncOperationId);assert.equal(current?._syncDeletedOwner,row._syncDeletedOwner);const plan=current._syncErasePlan;return JSON.stringify({cursor:plan.cursor,fileCursor:plan.fileCursor,archiveCursor:plan.archiveCursor,scan:plan.archiveScan?{count:plan.archiveScan.ids?.length,stack:plan.archiveScan.stack?.length}:null,complete:plan.complete});};
+ const observe=require('./delete_plan_progress.cjs').observeDeletePlan(
+  (collection,id)=>call('managed/records',{operation:'read',collection,id,syncProtocol:2}),school,
+  progress=>{report.progress=progress;console.log('EXACT_TEST_DELETE_PROGRESS '+JSON.stringify(progress));});
+
  const ack=await retryExactDelete(original,send,{attempts:48,maxElapsedMs:40*60*1000,observeProgress:observe});assert.equal(verifiedNativeReceipt(ack,original,school),true);
  const current=(await call('managed/records',{operation:'read',collection:'students_directory',id,syncProtocol:2})).records[id];assert.equal(current._syncErasePlan.complete,true);assert.equal(current._syncErasePlan.archiveScan,undefined);assert.equal(current._syncOperationId,row._syncOperationId);assert.equal(current._syncRevision,row._syncRevision);
  report.status='PASS';report.sameOriginalOperation=true;report.signedDriveAndFirebaseCompletion=true;report.exhaustedIteratorStateRemovedByOriginalOwner=true;
