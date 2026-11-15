@@ -17,9 +17,9 @@ async function run(){
   const inventoryMs=Date.now()-started;
   const item=inventory.items.find(x=>x.verification==='bytes_hashed'&&x.sizeBytes>0&&x.sizeBytes<=1024*1024);assert.ok(item,'No small verified original on inventory page');
   const readStarted=Date.now();const downloaded=await call('managed/file/download',{fileId:item.fileId,expectedSha256:item.sha256,expectedVersion:item.version});
-  const bytes=Buffer.from(downloaded.base64,'base64');assert.equal(bytes.length,item.sizeBytes);assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'),item.sha256);
+  const downloadMs=Date.now()-readStarted;const bytes=Buffer.from(downloaded.base64,'base64');assert.equal(bytes.length,item.sizeBytes);assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'),item.sha256);
   const status=await call('managed/live/rollout-status',{liveProtocol:1});
-  Object.assign(report,{scope:'READ_ONLY_TEST_INVENTORY_ORIGINAL_READBACK',status:'PASS',inventoryMs,downloadMs:Date.now()-readStarted,items:inventory.items.length,partial:inventory.partial,scanLimited:inventory.scanLimited,coverageComplete:inventory.coverageComplete,verifiedOriginalBytes:bytes.length,exactSha256Verified:true,unsettledWrites:status.unsettledWrites,inventoryScriptRoundTripMillis:inventory.syncTiming?.scriptRoundTripMillis});
+  Object.assign(report,{scope:'READ_ONLY_TEST_INVENTORY_ORIGINAL_READBACK',status:'PASS',inventoryMs,downloadMs,items:inventory.items.length,partial:inventory.partial,scanLimited:inventory.scanLimited,coverageComplete:inventory.coverageComplete,verifiedOriginalBytes:bytes.length,exactSha256Verified:true,unsettledWrites:status.unsettledWrites,inventoryScriptRoundTripMillis:inventory.syncTiming?.scriptRoundTripMillis});
   return;
  }
  const confirmDisposableTest='owner-disposable-test-20261115';
