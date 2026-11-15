@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/atomic-person-live-acceptance.yml'
       - '.github/scripts/test_atomic_person_live.cjs'
+      - '.github/scripts/recover_test_preparing_delete.cjs'
+      - '.github/acceptance/test-preparation-no-live-writes.json'
       - '.github/scripts/await_test_gate.cjs'
 permissions:
   actions: read
