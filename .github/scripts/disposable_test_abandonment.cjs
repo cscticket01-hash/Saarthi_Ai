@@ -11,6 +11,17 @@ async function run(){
  const login=await send('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+key,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});assert.equal(login.http,200);assert.ok(login.data.idToken);
  const call=async(action,extra={})=>{const r=await send(url,{...extra,action,schoolId:school},login.data.idToken);assert.equal(r.http,200,'TEST request unavailable');assert.equal(r.data.success,true);assert.equal(r.data.schoolId,school);return r.data;};
  assert.equal((await call('managed/profile',{operation:'read'})).profile?.schoolName,'TEST Sync V2');
+ if(process.env.VS_CLEANUP_PHASE==='inventory_verify'){
+  const started=Date.now();const inventory=await call('managed/file/inventory');
+  assert.equal(inventory.binaryInventoryVersion,1);assert.ok(Array.isArray(inventory.items));
+  const inventoryMs=Date.now()-started;
+  const item=inventory.items.find(x=>x.verification==='bytes_hashed'&&x.sizeBytes>0&&x.sizeBytes<=1024*1024);assert.ok(item,'No small verified original on inventory page');
+  const readStarted=Date.now();const downloaded=await call('managed/file/download',{fileId:item.fileId,expectedSha256:item.sha256,expectedVersion:item.version});
+  const bytes=Buffer.from(downloaded.base64,'base64');assert.equal(bytes.length,item.sizeBytes);assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'),item.sha256);
+  const status=await call('managed/live/rollout-status',{liveProtocol:1});
+  Object.assign(report,{scope:'READ_ONLY_TEST_INVENTORY_ORIGINAL_READBACK',status:'PASS',inventoryMs,downloadMs:Date.now()-readStarted,items:inventory.items.length,partial:inventory.partial,scanLimited:inventory.scanLimited,coverageComplete:inventory.coverageComplete,verifiedOriginalBytes:bytes.length,exactSha256Verified:true,unsettledWrites:status.unsettledWrites,inventoryScriptRoundTripMillis:inventory.syncTiming?.scriptRoundTripMillis});
+  return;
+ }
  const confirmDisposableTest='owner-disposable-test-20261115';
  if(process.env.VS_CLEANUP_PHASE==='verified_reconcile'){
   const before=await call('managed/live/rollout-status',{liveProtocol:1});assert.equal(before.abandonedTestOperations,14);
