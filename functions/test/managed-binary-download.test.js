@@ -57,3 +57,30 @@ test('concurrently changed bytes are rejected without altering original',()=>{
  const f=storage(),file=media(f);let reads=0;file.getLastUpdated=()=>new Date(++reads===1?1000:2000);
  assert.equal(f.call({action:'managed_binary_inventory'}).success,false);assert.equal(file.text,'synthetic photo');
 });
+
+test('inventory metadata RPCs consume the scan budget and do not continue in an untimed full-manifest pass',()=>{
+ const f=storage(),files=Array.from({length:10},(_,i)=>media(f,'slow'+i+'.jpg','photo'+i));
+ let clock=Date.now();f.context.Date=class extends Date{static now(){return clock;}};
+ const reads=files.map(()=>0);
+ files.forEach((file,i)=>{const size=file.getSize.bind(file);file.getSize=()=>{reads[i]++;clock+=2000;return size();};});
+ const result=f.call({action:'managed_binary_inventory'});
+ assert.equal(result.success,true);assert.equal(result.scanLimited,true);assert.equal(result.coverageComplete,false);
+ assert.ok(result.items.length>=1);assert.equal(reads[9],0,'unvisited files must not be fetched after the scan budget');
+ assert.ok(reads.filter(n=>n>0).length<files.length);
+});
+
+test('slow hashes stop at an honest resumable page without changing the stable manifest fingerprint',()=>{
+ for(const bundle of [false,true]){
+  const f=storage({bundle}),files=Array.from({length:8},(_,i)=>media(f,'bounded'+i+'.jpg','photo'+i));
+  let clock=Date.now(),blobs=0;f.context.Date=class extends Date{static now(){return clock;}};
+  for(const file of files){const blob=file.getBlob.bind(file);file.getBlob=()=>{blobs++;clock+=13000;return blob();};}
+  const first=f.call({action:'managed_binary_inventory'});
+  assert.equal(first.success,true);assert.equal(first.items.length,1);assert.equal(blobs,1);
+  assert.equal(first.partial,true);assert.equal(first.coverageComplete,false);assert.equal(first.scanLimited,false);
+  assert.equal(first.nextCursor,first.items[0].fileId);
+  const second=f.call({action:'managed_binary_inventory',cursor:first.nextCursor});
+  assert.equal(second.success,true);assert.equal(second.items.length,1);assert.equal(blobs,2);
+  assert.equal(second.inventoryFingerprint,first.inventoryFingerprint);
+  assert.notEqual(second.items[0].fileId,first.items[0].fileId);
+ }
+});
