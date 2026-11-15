@@ -48,7 +48,7 @@ jobs:
       group: sync3-verified-test-school-mutations
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,20 +56,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install existing verified Firebase Admin dependency
-        run: npm --prefix functions install --ignore-scripts --no-package-lock
+      - name: Require the exact original-delete recovery to have succeeded
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const assert=require('node:assert/strict');
+          async function main(){
+           for(let n=0;n<15;n++){
+            const r=await fetch('https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/actions/runs/43728458304',{headers:{Authorization:'Bearer '+process.env.GITHUB_TOKEN,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(15000)});
+            assert.equal(r.status,200);const run=await r.json();
+            assert.equal(run.head_sha,'c858b059846cb2d5885910010af0bc6f19354405');assert.equal(run.head_branch,'test/atomic-person-live-20261109');
+            if(run.status==='completed'){assert.equal(run.conclusion,'success','Original delete recovery must finish without a bypass');console.log('Exact original-delete recovery PASS');return;}
+            await new Promise(resolve=>setTimeout(resolve,2000));
+           }
+           throw Error('Original delete recovery is not complete');
+          }
+          main().catch(error=>{console.error(error.message);process.exitCode=1});
+          JS
       - name: Verify the deployed broker and Worker tree
         run: git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
-      - name: Resume exact retained TEST deletion and verify Drive before restoring legacy authority
+      - name: Publish synthetic TEST bundles and verify Drive before restoring legacy authority
         env:
-          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
           VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
-        run: node .github/scripts/recover_test_preparing_delete.cjs
+        run: node .github/scripts/test_atomic_person_live.cjs
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: isolated-atomic-person-live-evidence
-          path: build/cloud-prerequisites/preparing-delete-recovery.json
+          path: build/cloud-prerequisites/atomic-person-live.json
