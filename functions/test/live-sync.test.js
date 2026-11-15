@@ -862,3 +862,34 @@ test('student slot settlement needs the admitted TEST school and current signed 
   id:receipt,successorId,recordId:id,generation:record.mobileStableId,
   operationId:record._syncOperationId,revision:record._syncRevision}]]);
 });
+
+test('verified completed deletion seed preserves the complete source and owner proof',async()=>{
+ const source={schoolId:A,_syncDeleted:true,_syncRevision:'drive-source',_syncOperationId:'original-delete-operation',
+  _syncRequestHash:'original-request-hash',_syncDeletedOwner:'original-owner',_syncRetiredStudentGenerations:['prior-generation'],
+  _syncErasePlan:{complete:true,version:1,targets:[{id:'original-id',revision:'original-revision'}]}};
+ const original=JSON.stringify(source),calls=[];
+ const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async(s,l,b)=>{calls.push(b);return {state:b.command==='seedSeal'?'active':'seeding'};}}});
+ let reads=0;await live.prepare(A,'students_directory',async()=>++reads===1?{success:true,schoolId:A,syncProtocol:2,collectionRevision:'source-head',records:{deleted:source}}:{success:true,schoolId:A,syncProtocol:2,collectionRevision:'source-head',unchanged:true});
+ const seeded=calls.find(x=>x.command==='seedPage').rows[0].data;
+ assert.equal(seeded._syncErasePlan.complete,true);assert.equal(seeded._syncErasePlan.archiveScan,undefined);
+ assert.equal(seeded._syncRevision,source._syncRevision);assert.equal(seeded._syncOperationId,source._syncOperationId);
+ assert.equal(seeded._syncRequestHash,source._syncRequestHash);assert.equal(seeded._syncDeletedOwner,source._syncDeletedOwner);
+ assert.deepEqual(seeded._syncRetiredStudentGenerations,source._syncRetiredStudentGenerations);
+ assert.deepEqual(seeded._syncErasePlan.targets,source._syncErasePlan.targets);
+ assert.equal(JSON.stringify(source),original,'Drive source must remain untouched');
+});
+
+test('unfinished or non-deleted erase cursors and a sensitive final seed row never begin Cloudflare admission',async()=>{
+ for(const extra of [
+  {_syncDeleted:true,_syncErasePlan:{complete:false,archiveScan:{token:'not-finished'}}},
+  {_syncDeleted:false,_syncErasePlan:{complete:true,archiveScan:{token:'not-a-tombstone'}}},
+  {password:'never-seed'},
+  {_syncDeleted:true,_syncErasePlan:{complete:true,archiveScan:{token:'finished'},other:{token:'not-an-archive-cursor'}}}
+ ]){
+  let commands=0;const live=createLiveSync({schools:[A],edge:{enabled:()=>true,rpc:async()=>{commands++;}}});
+  const records=Object.fromEntries(Array.from({length:500},(_,n)=>['row-'+n,{schoolId:A,_syncRevision:'source-'+n,name:'synthetic'}]));
+  records.last={schoolId:A,_syncRevision:'source-last',...extra};
+  await assert.rejects(live.prepare(A,'students_directory',async()=>({success:true,schoolId:A,syncProtocol:2,collectionRevision:'head',records})),e=>e.code==='LIVE_BASELINE_RECORD_UNSUPPORTED'||e.code==='LIVE_BASELINE_DELETE_PENDING');
+  assert.equal(commands,0);
+ }
+});
