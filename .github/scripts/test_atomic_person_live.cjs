@@ -65,14 +65,14 @@ async function run() {
    for(const collection of collections){
     const snapshot=await admin('managed/records',{collection,operation:'read',syncProtocol:2});
     assert.equal(snapshot.syncProtocol,2);assert.ok(snapshot.records&&!snapshot.partial&&!snapshot.partialRecords&&!snapshot.pointRead);
-    const reasons={};let invalid=0;const add=code=>{reasons[code]=(reasons[code]||0)+1;};
-    function check(v,depth=0){
+    const reasons={};let invalid=0;const invalidShapes=[];let currentPaths=[];const add=code=>{reasons[code]=(reasons[code]||0)+1;};
+    function check(v,depth=0,path=[]){
      if(depth>12){add('depth_limit');return;}
-     if(Array.isArray(v)){for(const x of v)check(x,depth+1);return;}
+     if(Array.isArray(v)){for(const x of v)check(x,depth+1,[...path,'[]']);return;}
      if(v&&typeof v==='object')for(const [key,x] of Object.entries(v)){
       if(['__proto__','prototype','constructor'].includes(key))add('prototype_key');
-      if(/password|token|secret|private_key|base64|localpath/i.test(key)&&key!=='mobileLinkToken')add('blocked_key_'+key.replace(/[^A-Za-z0-9_]/g,'').slice(0,60));
-      check(x,depth+1);
+      if(/password|token|secret|private_key|base64|localpath/i.test(key)&&key!=='mobileLinkToken'){add('blocked_key_'+key.replace(/[^A-Za-z0-9_]/g,'').slice(0,60));currentPaths.push([...path,key].map(x=>x.replace(/[^A-Za-z0-9_\[\]]/g,'').slice(0,40)).join('.'));}
+      check(x,depth+1,[...path,key]);
      }
      if(typeof v==='string'&&v.startsWith('data:'))add('inline_data_uri');
     }
@@ -81,9 +81,9 @@ async function run() {
      if(!id||id.length>200||id.includes('/')||['.','..','__proto__','prototype','constructor'].includes(id))add('invalid_record_id');
      if(data.schoolId!==schoolId)add('wrong_school');
      if(typeof data._syncRevision!=='string'||!data._syncRevision||/^(live-|cf-)/.test(data._syncRevision))add('unverified_source_revision');
-     check(data);if(JSON.stringify(reasons)!==before)invalid++;
+     currentPaths=[];check(data);if(JSON.stringify(reasons)!==before){invalid++;invalidShapes.push({syntheticTest:data.syntheticTest===true,idHash:hash(id),rootKeys:Object.keys(data).filter(k=>/^[A-Za-z_][A-Za-z0-9_]{0,50}$/.test(k)),blockedPaths:currentPaths});}
     }
-    report.validation.push({collection,rows:Object.keys(snapshot.records).length,invalid,reasons});
+    report.validation.push({collection,rows:Object.keys(snapshot.records).length,invalid,reasons,invalidShapes});
    }
    report.status='READ_ONLY_DIAGNOSTIC_COMPLETE';return;
   }
