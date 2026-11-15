@@ -63,7 +63,7 @@ jobs:
   website-ui-live:
     needs: hosted-test-client
     if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/feature/sync3-unified-repair-20261026'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       evidence_run: ${{ steps.website-evidence.outputs.run }}

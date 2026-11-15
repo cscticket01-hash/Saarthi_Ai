@@ -151,7 +151,7 @@ jobs:
   website-ui-live:
     needs: actual-engines-live
     if: github.ref == 'refs/heads/windows/easy-connect-draft' || github.ref == 'refs/heads/feature/smart-sync-3'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       evidence_run: ${{ steps.website-evidence.outputs.run }}
