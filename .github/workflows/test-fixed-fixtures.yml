@@ -1,0 +1,40 @@
+name: Owner-authorized fixed TEST fixture protocol check
+on:
+  push:
+    branches: [test/fixed-fixtures-20261115]
+    paths: ['.github/workflows/test-fixed-fixtures.yml', '.github/scripts/isolated_live_sync.cjs']
+permissions:
+  contents: read
+concurrency:
+  group: sync3-20261114-safe-real-provider-gates
+  cancel-in-progress: false
+jobs:
+  test-protocol:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/test/fixed-fixtures-20261115'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VS_EXPECTED_TEST_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
+      VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+      VS_TEST_REBASE_FIXED_FIXTURES: vs-db8afb01a3be46a983c8284714d06e5d
+      VS_TEST_REAL_SYNC: 'true'
+      VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+      VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Require exact TEST runtime and fixed disposable fixture guard
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME).catch(()=>process.exit(1))"
+          node --test .github/scripts/isolated_fixed_fixture_rebase.test.cjs
+      - name: Existing real TEST protocol suite with original revision CAS for two fixed fixtures only
+        run: node .github/scripts/connect_isolated_test_storage.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: disposable-fixed-fixture-protocol-evidence
+          path: build/cloud-prerequisites/storage-pairing.json
+          retention-days: 14
