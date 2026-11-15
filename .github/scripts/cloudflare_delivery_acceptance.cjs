@@ -11,6 +11,37 @@ async function transport(url,body,token){
   ...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(120000)});
  return {status:response.status,data:await response.json()};
 }
+// Protected person writes use a signed lifecycle/Drive proof, whereas
+// ordinary records use a durable Cloudflare ticket plus a signed Drive ACK.
+// Never mistake a direct person receipt for a Cloudflare staging receipt.
+function verifiedRecordRoute(result,route){
+ const revision=result?.recordRevision;
+ if(typeof revision!=='string'||!revision||/^(cf-|live-)/.test(revision)||result.delivery)return false;
+ if(route==='person')return result.personLifecycleVersion===1&&result.syncProtocol===2&&result.cloudflareAccepted!==true;
+ if(route==='edge')return result.cloudflareAccepted===true&&result.driveState==='verified';
+ return false;
+}
+// Re-submit only the EXACT same immutable original request after an authenticated
+// broker SCRIPT_TIMEOUT. Both the original operation ID (or exact status ticket)
+// and its serialized request must remain unchanged. One bounded retry only.
+async function retryOriginalTimeout(run,body,{sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),delayMs=12000}={}){
+ const original=JSON.stringify(body);
+ const record=body?.action==='managed/records'&&body.operation==='write'&&
+   /^[a-f0-9]{64}$/.test(body.operationId||'')&&body.syncProtocol===2;
+ const status=body?.action==='managed/cloudflare/operation'&&
+   /^(records|file-[a-f0-9]{64})$/.test(body.lane||'')&&
+   /^[a-f0-9]{64}$/.test(body.id||'');
+ for(let attempt=0;attempt<2;attempt++){
+  if(JSON.stringify(body)!==original)throw Error('Immutable original request changed');
+  try{return await run(body);}
+  catch(error){
+   if(error?.status!==504||error?.code!=='SCRIPT_TIMEOUT'||attempt!==0||!(record||status))
+    throw error;
+   await sleep(delayMs);
+  }
+ }
+ throw Error('Original request remains unverified');
+}
 async function acceptance({env=process.env,request=transport}={}){
  const report={scope:'Synthetic TEST school only, retained fixtures',schoolId:SCHOOL,checks:[],productionLoadCertified:false};
  let stage='explicit acceptance opt-in',token;
@@ -34,7 +65,11 @@ async function acceptance({env=process.env,request=transport}={}){
   async function call(body){
    const r=await request(ENDPOINT,{...body,schoolId:SCHOOL},token);
    if(r.status!==200||r.data?.success!==true||r.data.schoolId!==SCHOOL){
-    report.failure={http:r.status,...(/^[A-Z_]{1,80}$/.test(r.data?.code||'')?{code:r.data.code}:{})};throw Error(stage);
+    report.failure={http:r.status,...(/^[A-Z_]{1,80}$/.test(r.data?.code||'')?{code:r.data.code}:{})};
+    const error=new Error(stage);
+    error.status=r.status;
+    error.code=report.failure.code;
+    throw error;
    }
    return r.data;
   }
@@ -52,34 +87,54 @@ async function acceptance({env=process.env,request=transport}={}){
    const ticket=result.delivery;requireCheck(result.cloudflareAccepted===true&&result.driveState==='pending'&&ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&/^(records|file-[a-f0-9]{64})$/.test(ticket.lane));
    requireCheck(!result.fileId&&!result.recordRevision);
    for(let attempt=0;attempt<24;attempt++){
-    result=await call({action:'managed/cloudflare/operation',...ticket,waitMillis:20000});
+    result=await originalRequest({action:'managed/cloudflare/operation',...ticket,waitMillis:20000});
     if(result.deliveryStatus)report.lastDeliveryStatus=result.deliveryStatus;
     if(!result.delivery){requireCheck(result.driveState==='verified');return result;}
     requireCheck(result.delivery.id===ticket.id&&result.delivery.lane===ticket.lane);
    }
    throw Error(stage);
   }
+  // Every status poll or record retry is tied to its original immutable
+  // operation, never a new ID or guessed receipt. Timeouts remain failures
+  // until the exact signed Drive proof and readback are obtained.
+  async function originalRequest(body){
+   const wrapped=async original=>{
+    const answer=await call(original);
+    if(report.failure?.code==='SCRIPT_TIMEOUT')delete report.failure;
+    return answer;
+   };
+   return retryOriginalTimeout(wrapped,body,{
+    sleep:async ms=>{report.originalTimeoutRetryCount=(report.originalTimeoutRetryCount||0)+1;
+     await new Promise(resolve=>setTimeout(resolve,ms));},
+   });
+  }
   async function record(collection,id,data,extra={}){
    const body={action:'managed/records',operation:'write',syncProtocol:2,collection,id,
     operationId:hash(SCHOOL+':'+collection+':'+id),expectedRecordRevision:'',data:{...data,schoolId:SCHOOL},edgeDeliveryVersion:1,...extra};
-   let result=await call(body);
-   if(result.delivery)result=await settle(result);
-   requireCheck(result.cloudflareAccepted===true&&result.driveState==='verified'&&typeof result.recordRevision==='string'&&!result.recordRevision.startsWith('cf-'));
-   const replay=await call(body);requireCheck(replay.recordRevision===result.recordRevision&&replay.driveState==='verified');
+   const route=collection==='teachers_directory'?'person':'edge';
+   let result=await originalRequest(body);
+   if(route==='edge'&&result.delivery)result=await settle(result);
+   requireCheck(verifiedRecordRoute(result,route));
+   const replay=await originalRequest(body);
+   requireCheck(replay.recordRevision===result.recordRevision&&verifiedRecordRoute(replay,route));
    const read=await call({action:'managed/records',operation:'read',syncProtocol:2,collection,id});
    const saved=read.records?.[id];
-   requireCheck(saved?.schoolId===SCHOOL&&saved?._syncRevision===result.recordRevision);
+   requireCheck(saved?.schoolId===SCHOOL&&saved?._syncRevision===result.recordRevision&&saved?._syncOperationId===body.operationId);
+   report.verifiedRoutes??=[];
+   report.verifiedRoutes.push({collection,route:route==='person'?'signed-person-lifecycle-Drive':'Cloudflare-ACK-then-Drive'});
    if(collection==='documents')
     requireCheck(saved.fileId===data.fileId&&saved.contentHash===data.contentHash
       &&saved.documentKind===data.documentKind);
    report.checks.push({name:stage,status:'PASS'});return result;
   }
-  stage='teacher record edge acceptance, verified Drive write and exact replay';
+  // Test a real Cloudflare-backed collection BEFORE direct person writes.
+  // The test is incomplete unless both this and protected person paths PASS.
+  stage='calendar record Cloudflare acceptance and signed Google Drive readback';
+  const calendar='CF_TEST_CALENDAR_'+run;
+  await record('school_calendar',calendar,{title:'SYNTHETIC CLOUD DELIVERY TEST',syntheticTest:true});
+  stage='teacher signed lifecycle, verified Drive write and exact replay';
   const teacher='CF_TEST_TEACHER_'+run;
   await record('teachers_directory',teacher,{teacherId:teacher,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'teacher'});
-  stage='staff record edge acceptance and verified Drive write';
-  const staff='CF_TEST_STAFF_'+run;
-  await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
   // Valid bounded synthetic PDF container. Original provider bytes are retained,
   // not a real student's report card or a generated template.
   const bytes=Buffer.alloc(768*1024,32);
@@ -119,7 +174,10 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='another school cannot poll the accepted receipt';
   const foreign=await request(ENDPOINT,{action:'managed/cloudflare/operation',schoolId:'vs-'+'0'.repeat(32),lane:'records',id:hash('foreign')},token);requireCheck(foreign.status===403);
   report.checks.push({name:stage,status:'PASS'});
-  report.status='PASS';report.retainedFixtures={teacher,staff,document:'CF_TEST_IDCARD_'+run,fileId,sha256:meta.sha256};
+  stage='staff signed lifecycle, verified Drive write and exact replay';
+  const staff='CF_TEST_STAFF_'+run;
+  await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
+  report.status='PASS';report.retainedFixtures={teacher,staff,calendar,document:'CF_TEST_IDCARD_'+run,fileId,sha256:meta.sha256};
  }catch(_){report.status='FAIL';report.failedStage=stage;}
  return report;
 }
@@ -128,4 +186,4 @@ if(require.main===module)acceptance().then(report=>{
  fs.writeFileSync('build/cloud-prerequisites/cloudflare-delivery.json',JSON.stringify(report,null,2));
  console.log(JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;
 });
-module.exports={acceptance,SCHOOL,ENDPOINT,LOGIN};
+module.exports={acceptance,verifiedRecordRoute,retryOriginalTimeout,SCHOOL,ENDPOINT,LOGIN};

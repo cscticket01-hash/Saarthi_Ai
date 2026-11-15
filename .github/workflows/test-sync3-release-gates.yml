@@ -1,0 +1,276 @@
+name: TEST Sync 3 full release-gate verification (no production release)
+on:
+  pull_request:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/workflows/test-sync3-release-gates.yml'
+      - '.github/scripts/sync3_current_original_proof_audit.cjs'
+      - '.github/scripts/sync3_live_script_admission_readonly.cjs'
+      - '.github/scripts/cloudflare_delivery_acceptance.cjs'
+      - '.github/scripts/cloudflare_delivery_acceptance.test.cjs'
+      - '.github/scripts/sync3_original_release_gate.cjs'
+      - '.github/scripts/sync3_original_release_gate.test.cjs'
+      - '.github/scripts/sync3_production_r2_standby.test.cjs'
+      - 'cloudflare-sync/wrangler.production-standby.jsonc'
+      - 'docs/sync3-production-r2-standby.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync3-20261114-safe-real-provider-gates
+  cancel-in-progress: false
+env:
+  VS_EXPECTED_TEST_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
+  VS_EXPECTED_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
+  VS_VERIFIED_RENDER_COMMIT: 8d329ed72c6cd620f6f583d846743b9cd116c783
+  VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbs5fbrl550s73fge03g
+jobs:
+  original-worker-and-backend:
+    name: R2, DO, 8GB quota, retention, Google-signing regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Worker full type-check, Miniflare and all R2/retention tests
+        run: |
+          cd cloudflare-sync
+          npm ci --ignore-scripts
+          cp .dev.vars.example .dev.vars
+          npm run types
+          npm run check
+          npm run build
+          npm test
+      - name: Broker, Apps Script VM, security and all backend tests
+        run: |
+          npm --prefix functions install --ignore-scripts --no-package-lock
+          npm --prefix functions test
+          node --test .github/scripts/sync3_capacity_budget.test.cjs
+          node --test .github/scripts/cloudflare_delivery_acceptance.test.cjs
+          node --test .github/scripts/sync3_original_release_gate.test.cjs
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
+
+  flutter-retry-and-isolation:
+    name: Windows/Android local outbox, quota 507 and multi-PC SQLite
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Local 8GB 507 retry, verified signed cloud ACK and Android recovery
+        env:
+          APPDATA: ${{ runner.temp }}/isolated-sync3-flutter
+        run: |
+          flutter test --concurrency=1 --timeout 180s test/sync_recovery_policy_test.dart test/central_school_cloud_test.dart test/windows_live_sync_store_test.dart test/mobile_atomic_card_delivery_test.dart
+      - name: Independently persisted five-PC record convergence
+        env:
+          APPDATA: ${{ runner.temp }}/isolated-sync3-multi-pc
+        run: |
+          flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name 'five independent SQLite devices converge without joining their queues' test/windows_multi_pc_sync_test.dart
+
+  read-only-test-cloud:
+    name: Real TEST school auth, current Script version and exact deployed runtime
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Confirm exact TEST provider source without production data or writes
+        run: |
+          # Standby file is un-deployed; Worker runtime, broker and default
+          # production config MUST still exactly match verified TEST source.
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node -e "require('./.github/scripts/test_runtime_identity.cjs').waitForRuntime(process.env.VS_EXPECTED_TEST_RUNTIME,{attempts:3}).catch(()=>process.exit(1))"
+      - name: Read only TEST signed school and expected reviewed GS version
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: |
+          echo "VS_EXPECTED_TEST_SCRIPT_VERSION=$(node -e "process.stdout.write(require('./.github/scripts/reviewed_script_version.cjs').currentReviewedScriptVersion())")" >> "$GITHUB_ENV"
+          node .github/scripts/test_cloud_readiness.cjs
+          node -e "const r=require('./build/cloud-prerequisites/report.json');if(r.status!=='PASS'||r.deployedScriptEvidence?.matchesReviewedSource!==true) {console.error('Provider BLOCKED or Script deployed version mismatch');process.exit(1)}"
+          node .github/scripts/sync3_live_script_admission_readonly.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-real-test-read-only-current-provider
+          path: |
+            build/cloud-prerequisites/report.json
+            build/cloud-prerequisites/script-admission-capability.json
+          retention-days: 7
+
+  original-marker-zero-write:
+    name: Real TEST school 14 historical marker preview (never retire)
+    needs: [synthetic-teacher-readonly]
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enforce exact deployed TEST business source, no production substitution
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node --check .github/scripts/sync3_current_original_proof_audit.cjs
+      - name: Authenticated original-only reconciliation PREVIEW (zero writes)
+        env:
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/sync3_current_original_proof_audit.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-current-original-marker-zero-write
+          path: build/cloud-prerequisites/edge-original-reconciliation.json
+          retention-days: 7
+
+  synthetic-test-google-delivery:
+    name: Real synthetic TEST school R2 Cloudflare ACK -> signed Google Drive readback
+    needs: [read-only-test-cloud, synthetic-teacher-readonly, original-marker-zero-write]
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.read-only-test-cloud.result == 'success' && needs.original-marker-zero-write.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Only reviewed exact deployed TEST business source may write synthetic records
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node --check .github/scripts/cloudflare_delivery_acceptance.cjs
+      - name: Synthetic TEST teacher/staff records and original PDF bytes Google Drive readback
+        env:
+          VS_CF_DELIVERY_ACCEPTANCE: '1'
+          VS_CF_DELIVERY_RUN_ID: verify-20261114-${{ github.run_id }}
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/cloudflare_delivery_acceptance.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-current-real-test-synthetic-google-delivery
+          path: build/cloud-prerequisites/cloudflare-delivery.json
+          retention-days: 7
+
+  synthetic-teacher-readonly:
+    name: Read-only failed synthetic teacher original receipt and Drive point-read diagnostic
+    needs: [read-only-test-cloud]
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enforce actual deployed TEST broker source and no production endpoints
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json ':(exclude)cloudflare-sync/wrangler.production-standby.jsonc'
+          node --check .github/scripts/sync3_synthetic_teacher_postmortem.cjs
+      - name: Authenticated read-only original synthetic teacher receipt and Drive point-read
+        env:
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/sync3_synthetic_teacher_postmortem.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-synthetic-teacher-readonly-diagnostic
+          path: build/cloud-prerequisites/synthetic-teacher-postmortem.json
+          retention-days: 7
+
+  hosted-windows-os-compat:
+    name: Hosted Windows OS SQLite and replay (not physical-device certification)
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Five independent Windows OS SQLite files converge with original offline operation IDs
+        env:
+          APPDATA: ${{ runner.temp }}/saarthi-sync3-windows
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name "5 independent SQLite PCs retain offline queues and merge disjoint same-row edits" test/windows_multi_pc_sync_test.dart
+      - name: Old student generation cannot adopt an offline record or fee
+        env:
+          APPDATA: ${{ runner.temp }}/saarthi-sync3-windows
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name "offline PC cannot attach old student or fee edits to a new Class/Roll generation" test/windows_multi_pc_sync_test.dart
+      - name: Timeout and restart keep original immutable operation identity
+        env:
+          APPDATA: ${{ runner.temp }}/saarthi-sync3-windows
+        run: flutter test --dart-define=SAARTHI_WINDOWS_SQLITE=true --concurrency=1 --timeout 180s --plain-name "502/503/504, 45-second timeout and lock failure preserve operation across reopen" test/windows_multi_pc_sync_test.dart
+
+  original-proof-release-fence:
+    name: BLOCK production promotion on unresolved original receipts
+    needs: [original-worker-and-backend, flutter-retry-and-isolation, hosted-windows-os-compat, read-only-test-cloud, synthetic-teacher-readonly, original-marker-zero-write, synthetic-test-google-delivery]
+    if: always() && github.repository == 'cscticket01-hash/Saarthi_Ai' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read original signed Script capability evidence
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-real-test-read-only-current-provider
+          path: build/cloud-prerequisites
+      - name: Read authenticated exact-original zero-write audit
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-current-original-marker-zero-write
+          path: build/cloud-prerequisites
+      - name: Read independently verified synthetic Google bytes
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: sync3-current-real-test-synthetic-google-delivery
+          path: build/cloud-prerequisites
+      - name: Refuse production readiness when originals lack proof
+        run: node .github/scripts/sync3_original_release_gate.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync3-original-release-fence-status
+          path: build/cloud-prerequisites/sync3-release-readiness.json
+          retention-days: 7
