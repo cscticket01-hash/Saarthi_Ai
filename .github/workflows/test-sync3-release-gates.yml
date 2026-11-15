@@ -20,10 +20,10 @@ concurrency:
   group: sync3-20261114-safe-real-provider-gates
   cancel-in-progress: false
 env:
-  VS_EXPECTED_TEST_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
-  VS_EXPECTED_RUNTIME: 8d329ed72c6cd620f6f583d846743b9cd116c783
-  VS_VERIFIED_RENDER_COMMIT: 8d329ed72c6cd620f6f583d846743b9cd116c783
-  VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbs5fbrl550s73fge03g
+  VS_EXPECTED_TEST_RUNTIME: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
+  VS_EXPECTED_RUNTIME: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
+  VS_VERIFIED_RENDER_COMMIT: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
+  VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbsi1nec6qcc73980p00
 jobs:
   original-worker-and-backend:
     name: R2, DO, 8GB quota, retention, Google-signing regressions
