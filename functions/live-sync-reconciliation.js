@@ -30,6 +30,32 @@ function driveProofMatches(proof,binding){
  const record=proof?.records?.[binding.id];
  return proof?.success===true&&proof.schoolId===binding.schoolId&&proof.syncProtocol===2&&proof.pointRead===true&&record?.schoolId===binding.schoolId&&(record.id===undefined||record.id===binding.id)&&record._syncOperationId===binding.operationId&&record._syncRequestHash===binding.requestHash&&typeof record._syncRevision==='string'&&record._syncRevision.length>0&&!/^(live-|cf-)/.test(record._syncRevision)&&(binding.operation==='delete'?record._syncDeleted===true:record._syncDeleted!==true);
 }
+// Exact original legacy proof from the authenticated school-bound Cloudflare
+// Durable Object. Completed means the owner verified its Google delivery, but
+// only the *original retained canonical row* can prove a lost legacy request.
+// A superseding Sheet row, staged-only job or purged source is NOT evidence.
+function edgeProofMatches(proof,binding){
+ if(binding?.lane!=='legacy')return false;
+ const expectedId=createHash('sha256').update(JSON.stringify([
+  binding.schoolId,'managed_records',
+  [binding.collection,binding.id,binding.operationId],
+ ])).digest('hex');
+ const result=proof?.response?.result,record=result?.record;
+ const revision=result?.recordRevision;
+ return Boolean(proof?.id===expectedId&&proof.state==='completed'&&
+  result?.success===true&&result.schoolId===binding.schoolId&&
+  result.syncProtocol===2&&typeof revision==='string'&&
+  revision.length>0&&!/^(live-|cf-)/.test(revision)&&
+  record&&typeof record==='object'&&!Array.isArray(record)&&
+  record.schoolId===binding.schoolId&&
+  (record.id===undefined||record.id===binding.id)&&
+  record._syncOperationId===binding.operationId&&
+  record._syncRequestHash===binding.requestHash&&
+  record._syncRevision===revision&&
+  (binding.operation==='delete'
+   ? record._syncDeleted===true
+   : record._syncDeleted!==true));
+}
 function noticeProofMatches(proof,binding){
  if(binding.lane!=='legacy'||binding.collection!=='school_notices'||
     proof?.schoolId!==binding.schoolId||proof.lane!=='notices')return false;
@@ -48,16 +74,72 @@ function noticeProofMatches(proof,binding){
   response?.state==='completed'&&typeof response.driveRevision==='string'&&
   response.driveRevision.length>0&&!/^(live-|cf-)/.test(response.driveRevision);
 }
-function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceipt,now=Date.now}){
- async function reconcile(school,{limit=25}={}){
-  if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
+// Diagnostic classification only. This function does not authorize marker
+// retirement; noticeProofMatches remains the sole positive receipt verifier.
+// Never return operation IDs, hashes, student data or raw provider payloads.
+function noticeMismatchReason(proof,binding){
+ const job=proof?.job;
+ const expectedId=createHash('sha256').update(JSON.stringify([binding.schoolId,binding.operationId])).digest('hex');
+ if(proof?.schoolId!==binding.schoolId||proof?.lane!=='notices')
+  return 'school_scope';
+ if(job?.id!==expectedId||job.kind!=='notice')
+  return 'job_identity';
+ if(job.state!=='completed')
+  return 'job_unsettled';
+ if(typeof job.payload!=='string'||typeof job.response!=='string')
+  return 'job_missing_payload';
+ let payload,response;
+ try{payload=JSON.parse(job.payload);response=JSON.parse(job.response);}
+ catch{return 'unparseable_payload';}
+ const request=payload?.request,ack=payload?.ack;
+ try{
+  if(canonical(bindOperation(binding.schoolId,'legacy',request))!==canonical(binding))
+   return 'original_request_binding';
+  if(payload.fingerprint!==createHash('sha256').update(JSON.stringify(request)).digest('hex'))
+   return 'request_fingerprint';
+ }catch{return 'unparseable_request';}
+ if(ack?.success!==true||ack.schoolId!==binding.schoolId||ack.syncProtocol!==2||
+    typeof ack.recordRevision!=='string'||!ack.recordRevision.startsWith('cf-'))
+  return 'cloudflare_ack';
+ if(ack.record?.schoolId!==binding.schoolId||ack.record.id!==binding.id||
+    ack.record._syncOperationId!==binding.operationId||
+    ack.record._syncRevision!==ack.recordRevision||
+    (binding.operation==='delete'?ack.record._syncDeleted!==true:ack.record._syncDeleted===true))
+  return 'ack_original_record';
+ if(response?.state!=='completed'||typeof response.driveRevision!=='string'||
+    !response.driveRevision||/^(live-|cf-)/.test(response.driveRevision))
+  return 'drive_completion';
+ return 'unclassified';
+}
+// Read-only diagnosis for a mismatched ORIGINAL notice binding. The coarse
+// verifier must still reject the receipt; these fixed strings expose no data.
+function noticeBindingMismatchDimension(proof,binding){
+ try{
+  const original=JSON.parse(proof.job.payload)?.request;
+  const found=bindOperation(binding.schoolId,'legacy',original);
+  if(!found)return 'invalid_original_request';
+  if(found.collection!==binding.collection)return 'collection';
+  if(found.id!==binding.id)return 'record_id';
+  if(found.operation!==binding.operation)return 'operation_kind';
+  if(found.operationId!==binding.operationId)return 'operation_id';
+  if(found.requestHash!==binding.requestHash)return 'intent_hash';
+  return 'other';
+ }catch{return 'unreadable_request';}
+}
+function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
+ async function reconcile(school,{limit=25,previewOnly=false}={}){
+  if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100||typeof previewOnly!=='boolean')throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
   const ref=db.doc('school_live_migrations/'+school),snapshot=(await ref.get()).data()||{};
   const candidates=['inflight','liveInflight'].flatMap(map=>Object.entries(snapshot[map]||{}).map(([token,marker])=>({map,token,marker}))).sort((a,b)=>(Number(a.marker.startedAt)||0)-(Number(b.marker.startedAt)||0));
-  let cleared=0;const reasons={},proofs=new Map();
+  let cleared=0,previewWouldClear=0;const reasons={},proofs=new Map();
+  // Aggregated diagnostic counters only; never emit record IDs, hashes,
+  // Google payloads, signed receipts, or school credentials.
+  const proofSources={},note=kind=>{proofSources[kind]=(proofSources[kind]||0)+1;};
   const retain=reason=>{reasons[reason]=(reasons[reason]||0)+1;};
   for(const {map,token,marker}of candidates.slice(0,limit)){
    const lane=map==='liveInflight'?'live':'legacy',binding=marker.operationBinding;
-   if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');continue;}
+   note(lane==='live'?'live_marker':'legacy_marker');
+   if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');note('invalid_binding');continue;}
    let verified=false;
    try{
     // An idle notice proof must not be reused for a distinct marker with a
@@ -66,21 +148,65 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceip
     // Several lost responses for one immutable operation need one verified
     // lookup. The cache lasts only this bounded reconciliation invocation.
     if(!proofs.has(proofKey))proofs.set(proofKey,(async()=>{
-     if(lane==='live'&&typeof readLiveReceipt==='function')return liveProofMatches(await readLiveReceipt(school,binding.operationId),binding);
+     if(lane==='live'&&typeof readLiveReceipt==='function'){
+      try{
+       const ok=liveProofMatches(await readLiveReceipt(school,binding.operationId),binding);
+       note(ok?'live_exact':'live_nonmatching');return ok;
+      }catch(error){note('live_read_error');throw error;}
+     }
      if(lane==='legacy'){
-      if(typeof readDrive==='function'&&driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;
+      let readError=null;
+      if(typeof readDrive==='function'){
+       try{
+        const ok=driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding);
+        note(ok?'drive_exact':'drive_nonmatching');
+        if(ok)return true;
+       }catch(error){note('drive_read_error');readError=error;}
+      }else note('drive_reader_missing');
+      // A verified old edge job may retain a signed original Google receipt
+      // even after a newer Sheet revision superseded the same record ID.
+      // Require a fully settled marker, exactly-bound operation and original
+      // canonical Google row. Never clear from staging success alone.
+      if(marker.activeAttempts===0&&typeof readEdgeReceipt==='function'){
+       try{
+        const proof=await readEdgeReceipt(school,binding);
+        const ok=edgeProofMatches(proof,binding);
+        note(ok?'edge_exact':proof==null?'edge_job_missing':proof.state==='completed'?'edge_completed_nonmatching':'edge_nonmatching');
+        if(ok)return true;
+       }catch(error){note('edge_read_error');readError??=error;}
+      }else note(marker.activeAttempts===0?'edge_reader_missing':'edge_skipped_active_attempt');
       // Notice patches are expanded before owner delivery, so their original
       // request hash can differ from the signed final row. The retained edge
       // job binds the ORIGINAL request and its verified signed completion.
-      // Superseded rows alone remain insufficient. Purged/missing jobs fail.
-      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function')
-       return noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
+      // A Google point-read or unrelated records-lane error must not suppress
+      // checking the exact notice-lane original receipt.
+      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function'){
+       try{
+        const proof=await readNoticeReceipt(school,binding.operationId);
+        const ok=noticeProofMatches(proof,binding);
+        if(ok){note('notice_exact');return true;}
+        if(!proof?.job)note('notice_job_missing');
+        else if(proof.job.state!=='completed')note('notice_job_unsettled');
+        else if(!proof.job.payload||!proof.job.response)note('notice_job_purged');
+        else{
+         note('notice_receipt_mismatch');
+         const cause=noticeMismatchReason(proof,binding);
+         note('notice_mismatch_'+cause);
+         if(cause==='original_request_binding')
+          note('notice_original_binding_'+noticeBindingMismatchDimension(proof,binding));
+        }
+       }catch(error){note('notice_read_error');readError??=error;}
+      }
+      if(readError){note('source_error_retained');throw readError;}
      }
      return false;
     })());
     verified=await proofs.get(proofKey);
    }catch{retain('proof_unavailable');continue;}
    if(!verified){retain('proof_unverified');continue;}
+   // Read-only diagnostic. Do not open a Firestore transaction when previewing.
+   // Proof conditions are unchanged; only actual reconciliation can CAS-retire a marker.
+   if(previewOnly){previewWouldClear++;continue;}
    const removed=await db.runTransaction(async tx=>{
     const current=(await tx.get(ref)).data()||{},markers={...current[map]};
     // A proof for an old request can never clear a replacement marker, even
@@ -90,8 +216,8 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceip
    });
    if(removed)cleared++;else retain('marker_changed');
   }
-  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons};
+  return {success:true,schoolId:school,scanned:Math.min(limit,candidates.length),cleared,retained:Object.values(reasons).reduce((a,b)=>a+b,0),more:candidates.length>limit,reasons,proofSources,previewOnly,previewWouldClear};
  }
  return {reconcile};
 }
-module.exports={bindOperation,legacyRequestHash,createLiveReconciliation,noticeProofMatches};
+module.exports={bindOperation,legacyRequestHash,edgeProofMatches,createLiveReconciliation,noticeProofMatches};

@@ -72,7 +72,8 @@ jobs:
         name: oauth-broker-review-source
         path: oauth-broker
   web:
-    runs-on: ubuntu-latest
+    # Pinned Playwright 1.58.2 does not support the moving ubuntu-latest 26.04 image.
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
     - uses: subosito/flutter-action@v2

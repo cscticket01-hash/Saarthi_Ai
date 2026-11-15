@@ -15,8 +15,8 @@ async function main(){
  const key=fs.readFileSync('lib/platform/platform_config.dart','utf8').match(/const platformApiKey = '([A-Za-z0-9_-]+)'/)[1];
  const login=await post('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+key,{email:process.env.VS_TEST_LOGIN_EMAIL,password:process.env.VS_TEST_LOGIN_PASSWORD,returnSecureToken:true});
  assert.equal(login.status,200);assert.ok(login.data.idToken);
- const call=body=>require('./safe_test_read_retry.cjs').schoolCall({post,url:API,schoolId:f.schoolId,token:login.data.idToken,report},body);
- const read=(collection,id)=>call({action:'managed/records',collection,id,operation:'read',syncProtocol:2});
+ const call=(body,retryOptions)=>require('./safe_test_read_retry.cjs').schoolCall({post,url:API,schoolId:f.schoolId,token:login.data.idToken,report,retryOptions},body);
+ const read=(collection,id)=>call({action:'managed/records',collection,id,operation:'read',syncProtocol:2},{attempts:6});
  const before=await read('students_directory',f.student);assert.equal(before.pointRead,true);
  validateRetainedPerson(before.records?.[f.student]);report.checks.push('original retained generation and immutable delete scope verified');
  const body={action:'managed/records',edgeDeliveryVersion:1,operation:'delete',collection:'students_directory',id:f.student,

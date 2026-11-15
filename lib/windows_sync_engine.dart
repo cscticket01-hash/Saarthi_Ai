@@ -122,7 +122,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     } catch (error) {
       if (FirebaseFirestore.instance.activeProfileId != origin || _transferProfile != origin) return null;
       final recovery = windowsSyncRecovery(error);
-      if (recovery.kind == SyncFailureKind.quota) {
+      if ({SyncFailureKind.quota, SyncFailureKind.r2StorageFull}.contains(recovery.kind)) {
         _transferReadAfter = DateTime.now().add(recovery.delay(1));
       }
       _transferStatus = await _withDriveHistory({...?_transferStatus, 'unavailable': true}, origin);
@@ -1385,7 +1385,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // A fresh durable change may dispatch while an older transient row waits;
     // the row-level deadline still prevents retrying that older operation early.
     if (localMutation &&
-        recoveryDecision?.kind != SyncFailureKind.quota &&
+        !{SyncFailureKind.quota, SyncFailureKind.r2StorageFull}.contains(recoveryDecision?.kind) &&
         (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now())))
       _nextRetry = null;
     if (_syncing) {
@@ -2832,7 +2832,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ? syncRetryDeadline(now: DateTime.now(), previous: _nextRetry,
               delay: retryDelay)
           : null;
-      if (recoveryDecision!.kind == SyncFailureKind.quota) {
+      if ({SyncFailureKind.quota, SyncFailureKind.r2StorageFull}.contains(recoveryDecision!.kind)) {
         _quotaRetryAt = _nextRetry;
         try {
           await FirebaseFirestore.instance.collection('_windows_sync_status').doc('provider-pressure').set({

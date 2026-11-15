@@ -22,7 +22,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+function createManagedSchools({testOriginalAbandonment=null,liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
@@ -327,8 +327,15 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(liveSync.enabled(m.schoolId)&&personLifecycle.handled(body))personLifecycle.validate(m.schoolId,body);
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
- async function reconcileAdmission(m,limit=1){
-  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit});
+ async function reconcileAdmission(m,limit=1,previewOnly=false){
+  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),
+   readEdgeReceipt:async(school,binding)=>{
+    try{return await cloudflareSync.rpc(school,'records',{
+     command:'status',id:hash(JSON.stringify([school,'managed_records',
+      [binding.collection,binding.id,binding.operationId]])),
+    });}catch(error){if(error.code==='EDGE_RECEIPT_NOT_FOUND')return null;throw error;}
+   },
+   readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit,previewOnly});
  }
  async function signedLegacy(m,body){
   const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');
@@ -922,6 +929,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  const m=await identity(req,b.schoolId);
  m.edgeDeliveryVersion=b.edgeDeliveryVersion===1?1:0;
  const deviceDecision=await deviceAccess.authorize({req,body:b,identity:m,entitlement:lease(m)});if(deviceDecision.handled)return deviceDecision.result;
+ if(action==='managed/test-originals'){if(!testOriginalAbandonment||!lease(m).allowed)fail(403,'Disposable TEST maintenance is disabled');return testOriginalAbandonment(m,b);}
  if(action==='managed/repair-knowledge/pull'){if(!lease(m).allowed)fail(403,'School licence is inactive');return {success:true,schoolId:m.schoolId,...await repairKnowledge.pull(m,b.observation||{})};}
  if(['managed/support/list','managed/support/create','managed/support/thread','managed/support/reply','managed/support/resolve'].includes(action))return createManagedSupport({db,now,fail})(action,b,m);
  // A restored Firebase session predates enrollment on existing PCs. Optional
@@ -1157,7 +1165,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     fail(502,'Verified atomic bundle receipt unavailable');
    return {success:true,schoolId:m.schoolId,...result};
   }
-  if(operation==='reconcile')return reconcileAdmission(m,25);
+  if(operation==='reconcile')return reconcileAdmission(m,25,b.previewOnly===true);
   const deliveryDrained=async()=>{
    const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
    return stats.every(s=>s.pending===0&&s.needsAttention===0);

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/sync_recovery_policy.dart';
+import '../lib/school_backend_transport.dart';
 import '../lib/windows_sync_recovery.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import 'dart:async';
@@ -7,6 +8,20 @@ import 'package:fake_async/fake_async.dart';
 import '../lib/windows_sync_schedule.dart';
 
 void main() {
+  test('Android R2 capacity backpressure retains pending operations for automatic retry', () {
+    for (final status in [507, 503]) {
+      final failure = SchoolApiFailure(status, code: 'R2_CAPACITY_EXCEEDED');
+      expect(failure.retryable, isTrue);
+      expect(failure.storageFull, isTrue);
+      expect(failure.retryAfterMs, 3600000);
+      expect(failure.userMessage, contains('8 GB'));
+      expect(failure.userMessage, contains('Local pending data is safe'));
+    }
+    expect(SchoolApiFailure(507, retryAfterMs: 7200000).retryAfterMs, 7200000);
+    expect(SchoolApiFailure(403, code: 'R2_CAPACITY_EXCEEDED').retryable, isFalse);
+    expect(SchoolApiFailure(403, code: 'R2_CAPACITY_EXCEEDED').storageFull, isFalse);
+    expect(SchoolApiFailure(503).storageFull, isFalse);
+  });
   test('provider quota codes retain provider minimum wait and remain distinct from access denial', () {
     for (final code in ['SCRIPT_QUOTA_EXCEEDED', 'CLOUDFLARE_QUOTA_EXCEEDED', 'FIREBASE_QUOTA_EXCEEDED', 'RESOURCE_EXHAUSTED']) {
       final decision = SyncRecoveryDecision.classify(status: 503, code: code, retryAfterMs: 120000);
@@ -18,6 +33,21 @@ void main() {
     final decision = windowsSyncRecovery(CentralCloudException(429, 'school_cloud', 'quota',
         diagnosticCode: 'FIREBASE_QUOTA_EXCEEDED', retryAfterMs: 900000));
     expect(decision.delay(1, jitter: 0), const Duration(minutes: 15));
+  });
+
+  test('R2 8GB capacity fence retains original Windows/Android outbox until storage frees', () {
+    for (final decision in [
+      SyncRecoveryDecision.classify(status: 507, code: 'R2_CAPACITY_EXCEEDED'),
+      SyncRecoveryDecision.classify(status: 503, code: 'R2_CAPACITY_EXCEEDED'),
+    ]) {
+      expect(decision.kind, SyncFailureKind.r2StorageFull);
+      expect(decision.retry, isTrue);
+      expect(decision.review, isFalse);
+      expect(decision.independentRecords, isFalse);
+      expect(decision.delay(1, jitter: 0), const Duration(hours: 1));
+      expect(decision.message, contains('8 GB'));
+      expect(decision.message, contains('Local pending data is safe'));
+    }
   });
 
   test('notice delete after wrapped card conflict dispatches automatically; idle and shared failures do not', () {

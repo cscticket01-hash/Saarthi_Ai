@@ -231,16 +231,22 @@ void main() {
           expect(await store.pending('foreign-owner'), isEmpty);
           transport.offline = false;
           final ack = Stopwatch()..start();
-          for (var n = 0; n < 36; n++) {
+          for (var n = 0; n < 180; n++) {
             await restored.flushAttendance();
             await restored.refreshAttendanceStatus();
+            if (restored.attendanceAccepted > 0) {
+              metrics.putIfAbsent('androidQueueToAcceptanceObservedMs',
+                  () => ack.elapsedMilliseconds);
+            }
             if (restored.attendancePending == 0 &&
                 restored.lastAttendanceAck != null) break;
-            await Future<void>.delayed(const Duration(seconds: 5));
+            await Future<void>.delayed(const Duration(seconds: 1));
           }
           expect(restored.attendancePending, 0);
           expect(restored.lastAttendanceAck, isNotNull);
           metrics['androidQueueToDurableAckMs'] = ack.elapsedMilliseconds;
+          metrics['androidQueueToFinalDeliveryAckMs'] = ack.elapsedMilliseconds;
+          metrics['acceptanceIsNotDriveBackup'] = true;
           final verificationRead = Stopwatch()..start();
           final cloud = await ManagedSchoolSession.callForSchool(
               school, 'managed/records', {

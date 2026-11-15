@@ -6659,7 +6659,7 @@ function VS_inventoryManagedStorage() {
   return {schoolId:school,rootFolderId:root.getId(),workbookId:p.getProperty('VS_MANAGED_SHEET_ID')||null,
     inventoryVersion:1,partial:partial,folders:folders,files:files};
 }
-function VS_managedVerify(e) {
+function VS_managedVerify(e,onAuthenticated) {
   const b = JSON.parse(e.postData.contents), p = PropertiesService.getScriptProperties();
   const school = p.getProperty('VS_MANAGED_SCHOOL_ID'), secret = p.getProperty('VS_MANAGED_SECRET');
   if (!secret || b.schoolId !== school || !Number.isSafeInteger(b.timestamp) || Math.abs(Date.now()-b.timestamp)>120000 || !/^[a-f0-9]{48}$/.test(b.nonce||'') || typeof b.payload !== 'string' || b.payload.length > 28*1024*1024) throw new Error('Signed school request required');
@@ -6668,6 +6668,10 @@ function VS_managedVerify(e) {
   for(let n=0;n<64;n++) difference |= expected.charCodeAt(n)^b.signature.charCodeAt(n);
   if(difference) throw new Error('Invalid request signature');
   const payload=JSON.parse(b.payload);
+  // School binding is established only after the complete valid HMAC.
+  // Nonce/lock admission may still fail: that must remain a retryable error,
+  // never a successful write receipt or an unauthenticated response.
+  if(typeof onAuthenticated==='function')onAuthenticated(school);
   const lock=LockService.getScriptLock();lock.waitLock(payload.action==='managed_delta'&&payload.headOnly===true?1000:30000);
   try {
     const key='VS_NONCE_'+b.nonce;
@@ -7415,7 +7419,7 @@ function VS_binaryMetadata(file,includeBytes) {
   return {fileId:file.getId(),name:file.getName(),mime:file.getMimeType(),sizeBytes:size,sha256:digest,version:String(updated)+'-'+String(size)+'-'+digest,...(includeBytes?{base64:Utilities.base64Encode(bytes)}:{})};
 }
 function VS_binaryInventory(b) {
-  const root=VS_managedRoot(),pending=[],all=[],seen={};let limited=false,visited=0;
+  const root=VS_managedRoot(),pending=[],all=[],seen={},fileIds={};let limited=false,visited=0;
   const started=Date.now(),folders=root.getFolders();let rootScanned=0;while(folders.hasNext()) {if(++rootScanned>250||Date.now()-started>6000){limited=true;break;}const f=folders.next();if(VS_BINARY_FOLDERS.indexOf(f.getName())>=0)pending.push(f);if(pending.length>250){limited=true;break;}}
   while(pending.length) {
     if(++visited>250||all.length>=1000||Date.now()-started>6000){limited=true;break;}
@@ -7423,21 +7427,30 @@ function VS_binaryInventory(b) {
     if(!VS_binaryFolderAllowed(folder))continue;
     const children=folder.getFolders();while(children.hasNext()){if(pending.length+visited>=250){limited=true;break;}pending.push(children.next());}
     const files=folder.getFiles();while(files.hasNext()) {if(all.length>=1000||Date.now()-started>6000){limited=true;break;}const file=files.next();
-      if(!file.isTrashed()&&String(file.getMimeType()).indexOf('application/vnd.google-apps.')!==0)all.push(file);
+      if(!file.isTrashed()&&String(file.getMimeType()).indexOf('application/vnd.google-apps.')!==0){
+        const id=file.getId();if(fileIds[id])continue;fileIds[id]=true;
+        // Include remote metadata I/O in the scan budget, rather than issuing
+        // another unbounded pass over up to 1,000 files after the timer stops.
+        all.push({file:file,id:id,size:file.getSize(),updated:file.getLastUpdated().getTime()});
+      }
     }
   }
-  const unique=all.filter((file,index)=>all.findIndex(other=>other.getId()===file.getId())===index);
-  unique.sort((a,c)=>a.getId()<c.getId()?-1:a.getId()>c.getId()?1:0);
-  const inventoryManifest=unique.map(f=>({id:f.getId(),size:f.getSize(),updated:f.getLastUpdated().getTime()})),inventoryFingerprint=VS_layoutHash(inventoryManifest);
-  const candidates=unique.filter(f=>!b.cursor||f.getId()>b.cursor),items=[];let bytes=0,cursor=b.cursor||'',unverified=false;
-  for(const file of candidates) {
-    if(items.length>=5)break;const size=file.getSize();if(size>VS_BINARY_MAX_BYTES||size<1){items.push({fileId:file.getId(),name:file.getName(),mime:file.getMimeType(),sizeBytes:size,verification:'unavailable',reason:'size_limit'});unverified=true;cursor=file.getId();continue;}
+  all.sort((a,c)=>a.id<c.id?-1:a.id>c.id?1:0);
+  const inventoryManifest=all.map(entry=>({id:entry.id,size:entry.size,updated:entry.updated})),inventoryFingerprint=VS_layoutHash(inventoryManifest);
+  const candidates=all.filter(entry=>!b.cursor||entry.id>b.cursor),items=[];let bytes=0,cursor=b.cursor||'',unverified=false;
+  for(const entry of candidates) {
+    if(items.length>=5)break;
+    // Provider calls cannot be interrupted. Do not start another hash after
+    // the budget expires; one candidate still makes cursor progress.
+    if(items.length&&Date.now()-started>12000)break;
+    const file=entry.file,size=entry.size;
+    if(size>VS_BINARY_MAX_BYTES||size<1){items.push({fileId:entry.id,name:file.getName(),mime:file.getMimeType(),sizeBytes:size,verification:'unavailable',reason:'size_limit'});unverified=true;cursor=entry.id;continue;}
     if(bytes+size>VS_BINARY_MAX_BYTES)break;
-    const verified=VS_binaryMetadata(VS_binaryFile(file.getId()),false),captured=inventoryManifest.find(entry=>entry.id===file.getId());
-    if(verified.sizeBytes!==captured.size||verified.version.indexOf(String(captured.updated)+'-'+String(captured.size)+'-')!==0)throw new Error('School binary changed during verification');
-    items.push({...verified,verification:'bytes_hashed'});bytes+=size;cursor=file.getId();
+    const verified=VS_binaryMetadata(VS_binaryFile(entry.id),false);
+    if(verified.sizeBytes!==entry.size||verified.version.indexOf(String(entry.updated)+'-'+String(entry.size)+'-')!==0)throw new Error('School binary changed during verification');
+    items.push({...verified,verification:'bytes_hashed'});bytes+=size;cursor=entry.id;
   }
-  const more=candidates.some(f=>f.getId()>cursor);
+  const more=candidates.some(entry=>entry.id>cursor);
   return {binaryInventoryVersion:1,inventoryFingerprint:inventoryFingerprint,inventoryScope:'application_media_folders',observedAt:Date.now(),items:items,nextCursor:more?cursor:null,partial:limited||more||unverified,scanLimited:limited,coverageComplete:!limited&&!more&&!unverified,hashedBytes:bytes};
 }
 function VS_binaryDownload(b) {
@@ -7580,11 +7593,11 @@ function VS_managedBackupSnapshot(b) {
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
-  let verified=false;
+  let verified=false,authenticated=false;
   try {
     const request=JSON.parse(e.postData.contents);
     if(request.action==='managed_connect')return VS_managedConnect(request);
-    const b=VS_managedVerify(e);verified=true;let result;
+    const b=VS_managedVerify(e,()=>{authenticated=true;});verified=true;let result;
     if(b.action==='managed_backup_snapshot'){
       result=VS_managedBackupSnapshot(b);
     }else if(b.action==='managed_storage_quota'){
@@ -7599,7 +7612,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,requestAdmissionErrorVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -7674,7 +7687,7 @@ function VS_managedHandle(e) {
     // exceptions, payloads, identities, signatures, paths or credentials.
     const diagnostic=VS_managedDiagnostic(error);
     const site=String(error&&error.stack||'').match(/(?:Code|SaarthiManagedAll)(?:\.gs)?:(\d+)/);
-    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
+    const trace={event:'managed_storage_failure',at:Date.now(),phase:verified?'authorized_operation':authenticated?'authenticated_admission':'request_verification',code:diagnostic,line:site?Number(site[1]):0};
     if(typeof console!=='undefined')console.info(JSON.stringify(trace));
     // Anonymous web-app executions may not expose logs in the default Cloud
     // project. Keep only the same non-sensitive trace in a short-lived cache.
@@ -7685,8 +7698,8 @@ function VS_managedHandle(e) {
     if(verified){
       try{PropertiesService.getScriptProperties().setProperty('VS_OWNER_LAST_SYNC_DIAGNOSTIC_V2',JSON.stringify(trace));}catch(_){}
     }
-    const code=verified?diagnostic:'SCRIPT_OPERATION_FAILED';
-    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified?{schoolId:school}:{}));
+    const code=verified||authenticated?diagnostic:'SCRIPT_OPERATION_FAILED';
+    return jsonResponse(Object.assign({success:false,message:safe[error.message]||'School storage request rejected',code:code},verified||authenticated?{schoolId:school}:{}));
   }
 }
 

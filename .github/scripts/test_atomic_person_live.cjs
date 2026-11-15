@@ -210,7 +210,10 @@ async function run() {
         assert.ok(proof?.driveVerified && proof.fileId);
         archives.push({fileId: proof.fileId, sha256: item.sha256});
       }
-      report.cases.push({withPhoto, cloudAckMs, peerReadMs, driveVerifiedMs: Math.round(performance.now() - started)});
+      report.cases.push({withPhoto, cloudAckMs, peerReadMs,
+        fastSyncTargetMs: 5000, fastSyncTargetStatus: peerReadMs <= 5000 ? 'PASS' : 'FAIL',
+        latencyScope: 'synthetic authenticated API readback, not physical client visibility',
+        driveVerifiedMs: Math.round(performance.now() - started)});
     }
   } finally {
     if (active) {
@@ -230,8 +233,11 @@ async function run() {
     assert.equal(hash(Buffer.from(reply.base64, 'base64')), file.sha256);
   }
   report.verifiedDriveFiles = archives.length;
-  report.status = 'PASS';
+  report.status = 'PASS'; // Functional integrity, independent of performance.
+  report.fastSyncTargetStatus = report.cases.length === 2 &&
+    report.cases.every(item => item.fastSyncTargetStatus === 'PASS') ? 'PASS' : 'FAIL';
 }
+
 
 run().catch(error => {
   report.code = typeof error.code === 'string' ? error.code : 'ATOMIC_LIVE_CHECK_FAILED';

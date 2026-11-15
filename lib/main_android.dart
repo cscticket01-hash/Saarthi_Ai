@@ -567,7 +567,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
         return;
       final now = DateTime.now();
       if (_s.attendancePending > 0 &&
-          now.difference(lastQueueCheck) >= const Duration(seconds: 5)) {
+          now.difference(lastQueueCheck) >= const Duration(seconds: 1)) {
         lastQueueCheck = now;
         unawaited(_s.flushAttendance().catchError((_) {}));
       }

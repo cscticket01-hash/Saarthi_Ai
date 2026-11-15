@@ -5,7 +5,8 @@
  "compatibility_date":"2026-10-28",
  "compatibility_flags":["nodejs_compat"],
  "durable_objects":{"bindings":[{"name":"LANES","class_name":"SyncLane"}]},
+ "r2_buckets":[{"binding":"R2_STAGE","bucket_name":"saarthi-sync-r2-test"}],
  "migrations":[{"tag":"v1","new_sqlite_classes":["SyncLane"]}],
- "vars":{"BROKER_URL":"https://saarthi-sync-v2-test.onrender.com/school-cloud"},
+ "vars":{"BROKER_URL":"https://saarthi-sync-v2-test.onrender.com/school-cloud","R2_STAGING_ENABLED":"true"},
  "observability":{"enabled":true,"head_sampling_rate":0.01}
 }

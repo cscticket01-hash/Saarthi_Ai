@@ -23,8 +23,11 @@ async function verificationClockWorker(t){
   'const b=await request.json();const sql=this.ctx.storage.sql;',
   'if(b.lane==="inspect"){const r=sql.exec("SELECT length(payload) AS bytes FROM edge_ops WHERE id=?",b.identity).toArray()[0];return Response.json({retained:!!r&&r.bytes>0});}',
   'const expired=Date.now()-24*60*60*1000-1000;',
-  'if(b.lane==="live")sql.exec("UPDATE live_backup SET verified_at=? WHERE operation_id=? AND state=\\x27verified\\x27",expired,b.identity);',
-  'else sql.exec("UPDATE edge_ops SET verified_at=?,purge_due=? WHERE id=? AND state=\\x27completed\\x27",expired,Date.now()-500,b.identity);',
+  'if(b.lane==="unknown-records"){sql.exec("UPDATE edge_ops SET created=0,purge_due=? WHERE id=?",Date.now()-1,b.identity);return new Response("ok");}',
+  'if(b.lane==="accept-live"){sql.exec("UPDATE live_backup SET accepted_at=? WHERE operation_id=?",expired,b.identity);return new Response("ok");}',
+  'if(b.lane==="accept-records"){sql.exec("UPDATE edge_ops SET created=? WHERE id=?",expired,b.identity);return new Response("ok");}',
+  'if(b.lane==="live")sql.exec("UPDATE live_backup SET accepted_at=?,verified_at=? WHERE operation_id=? AND state=\\x27verified\\x27",expired,expired,b.identity);',
+  'else sql.exec("UPDATE edge_ops SET created=?,verified_at=?,purge_due=? WHERE id=? AND state=\\x27completed\\x27",expired,expired,Date.now()-500,b.identity);',
   'return new Response("ok");',
   '}return super.fetch(request);',
   '}',
@@ -167,3 +170,38 @@ test('24h expiry removes verified delivery payload but never pending school reco
  assert.equal((await delivery.status(school,'records',first.delivery.id,read)).driveState,'verified');
 });
 
+test('acceptance age and recent Google proof jointly gate operation-specific cleanup',async t=>{
+ const scriptPath=await verificationClockWorker(t);
+ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'acceptance-clock',modules:true,scriptPath,compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],outboundService:()=>new Response('{}',{status:503}),durableObjects:{LANES:{className:'VerificationLane',useSQLite:true}},bindings:{EDGE_KEY:key,LIVE_SYNC_TEST_SCHOOL_ID:school,BROKER_URL:'https://broker.invalid/school-cloud'}}]}));
+ t.after(()=>mf.dispose());
+ const edge=createCloudflareSync({url:'https://worker.invalid',key,schools:['*'],fetchImpl:(url,opt)=>mf.dispatchFetch(String(url),opt)});
+ const live=createLiveSync({edge,schools:[school]}),gs=storage({lifecycle:true,bundle:true}),read=async b=>gs.call(b);
+ async function age(lane,identity){
+  const ns=await mf.getDurableObjectNamespace('LANES'),stub=ns.get(ns.idFromName(school+'/'+lane));
+  assert.equal((await stub.fetch('https://clock.invalid/__verified_clock_test',{method:'POST',body:JSON.stringify({lane:'accept-'+lane,identity})})).status,200);
+ }
+ await live.prepare(school,'school_expenses',read);
+ const request={collection:'school_expenses',id:'old-acceptance',operation:'write',operationId:'acceptance-clock-live-original',expectedRevision:'',data:{schoolId:school,amount:12}};
+ await live.commit(school,request,read);
+ await age('live',request.operationId);
+ assert.equal((await live.command(school,{command:'expireVerified'})).expired,0,'Old pending work remains');
+ assert.equal((await live.drain(school,read)).processed,1);
+ assert.equal((await live.command(school,{command:'expireVerified'})).expired,1,'Late Google verification does not restart 24 hours');
+ const delivery=createCloudflareDelivery({edge,payloadGcEnabled:true});
+ const record={action:'managed_records',collection:'school_expenses',id:'staged-old-acceptance',operation:'write',syncProtocol:2,operationId:'acceptance-clock-edge-original',expectedRecordRevision:'',data:{schoolId:school,amount:15}};
+ const first=await delivery.record(school,record,read);
+ const newer=await delivery.record(school,{...record,id:'newer-pending',operationId:'acceptance-clock-edge-newer'},read);
+ await age('records',first.delivery.id);
+ assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,0);
+ assert.equal((await delivery.drain(school,'records',read)).processed,1);
+ assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,1);
+ assert.equal(await stagedPayloadRetained(mf,first.delivery.id),false);
+ assert.equal(await stagedPayloadRetained(mf,newer.delivery.id),true,'One operation cannot expire another');
+ assert.equal((await delivery.status(school,'records',first.delivery.id,read)).driveState,'verified');
+ assert.equal((await delivery.drain(school,'records',read)).processed,1);
+ const ns=await mf.getDurableObjectNamespace('LANES'),stub=ns.get(ns.idFromName(school+'/records'));
+ assert.equal((await stub.fetch('https://clock.invalid/__verified_clock_test',{method:'POST',body:JSON.stringify({lane:'unknown-records',identity:newer.delivery.id})})).status,200);
+ assert.equal((await edge.rpc(school,'records',{command:'expireVerified'})).expired,0);
+ assert.equal(await stagedPayloadRetained(mf,newer.delivery.id),true,'Unknown legacy acceptance is retained');
+ assert.equal((await edge.rpc(school,'records',{command:'retention'})).nextCleanupAt,null,'Unknown age cannot cause an expired-alarm busy loop');
+});
