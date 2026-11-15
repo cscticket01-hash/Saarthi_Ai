@@ -81,7 +81,7 @@ async function run() {
      if(!id||id.length>200||id.includes('/')||['.','..','__proto__','prototype','constructor'].includes(id))add('invalid_record_id');
      if(data.schoolId!==schoolId)add('wrong_school');
      if(typeof data._syncRevision!=='string'||!data._syncRevision||/^(live-|cf-)/.test(data._syncRevision))add('unverified_source_revision');
-     currentPaths=[];check(data);if(JSON.stringify(reasons)!==before){invalid++;invalidShapes.push({syntheticTest:data.syntheticTest===true,idHash:hash(id),rootKeys:Object.keys(data).filter(k=>/^[A-Za-z_][A-Za-z0-9_]{0,50}$/.test(k)),blockedPaths:currentPaths});}
+     currentPaths=[];check(data);if(JSON.stringify(reasons)!==before){invalid++;invalidShapes.push({deleted:data._syncDeleted===true,eraseComplete:data._syncErasePlan?.complete===true,erasePlanVersion:data._syncErasePlan?.version??null,syntheticTest:data.syntheticTest===true,idHash:hash(id),rootKeys:Object.keys(data).filter(k=>/^[A-Za-z_][A-Za-z0-9_]{0,50}$/.test(k)),blockedPaths:currentPaths});}
     }
     report.validation.push({collection,rows:Object.keys(snapshot.records).length,invalid,reasons,invalidShapes});
    }
