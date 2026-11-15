@@ -5,7 +5,7 @@ function fixture(){return {
  audit:{status:'NO_BLOCKERS',stage:'complete',exactRuntimeVerified:true,queuesVerifiedBefore:true,
   previewResponseShape:{previewOnly:true,cleared:0},
   before:{unsettledWrites:0,pending:0,needsAttention:0},
-  after:{unsettledWrites:0,pending:0,needsAttention:0},
+  after:{unsettledWrites:0,pending:0,needsAttention:0,abandonedTestOperations:0},
   reconciliation:{scanned:0,cleared:0,retained:0,previewWouldClear:0,more:false}},
  cloud:{status:'PASS',deployedScriptEvidence:{matchesReviewedSource:true}},
  script:{status:'PASS',actualAdmissionErrorVersion:1},
@@ -24,7 +24,7 @@ test('clean original TEST proof cannot authorize production',()=>{
 test('14 unresolved original operations block release even with zero queue and green Drive',()=>{
  const f=fixture();Object.assign(f.audit,{status:'READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED',
   before:{unsettledWrites:14,pending:0,needsAttention:0},
-  after:{unsettledWrites:14,pending:0,needsAttention:0},
+  after:{unsettledWrites:14,pending:0,needsAttention:0,abandonedTestOperations:0},
   reconciliation:{scanned:14,retained:14,cleared:0,previewWouldClear:0,more:false}});
  const r=evaluateEvidence(f);
  assert.equal(r.status,'RELEASE_BLOCKED');
@@ -71,5 +71,21 @@ test('signed Script, owner and Cloudflare Drive byte proofs cannot be skipped',(
 test('missing artifacts fail closed',()=>{
  for(const key of ['audit','cloud','script','delivery']){
   const f=fixture();delete f[key];assert.equal(evaluateEvidence(f).status,'RELEASE_BLOCKED');
+ }
+});
+
+test('explicit owner-abandoned TEST history permits a fresh baseline, never claims original delivery or production authority',()=>{
+ const f=fixture();f.audit.status='DISPOSABLE_TEST_HISTORY_ABANDONED';
+ f.audit.after.abandonedTestOperations=14;f.audit.after.originalHistoryVerified=false;
+ const r=evaluateEvidence(f);assert.equal(r.productionAuthorized,false);assert.equal(r.status,'TEST_DISPOSABLE_BASELINE_READY');
+ assert.equal(r.originalHistoryVerified,false);assert.equal(r.historyDisposition,'OWNER_ABANDONED_DISPOSABLE_TEST_ONLY');
+ assert.ok(r.independentProductionGates.includes('PHYSICAL_WINDOWS_ANDROID'));
+ assert.ok(r.independentProductionGates.includes('ELAPSED_24H_RETENTION'));
+ assert.deepEqual(r.blockerCodes,[]);
+});
+test('an arbitrary abandoned count, missing disposition, or falsely verified history cannot reset TEST proof gates',()=>{
+ for(const change of [f=>f.audit.after.abandonedTestOperations=13,f=>f.audit.status='NO_BLOCKERS',f=>f.audit.after.originalHistoryVerified=true]){
+  const f=fixture();f.audit.status='DISPOSABLE_TEST_HISTORY_ABANDONED';f.audit.after.abandonedTestOperations=14;f.audit.after.originalHistoryVerified=false;change(f);
+  const r=evaluateEvidence(f);assert.equal(r.status,'RELEASE_BLOCKED');assert.equal(r.productionAuthorized,false);
  }
 });

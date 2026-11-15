@@ -10,7 +10,12 @@ function evaluateEvidence({audit,cloud,script,delivery}){
  // evidence, NOT a successful release. Differentiate real missing-proof
  // blockers from malformed/untrusted audit data without relaxing either.
  const remaining=audit?.after?.unsettledWrites;
- const consistentAuditStatus=(audit?.status==='NO_BLOCKERS'&&remaining===0)||
+ const abandoned=audit?.after?.abandonedTestOperations;
+ if(!nonneg(abandoned))block('ORIGINAL_AUDIT_UNVERIFIED');
+ const ownerReset=abandoned===14&&remaining===0&&audit?.after?.originalHistoryVerified===false&&audit?.status==='DISPOSABLE_TEST_HISTORY_ABANDONED';
+ if(abandoned>0&&!ownerReset)block('UNREVIEWED_TEST_HISTORY_DISPOSITION');
+ const consistentAuditStatus=(audit?.status==='DISPOSABLE_TEST_HISTORY_ABANDONED'&&remaining===0&&abandoned>0)||
+   (audit?.status==='NO_BLOCKERS'&&remaining===0)||
    (audit?.status==='READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED'&&nonneg(remaining)&&remaining>0);
  if(!consistentAuditStatus||audit?.stage!=='complete'||audit.exactRuntimeVerified!==true||
    audit.previewResponseShape?.previewOnly!==true||audit.previewResponseShape?.cleared!==0||
@@ -39,7 +44,8 @@ function evaluateEvidence({audit,cloud,script,delivery}){
   routes.filter(x=>x.collection==='teachers_directory'&&x.route==='signed-person-lifecycle-Drive').length<2)
   block('CLOUDFLARE_TO_DRIVE_READBACK_UNVERIFIED');
  return {scope:'isolated TEST evidence; NO production authorization',
-  status:blockers.length?'RELEASE_BLOCKED':'TEST_ORIGINAL_PROOFS_CLEARED',
+  status:blockers.length?'RELEASE_BLOCKED':ownerReset?'TEST_DISPOSABLE_BASELINE_READY':'TEST_ORIGINAL_PROOFS_CLEARED',
+  originalHistoryVerified:ownerReset?false:undefined,historyDisposition:ownerReset?'OWNER_ABANDONED_DISPOSABLE_TEST_ONLY':'ORIGINAL_PROOFS_REQUIRED',
   productionAuthorized:false,unresolvedOriginalCount:nonneg(after)?after:null,
   blockerCodes:blockers,
   independentProductionGates:['PHYSICAL_WINDOWS_ANDROID','CROSS_VERSION_ACK_IDLE',
@@ -61,7 +67,7 @@ function main(){
   '\n\nUnresolved originals: '+(result.unresolvedOriginalCount??'unknown')+
   '\n\nReasons: '+(result.blockerCodes.join(', ')||'none')+
   '\n\nProduction authorized: **No**. Physical device and elapsed retention gates remain independent.\n');
- if(result.status!=='TEST_ORIGINAL_PROOFS_CLEARED')process.exitCode=1;
+ if(!['TEST_ORIGINAL_PROOFS_CLEARED','TEST_DISPOSABLE_BASELINE_READY'].includes(result.status))process.exitCode=1;
 }
 if(require.main===module)main();
 module.exports={evaluateEvidence};

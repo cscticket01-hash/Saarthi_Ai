@@ -61,7 +61,7 @@ async function run(){
  assert.equal(before.scriptVerified,true);
  report.queuesVerifiedBefore=before.queuesVerified===true;
  assert.ok(Number.isSafeInteger(before.unsettledWrites)&&before.unsettledWrites>=0);
- report.before={unsettledWrites:before.unsettledWrites,
+ report.before={abandonedTestOperations:before.abandonedTestOperations,originalHistoryVerified:before.originalHistoryVerified,unsettledWrites:before.unsettledWrites,
   pending:before.pending,needsAttention:before.needsAttention};
  // No Firestore write or original marker retirement is permitted in this audit.
  report.stage='read_only_preview';
@@ -79,10 +79,10 @@ async function run(){
  assert.ok(Number.isSafeInteger(after.unsettledWrites)&&after.unsettledWrites>=0);
  // Other serialized TEST writers may legitimately add markers while this read-only audit runs.
  report.concurrentMarkerChange=after.unsettledWrites!==before.unsettledWrites;
- report.after={unsettledWrites:after.unsettledWrites,
+ report.after={abandonedTestOperations:after.abandonedTestOperations,originalHistoryVerified:after.originalHistoryVerified,unsettledWrites:after.unsettledWrites,
   pending:after.pending,needsAttention:after.needsAttention};
  report.stage='complete';
- report.status=after.unsettledWrites===0?'NO_BLOCKERS':'READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED';
+ report.status=after.abandonedTestOperations>0?'DISPOSABLE_TEST_HISTORY_ABANDONED':after.unsettledWrites===0?'NO_BLOCKERS':'READONLY_DIAGNOSTIC_COMPLETE_RELEASE_BLOCKED';
  // Aggregate-only authenticated forensics. Never log operation IDs, student
  // records, original request hashes, signed credentials or raw provider data.
  const counts=source=>Object.fromEntries(Object.entries(source||{}).filter(

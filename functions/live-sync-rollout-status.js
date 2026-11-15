@@ -39,6 +39,6 @@ async function rolloutStatus({schoolId,enabled,db,edge,readDrive}){
  if(Object.values(collections).some(s=>s!=='active'))blockers.push('VERIFIED_COLLECTION_MIGRATION_REQUIRED');
  return {success:true,schoolId,liveProtocol:1,configured:enabled,workerVerified,scriptVerified,scriptBundleVersion,queuesVerified,pending,needsAttention,deliveryQueues,unsettledWrites:inflight,collections,blockers,
   // Server status cannot certify installed clients, p95 or physical devices.
-  fullRolloutVerified:false};
+  abandonedTestOperations:Number.isSafeInteger(state.testAbandonment?.count)?state.testAbandonment.count:0,originalHistoryVerified:!state.testAbandonment&&inflight===0,fullRolloutVerified:false};
 }
 module.exports={rolloutStatus};
