@@ -20,7 +20,11 @@ async function main(){
  const [id,row]=matches[0];assert.equal(row.schoolId,school);assert.equal(row._syncDeleted,true);assert.equal(row._syncErasePlan?.version,1);assert.ok(Array.isArray(row._syncErasePlan.targets));
  const root=row._syncErasePlan.targets.find(t=>t.collection==='students_directory'&&t.id===id);assert.ok(root?.sourceRevision);assert.equal(root.generation,row._syncDeletedOwner);assert.match(row._syncOperationId,/^[A-Za-z0-9_-]{16,100}$/);
  report.initialDeleteComplete=row._syncErasePlan.complete===true;
- const head=await call('managed/live/head',{liveProtocol:1});for(const name of collections){const item=head.collections.find(x=>x.collection===name);if(item)assert.equal(item.cursor,0,'A live business write prohibits preparation abort');}
+ const external=JSON.parse(fs.readFileSync('.github/acceptance/test-preparation-no-live-writes.json','utf8'));
+ assert.equal(external.schoolId,school);assert.equal(external.namespace,'978917e1b620408392a3c27b3ab783e6');assert.deepEqual(external.rows,[[0,0]]);assert.ok(Date.now()>=external.at&&Date.now()-external.at<15*60*1000,'Fresh connected Cloudflare SQL observation required');
+ // This is an operator's independently observed no-write preparation proof,
+ // never a user-data ACK, Google receipt, or a marker-clear authorization.
+ const head={collections:collections.map(collection=>({collection,cursor:0}))};report.externalNoLiveWritesObservedAt=external.at;
  const credentials=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||'{}');assert.equal(credentials.project_id,project);
  const req=require('node:module').createRequire(require('node:path').resolve('functions/package.json'));
  const {initializeApp,cert,deleteApp}=req('firebase-admin/app'),{getFirestore}=req('firebase-admin/firestore');
