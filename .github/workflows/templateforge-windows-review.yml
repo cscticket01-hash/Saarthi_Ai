@@ -5,6 +5,7 @@ on:
   # feature-branch push wastes Windows builders and duplicates failure reports.
   pull_request:
     branches:
+      - windows/easy-connect-draft
       - main
       - feature/live-sync-authority-v1-20261102
     paths:
