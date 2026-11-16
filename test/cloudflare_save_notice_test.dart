@@ -29,6 +29,21 @@ void main() {
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('many accepted records show only the latest for five seconds', (tester) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final older = {'cloudflareAccepted':true,'operationId':'older-record',
+      'acceptedAt':now-200,'collection':'students_directory','operation':'write',
+      'id':'student-older'};
+    final latest = {'cloudflareAccepted':true,'operationId':'newest-record',
+      'acceptedAt':now,'collection':'teachers_directory','operation':'write',
+      'id':'teacher-newest'};
+    await tester.pumpWidget(MaterialApp(home:CloudflareSaveNotice(rows:[older, latest])));
+    expect(find.textContaining('teacher-newest'),findsOneWidget);
+    expect(find.textContaining('student-older'),findsNothing);
+    await tester.pump(const Duration(seconds:5));
+    expect(find.byKey(const ValueKey('cloudflare-save-success')),findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('old completed receipt does not replay when sync page opens', (tester) async {
     final old = {'cloudflareAccepted':true, 'operationId':'historical-success',
       'acceptedAt':DateTime.now().millisecondsSinceEpoch-60000,
