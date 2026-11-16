@@ -154,3 +154,17 @@ test('lost Google response plus unavailable original Cloudflare receipt retains 
   assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
  }
 });
+
+test('matching delete tombstone cannot clear its marker while owner erase cleanup is incomplete',async()=>{
+ const op={...request,operation:'delete',deleteEverywhereVersion:1};delete op.data;
+ const value=marker('legacy',op),binding=value.operationBinding;
+ for(const complete of [false,true]){
+  const f=fixture();save(f,'inflight',value);
+  const record={schoolId:A,_syncDeleted:true,_syncRevision:'original-drive-delete',_syncOperationId:binding.operationId,_syncRequestHash:binding.requestHash,_syncErasePlan:{version:1,complete}};
+  const edge=exactEdgeProof(binding);edge.response.result.record={...record};edge.response.result.recordRevision=record._syncRevision;
+  assert.equal(edgeProofMatches(edge,binding),complete);
+  const result=await createLiveReconciliation({db:f.db,readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,records:{[binding.id]:record}}),readEdgeReceipt:async()=>edge}).reconcile(A);
+  assert.equal(result.cleared,complete?1:0);
+  if(!complete)assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ }
+});

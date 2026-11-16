@@ -26,9 +26,14 @@ function liveProofMatches(proof,binding){
  const receipt=proof?.receipt;
  return proof?.liveProtocol===1&&proof.schoolId===binding.schoolId&&proof.operationId===binding.operationId&&proof.found===true&&proof.fingerprint===binding.requestHash&&receipt?.liveProtocol===1&&receipt.schoolId===binding.schoolId&&receipt.operationId===binding.operationId&&receipt.cloudState==='committed'&&['pending','verified'].includes(receipt.backupState)&&typeof receipt.recordRevision==='string'&&receipt.recordRevision.startsWith('live-')&&receipt.recordRevision.length>5&&Number.isSafeInteger(receipt.cursor)&&receipt.cursor>=0;
 }
+// A matching tombstone is insufficient while its owner erase plan is pending.
+function eraseFinished(record){
+ return !Object.hasOwn(record,'_syncErasePlan')||
+  !!record._syncErasePlan&&record._syncErasePlan.complete===true;
+}
 function driveProofMatches(proof,binding){
  const record=proof?.records?.[binding.id];
- return proof?.success===true&&proof.schoolId===binding.schoolId&&proof.syncProtocol===2&&proof.pointRead===true&&record?.schoolId===binding.schoolId&&(record.id===undefined||record.id===binding.id)&&record._syncOperationId===binding.operationId&&record._syncRequestHash===binding.requestHash&&typeof record._syncRevision==='string'&&record._syncRevision.length>0&&!/^(live-|cf-)/.test(record._syncRevision)&&(binding.operation==='delete'?record._syncDeleted===true:record._syncDeleted!==true);
+ return proof?.success===true&&proof.schoolId===binding.schoolId&&proof.syncProtocol===2&&proof.pointRead===true&&record?.schoolId===binding.schoolId&&(record.id===undefined||record.id===binding.id)&&record._syncOperationId===binding.operationId&&record._syncRequestHash===binding.requestHash&&typeof record._syncRevision==='string'&&record._syncRevision.length>0&&!/^(live-|cf-)/.test(record._syncRevision)&&(binding.operation==='delete'?record._syncDeleted===true&&eraseFinished(record):record._syncDeleted!==true);
 }
 // Exact original legacy proof from the authenticated school-bound Cloudflare
 // Durable Object. Completed means the owner verified its Google delivery, but
@@ -53,7 +58,7 @@ function edgeProofMatches(proof,binding){
   record._syncRequestHash===binding.requestHash&&
   record._syncRevision===revision&&
   (binding.operation==='delete'
-   ? record._syncDeleted===true
+   ? record._syncDeleted===true&&eraseFinished(record)
    : record._syncDeleted!==true));
 }
 function noticeProofMatches(proof,binding){

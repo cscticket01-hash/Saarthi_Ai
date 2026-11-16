@@ -256,3 +256,27 @@ test('signed TEST readback settles only the exact superseded student roll confli
  assert.equal((await delivery.status(school,'records',successor.delivery.id)).driveState,'verified');
  await assert.rejects(delivery.record(school,original),e=>e.code==='STUDENT_SLOT_CONFLICT');
 });
+
+// Exercise the real Worker error envelope, not a mocked schoolId response.
+test('authenticated notice precondition rejections settle only their exact new admission',async()=>{
+ const {createLiveMigration}=require('../../functions/live-sync-migration.js');
+ await edge.rpc(A,'notices',{command:'seed',records:{},revision:'legacy'});
+ const original=write('school_notices','scope-contract-notice');
+ await edge.rpc(A,'notices',{command:'write',request:original});
+ const f=fixture(),gate=createLiveMigration({db:f.db});
+ const historical={collection:'school_notices',activeAttempts:0,startedAt:1};
+ f.docs.set('school_live_migrations/'+A,{inflight:{historical}});
+ for(const request of [
+  {...original,operationId:'stale-scope-operation-001'},
+  {...original,data:{...original.data,name:'changed replay'}},
+ ]){
+  await assert.rejects(gate.legacy(A,request,()=>edge.rpc(A,'notices',{command:'write',request})),e=>e.status===409);
+  assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{historical});
+ }
+ // A delete conflict remains uncertain; only notice writes have this attestation.
+ const deletion={...original,operation:'delete',operationId:'delete-scope-operation-001'};
+ await assert.rejects(gate.legacy(A,deletion,()=>edge.rpc(A,'notices',{command:'write',request:deletion})),e=>e.status===409);
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,2);
+ const reply=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',body:JSON.stringify({schoolId:A,lane:'notices',command:'write',request:original})});
+ assert.equal(reply.status,401);assert.equal((await reply.json()).schoolId,undefined);
+});
