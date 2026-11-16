@@ -72,7 +72,8 @@ jobs:
         name: oauth-broker-review-source
         path: oauth-broker
   web:
-    runs-on: ubuntu-latest
+    # Playwright 1.58.2 supports Ubuntu 24.04, not the moving 26.04 image.
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
     - uses: subosito/flutter-action@v2
@@ -495,6 +496,7 @@ jobs:
     - fix/final-school-sync-fees-exams-20261008
   pull_request:
     branches:
+    - windows/easy-connect-draft
     - main
     - feature/smart-sync-3-finalization
   workflow_dispatch:
