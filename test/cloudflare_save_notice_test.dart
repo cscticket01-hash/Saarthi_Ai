@@ -4,7 +4,7 @@ import '../lib/cloudflare_save_notice.dart';
 void main() {
   testWidgets('real acceptance expires after visibility without hiding errors or replaying on rebuild', (tester) async {
     final receipt = {'cloudflareAccepted':true,'operationId':'verified-operation',
-      'acceptedAt':1000,'collection':'students_directory','operation':'delete','id':'synthetic'};
+      'acceptedAt':DateTime.now().millisecondsSinceEpoch,'collection':'students_directory','operation':'delete','id':'synthetic'};
     Future<void> show(List<Map<String,dynamic>> rows) async {
       await tester.pumpWidget(MaterialApp(home:Column(children:[
         const Text('Unresolved provider error'), CloudflareSaveNotice(rows:rows)])));
@@ -18,14 +18,24 @@ void main() {
     expect(find.text('Unresolved provider error'), findsOneWidget);
     await show([receipt]);
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
-    await show([{...receipt,'acceptedAt':2000,'operationId':'second','operation':'write'}]);
+    await show([{...receipt,'acceptedAt':DateTime.now().millisecondsSinceEpoch,'operationId':'second','operation':'write'}]);
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsOneWidget);
     await tester.pump(const Duration(seconds:5));
     await show([receipt]);
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
-    await show([{...receipt,'acceptedAt':3000,'operationId':'third'}]);
+    await show([{...receipt,'acceptedAt':DateTime.now().millisecondsSinceEpoch,'operationId':'third'}]);
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsOneWidget);
     await show([]);
+    expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('old completed receipt does not replay when sync page opens', (tester) async {
+    final old = {'cloudflareAccepted':true, 'operationId':'historical-success',
+      'acceptedAt':DateTime.now().millisecondsSinceEpoch-60000,
+      'collection':'documents', 'operation':'write', 'id':'old-document'};
+    await tester.pumpWidget(MaterialApp(home:CloudflareSaveNotice(rows:[old])));
+    expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
+    await tester.pumpWidget(MaterialApp(home:CloudflareSaveNotice(rows:[old])));
     expect(find.byKey(const ValueKey('cloudflare-save-success')), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
