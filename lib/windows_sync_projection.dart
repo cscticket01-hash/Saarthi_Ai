@@ -118,6 +118,12 @@ String projectWindowsSyncState(
   int incomingPending = 0,
 }) {
   if (paused) return 'paused';
+  // Durable outbound completion, not the lifetime of a background poll,
+  // determines whether the device's school sync has finished. A record is
+  // absent from this queue only after its authoritative ACK is persisted.
+  // Keep incoming work and every error/review state visible.
+  if (rows.isEmpty && incomingPending == 0 &&
+      !blocked && !offline && !failed && !reviewRequired) return 'idle';
   if (syncing) return 'syncing';
   if (blocked ||
       reviewRequired ||
