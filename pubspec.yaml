@@ -75,3 +75,6 @@ flutter:
     - family: VidyaNotoDevanagari
       fonts:
         - asset: "assets/fonts/NotoSansDevanagari[wdth,wght].ttf"
+
+# Owner-authorized production client package refresh, 2026-11-16.
+# Sync migration flags remain unchanged; versions are assigned by release workflows.
