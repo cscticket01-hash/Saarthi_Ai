@@ -28,6 +28,13 @@ class _CloudflareSaveNoticeState extends State<CloudflareSaveNotice> {
     _latestAt = row['acceptedAt'] as int;
     _seen = identity;
     _expiry?.cancel();
+    // A history read can arrive when this screen opens long after the ACK.
+    // Never replay an old success as if the user had just saved that item.
+    final age = DateTime.now().millisecondsSinceEpoch - _latestAt;
+    if (age > 5000 || age < -1000) {
+      _message = null;
+      return;
+    }
     final operation = row['operation'];
     _message = 'Cloudflare saved · ${row['collection'] ?? 'data'} · '
         '${operation == 'write' || operation == 'delete' ? operation : 'accepted'} · ${row['recordId'] ?? row['id'] ?? ''}';

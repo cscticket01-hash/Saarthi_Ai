@@ -70,6 +70,10 @@ class WindowsDriveDeliveryQueue {
         'id': id,
         'recordRevision': ack['recordRevision'],
         'liveProtocol': 1,
+        // This only follows a validated, durably committed Cloudflare live
+        // receipt; it is not evidence of Google Drive completion.
+        'cloudflareAccepted': true,
+        'operation': deleting ? 'delete' : 'write',
         'state': verified ? 'completed' : 'pending',
         'acceptedAt': DateTime.now().millisecondsSinceEpoch,
         'completedAt': verified ? DateTime.now().millisecondsSinceEpoch : 0,
@@ -79,6 +83,9 @@ class WindowsDriveDeliveryQueue {
       }),
     );
     _scope(school, profile);
+    // Update the latest ACK notice immediately; periodic Drive status reads
+    // must never be required to dismiss the app's outgoing sync spinner.
+    changed.value++;
   }
 
   /// Track the existing staging lane independently of the native live lane.
@@ -417,6 +424,7 @@ class WindowsDriveDeliveryQueue {
       }
       result.add({
         'id': row['operationId'],
+        'cloudflareAccepted': true,
         'collection': row['collection'],
         'recordId': row['id'],
         'state': row['state'] == 'verified'
@@ -452,7 +460,8 @@ class WindowsDriveDeliveryQueue {
         .map(
           (row) => {
             'id': row['operationId'],
-            if (row['edgeDeliveryVersion'] == 1) 'cloudflareAccepted': true,
+            if (row['edgeDeliveryVersion'] == 1 || row['cloudflareAccepted'] == true)
+              'cloudflareAccepted': true,
             'state': row['state'],
             'acceptedAt': row['acceptedAt'],
             'completedAt': row['completedAt'],

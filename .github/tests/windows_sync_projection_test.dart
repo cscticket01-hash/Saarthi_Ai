@@ -7,6 +7,9 @@ void main() {
   String state(List<Map<String,dynamic>> rows, {bool offline=false}) =>
       projectWindowsSyncState(rows, nowMillis:now,offline:offline);
   check(state([])=='idle');
+  check(projectWindowsSyncState([],nowMillis:now,syncing:true)=='idle');
+  check(projectWindowsSyncState([],nowMillis:now,syncing:true,incomingPending:1)=='syncing');
+  check(projectWindowsSyncState([{'syncState':'pending'}],nowMillis:now,syncing:true)=='syncing');
   check(projectWindowsSyncState([],nowMillis:now,syncing:true,paused:true)=='paused');
   check(projectWindowsSyncState([],nowMillis:now,reviewRequired:true)=='needsAttention');
   check(state([{'syncState':'needsAttention'}])=='needsAttention');

@@ -2391,6 +2391,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 _activeSchoolSyncId,canAdmit:()=>!isPaused));
           }
           await _measure('recordUploadStage', () => _pushManagedOutbox());
+          // Publish the durable queue/ACK state as soon as upload returns;
+          // incoming reconciliation and read-only Drive receipt polling are
+          // independent, so they must not prolong the outgoing sync display.
+          await refreshDetails();
           unawaited(_refreshDriveDeliveries());
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
