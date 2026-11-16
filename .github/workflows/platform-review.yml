@@ -496,6 +496,7 @@ jobs:
     - fix/final-school-sync-fees-exams-20261008
   pull_request:
     branches:
+    - windows/easy-connect-draft
     - main
     - feature/smart-sync-3-finalization
   workflow_dispatch:
