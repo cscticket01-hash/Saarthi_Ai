@@ -328,7 +328,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
  async function reconcileAdmission(m,limit=1){
-  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit});
+  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),
+   readEdgeReceipt:(school,binding)=>cloudflareSync.rpc(school,'records',{
+    command:'status',id:hash(JSON.stringify([school,'managed_records',
+     [binding.collection,binding.id,binding.operationId]])),
+   }),
+   readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit});
  }
  async function signedLegacy(m,body){
   const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');

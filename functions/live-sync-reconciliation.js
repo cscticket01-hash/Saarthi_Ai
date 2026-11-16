@@ -26,9 +26,40 @@ function liveProofMatches(proof,binding){
  const receipt=proof?.receipt;
  return proof?.liveProtocol===1&&proof.schoolId===binding.schoolId&&proof.operationId===binding.operationId&&proof.found===true&&proof.fingerprint===binding.requestHash&&receipt?.liveProtocol===1&&receipt.schoolId===binding.schoolId&&receipt.operationId===binding.operationId&&receipt.cloudState==='committed'&&['pending','verified'].includes(receipt.backupState)&&typeof receipt.recordRevision==='string'&&receipt.recordRevision.startsWith('live-')&&receipt.recordRevision.length>5&&Number.isSafeInteger(receipt.cursor)&&receipt.cursor>=0;
 }
+// A matching tombstone is insufficient while its owner erase plan is pending.
+function eraseFinished(record){
+ return !Object.hasOwn(record,'_syncErasePlan')||
+  !!record._syncErasePlan&&record._syncErasePlan.complete===true;
+}
 function driveProofMatches(proof,binding){
  const record=proof?.records?.[binding.id];
- return proof?.success===true&&proof.schoolId===binding.schoolId&&proof.syncProtocol===2&&proof.pointRead===true&&record?.schoolId===binding.schoolId&&(record.id===undefined||record.id===binding.id)&&record._syncOperationId===binding.operationId&&record._syncRequestHash===binding.requestHash&&typeof record._syncRevision==='string'&&record._syncRevision.length>0&&!/^(live-|cf-)/.test(record._syncRevision)&&(binding.operation==='delete'?record._syncDeleted===true:record._syncDeleted!==true);
+ return proof?.success===true&&proof.schoolId===binding.schoolId&&proof.syncProtocol===2&&proof.pointRead===true&&record?.schoolId===binding.schoolId&&(record.id===undefined||record.id===binding.id)&&record._syncOperationId===binding.operationId&&record._syncRequestHash===binding.requestHash&&typeof record._syncRevision==='string'&&record._syncRevision.length>0&&!/^(live-|cf-)/.test(record._syncRevision)&&(binding.operation==='delete'?record._syncDeleted===true&&eraseFinished(record):record._syncDeleted!==true);
+}
+// Exact original legacy proof from the authenticated school-bound Cloudflare
+// Durable Object. Completed means the owner verified its Google delivery, but
+// only the *original retained canonical row* can prove a lost legacy request.
+// A superseding Sheet row, staged-only job or purged source is NOT evidence.
+function edgeProofMatches(proof,binding){
+ if(binding?.lane!=='legacy')return false;
+ const expectedId=createHash('sha256').update(JSON.stringify([
+  binding.schoolId,'managed_records',
+  [binding.collection,binding.id,binding.operationId],
+ ])).digest('hex');
+ const result=proof?.response?.result,record=result?.record;
+ const revision=result?.recordRevision;
+ return Boolean(proof?.id===expectedId&&proof.state==='completed'&&
+  result?.success===true&&result.schoolId===binding.schoolId&&
+  result.syncProtocol===2&&typeof revision==='string'&&
+  revision.length>0&&!/^(live-|cf-)/.test(revision)&&
+  record&&typeof record==='object'&&!Array.isArray(record)&&
+  record.schoolId===binding.schoolId&&
+  (record.id===undefined||record.id===binding.id)&&
+  record._syncOperationId===binding.operationId&&
+  record._syncRequestHash===binding.requestHash&&
+  record._syncRevision===revision&&
+  (binding.operation==='delete'
+   ? record._syncDeleted===true&&eraseFinished(record)
+   : record._syncDeleted!==true));
 }
 function noticeProofMatches(proof,binding){
  if(binding.lane!=='legacy'||binding.collection!=='school_notices'||
@@ -48,7 +79,7 @@ function noticeProofMatches(proof,binding){
   response?.state==='completed'&&typeof response.driveRevision==='string'&&
   response.driveRevision.length>0&&!/^(live-|cf-)/.test(response.driveRevision);
 }
-function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceipt,now=Date.now}){
+function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
  async function reconcile(school,{limit=25}={}){
   if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
   const ref=db.doc('school_live_migrations/'+school),snapshot=(await ref.get()).data()||{};
@@ -68,7 +99,22 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceip
     if(!proofs.has(proofKey))proofs.set(proofKey,(async()=>{
      if(lane==='live'&&typeof readLiveReceipt==='function')return liveProofMatches(await readLiveReceipt(school,binding.operationId),binding);
      if(lane==='legacy'){
-      if(typeof readDrive==='function'&&driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;
+      let readError=null;
+      if(typeof readDrive==='function'){
+       try{
+        if(driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;
+       }catch(error){readError=error;}
+      }
+      // A verified old edge job may retain a signed original Google receipt
+      // even after a newer Sheet revision superseded the same record ID.
+      // Require a fully settled marker, exactly-bound operation and original
+      // canonical Google row. Never clear from staging success alone.
+      if(marker.activeAttempts===0&&typeof readEdgeReceipt==='function'){
+       try{
+        if(edgeProofMatches(await readEdgeReceipt(school,binding),binding))return true;
+       }catch(error){readError??=error;}
+      }
+      if(readError)throw readError;
       // Notice patches are expanded before owner delivery, so their original
       // request hash can differ from the signed final row. The retained edge
       // job binds the ORIGINAL request and its verified signed completion.
@@ -94,4 +140,4 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readNoticeReceip
  }
  return {reconcile};
 }
-module.exports={bindOperation,legacyRequestHash,createLiveReconciliation,noticeProofMatches};
+module.exports={bindOperation,legacyRequestHash,edgeProofMatches,createLiveReconciliation,noticeProofMatches};
