@@ -1952,8 +1952,22 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     final message = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
       ? cloudTransferMessage(_status) : null;
     if (widget.panelBuilder != null) {
-      final messages = <String>{...widget.messages, if (message != null) message,
-        if (widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId) ...driveSaveMessages(_status)}.toList();
+      final transferMessages = widget.showTransfers &&
+          _profile == FirebaseFirestore.instance.activeProfileId
+          ? driveSaveMessages(_status) : const <String>[];
+      // Ordinary Cloudflare -> Drive delivery is backend work, not a PC sync
+      // failure. Show one independent status line, never 25 persistent orange
+      // "success"/"pending" alerts.
+      final backgroundPending = message ==
+              'Cloudflare background backup · Google Drive transfer pending.' ||
+          transferMessages.any((text) => text.contains('Drive save pending'));
+      final messages = <String>{
+        ...widget.messages,
+        if (message != null &&
+            message != 'Cloudflare background backup · Google Drive transfer pending.')
+          message,
+        ...transferMessages.where((text) => text.startsWith('Drive save needs review')),
+      }.toList();
       final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
           ? measuredDriveProgress(_status) : null;
       final acceptedHistory = widget.showTransfers &&
@@ -1962,9 +1976,16 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
             (r) => r is Map && r['cloudflareAccepted'] == true));
       // Completed receipts belong to durable history, not the error panel.
       // The last Cloudflare ACK gets its own five-second, self-expiring notice.
-      if (messages.isEmpty && !acceptedHistory) return const SizedBox.shrink();
+      if (messages.isEmpty && !acceptedHistory && !backgroundPending)
+        return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               if (messages.isNotEmpty) widget.panelBuilder!(messages, progress),
+              if (backgroundPending)
+                const Padding(
+                  padding: EdgeInsets.only(top:8),
+                  child: Text('Google Drive backup pending · Cloudflare delivery is separate from device sync',
+                    key: ValueKey('cloudflare-background-drive-pending')),
+                ),
               if (acceptedHistory) CloudflareSaveNotice(key: ValueKey(_profile), rows:
                 widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
                   ? [for (final row in (_status?['driveSaveHistory'] as List? ?? const []))
