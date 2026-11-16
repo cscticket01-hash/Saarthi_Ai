@@ -5,8 +5,27 @@ $ErrorActionPreference = 'Stop'
 $release = (Resolve-Path $ReleaseDirectory).Path
 $source = Join-Path $env:ProgramFiles 'Tesseract-OCR'
 if (!(Test-Path (Join-Path $source 'tesseract.exe'))) {
-  choco install tesseract --version=5.5.3.20260724 -y --no-progress
-  if ($LASTEXITCODE -ne 0) { throw 'Pinned Tesseract OCR installation failed.' }
+  # Use the same official release directly; a Chocolatey feed outage must not
+  # force a version change or removal of offline OCR from the package.
+  $url = 'https://github.com/tesseract-ocr/tesseract/releases/download/5.5.3/tesseract-ocr-w64-setup-5.5.3.20260724.exe'
+  $expected = 'bee9e3434bd94fd65387d9be28cd467a41f61b1275383b55b0f59a1331270ae4'
+  $temporary = Join-Path ([IO.Path]::GetTempPath()) ('saarthi-ocr-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+  try {
+    $installer = Join-Path $temporary 'tesseract-5.5.3.exe'
+    Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing -TimeoutSec 120
+    if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+      throw 'Official Tesseract installer integrity check failed; refusing execution.'
+    }
+    $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$source") -PassThru
+    if (!$process.WaitForExit(180000)) {
+      $process.Kill()
+      throw 'Pinned Tesseract installation timed out.'
+    }
+    if ($process.ExitCode -ne 0) { throw 'Pinned Tesseract OCR installation failed.' }
+  } finally {
+    Remove-Item $temporary -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 if (!(Test-Path (Join-Path $source 'tesseract.exe'))) {
   throw 'Tesseract executable was not installed at the expected location.'
@@ -49,6 +68,9 @@ foreach ($language in $models.Keys) {
   }
 }
 $license = Get-ChildItem $source -File -Filter 'LICENSE*' | Select-Object -First 1
+if (!$license -and (Test-Path (Join-Path $source 'doc\LICENSE'))) {
+  $license = Get-Item (Join-Path $source 'doc\LICENSE')
+}
 if (!$license) {
   $chocoLicense = Join-Path $env:ProgramData 'chocolatey\lib\tesseract\legal\LICENSE.txt'
   if (Test-Path $chocoLicense) { $license = Get-Item $chocoLicense }
