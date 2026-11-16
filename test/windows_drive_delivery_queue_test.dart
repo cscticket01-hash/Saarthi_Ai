@@ -165,6 +165,17 @@ void main() {
     expect(history.single['state'], 'pending');
     expect(history.single['completedAt'], 0);
   });
+  test('verified native Cloudflare ACK notifies UI immediately but Drive stays pending', () async {
+    final before = WindowsDriveDeliveryQueue.changed.value;
+    await WindowsDriveDeliveryQueue.retain(school,'school_expenses','one',op,receipt(op));
+    final history = await WindowsDriveDeliveryQueue.history(school);
+    expect(history, hasLength(1));
+    expect(history.single['cloudflareAccepted'], true);
+    expect(history.single['operation'], 'write');
+    expect(history.single['state'], 'pending');
+    expect(history.single['completedAt'], 0);
+    expect(WindowsDriveDeliveryQueue.changed.value, before + 1);
+  });
   test('restart reconciliation uses original operation receipt without re-sending a mutation', () async {
     await WindowsDriveDeliveryQueue.retain(
       school,
