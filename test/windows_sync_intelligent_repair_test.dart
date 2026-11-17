@@ -455,7 +455,27 @@ void main() {
           }]};
       },
     );
-    expect(submitted, true);
+    // The Cloudflare-first owner must not silently consume single-record
+    // tickets in a legacy Google-Drive-completion batch.
+    expect(submitted, false);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(3));
+    // A broker without this capability retains exactly the older batched
+    // provider-verified path for backward-compatible schools.
+    WindowsFirebaseRemote.edgeDeliverySupported = false;
+    await WindowsFirebaseRemote.prepareManagedBatch(
+      school,canAdmit:()=>true,
+      prepareRecord:(ref,item,school)=>db.bindOutboxWireData(
+        ref,item,Map<String,dynamic>.from(item['data'] as Map),'snapshot2'),
+      send:(_,ops) async {
+        submitted=true;
+        expect(ops.map((op)=>op['collection']),everyElement('school_expenses'));
+        return {'schoolId':school,'syncProtocol':2,'recordWriteBatchVersion':1,
+          'acknowledgements':[for(final op in ops) {
+            'operationId':op['operationId'],'success':true,'recordRevision':'drive-verified'
+          }]};
+      },
+    );
+    expect(submitted,true);
     final notices = (await db.collection('_windows_firebase_outbox').get()).docs
       .where((row) => row.data()['collection'] == 'school_notices');
     expect(notices, hasLength(1));
