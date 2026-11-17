@@ -14,6 +14,8 @@ test('production R2 standby uses a different private bucket, never TEST storage'
  assert.deepEqual(standby.r2_buckets,[{binding:'R2_STAGE',bucket_name:'saarthi-sync-r2-prod'}]);
  assert.notEqual(standby.r2_buckets[0].bucket_name,testWorker.r2_buckets[0].bucket_name);
  assert.equal(standby.vars.R2_STAGING_ENABLED,'false','no new R2 admissions before release gates');
+ assert.equal(standby.vars.R2_STAGING_SCHOOLS,'','no school is admitted in production by default');
+ assert.equal(standby.vars.R2_STAGING_ALL_SCHOOLS_ENABLED,'false','no bulk enable without separate provider proof');
  assert.notEqual(standby.vars.R2_STAGING_ENABLED,testWorker.vars.R2_STAGING_ENABLED);
 });
 test('R2 standby cannot quietly modify production broker, lane migration or original secrets',()=>{
@@ -25,7 +27,7 @@ test('R2 standby cannot quietly modify production broker, lane migration or orig
  assert.deepEqual(standby.observability,production.observability);
  assert.equal(standby.vars.EDGE_KEY,undefined,'worker secrets are out of config');
  assert.equal(standby.vars.LIVE_SYNC_TEST_SCHOOL_ID,undefined);
- const only={...standby};delete only.r2_buckets;only.vars={...only.vars};delete only.vars.R2_STAGING_ENABLED;
+ const only={...standby};delete only.r2_buckets;only.vars={...only.vars};delete only.vars.R2_STAGING_ENABLED;delete only.vars.R2_STAGING_SCHOOLS;delete only.vars.R2_STAGING_ALL_SCHOOLS_ENABLED;
  assert.deepEqual(only,production,'the standby must be additive and otherwise identical');
 });
 test('default production file still has no automatic R2 admission',()=>{
