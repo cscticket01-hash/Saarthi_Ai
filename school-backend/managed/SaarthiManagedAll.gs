@@ -6549,6 +6549,7 @@ function VS_managedResumableUpload(b){
   return {uploadResumableVersion:1,committed:false,uploadKey:state.uploadKey,sha256:state.sha256,sizeBytes:state.sizeBytes,offset};
  }finally{lock.releaseLock();}
 }
+
 /** Managed Windows storage adapter. Deploy as the SCHOOL account, not developer.
  * No Firebase project/key/password required. Run VS_setupManagedSchool once.
  * Existing legacy sheets/files remain untouched; do not rebind existing roots.
@@ -9175,6 +9176,7 @@ function VS_managedSummary(){
  function visit(folder){if(++folders>1000||Date.now()>until){partial=true;return;}const it=folder.getFiles();while(it.hasNext()){if(++files>10000||Date.now()>until){partial=true;return;}bytes+=it.next().getSize();}const children=folder.getFolders();while(children.hasNext()){if(Date.now()>until){partial=true;return;}visit(children.next());}}
  visit(root);return {studentCount:Object.keys(VS_managedRecord({collection:'students_directory',operation:'read'}).records).length,driveBytes:bytes,partial:partial};
 }
+
 /** Isolated TEST disaster rehearsal. Never activates storage or changes source.
  * Each resume copies/verifies one binary or 25 rows. Immutable checkpoints and
  * stable operation IDs permit lost-response retry without duplicate copies.
@@ -9395,5 +9397,6 @@ function VS_disasterWorkbookObservation(file) {
   if(!Number.isFinite(millis)||millis<=0)throw new Error('Disaster readback workbook generation unavailable');
   return millis;
 }
+
 function doPost(e) { return VS_managedHandle(e); }
 function doGet(e) { return jsonResponse({success:false,message:'Authenticated signed POST required'}); }
