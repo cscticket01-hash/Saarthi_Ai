@@ -73,7 +73,10 @@ void main() {
       journalStarted.complete();
       await journalGate.future; // simulate disk flush before foreground Idle
     };
-    final id = List.filled(64, 'a').join();
+    final id = CentralSchoolCloud.expectedRecordStageTicket({
+      'schoolId':school,'collection':'school_expenses',
+      'id':'one','operationId':'original-operation-id',
+    });
     final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
         client: MockClient((request) async {
           calls++;
@@ -101,6 +104,27 @@ void main() {
     expect(stage['fileId'], isNull);
     expect(jsonEncode(notices), isNot(contains('stay-local')));
     expect(calls, 1, reason: 'no client-side Drive delivery long-poll');
+    cloud.close();
+  });
+  test('foreign ticket identity cannot produce Cloudflare-only handoff', () async {
+    var journalWrites=0;
+    CentralSchoolCloud.edgeDeliveryProfile=()=>'original-profile';
+    CentralSchoolCloud.onEdgeDelivery=(notice) async {journalWrites++;};
+    final cloud=CentralSchoolCloud(endpoint:'https://school.example/api',
+      client:MockClient((request) async {
+        return http.Response(jsonEncode({
+          'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+          'cloudflareAccepted':true,'driveState':'pending',
+          'delivery':{'lane':'records','id':List.filled(64,'a').join()},
+        }),200);
+      }));
+    await expectLater(cloud.api({
+      'action':'managed/records','schoolId':school,'syncProtocol':2,
+      'operation':'write','collection':'school_calendar',
+      'id':'event-1','operationId':'original-op-1234567890',
+      'data':{'syntheticTest':true},
+    },returnAfterDurableCloudflareHandoff:true),throwsStateError);
+    expect(journalWrites,0);
     cloud.close();
   });
   test('stage-only handoff refuses missing durable receipt observer before upload', () async {
