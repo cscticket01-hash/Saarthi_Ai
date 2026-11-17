@@ -9,7 +9,7 @@ for(const source of ['SaarthiManagedAdapter.gs','SaarthiManagedAll.gs'])test(sou
  if(typeof c.VS_cachedOriginalUpload!=='function'||typeof c.VS_rememberOriginalUpload!=='function'){
   assert.equal(typeof c.VS_cachedOriginalUpload,'undefined');
   assert.equal(typeof c.VS_rememberOriginalUpload,'undefined');
-  assert.match(sourceText,/DriveApp\\.getFileById/);
+  assert.ok(sourceText.includes('DriveApp.getFileById'),'the generated monolithic script must use direct Drive file lookup when no receipt cache is present');
   return;
  }
  c.VS_layoutHash=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');

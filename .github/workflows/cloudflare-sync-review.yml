@@ -19,6 +19,8 @@ on:
       - 'lib/sync_recovery_policy.dart'
       - 'test/sync_recovery_policy_test.dart'
       - 'school-backend/managed/SaarthiManagedAdapter.gs'
+      - '.github/scripts/build_managed_script.py'
+      - 'school-backend/managed/SaarthiManagedAll.gs'
   pull_request:
     paths:
       - 'lib/document_processing_engine.dart'

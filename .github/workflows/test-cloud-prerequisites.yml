@@ -23,6 +23,8 @@ on:
       - .github/scripts/settle_test_delta.test.cjs
       - .github/scripts/isolated_live_sync.cjs
       - .github/scripts/sync3_production_r2_standby.test.cjs
+      - .github/scripts/build_managed_script.py
+      - school-backend/managed/SaarthiManagedAll.gs
       # Disaster evidence logic changes require a fresh exact-head prerequisite.
       - .github/scripts/test_disaster_live.cjs
       - .github/scripts/disaster_resume.cjs
