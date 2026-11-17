@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {acceptance,ENDPOINT,LOGIN,SCHOOL}=require('./cloudflare_delivery_acceptance.cjs');
+const {acceptance,verifiedRecordRoute,retryOriginalTimeout,ENDPOINT,LOGIN,SCHOOL}=require('./cloudflare_delivery_acceptance.cjs');
 const env={VS_CF_DELIVERY_ACCEPTANCE:'1',VS_EXPECTED_RUNTIME:'a'.repeat(40),
  VS_CF_DELIVERY_RUN_ID:'synthetic-retained',VS_TEST_LOGIN_EMAIL:'secret-test-email',VS_TEST_LOGIN_PASSWORD:'secret-test-password'};
 test('live acceptance cannot run without explicit opt-in and a stable run ID',async()=>{
@@ -26,36 +26,83 @@ test('foreign membership fails before business data and reports no credentials',
  assert.equal(result.status,'FAIL');assert.equal(calls.length,3);
  assert.doesNotMatch(JSON.stringify(result),/private-token|private-uid|private-secret|secret-test-email|secret-test-password/);
 });
-const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
-const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
-const offlineEnv={...env,GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'cscticket01-hash/Saarthi_Ai',GITHUB_REF:'refs/heads/test/offline-google-20261113'};
-function offlineFixture(state='verified'){
- const calls=[],bytes=Buffer.from('%PDF-1.4\n% SYNTHETIC OFFLINE DELIVERY TEST ONLY\n%%EOF\n');
- const id=hash(JSON.stringify([SCHOOL,'cf_offline_'+env.VS_CF_DELIVERY_RUN_ID]));
- return {calls,request:async(url,body)=>{
-  calls.push(body?.action||url);
-  const data={success:true,schoolId:SCHOOL};
-  if(url===ENDPOINT+'/healthz')Object.assign(data,{ready:true,projectId:'saarthi-ai-df12b',runtimeCommit:env.VS_EXPECTED_RUNTIME});
-  else if(url===LOGIN)Object.assign(data,{idToken:'private-token',localId:'private-uid'});
-  else if(body.action==='managed/session')Object.assign(data,{allowed:true,uid:'private-uid'});
-  else if(body.action==='managed/storage/check')Object.assign(data,{storageReady:true,scriptBundleVersion:require('./reviewed_script_version.cjs').currentReviewedScriptVersion(),brokerEdgeDeliveryVersion:1,recordSyncVersion:2,uploadResumableVersion:1,brokerAtomicSmallFilesVersion:1});
-  else if(body.action==='managed/file/upload')Object.assign(data,{cloudflareAccepted:true,driveState:'pending',delivery:{id,lane:'file-'+id}});
-  else if(body.action==='managed/cloudflare/operation')Object.assign(data,{cloudflareAccepted:true,driveState:state,committed:state==='verified',sha256:hash(bytes),sizeBytes:bytes.length,...(state==='verified'?{fileId:'test-file'}:{delivery:{id,lane:'file-'+id}})});
-  else if(body.action==='managed/file/read')Object.assign(data,{mime:'application/pdf',base64:bytes.toString('base64')});
-  else throw Error('Unexpected write or drain');
-  return {status:200,data};
- }};
-}
-test('offline acceptance exits after one durable upload; verifier never uploads or drains',async()=>{
- const cwd=process.cwd(),temp=fs.mkdtempSync(path.join(os.tmpdir(),'offline-delivery-'));process.chdir(temp);
- try{
-  const f=offlineFixture();const accepted=await acceptance({env:{...offlineEnv,VS_CF_OFFLINE_PHASE:'accept'},request:f.request});
-  assert.equal(accepted.status,'ACCEPTED');assert.equal(f.calls.filter(x=>x==='managed/file/upload').length,1);assert(!f.calls.includes('managed/cloudflare/operation'));
-  const p='build/cloud-prerequisites/offline-accepted.json',proof=JSON.parse(fs.readFileSync(p));assert.doesNotMatch(JSON.stringify(proof),/private-token|secret-test/);
-  const early=offlineFixture();assert.equal((await acceptance({env:{...offlineEnv,VS_CF_OFFLINE_PHASE:'verify'},request:early.request})).status,'FAIL');assert(!early.calls.includes('managed/cloudflare/operation'));
-  proof.acceptedAtClient-=181000;fs.writeFileSync(p,JSON.stringify(proof));
-  const v=offlineFixture();const done=await acceptance({env:{...offlineEnv,VS_CF_OFFLINE_PHASE:'verify'},request:v.request});assert.equal(done.status,'PASS');assert(done.bytesReadbackVerified);assert(!v.calls.includes('managed/file/upload'));assert.equal(v.calls.filter(x=>x==='managed/cloudflare/operation').length,1);
-  const pending=offlineFixture('pending');assert.equal((await acceptance({env:{...offlineEnv,VS_CF_OFFLINE_PHASE:'verify'},request:pending.request})).status,'FAIL');assert(!pending.calls.includes('managed/file/read'));
-  proof.id='0'.repeat(64);fs.writeFileSync(p,JSON.stringify(proof));const changed=offlineFixture();assert.equal((await acceptance({env:{...offlineEnv,VS_CF_OFFLINE_PHASE:'verify'},request:changed.request})).status,'FAIL');assert(!changed.calls.includes('managed/cloudflare/operation'));
- }finally{process.chdir(cwd);fs.rmSync(temp,{recursive:true,force:true});}
+
+test('person lifecycle signed Drive proof is not mislabeled Cloudflare',()=>{
+ const person={success:true,schoolId:SCHOOL,syncProtocol:2,personLifecycleVersion:1,recordRevision:'original-google-123'};
+ assert.equal(verifiedRecordRoute(person,'person'),true);
+ assert.equal(verifiedRecordRoute(person,'edge'),false);
+ assert.equal(verifiedRecordRoute({...person,cloudflareAccepted:true},'person'),false);
+ assert.equal(verifiedRecordRoute({...person,delivery:{lane:'records',id:'a'.repeat(64)}},'person'),false);
+ assert.equal(verifiedRecordRoute({...person,recordRevision:'cf-unknown'},'person'),false);
+});
+test('Cloudflare-backed record requires verified Google Drive receipt, not pending or fake lifecycle',()=>{
+ const edge={success:true,schoolId:SCHOOL,cloudflareAccepted:true,driveState:'verified',recordRevision:'google-456'};
+ assert.equal(verifiedRecordRoute(edge,'edge'),true);
+ for(const invalid of [
+  {...edge,driveState:'pending'},
+  {...edge,driveState:'retry'},
+  {...edge,cloudflareAccepted:false},
+  {...edge,delivery:{lane:'records',id:'b'.repeat(64)}},
+  {...edge,recordRevision:'cf-staged-only'},
+  {...edge,recordRevision:null},
+ ])assert.equal(verifiedRecordRoute(invalid,'edge'),false);
+ assert.equal(verifiedRecordRoute(edge,'person'),false);
+});
+
+const calendarRequest={action:'managed/records',operation:'write',syncProtocol:2,
+ collection:'school_calendar',id:'synthetic',operationId:'a'.repeat(64),
+ schoolId:SCHOOL,expectedRecordRevision:'',data:{title:'SYNTHETIC'}};
+const scriptTimeout=()=>Object.assign(new Error('signed timeout'),{status:504,code:'SCRIPT_TIMEOUT'});
+test('signed Script timeout resends only the exact original operation once',async()=>{
+ const calls=[],waits=[];
+ const result=await retryOriginalTimeout(async body=>{
+  calls.push(JSON.stringify(body));
+  if(calls.length===1)throw scriptTimeout();
+  return {success:true,cloudflareAccepted:true,delivery:{id:'b'.repeat(64),lane:'records'}};
+ },structuredClone(calendarRequest),{sleep:async ms=>waits.push(ms)});
+ assert.equal(result.delivery.lane,'records');
+ assert.deepEqual(calls,[JSON.stringify(calendarRequest),JSON.stringify(calendarRequest)]);
+ assert.deepEqual(waits,[12000]);
+});
+test('unverified repeated timeout stays failed after one bounded retry',async()=>{
+ let calls=0;
+ await assert.rejects(retryOriginalTimeout(async()=>{calls++;throw scriptTimeout()},calendarRequest,
+  {sleep:async()=>{}}),e=>e.status===504&&e.code==='SCRIPT_TIMEOUT');
+ assert.equal(calls,2);
+});
+test('non-immutable or non-authenticated retries fail immediately',async()=>{
+ for(const body of [{...calendarRequest,operationId:'wrong'},
+  {...calendarRequest,operation:'delete'},{action:'managed/file/upload',uploadKey:'synthetic'}]){
+  let calls=0;
+  await assert.rejects(retryOriginalTimeout(async()=>{calls++;throw scriptTimeout()},body,
+   {sleep:async()=>{}}));
+  assert.equal(calls,1);
+ }
+ for(const err of [{status:503,code:'SCRIPT_TIMEOUT'},{status:504,code:'UNKNOWN'},{status:409,code:'CONFLICT'}]){
+  let calls=0;
+  await assert.rejects(retryOriginalTimeout(async()=>{calls++;throw Object.assign(new Error(),err)},calendarRequest,
+   {sleep:async()=>{}}));
+  assert.equal(calls,1);
+ }
+});
+test('status timeout retries exactly the same authenticated receipt ticket',async()=>{
+ const status={action:'managed/cloudflare/operation',schoolId:SCHOOL,lane:'records',
+  id:'f'.repeat(64),waitMillis:20000};
+ let calls=0;
+ const result=await retryOriginalTimeout(async input=>{
+  assert.deepEqual(input,status);calls++;
+  if(calls===1)throw scriptTimeout();
+  return {success:true,driveState:'verified',recordRevision:'drive-123'};
+ },status,{sleep:async()=>{}});
+ assert.equal(calls,2);
+ assert.equal(result.driveState,'verified');
+});
+test('mutated original request cannot be reissued after signed timeout',async()=>{
+ const mutated=structuredClone(calendarRequest);
+ let calls=0;
+ await assert.rejects(retryOriginalTimeout(async body=>{
+  calls++;body.data.title='FORGED';
+  throw scriptTimeout();
+ },mutated,{sleep:async()=>{}}),/Immutable original request changed/);
+ assert.equal(calls,1);
 });

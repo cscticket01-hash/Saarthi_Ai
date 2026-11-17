@@ -4,6 +4,27 @@ const {canonical}=require('./live-sync-canonical');
 const COLLECTIONS=new Set(['school_expenses','school_calendar','school_notices','school_settings','students_directory','teachers_directory','fee_settings','fee_ledger','fee_payments','teacher_salary','attendance_records','attendance_logs','teacher_attendance','teacher_schedules','exams','exam_results','exam_center_results','documents','student_scan_index','scanner_devices','school_config']);
 const payloadHash=record=>createHash('sha256').update(canonical({deleted:record._syncDeleted===true,data:Object.fromEntries(Object.entries(record).filter(([key])=>!key.startsWith('_sync')))})).digest('hex');
 const refuse=(status,code)=>{throw Object.assign(Error('Live sync admission requires verified school state.'),{status,code,publicMessage:true});};
+// Fail before seedBegin, not halfway through a school baseline. The Worker
+// independently enforces these same wire-shape restrictions on every page.
+function assertSeedRow(school,id,data){
+ const bad=()=>refuse(422,'LIVE_BASELINE_RECORD_UNSUPPORTED');
+ if(data&&data._syncErasePlan&&data._syncErasePlan.complete!==true)refuse(503,'LIVE_BASELINE_DELETE_PENDING');
+ if(typeof id!=='string'||!id||id.length>200||id.includes('/')||
+    ['.','..','__proto__','prototype','constructor'].includes(id)||!data||
+    typeof data!=='object'||Array.isArray(data)||data.schoolId!==school||
+    typeof data._syncRevision!=='string'||!data._syncRevision||/^(live-|cf-)/.test(data._syncRevision))bad();
+ function shape(value,depth=0){
+  if(depth>12)bad();
+  if(Array.isArray(value)){for(const item of value)shape(item,depth+1);return;}
+  if(value&&typeof value==='object')for(const [key,item]of Object.entries(value)){
+   if(['__proto__','prototype','constructor'].includes(key)||
+      /password|token|secret|private_key|base64|localpath/i.test(key)&&key!=='mobileLinkToken')bad();
+   shape(item,depth+1);
+  }
+  if(typeof value==='string'&&value.startsWith('data:'))bad();
+ }
+ shape(data);
+}
 function createLiveSync({edge,schools=[],now=Date.now}){
  const enabled=school=>schools.includes(school)&&edge?.enabled(school)===true;
  async function command(school,body){if(!enabled(school))refuse(412,'LIVE_SYNC_DISABLED');return edge.rpc(school,'live',body);}
@@ -52,7 +73,8 @@ function createLiveSync({edge,schools=[],now=Date.now}){
   if(!COLLECTIONS.has(collection))refuse(412,'LIVE_COLLECTION_NOT_ADMITTED');
   const source=await read({action:'managed_records',operation:'read',collection,syncProtocol:2});
   if(source.success!==true||source.schoolId!==school||source.syncProtocol!==2||!source.records||typeof source.records!=='object'||Array.isArray(source.records)||typeof source.collectionRevision!=='string'||source.missingRecords?.length||source.partialRecords===true||source.partial===true||source.pointRead===true||source.unchanged===true)refuse(502,'LIVE_BASELINE_UNVERIFIED');
-  const entries=Object.entries(source.records).filter(([id])=>collection!=='school_settings'||id!=='staff_payroll_directory');if(entries.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
+  const entries=Object.entries(source.records).filter(([id])=>collection!=='school_settings'||id!=='staff_payroll_directory');
+  for(const [id,data]of entries)assertSeedRow(school,id,data);if(entries.length>100000)refuse(413,'LIVE_BASELINE_TOO_LARGE');
   const fingerprint=createHash('sha256').update(canonical(Object.fromEntries(entries))).digest('hex');
   const started=await command(school,{command:'seedBegin',collection,count:entries.length,fingerprint,sourceRevision:source.collectionRevision,replaceSeeding:true});
   if(started.state==='active')return {liveProtocol:1,schoolId:school,state:'active'};

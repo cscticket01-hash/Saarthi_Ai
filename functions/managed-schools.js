@@ -327,13 +327,15 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(liveSync.enabled(m.schoolId)&&personLifecycle.handled(body))personLifecycle.validate(m.schoolId,body);
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
- async function reconcileAdmission(m,limit=1){
+ async function reconcileAdmission(m,limit=1,previewOnly=false){
   return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),
-   readEdgeReceipt:(school,binding)=>cloudflareSync.rpc(school,'records',{
-    command:'status',id:hash(JSON.stringify([school,'managed_records',
-     [binding.collection,binding.id,binding.operationId]])),
-   }),
-   readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit});
+   readEdgeReceipt:async(school,binding)=>{
+    try{return await cloudflareSync.rpc(school,'records',{
+     command:'status',id:hash(JSON.stringify([school,'managed_records',
+      [binding.collection,binding.id,binding.operationId]])),
+    });}catch(error){if(error.code==='EDGE_RECEIPT_NOT_FOUND')return null;throw error;}
+   },
+   readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit,previewOnly});
  }
  async function signedLegacy(m,body){
   const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');
@@ -1162,7 +1164,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     fail(502,'Verified atomic bundle receipt unavailable');
    return {success:true,schoolId:m.schoolId,...result};
   }
-  if(operation==='reconcile')return reconcileAdmission(m,25);
+  if(operation==='reconcile')return reconcileAdmission(m,25,b.previewOnly===true);
   const deliveryDrained=async()=>{
    const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
    return stats.every(s=>s.pending===0&&s.needsAttention===0);

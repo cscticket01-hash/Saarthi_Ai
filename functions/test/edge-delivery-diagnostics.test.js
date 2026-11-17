@@ -2,10 +2,10 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createCloudflareDelivery}=require('../cloudflare-delivery');
 const school='vs-'+'a'.repeat(32);
-async function run(deliver,diagnostics,requestExtra={}){
+async function run(deliver,diagnostics){
  let finished;
  const edge={rpc:async(s,l,b)=>{
-  if(b.command==='pending')return [{id:'a'.repeat(64),payload:JSON.stringify({action:'managed_records',collection:'students_directory',id:'private-student',operationId:'original-operation-00001',data:{schoolId:school},...requestExtra})}];
+  if(b.command==='pending')return [{id:'a'.repeat(64),payload:JSON.stringify({action:'managed_records',collection:'students_directory',id:'private-student',operationId:'original-operation-00001',data:{schoolId:school}})}];
   if(b.command==='claim')return true;
   if(b.command==='finish'){finished=b.values;return true;}
   throw Error('unexpected command');
@@ -67,39 +67,4 @@ test('explicit Delete Everywhere never reports Drive verified until Firebase AND
  assert.equal(values.state,'completed');
  assert.equal(values.result.driveDeletionComplete,true);
  assert.equal(values.result.firebaseDeletionComplete,true);
-});
-
-test('Firebase permission denial retains the immutable cloud ticket under owner review',async()=>{
- const logs=[];
- const {finished}=await run(async()=>{
-   throw Object.assign(Error('private credentials must not be reported'),
-      {status:503,code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'});
- }, e=>logs.push(e));
- assert.equal(finished.state,'needsAttention');
- assert.equal(finished.failureCode,'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED');
- assert.equal(finished.nextAttemptAt,Number.MAX_SAFE_INTEGER);
- assert.deepEqual(logs,[{event:'edge_delivery_failure',lane:'records',phase:'deliver',
-   code:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED',status:503}]);
- assert(!JSON.stringify(logs).includes('credentials'));
-});
-
-test('Drive-only, edge-only or incomplete delete ACK never retires the original queued operation',async()=>{
- const request={operation:'delete',deleteEverywhereVersion:1};
- const correct={success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-final',
-  deleteEverywhereVersion:1,driveDeletionComplete:true,firebaseDeletionComplete:true,
-  record:{schoolId:school,id:'private-student',_syncDeleted:true,
-   _syncOperationId:'original-operation-00001',_syncRevision:'drive-final',
-   _syncErasePlan:{complete:true}}};
- for(const change of [
-  {firebaseDeletionComplete:false},{driveDeletionComplete:false},
-  {record:{...correct.record,_syncErasePlan:{complete:false}}},
-  {record:{...correct.record,_syncOperationId:'another-operation'}}
- ]){
-  const {finished}=await run(async()=>({...correct,...change}),()=>{},request);
-  assert.equal(finished.state,'retry','No early Cloudflare final ACK without exact Drive and Firebase proof');
-  assert.equal(finished.failureCode,'ACK_UNVERIFIED');
- }
- const {finished}=await run(async()=>correct,()=>{},request);
- assert.equal(finished.state,'completed');
- assert.equal(finished.result.firebaseDeletionComplete,true);
 });

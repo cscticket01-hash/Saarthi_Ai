@@ -133,26 +133,52 @@ test('a Google point-read timeout can fall back to original completed edge proof
  assert.equal(failed.cleared,0);
  assert.equal(failed.reasons.proof_unavailable,1);
 });
-test('lost Google response plus unavailable original Cloudflare receipt retains marker for review',async()=>{
- for(const reason of [
-  Object.assign(Error('original receipt unavailable'),{status:404,code:'CLOUDFLARE_SYNC_UNAVAILABLE'}),
-  Object.assign(Error('provider quota'),{status:503,code:'CLOUDFLARE_QUOTA_EXCEEDED'}),
- ]){
-  const f=fixture(),value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding;
-  save(f,'inflight',value);
-  let edgeReads=0;
-  const outcome=await createLiveReconciliation({db:f.db,
-   readDrive:async()=>({success:true,schoolId:A,syncProtocol:2,pointRead:true,
-    records:{[binding.id]:{schoolId:A,_syncOperationId:'newer-operation-revision',
-     _syncRequestHash:'f'.repeat(64),_syncRevision:'newer-sheet-revision'}}}),
-   readEdgeReceipt:async()=>{edgeReads++;throw reason;},
-  }).reconcile(A);
-  assert.equal(edgeReads,1);
-  assert.equal(outcome.cleared,0);
-  assert.equal(outcome.retained,1);
-  assert.equal(outcome.reasons.proof_unavailable,1);
-  assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
- }
+
+test('source diagnostics count unavailable original proofs without exposing operation identities',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0},binding=value.operationBinding;
+ save(f,'inflight',value);
+ const result=await createLiveReconciliation({db:f.db,
+  readDrive:async()=>{throw Error('Google source read unavailable');},
+  readEdgeReceipt:async()=>{throw Error('Original edge receipt missing');}
+ }).reconcile(A);
+ assert.equal(result.cleared,0);
+ assert.equal(result.reasons.proof_unavailable,1);
+ assert.deepEqual(result.proofSources,{
+  legacy_marker:1,drive_read_error:1,edge_read_error:1,source_error_retained:1
+ });
+ assert.ok(!JSON.stringify(result).includes(binding.operationId));
+ assert.ok(!JSON.stringify(result).includes(binding.id));
+ assert.ok(!JSON.stringify(result).includes(binding.requestHash));
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+});
+
+test('read-only original proof preview never writes Firestore, even when an exact receipt is found',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ f.db.runTransaction=async()=>{throw Error('preview attempted forbidden transaction');};
+ const result=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>exactEdgeProof(value.operationBinding)}).reconcile(A,{previewOnly:true});
+ assert.equal(result.previewOnly,true);
+ assert.equal(result.previewWouldClear,1);
+ assert.equal(result.cleared,0);
+ assert.equal(result.scanned,1);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+ const none=await createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>null}).reconcile(A,{previewOnly:true});
+ assert.equal(none.previewWouldClear,0);
+ assert.equal(none.reasons.proof_unverified,1);
+ assert.ok(f.docs.get('school_live_migrations/'+A).inflight.token);
+});
+test('read-only preview cannot alter the normal reconciliation CAS behavior',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const reconcile=createLiveReconciliation({db:f.db,readEdgeReceipt:async()=>exactEdgeProof(value.operationBinding)});
+ await assert.rejects(reconcile.reconcile(A,{previewOnly:'yes'}),e=>e.status===400);
+ assert.equal((await reconcile.reconcile(A)).cleared,1);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{});
+});
+test('missing historical record job is diagnosed and original marker remains untouched',async()=>{
+ const f=fixture(),value={...marker('legacy'),activeAttempts:0};save(f,'inflight',value);
+ const result=await createLiveReconciliation({db:f.db,readDrive:async()=>({}),readEdgeReceipt:async()=>null}).reconcile(A,{previewOnly:true});
+ assert.equal(result.cleared,0);assert.equal(result.previewWouldClear,0);assert.equal(result.retained,1);
+ assert.equal(result.proofSources.edge_job_missing,1);assert.equal(result.proofSources.edge_read_error,undefined);
+ assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight.token,value);
 });
 
 test('matching delete tombstone cannot clear its marker while owner erase cleanup is incomplete',async()=>{

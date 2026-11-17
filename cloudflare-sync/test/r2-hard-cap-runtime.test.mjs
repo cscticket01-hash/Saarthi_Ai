@@ -30,7 +30,7 @@ export class R2HardFenceTestLane extends SyncLane {
   compatibilityFlags:['nodejs_compat'],
   durableObjects:{LANES:{className:'R2HardFenceTestLane',useSQLite:true}},
   r2Buckets:['R2_STAGE'],
-  bindings:{EDGE_KEY:key,R2_STAGING_ENABLED:'true',R2_STAGING_SCHOOLS:school+','+other,BROKER_URL:'https://broker.invalid/school-cloud'},
+  bindings:{EDGE_KEY:key,R2_STAGING_ENABLED:'true',BROKER_URL:'https://broker.invalid/school-cloud'},
   outboundService:()=>new Response('{}',{status:503})
  }]}));
  t.after(()=>mf.dispose());

@@ -76,7 +76,7 @@ export class R2VerifiedTimeLane extends SyncLane {
   compatibilityDate:'2026-10-28',compatibilityFlags:['nodejs_compat'],
   durableObjects:{LANES:{className:'R2VerifiedTimeLane',useSQLite:true}},
   r2Buckets:['R2_STAGE'],outboundService:()=>new Response('{}',{status:503}),
-  bindings:{EDGE_KEY:secret,R2_STAGING_ENABLED:'true',R2_STAGING_SCHOOLS:school,BROKER_URL:'https://broker.invalid/school-cloud'}
+  bindings:{EDGE_KEY:secret,R2_STAGING_ENABLED:'true',BROKER_URL:'https://broker.invalid/school-cloud'}
  }]}));
  t.after(()=>mf.dispose());
  const rpc=async(command,body={},lane='records')=>{

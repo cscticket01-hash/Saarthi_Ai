@@ -11,9 +11,12 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
   const prior=await admin({action:'managed/records',operation:'read',collection,syncProtocol:2});
   check('Read TEST '+collection,prior,prior.http===200&&prior.data.schoolId===schoolId);
   const row=prior.data.records?.[id];
-  if(row){if(row.syntheticTest!==true)throw Error('Existing non-synthetic record retained');return row;}
+  if(row&&row.syntheticTest===true)return row;
+  if(row&&!canRebaseFixedTestFixture({env:process.env,endpoint,schoolId,collection,id,day:isolatedAttendanceDay(schoolId)}))throw Error('Existing non-synthetic record retained');
+  if(row&&!(typeof row._syncRevision==='string'&&row._syncRevision))throw Error('Original TEST fixture revision required');
+  if(row){report.ownerRebasedTestFixtures=report.ownerRebasedTestFixtures||[];report.ownerRebasedTestFixtures.push(collection);}
   const operationId=prefix+'-'+createHash('sha256').update(collection+'/'+id).digest('hex').slice(0,24);
-  const body={action:'managed/records',operation:'write',collection,id,data:{...data,syntheticTest:true},syncProtocol:2,operationId,expectedRecordRevision:''};
+  const body={action:'managed/records',operation:'write',collection,id,data:{...data,syntheticTest:true},syncProtocol:2,operationId,expectedRecordRevision:row?._syncRevision||''};
   let r=await admin(body);check('Real durable Script ACK '+collection,r,r.http===200&&r.data.syncProtocol===2&&typeof r.data.recordRevision==='string');
   const revision=r.data.recordRevision;
   r=await admin(body);check('Identical retry ACK '+collection,r,r.http===200&&r.data.recordRevision===revision);
@@ -104,3 +107,12 @@ module.exports=async function({post,check,endpoint,schoolId,token,report}){
  }
  report.realAttendancePending=1;throw Error('Actual cloud ACK not yet received; pending retained');
 };
+
+// Explicit disposable TEST permission only; never broaden ordinary writer guards.
+function canRebaseFixedTestFixture({env,endpoint,schoolId,collection,id,day}){
+ return env.GITHUB_ACTIONS==='true'&&env.GITHUB_REPOSITORY==='cscticket01-hash/Saarthi_Ai'&&
+  env.VS_TEST_CONNECT_CONFIRM===schoolId&&env.VS_TEST_REBASE_FIXED_FIXTURES===schoolId&&
+  schoolId==='vs-db8afb01a3be46a983c8284714d06e5d'&&endpoint==='https://saarthi-sync-v2-test.onrender.com/school-cloud'&&
+  (collection==='school_calendar'&&id===day||collection==='school_settings'&&id==='school_location');
+}
+module.exports.canRebaseFixedTestFixture=canRebaseFixedTestFixture;

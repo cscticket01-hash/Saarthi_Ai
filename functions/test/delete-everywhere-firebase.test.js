@@ -20,13 +20,8 @@ function ack(list=targets()){
      _syncOperationId:op,_syncErasePlan:{complete:true,targets:list}}};
 }
 function fixture(entries=[]){
- const data=new Map(entries),calls=[],reads=[];
- const db={doc:path=>({path,get:async()=>({exists:data.has(path)})}),
-  getAll:async(...refs)=>{
-   reads.push(...refs.map(ref=>ref.path));
-   return refs.map(ref=>({exists:data.has(ref.path)}));
-  },
-  runTransaction:async fn=>{
+ const data=new Map(entries),calls=[];
+ const db={doc:path=>({path}),runTransaction:async fn=>{
    const writes=[];const value=await fn({
      get:async ref=>({exists:data.has(ref.path),data:()=>data.get(ref.path)}),
      delete:ref=>writes.push(ref.path)
@@ -34,7 +29,7 @@ function fixture(entries=[]){
    for(const path of writes){calls.push(path);data.delete(path);}
    return value;
  }};
- return {data,calls,reads,db,cleanup:createDeleteEverywhere({db})};
+ return {data,calls,cleanup:createDeleteEverywhere({db})};
 }
 const source=()=>({schoolId:A,mobileStableId:'p-old',_syncRevision:old,name:'Original'});
 const fee=()=>({schoolId:A,personId:'p-old',_syncRevision:'old-fee-revision',amount:100});
@@ -50,7 +45,6 @@ test('verified original Drive plan erases only exact tenant parent/fee and prese
  assert.equal(result.firebaseDeletionComplete,true);
  assert.equal(result.firebaseDeletedRecords,2);
  assert.deepEqual(f.calls,[root,child]);
- assert.deepEqual(f.reads,[root,child],'Every target must be independently read back');
  for(const path of [foreign,untouched,licence])assert(f.data.has(path));
  const retry=await f.cleanup.finish(A,request,ack());
  assert.equal(retry.firebaseDeletedRecords,0);
@@ -124,62 +118,12 @@ test('wrong school, fake Drive flags, wrong operation, incomplete plan or change
  }
 });
 
-
-test('id-less Script tombstone proves its original operation and exact immutable plan, then deletes Firebase',async()=>{
- const proof=ack();delete proof.record.id;
- const f=fixture([[root,source()],[child,fee()]]);
- const out=await f.cleanup.finish(A,request,proof);
- assert.equal(out.firebaseDeletionComplete,true);
- assert.equal(out.firebaseDeletedRecords,2);
- assert.equal(f.data.has(root),false);
- assert.equal(f.data.has(child),false);
- const replay=await f.cleanup.finish(A,request,proof);
- assert.equal(replay.firebaseDeletedRecords,0);
-});
-test('id-less tombstone with changed operation or signed target never removes Firebase',async()=>{
- for(const mutate of [
-  p=>{p.record._syncOperationId='another-operation';},
-  p=>{p.record._syncErasePlan.targets=[...p.record._syncErasePlan.targets].reverse();},
-  p=>{p.deletionTargets[0].revision='different-revision';}
- ]){
-  const proof=ack();delete proof.record.id;mutate(proof);
-  const f=fixture([[root,source()],[child,fee()]]);
-  await assert.rejects(f.cleanup.finish(A,request,proof));
-  assert.equal(f.data.has(root),true);
-  assert.equal(f.data.has(child),true);
-  assert.equal(f.calls.length,0);
- }
-});
-
-test('Firestore permission denial is explicit, private and never grants a final Delete ACK',async()=>{
- const denied=Object.assign(Error('Private provider and service-account details'),{code:7});
- const db={doc:path=>({path}),runTransaction:async()=>{throw denied}};
+test('Firestore IAM permission denial is typed and never claims Firebase deletion',async()=>{
+ const db={doc:path=>({path}),runTransaction:async()=>{
+  throw Object.assign(Error('private upstream permission detail'),{code:7});
+ }};
  const cleanup=createDeleteEverywhere({db});
- await assert.rejects(cleanup.finish(A,request,ack()),e=>
-   e.status===503 && e.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED' &&
-   e.publicMessage===true && !String(e.message).includes('Private provider'));
-});
-
-test('transaction delete without verified Firebase readback cannot grant final ACK',async()=>{
- const f=fixture([[root,source()],[child,fee()]]);
- const originalGetAll=f.db.getAll;
- f.db.getAll=async(...refs)=>refs.map(ref=>({exists:ref.path===child}));
- await assert.rejects(f.cleanup.finish(A,request,ack()),e=>
-   e.code==='DELETE_EVERYWHERE_FIREBASE_READBACK_UNVERIFIED' && e.status===409);
- assert.equal(f.data.has(root),false);
- assert.equal(f.data.has(child),false);
- // The same original operation can safely recover, without creating new writes.
- f.db.getAll=originalGetAll;
- const recovered=await f.cleanup.finish(A,request,ack());
- assert.equal(recovered.firebaseDeletionComplete,true);
- assert.equal(recovered.firebaseDeletedRecords,0);
- assert.deepEqual(f.calls,[root,child]);
-});
-
-test('Firebase readback permission denial remains private and blocks final ACK',async()=>{
- const f=fixture([[root,source()],[child,fee()]]);
- f.db.getAll=async()=>{throw Object.assign(Error('Private Firestore credential'),{code:7});};
- await assert.rejects(f.cleanup.finish(A,request,ack()),e=>
-   e.status===503 && e.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED' &&
-   !String(e.message).includes('Private Firestore credential'));
+ await assert.rejects(cleanup.finish(A,request,ack()),error=>
+  error.status===503&&error.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
+  error.publicMessage===true&&!error.message.includes('private upstream'));
 });

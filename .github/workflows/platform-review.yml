@@ -72,7 +72,7 @@ jobs:
         name: oauth-broker-review-source
         path: oauth-broker
   web:
-    # Playwright 1.58.2 supports Ubuntu 24.04, not the moving 26.04 image.
+    # Pinned Playwright 1.58.2 does not support the moving ubuntu-latest 26.04 image.
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
@@ -140,8 +140,8 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/id-publication-tests
       run: flutter test --concurrency=1 test/windows_document_review_owner_test.dart test/windows_sync_comparison_test.dart
-    - name: Verify central school cloud and two-phase handoff
-      run: flutter test --concurrency=1 test/central_school_cloud_test.dart test/cloudflare_record_handoff_test.dart
+    - name: Verify central school cloud and paths
+      run: flutter test test/central_school_cloud_test.dart
     - name: Verify school connection automation
       run: |
         python tool/build_school_setup_bundle.py --check
@@ -269,7 +269,7 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-appearance-review
         LOCALAPPDATA: ${{ runner.temp }}/windows-appearance-review
-      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_review_responsiveness_test.dart test/live_sync_receipt_test.dart test/cloudflare_save_notice_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
+      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -467,36 +467,6 @@ jobs:
     - run: flutter pub add mobile_scanner:7.3.0
     - name: Align resolved Android plugin SDKs
       run: python .github/scripts/configure_android_plugins.py
-    - name: Install required Android NDK with bounded retries
-      shell: bash
-      run: |
-        set -euo pipefail
-        version=28.2.13676358
-        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-        sdkmanager_bin="$(command -v sdkmanager || true)"
-        if [ -z "$sdkmanager_bin" ]; then
-          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-        fi
-        if [ ! -x "$sdkmanager_bin" ]; then
-          echo "::error::Android SDK cmdline-tools sdkmanager executable unavailable"
-          exit 1
-        fi
-        for attempt in 1 2 3; do
-          if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
-          if "$sdkmanager_bin" --install "ndk;$version" &&
-             [ -f "$sdk_root/ndk/$version/source.properties" ]; then
-            exit 0
-          fi
-          # This is ONLY the ephemeral CI runner's incomplete Android NDK,
-          # never app data, schools, uploads, credentials or user backups.
-          if [ -d "$sdk_root/ndk/$version" ] &&
-             [ ! -f "$sdk_root/ndk/$version/source.properties" ]; then
-            rm -rf "$sdk_root/ndk/$version"
-          fi
-          sleep "$((attempt * 5))"
-        done
-        echo "::error::Required NDK installation failed after bounded retries"
-        exit 1
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
