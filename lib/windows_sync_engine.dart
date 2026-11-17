@@ -841,10 +841,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // until the broker returns a canonical Drive revision. It is no longer
     // an outgoing device upload; show it in the separate Drive delivery
     // journal, never as a second upload or fake foreground spinner.
+    bool hasExactCloudflareHandoff(Map<String,dynamic> row) =>
+        row['syncState']=='cloudAccepted' &&
+        row['schoolId']==_activeSchoolSyncId &&
+        row['operationId'] is String &&
+        RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
+        row['cloudTicketId'] is String &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
+        row['cloudTicketLane']=='records';
     final cloudOwned=general.docs.where(
-      (d)=>d.data()['syncState']=='cloudAccepted').toList();
+      (d)=>hasExactCloudflareHandoff(d.data())).toList();
     final foregroundRecords=general.docs.where(
-      (d)=>d.data()['syncState']!='cloudAccepted').toList();
+      (d)=>!hasExactCloudflareHandoff(d.data())).toList();
     final items = [
       ...foregroundRecords,
       ...documents.docs,
