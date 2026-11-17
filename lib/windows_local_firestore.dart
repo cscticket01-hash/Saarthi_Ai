@@ -2402,6 +2402,14 @@ class _LocalSchoolDatabase {
       try {
         if(origin!=_activeProfileId ||
             original['schoolId']!=school ||
+            // A receipt never licenses a generic business queue transition.
+            // Only the deliberately synthetic calendar canary may change
+            // outgoing ownership; student/file/financial rows must retain
+            // their current production revision-safe owner.
+            original['collection']!='school_calendar' ||
+            original['operation']!='set' ||
+            original['data'] is! Map ||
+            (original['data'] as Map)['syntheticTest']!=true ||
             original['operationId'] is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
             !RegExp(r'^[a-f0-9]{64}$').hasMatch(ticketId))
