@@ -100,3 +100,26 @@ test('provider old-owner read outage retries without erasing original file stage
  assert.equal(row.state,'retry');
  assert.equal((await delivery.status(school,lane,fileId)).driveState,'pending');
 });
+
+test('lost Google ACK after replacement recovers identical original op from signed readback',async()=>{
+ const {edge,row}=fake(),delivery=createCloudflareDelivery({edge,now:()=>2000});
+ await delivery.wholeFile(school,request);
+ let writes=0,reads=0;
+ const done=await delivery.drain(school,lane,async r=>{
+  if(r.action==='managed_upload_resumable'){
+   return r.operation==='begin'?{...drive,offset:0,committed:false,fileId:undefined}:drive;
+  }
+  if(r.operation==='read'){
+   reads++;
+   return{success:true,schoolId:school,syncProtocol:2,
+    pointRead:true,records:{[id]:newRecord}};
+  }
+  writes++;throw Error('Must not duplicate already committed Google write');
+ });
+ assert.equal(done.processed,1);
+ assert.equal(reads,1);
+ assert.equal(writes,0);
+ assert.equal(row.state,'completed');
+ assert.equal((await delivery.status(school,lane,fileId)).documentRecord.recordRevision,
+  'real-new-record-revision');
+});

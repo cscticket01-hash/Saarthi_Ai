@@ -241,6 +241,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      // Failed metadata CAS retains the SAME original file operation for retry.
      phase='publishDocument';
      const document=original.document;
+     let alreadyCommitted=null;
      if(typeof document.expectedRevision==='string' &&
         document.expectedRevision.length>0) {
       // Immutable ownership of the OLD document is checked by the backend,
@@ -254,7 +255,22 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
          !owned.records||typeof owned.records!=='object')
         fail(502,'DOCUMENT_OWNER_READ_UNVERIFIED');
       const old=owned.records[document.id];
-      if(!old||old.schoolId!==school||
+      // If Google committed this SAME immutable operation but the reply was
+      // lost before the Worker persisted it, the exact signed point-read
+      // is a valid completion proof. Do not mislabel our own replay as a
+      // stale owner or reissue a replacement write.
+      if(old?.schoolId===school&&old.id===document.id&&
+         old.studentId===document.data.studentId&&
+         old._syncDeleted!==true&&
+         old.documentRevision===document.operationId&&
+         old.contentHash===original.sha256&&
+         old.fileId===progress.fileId&&
+         old._syncOperationId===document.operationId&&
+         typeof old._syncRevision==='string'&&old._syncRevision.length>0&&
+         !/^(live-|cf-)/.test(old._syncRevision)){
+        alreadyCommitted={success:true,schoolId:school,syncProtocol:2,
+         recordRevision:old._syncRevision,record:old};
+      }else if(!old||old.schoolId!==school||
          old.studentId!==document.data.studentId||
          old._syncDeleted===true||
          old.documentRevision!==document.expectedRevision||
@@ -270,7 +286,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
       ...(document.expectedRevision!==undefined?{expectedRevision:document.expectedRevision}:{}),
       ...(document.expectedUploadedAt!==undefined?{expectedUploadedAt:document.expectedUploadedAt}:{}),
       data:{...document.data,fileId:progress.fileId,fileUrl:result.fileUrl}};
-     const ack=await deliver(write);
+     const ack=alreadyCommitted||await deliver(write);
      phase='verifyDocument';
      if(!verifiedRecord(ack,school,write))fail(502,'DOCUMENT_ACK_UNVERIFIED');
      let record=ack.record;
