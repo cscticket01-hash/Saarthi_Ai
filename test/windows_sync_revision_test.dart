@@ -697,8 +697,15 @@ void main(){
   expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);
   await tester.runAsync(()async{await item.reference.set({'syncState':'pending'},const SetOptions(merge:true));
   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},sendVersioned:(item)async=>'acknowledged-revision');
-  await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);engine.state.value=SchoolCloudState.synced;
-  await tester.pump();expect(find.text('Pending: 0'),findsOneWidget);expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
+  await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);
+  // Background read-only reconciliation must never keep the dashboard
+  // spinning after the original durable outgoing queue is empty.
+  await tester.pump();
+  expect(find.text('Pending: 0'),findsOneWidget);
+  expect(find.textContaining('Sync Status • Idle'),findsOneWidget);
+  expect(find.textContaining('Syncing 0 items'),findsNothing);
+  engine.state.value=SchoolCloudState.synced;
+  await tester.pump();expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
   expect(find.textContaining('2026-10-06'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());engine.lastSuccessfulSync=null;engine.state.value=SchoolCloudState.localReady;
  });
