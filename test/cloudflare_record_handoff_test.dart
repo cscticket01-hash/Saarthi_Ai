@@ -38,6 +38,15 @@ void main() {
       enabledTestSchool:school),false);
   });
 
+  test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
+    await db.collection('students_directory').doc('real-student')
+      .set({'schoolId':school,'name':'Real school record'});
+    final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final before=row.data();
+    await expectLater(db.recordOutboxCloudHandoff(
+      row.reference,before,ticketId:ticket),throwsStateError);
+    expect((await row.reference.get()).data(),before);
+  });
   test('original CAS is retained at Cloudflare acceptance; only broker Drive proof retires it', () async {
     await db.collection('school_calendar').doc('event-1')
       .set({'schoolId':school,'syntheticTest':true,'title':'Synthetic test'});
