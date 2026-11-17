@@ -20,7 +20,7 @@ function validateIntent(school,request){
     data.schoolId!==school||data.documentId!==intent.id||
     data.documentRevision!==intent.operationId||
     data.contentHash!==request.sha256||
-    data.fileName!==request.name||data.mimeType!==request.mime||
+    (typeof data.fileName!=='string'||!data.fileName||data.fileName.length>200)||data.mimeType!==request.mime||
     data.fileId!==undefined||data.fileUrl!==undefined||
     Object.keys(data).some(k=>k.startsWith('_sync')||
       /base64|localpath|password/i.test(k))||
