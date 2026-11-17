@@ -2121,14 +2121,10 @@ class WindowsBackendBridge {
       final revision = body['documentRevision'] as String;
       if (id.isNotEmpty && id.length <= 200 && !id.contains('/') &&
           RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(revision)) {
-        // An authenticated broker advertises this specific capability.
-        // Unsupported schools keep the previous, Drive-verified path.
-        final available = await cloud.api({
-          'action': 'managed/storage/check', 'schoolId': school,
-        }, token: token);
-        await ensureSchool();
-        if (available['brokerDocumentStageVersion'] == 1 &&
-            available['documentVersions'] == 1) {
+        // Capability was verified by this school's authenticated sync owner
+        // at connection/health setup. Save never synchronously waits for
+        // Google Apps Script health: Cloudflare takes immutable custody now.
+        if (WindowsFirebaseRemote.documentStageSupported) {
           final raw = body['fileBase64']?.toString() ?? '';
           final bytes = Uint8List.fromList(base64Decode(
             raw.contains(',') ? raw.split(',').last : raw,

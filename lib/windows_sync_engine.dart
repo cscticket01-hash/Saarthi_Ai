@@ -1787,6 +1787,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _changeWatch.reset();
       _changeHeadsSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
+      WindowsFirebaseRemote.documentStageSupported = false;
       _changeFeedSupported = false;
       _remoteFeed.stop();
       _lastIntegrityAttempt = null;
@@ -2273,6 +2274,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           WindowsFirebaseRemote.edgeDeliverySupported =
               health['brokerEdgeDeliveryVersion'] == 1;
+          WindowsFirebaseRemote.documentStageSupported =
+              health['brokerDocumentStageVersion'] == 1 &&
+              health['documentVersions'] == 1 &&
+              health['uploadResumableVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&
               health['brokerRecordWriteBatchVersion'] == 1;

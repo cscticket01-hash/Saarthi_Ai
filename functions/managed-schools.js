@@ -1640,11 +1640,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       hash(bytes)!==b.chunkSha256)
     fail(400,'Invalid document chunk SHA-256');
   }else{
-   const capability=await cachedRead(uploadCapabilities,m.schoolId,
-     ()=>signedRequest(m,{action:'managed_health'}),300000);
-   if(capability.schoolId!==m.schoolId||capability.storageReady!==true||
-      capability.uploadResumableVersion!==1)
-    fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+   // Verified on school setup; do not wait on Google Script availability
+   // while saving durable bytes at Cloudflare. Broker retries Drive later.
+   const configured=await cachedRead(storageStates,m.schoolId,
+     ()=>db.doc('school_storage_private/'+m.schoolId).get());
+   if(!configured.exists||configured.data().ready!==true)
+    fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
   }
   const out=await edgeDelivery.file(m.schoolId,{
    action:'managed_upload_resumable',operation:b.operation,
@@ -1692,11 +1693,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      hash(bytes)!==meta.contentHash)
    fail(400,'Document content SHA-256 mismatch');
   // No client may obtain a Cloudflare ACK for an unconfigured Drive owner.
-  const capability=await cachedRead(uploadCapabilities,m.schoolId,
-   ()=>signedRequest(m,{action:'managed_health'}),300000);
-  if(capability.schoolId!==m.schoolId||capability.storageReady!==true||
-     capability.uploadResumableVersion!==1)
-   fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+  // Only durable per-school linkage is required for Cloudflare staging.
+  // Provider health is a later server background dependency, not an ACK gate.
+  const configured=await cachedRead(storageStates,m.schoolId,
+    ()=>db.doc('school_storage_private/'+m.schoolId).get());
+  if(!configured.exists||configured.data().ready!==true)
+   fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
   const result=await edgeDelivery.wholeFile(m.schoolId,{
    uploadKey:b.uploadKey,name:b.name,mime:b.mime,base64:b.base64,
    document:clean(d)});
