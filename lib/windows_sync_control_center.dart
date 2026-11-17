@@ -828,29 +828,24 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final recordDownloads = (inbound['recordDownloads'] as num? ?? 0).toInt();
     final remoteChecks = (inbound['remoteChecks'] as num? ?? 0).toInt();
     final mediaFiles = (inbound['mediaFiles'] as num? ?? 0).toInt();
-    final hasUploads = uploadCount > 0 || incomingCount > 0;
+    final hasUploads = uploadCount > 0;
     final stalled = _syncStalledFor(details);
-    // Once all locally durable outbound ACKs are complete and no incoming
-    // work is queued, background Drive receipt checks must not hold the
-    // user's sync spinner open. Never infer Idle from a network request alone.
+    // A remote change hint / inbound download is NEVER a device upload.
+    // Only the exact original operation's durable queue settlement can
+    // reduce uploadCount, so an unverified document stays pending.
     final deviceIdle = details['displayState'] == 'idle' && !hasUploads;
-    final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads && !deviceIdle;
-    final checking = !engine.isPaused && !deviceIdle && (checkingOnly || engine.isCheckingCloud);
-    final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
-    final phase = engine.isPaused ? 'paused' : stalled ? 'stalled' :
-        deviceIdle ? 'idle' : checking ? 'checking' :
-        engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
-        details['displayState']?.toString() ??
-        (syncing
-            ? 'syncing'
-            : engine.isPaused
-            ? 'paused'
-            : (details['needsAttention'] is num &&
-                  details['needsAttention'] > 0)
-            ? 'needsAttention'
-            : (details['pending'] is num && details['pending'] > 0)
-            ? 'pending'
-            : 'idle');
+    final checking = !engine.isPaused && !deviceIdle &&
+        !hasUploads && engine.isCheckingCloud;
+    final transferActive = engine.isSyncing && !engine.isPaused &&
+        hasUploads && ManagedSchoolSession.activeTransfers.value > 0;
+    final phase = projectWindowsDevicePhase(
+      durableState: details['displayState']?.toString(),
+      uploadPending: uploadCount,
+      syncing: engine.isSyncing,
+      transferActive: transferActive,
+      paused: engine.isPaused,
+      stalled: stalled,
+    );
     final phaseLabels = {
       'checking': 'Checking cloud',
       'preparing': 'Preparing changed data',
@@ -863,10 +858,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'idle': 'Idle',
       'paused': 'Paused',
     };
-    final phaseLabel = busy ? 'Checking' : phase == 'pending' && uploadCount == 0 && incomingCount > 0
-        ? (remoteChecks > 0 && recordDownloads == 0 && mediaFiles == 0
-            ? 'Cloud check queued' : 'Incoming work')
-        : (phaseLabels[phase] ?? 'Unknown');
+    final phaseLabel = phaseLabels[phase] ?? 'Unknown';
     final phaseColor = phase == 'needsAttention' || phase == 'stalled'
         ? const Color(0xFFFFC153)
         : _cyan;
@@ -911,13 +903,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
                     cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
                     drive:driveLabel,
-                    pending:uploadCount + incomingCount,
-                    pendingText:inbound.isNotEmpty
-                        ? windowsSyncFlowPendingText(uploadCount,inbound)
-                        : null,
+                    pending:uploadCount,
+                    pendingText:uploadCount > 0
+                        ? '$uploadCount uploads'
+                        : '0 pending',
                     lastMicros:details['lastVerifiedTransferMicros'] as int?,
-                    active:engine.isPaused?const {}:WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
-                      .where((lane)=>lane=='local'||!checking&&hasUploads).toSet(),
+                    active:engine.isPaused || deviceIdle
+                      ? const {}
+                      : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
+                        .where((lane)=>lane=='local'||hasUploads).toSet(),
                   ),
                   if (incomingCount > 0) Padding(
                     padding: const EdgeInsets.only(top: 10),
@@ -1258,6 +1252,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ? null
                     : () =>
                           (engine.isSyncing || syncCommandRunning) &&
+                              ((engine.details.value['pending'] as num? ?? 0) > 0) &&
                               !engine.isPaused
                           ? _run(
                               () => (widget.pauseRequest ?? engine.pauseSync)(
@@ -1266,12 +1261,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             )
                           : _startManualSync(),
                 icon: Icon(
-                  (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                  (engine.isSyncing || syncCommandRunning) &&
+                          ((engine.details.value['pending'] as num? ?? 0) > 0) &&
+                          !engine.isPaused
                       ? Icons.pause
                       : Icons.sync,
                 ),
                 label: Text(
-                  (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                  (engine.isSyncing || syncCommandRunning) &&
+                          ((engine.details.value['pending'] as num? ?? 0) > 0) &&
+                          !engine.isPaused
                       ? 'Pause Sync'
                       : 'Sync Now',
                 ),
