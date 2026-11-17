@@ -7421,28 +7421,51 @@ function VS_binaryMetadata(file,includeBytes) {
 }
 function VS_binaryInventory(b) {
   const root=VS_managedRoot(),pending=[],all=[],seen={};let limited=false,visited=0;
-  const started=Date.now(),folders=root.getFolders();let rootScanned=0;while(folders.hasNext()) {if(++rootScanned>250||Date.now()-started>6000){limited=true;break;}const f=folders.next();if(VS_BINARY_FOLDERS.indexOf(f.getName())>=0)pending.push(f);if(pending.length>250){limited=true;break;}}
+  const started=Date.now(),folders=root.getFolders();let rootScanned=0;
+  while(folders.hasNext()) {
+    if(++rootScanned>250||Date.now()-started>6000){limited=true;break;}
+    const f=folders.next();if(VS_BINARY_FOLDERS.indexOf(f.getName())>=0)pending.push(f);
+    if(pending.length>250){limited=true;break;}
+  }
   while(pending.length) {
     if(++visited>250||all.length>=1000||Date.now()-started>6000){limited=true;break;}
     const folder=pending.shift();if(seen[folder.getId()]){limited=true;continue;}seen[folder.getId()]=true;
     if(!VS_binaryFolderAllowed(folder))continue;
-    const children=folder.getFolders();while(children.hasNext()){if(pending.length+visited>=250){limited=true;break;}pending.push(children.next());}
-    const files=folder.getFiles();while(files.hasNext()) {if(all.length>=1000||Date.now()-started>6000){limited=true;break;}const file=files.next();
+    const children=folder.getFolders();
+    while(children.hasNext()){if(pending.length+visited>=250){limited=true;break;}pending.push(children.next());}
+    const files=folder.getFiles();
+    while(files.hasNext()) {
+      if(all.length>=1000||Date.now()-started>6000){limited=true;break;}
+      const file=files.next();
       if(!file.isTrashed()&&String(file.getMimeType()).indexOf('application/vnd.google-apps.')!==0)all.push(file);
     }
   }
   const unique=all.filter((file,index)=>all.findIndex(other=>other.getId()===file.getId())===index);
-  unique.sort((a,c)=>a.getId()<c.getId()?-1:a.getId()>c.getId()?1:0);
-  const inventoryManifest=unique.map(f=>({id:f.getId(),size:f.getSize(),updated:f.getLastUpdated().getTime()})),inventoryFingerprint=VS_layoutHash(inventoryManifest);
-  const candidates=unique.filter(f=>!b.cursor||f.getId()>b.cursor),items=[];let bytes=0,cursor=b.cursor||'',unverified=false;
+  unique.sort((x,y)=>x.getId()<y.getId()?-1:x.getId()>y.getId()?1:0);
+  // The stable page fingerprint uses cheap immutable identities only. Size, modified time
+  // and bytes are measured lazily inside the bounded page scan below.
+  const inventoryManifest=unique.map(file=>({id:file.getId(),name:file.getName()}));
+  const inventoryFingerprint=VS_layoutHash(inventoryManifest);
+  const candidates=unique.filter(file=>!b.cursor||file.getId()>b.cursor),items=[];
+  let bytes=0,cursor=b.cursor||'',unverified=false;
+  const metadataBudgetMs=6000,pageBudgetMs=12000;
   for(const file of candidates) {
-    if(items.length>=5)break;const size=file.getSize();if(size>VS_BINARY_MAX_BYTES||size<1){items.push({fileId:file.getId(),name:file.getName(),mime:file.getMimeType(),sizeBytes:size,verification:'unavailable',reason:'size_limit'});unverified=true;cursor=file.getId();continue;}
-    if(bytes+size>VS_BINARY_MAX_BYTES)break;
-    const verified=VS_binaryMetadata(VS_binaryFile(file.getId()),false),captured=inventoryManifest.find(entry=>entry.id===file.getId());
-    if(verified.sizeBytes!==captured.size||verified.version.indexOf(String(captured.updated)+'-'+String(captured.size)+'-')!==0)throw new Error('School binary changed during verification');
-    items.push({...verified,verification:'bytes_hashed'});bytes+=size;cursor=file.getId();
+    if(items.length>=5)break;
+    if(items.length>0&&Date.now()-started>=metadataBudgetMs){limited=true;break;}
+    const size=file.getSize();
+    if(size>VS_BINARY_MAX_BYTES||size<1) {
+      items.push({fileId:file.getId(),name:file.getName(),mime:file.getMimeType(),sizeBytes:size,verification:'unavailable',reason:'size_limit'});
+      unverified=true;cursor=file.getId();
+    } else {
+      if(bytes+size>VS_BINARY_MAX_BYTES)break;
+      const verified=VS_binaryMetadata(VS_binaryFile(file.getId()),false);
+      items.push({...verified,verification:'bytes_hashed'});bytes+=size;cursor=file.getId();
+    }
+    // A slow hash may consume this response's page budget, but it is not a metadata
+    // scan failure. Return the last verified cursor and resume on the next request.
+    if(Date.now()-started>=pageBudgetMs)break;
   }
-  const more=candidates.some(f=>f.getId()>cursor);
+  const more=candidates.some(file=>file.getId()>cursor);
   return {binaryInventoryVersion:1,inventoryFingerprint:inventoryFingerprint,inventoryScope:'application_media_folders',observedAt:Date.now(),items:items,nextCursor:more?cursor:null,partial:limited||more||unverified,scanLimited:limited,coverageComplete:!limited&&!more&&!unverified,hashedBytes:bytes};
 }
 function VS_binaryDownload(b) {
