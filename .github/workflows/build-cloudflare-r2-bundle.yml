@@ -42,7 +42,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --orphan artifacts/cloudflare-r2-worker-20261117
-          git rm -rf --cached . >/dev/null
+          # Orphan checkout already has an empty index; removing "." aborts it.
           mkdir -p bundles
           cp "$RUNNER_TEMP/saarthi-worker.js" bundles/worker.js
           printf '%s\n' "$GITHUB_SHA" > bundles/source-sha.txt
