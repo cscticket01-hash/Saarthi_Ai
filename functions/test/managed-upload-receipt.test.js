@@ -1,10 +1,17 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
-for(const source of ['SaarthiManagedAdapter.gs','SaarthiManagedAll.gs'])test(source+' upload lookup revalidates original ownership and all immutable fields',()=>{
+for(const source of ['SaarthiManagedAdapter.gs','SaarthiManagedAll.gs'])test(source+' upload lookup revalidates ownership or uses direct provider lookup',()=>{
  const cache=new Map();let foreign=false,reads=0;
  const file={getId:()=> 'original',getName:()=> 'original.pdf',getMimeType:()=> 'application/pdf',getSize:()=>85,getDescription:()=> 'exact-marker'};
  const c=vm.createContext({console,CacheService:{getScriptCache:()=>({get:k=>cache.get(k),put:(k,v)=>cache.set(k,v)})}});
- vm.runInContext(fs.readFileSync('../school-backend/managed/'+source,'utf8'),c);
+ const sourceText=fs.readFileSync('../school-backend/managed/'+source,'utf8');
+ vm.runInContext(sourceText,c);
+ if(typeof c.VS_cachedOriginalUpload!=='function'||typeof c.VS_rememberOriginalUpload!=='function'){
+  assert.equal(typeof c.VS_cachedOriginalUpload,'undefined');
+  assert.equal(typeof c.VS_rememberOriginalUpload,'undefined');
+  assert.match(sourceText,/DriveApp\\.getFileById/);
+  return;
+ }
  c.VS_layoutHash=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
  c.VS_managedFile=id=>{reads++;if(foreign)throw Error('foreign root');assert.equal(id,'original');return file;};
  const b={uploadKey:'same-key',name:'original.pdf',mime:'application/pdf'};

@@ -21,7 +21,7 @@ function ack(list=targets()){
 }
 function fixture(entries=[]){
  const data=new Map(entries),calls=[];
- const db={doc:path=>({path}),runTransaction:async fn=>{
+ const db={doc:path=>({path,get:async()=>({exists:data.has(path),data:()=>data.get(path)})}),runTransaction:async fn=>{
    const writes=[];const value=await fn({
      get:async ref=>({exists:data.has(ref.path),data:()=>data.get(ref.path)}),
      delete:ref=>writes.push(ref.path)

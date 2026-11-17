@@ -5,6 +5,7 @@ enum SyncFailureKind {
   timeout,
   server,
   quota,
+  r2StorageFull,
   authorization,
   configuration,
   conflict,
@@ -78,6 +79,7 @@ class SyncRecoveryDecision {
     SyncFailureKind.server =>
       'School server could not complete sync. Automatic recovery will retry.',
     SyncFailureKind.quota => 'School cloud request limit reached. Recovery is waiting before retrying.',
+    SyncFailureKind.r2StorageFull => 'Cloudflare school storage reached the 8 GB limit. Local pending data is safe; retry will resume when space is available.',
     SyncFailureKind.authorization =>
       'School authorization needs verification. Pending data is retained.',
     SyncFailureKind.configuration =>
@@ -107,6 +109,10 @@ class SyncRecoveryDecision {
     bool networkPathFailed = false,
     bool recordConflict = false,
   }) {
+    if (code == 'R2_CAPACITY_EXCEEDED' && {503, 507}.contains(status)) {
+      return SyncRecoveryDecision(SyncFailureKind.r2StorageFull, retry: true,
+        retryAfterMs: retryAfterMs > 0 ? retryAfterMs : 3600000);
+    }
     if ({'FILE_MISSING','FILE_UNREADABLE'}.contains(code)) {
       return const SyncRecoveryDecision(SyncFailureKind.fileMissing, review:true, independentRecords:true);
     }

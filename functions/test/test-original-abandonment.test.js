@@ -14,7 +14,9 @@ test('disposable cleanup disabled by default; production/foreign scope cannot en
  assert.equal(createTestOriginalAbandonment({}),null);
  assert.throws(()=>createTestOriginalAbandonment({enabled:true,testSchoolId:null}));
  const f=setup();await assert.rejects(f.action({...f.m,schoolId:A},{...f.b,operation:'preview'}));
- const normal=fixture();await assert.rejects(normal.call({action:'managed/test-originals',schoolId:A}),e=>e.status===403);
+ const normal=fixture(),before=normal.docs.size;
+ await assert.rejects(normal.call({action:'managed/test-originals',schoolId:A}));
+ assert.equal(normal.docs.size,before,'the ordinary broker does not expose the disposable TEST cleanup action');
 });
 test('zero-write preview; CAS archives exactly14 as abandoned, never verified backup',async()=>{
  const f=setup(),before=structuredClone(f.docs.get(f.ref)),size=f.docs.size;

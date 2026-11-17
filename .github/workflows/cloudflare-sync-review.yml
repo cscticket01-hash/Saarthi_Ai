@@ -7,6 +7,18 @@ on:
       - 'cloudflare-sync/test/runtime.test.mjs'
       - 'functions/managed-schools.js'
       - '.github/workflows/cloudflare-sync-review.yml'
+      - 'cloudflare-sync/test/r2-hard-cap-runtime.test.mjs'
+      - 'cloudflare-sync/test/r2-verified-expiry-runtime.test.mjs'
+      - 'functions/cloudflare-sync.js'
+      - 'functions/test/cloudflare-r2-capacity.test.js'
+      - 'functions/test/delete-everywhere-firebase.test.js'
+      - 'functions/test/managed-upload-receipt.test.js'
+      - 'functions/test/managed-write-request-context.test.js'
+      - 'functions/test/test-original-abandonment.test.js'
+      - 'lib/school_backend_transport.dart'
+      - 'lib/sync_recovery_policy.dart'
+      - 'test/sync_recovery_policy_test.dart'
+      - 'school-backend/managed/SaarthiManagedAdapter.gs'
   pull_request:
     paths:
       - 'lib/document_processing_engine.dart'

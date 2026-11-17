@@ -2,6 +2,14 @@
 const {createHmac,timingSafeEqual,createHash,createDecipheriv}=require('node:crypto');
 const {createProviderPressure,retryAfterMillis,quotaError}=require('./provider-pressure');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
+function isOriginalR2Write(lane,command){
+ command=String(command||'');
+ return (lane==='records'&&command==='enqueue')||
+  (/^file-[a-f0-9]{64}$/.test(lane)&&['part','putSmall'].includes(command))||
+  (lane==='notices'&&command==='write')||
+  (/^attendance-[a-f0-9]{2}$/.test(lane)&&command==='create')||
+  (lane==='live'&&['commit','bundleCommit','bundlePublish'].includes(command));
+}
 function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,providerPressureJournal=null}) {
  if(!url&&!key)return null;
  const endpoint=new URL(url);if(endpoint.protocol!=='https:'||endpoint.username||endpoint.password||endpoint.pathname!=='/'||endpoint.search||endpoint.hash||!key||key.length<32)throw Error('Invalid Cloudflare sync configuration');
@@ -20,6 +28,12 @@ function createCloudflareSync({url,key,schools=[],fetchImpl=fetch,now=Date.now,p
   const reader=r.body?.getReader();let length=0;const parts=[];
   if(reader){try{for(;;){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>8*1024*1024){await reader.cancel();throw Error('Cloudflare response too large');}parts.push(Buffer.from(value));}}finally{reader.releaseLock();}}
   const result=JSON.parse(Buffer.concat(parts).toString('utf8'));
+  if(r.status===507&&result.success===false&&(result.schoolId==null||result.schoolId===school)&&
+     result.code==='R2_CAPACITY_EXCEEDED'&&isOriginalR2Write(lane,body.command)){
+   throw Object.assign(Error('Cloudflare school storage reached the 8 GB limit; local pending data is safe.'),{
+    status:507,code:'R2_CAPACITY_EXCEEDED',publicMessage:true,retryAfterMs:3600000
+   });
+  }
   if(!r.ok||result.success!==true||result.schoolId!==school){
    const message=result.message;
    // Only this signed, school-admin TEST retry may expose a fixed diagnostic.
