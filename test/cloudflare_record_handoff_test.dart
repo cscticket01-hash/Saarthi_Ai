@@ -66,8 +66,8 @@ void main() {
       (before['queuedAt'] as Timestamp).millisecondsSinceEpoch);
   });
   test('original CAS is retained at Cloudflare acceptance; only broker Drive proof retires it', () async {
-    await db.collection('school_calendar').doc('event-1')
-      .set({'schoolId':school,'syntheticTest':true,'title':'Synthetic test'});
+    await db.collection('students_directory').doc('real-student-1')
+      .set({'schoolId':school,'name':'Real student saved locally'});
     final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
     final original=row.data();
     expect(original['operationId'],isA<String>());
@@ -76,7 +76,7 @@ void main() {
     await WindowsDriveDeliveryQueue.retainEdge({
       'source':'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       'schoolId':school,'profileId':db.activeProfileId,
-      'action':'managed/records','collection':'school_calendar','id':'event-1',
+      'action':'managed/records','collection':'students_directory','id':'real-student-1',
       'operation':'write','originalOperationId':original['operationId'],
       'proof':{'success':true,'schoolId':school,
         'edgeDeliveryVersion':1,'cloudflareAccepted':true,
@@ -89,7 +89,7 @@ void main() {
       sendVersioned:(item) async {
         mutationCalls++;
         throw CloudflareRecordHandoff(
-          school:school,collection:'school_calendar',id:'event-1',
+          school:school,collection:'students_directory',id:'real-student-1',
           operationId:original['operationId'],ticketId:ticket);
       },
     );
@@ -110,7 +110,7 @@ void main() {
       return {'success':true,'schoolId':school,
         'cloudflareAccepted':true,'driveState':'verified',
         'syncProtocol':2,'recordRevision':'drive-revision-001',
-        'record':{'schoolId':school,'id':'event-1',
+        'record':{'schoolId':school,'id':'real-student-1',
           '_syncRevision':'drive-revision-001',
           '_syncOperationId':original['operationId']}};
     });
