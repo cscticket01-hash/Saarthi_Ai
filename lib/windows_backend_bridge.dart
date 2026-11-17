@@ -1119,17 +1119,23 @@ class WindowsBackendBridge {
                 // A newer local generation must not be cleared by an older ACK.
                 return;
               }
+              final localRef = FirebaseFirestore.instance
+                  .collection('_local_student_documents').doc(queued.id);
+              final localBefore = (await localRef.get()).data();
+              if (localBefore == null ||
+                  localBefore['schoolId'] != record['schoolId'] ||
+                  localBefore['documentRevision'] != record['documentRevision'] ||
+                  localBefore['contentHash'] != payload['contentHash']) return;
               final batch = FirebaseFirestore.instance.batch();
+              batch.requireUnchanged(queued.reference, current);
+              batch.requireUnchanged(localRef, localBefore);
               batch.set(queued.reference, {
                 'syncState': 'cloudAccepted',
                 'cloudTicketId': expectedTicket,
                 'cloudTicketLane': 'file-$expectedTicket',
                 'cloudContentHash': payload['contentHash'],
               }, SetOptions(merge: true));
-              batch.set(
-                FirebaseFirestore.instance
-                    .collection('_local_student_documents')
-                    .doc(queued.id),
+              batch.set(localRef,
                 {'syncState': 'CloudflareSaved'},
                 SetOptions(merge: true),
               );
@@ -2114,7 +2120,7 @@ class WindowsBackendBridge {
       final id = body['documentId'] as String;
       final revision = body['documentRevision'] as String;
       if (id.isNotEmpty && id.length <= 200 && !id.contains('/') &&
-          RegExp(r'^[A-Za-z0-9_-]{16,100}).hasMatch(revision)) {
+          RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(revision)) {
         // An authenticated broker advertises this specific capability.
         // Unsupported schools keep the previous, Drive-verified path.
         final available = await cloud.api({

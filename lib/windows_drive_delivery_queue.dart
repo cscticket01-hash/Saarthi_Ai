@@ -433,6 +433,10 @@ class WindowsDriveDeliveryQueue {
                   () async {
                     _scope(school, profile);
                     final batch = db.batch();
+                    // Exact local generation compare-and-swap inside the
+                    // SQLite writer. A concurrent replacement must survive.
+                    batch.requireUnchanged(ref, original);
+                    batch.requireUnchanged(local, localRow);
                     batch.set(local, {
                       'syncState': 'Synced',
                       'cloudFileUrl': proof['fileUrl'],
