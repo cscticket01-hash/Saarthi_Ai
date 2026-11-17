@@ -499,6 +499,16 @@ class CentralSchoolCloud {
       jsonEncode([school,'managed_records',[collection,id,operationId]]))).toString();
   }
 
+  static String expectedFileStageTicket(Map body) {
+    final school=body['schoolId'],uploadKey=body['uploadKey'];
+    if(school is! String||!validSchoolId(school)||
+        uploadKey is! String||uploadKey.isEmpty||
+        !RegExp(r'^[A-Za-z0-9_-]{1,150}$').hasMatch(uploadKey))
+      throw StateError('Original school-bound file upload identity required.');
+    return edge_crypto.sha256.convert(
+        utf8.encode(jsonEncode([school,uploadKey]))).toString();
+  }
+
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
@@ -549,6 +559,11 @@ class CentralSchoolCloud {
         if (body['collection'] is String) 'collection': body['collection'],
         if (body['id'] is String) 'id': body['id'],
         if (body['operationId'] is String) 'originalOperationId': body['operationId'],
+        if (body['documentIntent'] is Map) ...{
+          'collection':'documents',
+          'id':(body['documentIntent'] as Map)['id'],
+          'originalDocumentRevision':(body['documentIntent'] as Map)['operationId'],
+        },
         if (body['operation'] == 'write' || body['operation'] == 'delete') 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
@@ -583,9 +598,13 @@ class CentralSchoolCloud {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
       if(returnAfterDurableCloudflareHandoff &&
-          (action!='managed/records' ||
-           ticket['lane']!='records' ||
-           ticket['id']!=expectedRecordStageTicket(body)))
+          !(action=='managed/records' &&
+            ticket['lane']=='records' &&
+            ticket['id']==expectedRecordStageTicket(body) ||
+            action=='managed/file/upload' &&
+            body['documentIntent'] is Map &&
+            ticket['lane']=='file-${ticket['id']}' &&
+            ticket['id']==expectedFileStageTicket(body)))
         throw StateError('Cloudflare stage ticket is not bound to the original operation.');
       acceptedTicket ??= ticket;
       check();
@@ -899,6 +918,7 @@ class CentralSchoolCloud {
     String mime,
     String raw, {
     String? uploadKey,
+    Map<String,dynamic>? documentIntent,
   }) async {
     final data = await saved();
     if (data.isEmpty) throw StateError('School Drive is not connected.');
@@ -907,7 +927,7 @@ class CentralSchoolCloud {
     if (data['managed'] == true && uploadKey != null) {
       final encoded = raw.contains(',') ? raw.split(',').last : raw;
       // Small files and mixed-version deployments retain the verified full upload.
-      if (encoded.length >= 700000) {
+      if (documentIntent==null && encoded.length >= 700000) {
         final capability = await api({'action':'managed/storage/check',
           'schoolId':data['schoolId']}, token:await firebaseToken());
         if (capability['uploadResumableVersion'] == 1 &&
@@ -932,7 +952,9 @@ class CentralSchoolCloud {
         'name': name,
         'mime': mime,
         'base64': raw.contains(',') ? raw.split(',').last : raw,
-      }, token: await firebaseToken());
+        if(documentIntent!=null) 'documentIntent':documentIntent,
+      }, token: await firebaseToken(),
+         returnAfterDurableCloudflareHandoff:documentIntent!=null);
     final token = await googleToken(data);
     final bytes = base64Decode(raw.contains(',') ? raw.split(',').last : raw);
     if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024)
