@@ -371,10 +371,10 @@ class WindowsDriveDeliveryQueue {
                 // retry the final receipt rather than lose that race or
                 // declare the local original completed.
                 if(original['syncState']!='cloudAccepted' &&
-                    original['collection']=='school_calendar' &&
-                    original['data'] is Map &&
-                    (original['data'] as Map)['syntheticTest']==true)
-                  throw StateError('Original cloud handoff transition is still pending.');
+                    original['cloudTicketId']==null &&
+                    original['operationId']==item['originalOperationId'] &&
+                    original['schoolId']==school)
+                  throw StateError('Original Cloudflare handoff CAS is not yet committed.');
                 if(original['syncState']=='cloudAccepted') {
                   if(!verifiedStagedRecordFinal(original,item,proof,school))
                     throw StateError('Canonical staged record revision unverified; original retained.');
