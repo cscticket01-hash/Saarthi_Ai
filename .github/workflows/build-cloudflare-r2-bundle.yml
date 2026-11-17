@@ -1,0 +1,51 @@
+name: Build reviewed Cloudflare R2 Worker bundle (source-pinned)
+on:
+  push:
+    branches:
+      - ci/cloudflare-r2-bundle-20261117
+    paths:
+      - '.github/workflows/build-cloudflare-r2-bundle.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install immutable Worker dependencies
+        working-directory: cloudflare-sync
+        run: npm ci --ignore-scripts
+      - name: Validate R2 code, typecheck and produce dry-run release bundle
+        working-directory: cloudflare-sync
+        run: |
+          set -euo pipefail
+          cp .dev.vars.example .dev.vars
+          npm run types
+          npm run check
+          npm run build
+          npm test
+          test -s dist/worker.js
+      - name: Assert private R2 production standby is denied to every school
+        run: node --test .github/scripts/sync3_production_r2_standby.test.cjs
+      - name: Publish non-secret exact SHA bundle on isolated artifacts branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp cloudflare-sync/dist/worker.js "$RUNNER_TEMP/saarthi-worker.js"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan artifacts/cloudflare-r2-worker-20261117
+          git rm -rf --cached . >/dev/null
+          mkdir -p bundles
+          cp "$RUNNER_TEMP/saarthi-worker.js" bundles/worker.js
+          printf '%s\n' "$GITHUB_SHA" > bundles/source-sha.txt
+          git add -f bundles/worker.js bundles/source-sha.txt
+          git commit -m "[hosting-only] Publish source-pinned compiled Cloudflare R2 Worker bundle"
+          git push origin HEAD:refs/heads/artifacts/cloudflare-r2-worker-20261117
