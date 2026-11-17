@@ -1363,7 +1363,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentFileHandoffVersion:allEdge(m.schoolId)&&cloudflareAtomicSmallFiles===true?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
@@ -1613,7 +1613,21 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return {success:true,schoolId:m.schoolId,uploadResumableVersion:1,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,offset:out.offset,committed:out.committed,...(out.cloudflareAccepted===true&&!out.committed&&out.driveState==='receiving'?{cloudflareAccepted:true,driveState:'receiving'}:{}),...(out.committed?{fileId:out.fileId,fileUrl:'https://drive.google.com/file/d/'+out.fileId+'/view'}:{})};
  }
  if(action==='managed/file/upload'){
-  if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});
+  if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');
+  if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');
+  if(b.documentIntent!==undefined){
+   if(!allEdge(m.schoolId)||m.edgeDeliveryVersion!==1||
+      !cloudflareAtomicSmallFiles||typeof b.uploadKey!=='string')
+     fail(412,'Cloudflare document handoff not enabled');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(bytes.length<1||bytes.length>20*1024*1024||
+      bytes.toString('base64')!==b.base64)fail(400,'Invalid document bytes');
+   require('./document-file-intent').validateIntent(m.schoolId,{
+     name:b.name,mime:b.mime,sha256:hash(bytes),documentIntent:b.documentIntent});
+  }
+  return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,
+    ...(b.uploadKey?{uploadKey:b.uploadKey}:{}),
+    ...(b.documentIntent!==undefined?{documentIntent:b.documentIntent}:{})});
  }
  if(action==='managed/file/read'){if(!/^[A-Za-z0-9_-]{1,200}$/.test(b.fileId||''))fail(400,'Invalid file ID');return signed(m,{action:'managed_file',fileId:b.fileId});}
  if(action==='managed/recycle'){
