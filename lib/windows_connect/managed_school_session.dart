@@ -45,7 +45,8 @@ class ManagedSchoolSession {
     return {'action':'managed/device/register','deviceManagementProtocol':2,'deviceName':name.isNotEmpty&&name.length<=100?name:'Windows PC','deviceOs':'Windows','type':'pc'};
   }
   static Future<Map<String,dynamic>> call(String action,[Map<String,dynamic> body=const {}]) => callForSchool(null, action, body);
-  static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body) async {
+  static Future<Map<String,dynamic>> callForSchool(String? expectedSchoolId, String action, Map<String,dynamic> body,
+      {bool returnAfterDurableCloudflareHandoff=false}) async {
     final saved=await CentralSchoolCloud.saved();verifyBuildEndpoint(saved['endpoint']?.toString()??'');if(saved['managed']!=true)throw StateError('Managed school login required');
     if(expectedSchoolId != null && saved['schoolId'] != expectedSchoolId) throw StateError('School changed before operation.');
     final cloud=CentralSchoolCloud(endpoint:saved['endpoint'],expectedSchoolId:saved['schoolId'],
@@ -63,7 +64,9 @@ class ManagedSchoolSession {
       if(dataTransfer){WindowsSyncEvidence.enter(dataSchool,'cloud');if(action.startsWith('managed/file/'))WindowsSyncEvidence.enter(dataSchool,'drive');}
       late final Map<String,dynamic> result;
       try {
-        result=await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},token:token);
+        result=await cloud.api({...metadata,'action':action,...body,'schoolId':saved['schoolId']},
+          token:token,
+          returnAfterDurableCloudflareHandoff:returnAfterDurableCloudflareHandoff);
       } finally {if(visibleTransfer)activeTransfers.value--;if(dataTransfer){WindowsSyncEvidence.leave(dataSchool,'cloud');if(action.startsWith('managed/file/'))WindowsSyncEvidence.leave(dataSchool,'drive');}}
       final currentIdentity = await CentralSchoolCloud.saved();
       if (currentIdentity['schoolId'] != saved['schoolId'] || currentIdentity['uid'] != saved['uid']) {
