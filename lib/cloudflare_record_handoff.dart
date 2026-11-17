@@ -15,22 +15,26 @@ class CloudflareRecordHandoff implements Exception {
       'provider delivery is independently pending.';
 }
 
-/// Fail-closed canary gate. Old/new versions and school baselines must be
-/// reconciled BEFORE any real school is allowlisted. No school is enabled in
-/// a default production build.
+/// Real-school two-phase stage admission is negotiated from the existing,
+/// authenticated broker capability. A valid school ID by itself NEVER
+/// authorizes an early Cloudflare-only ACK.
 bool eligibleForRecordHandoff(
   Map item,
   String school, {
-  String enabledTestSchool = '',
+  required bool edgeDeliverySupported,
 }) {
-  return enabledTestSchool.isNotEmpty &&
-      enabledTestSchool == school &&
+  return edgeDeliverySupported &&
       RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) &&
       item['schoolId'] == school &&
-      item['collection'] == 'school_calendar' &&
-      item['operation'] == 'set' &&
+      item['collection'] is String &&
+      (item['collection'] as String).isNotEmpty &&
+      // Binary attachments and their Drive fileId-dependent metadata have a
+      // different owner; stage them only after a separate file-first handoff.
+      item['collection'] != 'documents' &&
+      item['atomicBundleId'] == null &&
+      item['priorDeletion'] == null &&
+      {'set','update'}.contains(item['operation']) &&
       item['data'] is Map &&
-      (item['data'] as Map)['syntheticTest'] == true &&
       item['operationId'] is String &&
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['operationId']) &&
       item['baseCloudRevision'] is String;
@@ -52,10 +56,11 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       original['cloudTicketId']!=ticket||
       original['cloudTicketLane']!='records'||
       original['syncState']!='cloudAccepted'||
-      original['operation']!='set'||
-      original['collection']!='school_calendar'||
+      !{'set','update'}.contains(original['operation'])||
+      original['collection']=='documents'||
+      original['atomicBundleId']!=null||
+      original['priorDeletion']!=null||
       original['data'] is! Map||
-      (original['data'] as Map)['syntheticTest']!=true||
       proof['success']!=true||proof['schoolId']!=school||
       proof['cloudflareAccepted']!=true||
       proof['driveState']!='verified'||
