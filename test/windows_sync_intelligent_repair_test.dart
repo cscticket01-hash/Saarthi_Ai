@@ -434,7 +434,7 @@ void main() {
     });
   }
 
-  test('Cloudflare notices retain their dedicated lane while other batch work proceeds', () async {
+  test('Cloudflare first real school records bypass the legacy Drive batch owner', () async {
     WindowsFirebaseRemote.recordWriteBatchSupported = true;
     WindowsFirebaseRemote.edgeDeliverySupported = true;
     await db.collection('school_notices').doc('dedicated').set({'title': 'Keep queued'});
@@ -459,27 +459,14 @@ void main() {
     // tickets in a legacy Google-Drive-completion batch.
     expect(submitted, false);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(3));
-    // A broker without this capability retains exactly the older batched
-    // provider-verified path for backward-compatible schools.
-    WindowsFirebaseRemote.edgeDeliverySupported = false;
-    await WindowsFirebaseRemote.prepareManagedBatch(
-      school,canAdmit:()=>true,
-      prepareRecord:(ref,item,school)=>db.bindOutboxWireData(
-        ref,item,Map<String,dynamic>.from(item['data'] as Map),'snapshot2'),
-      send:(_,ops) async {
-        submitted=true;
-        expect(ops.map((op)=>op['collection']),everyElement('school_expenses'));
-        return {'schoolId':school,'syncProtocol':2,'recordWriteBatchVersion':1,
-          'acknowledgements':[for(final op in ops) {
-            'operationId':op['operationId'],'success':true,'recordRevision':'drive-verified'
-          }]};
-      },
-    );
-    expect(submitted,true);
     final notices = (await db.collection('_windows_firebase_outbox').get()).docs
       .where((row) => row.data()['collection'] == 'school_notices');
     expect(notices, hasLength(1));
     expect(notices.single.data()['syncState'], 'pending');
+    final expenses=(await db.collection('_windows_firebase_outbox').get()).docs
+      .where((row)=>row.data()['collection']=='school_expenses');
+    expect(expenses,hasLength(2));
+    expect(expenses.every((row)=>row.data()['syncState']=='pending'),true);
   });
 
   test('invalid batch receipt contracts pressure while preserving original queued operations', () async {
