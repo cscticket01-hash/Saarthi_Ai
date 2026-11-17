@@ -484,6 +484,21 @@ class CentralSchoolCloud {
       edge_crypto.sha256.convert(base64Decode(encoded)).toString()]))).toString();
   }
 
+  /// Match the broker's immutable single-record queue ticket. A 64-char
+  /// opaque token by itself is not proof that the staged operation is ours.
+  static String expectedRecordStageTicket(Map<String,dynamic> body) {
+    final school=body['schoolId'],collection=body['collection'],
+        id=body['id'],operationId=body['operationId'];
+    if(school is! String||!validSchoolId(school)||
+        collection is! String||collection.isEmpty||
+        id is! String||id.isEmpty||
+        operationId is! String||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(operationId))
+      throw StateError('Original school-scoped operation identity required.');
+    return edge_crypto.sha256.convert(utf8.encode(
+      jsonEncode([school,'managed_records',[collection,id,operationId]]))).toString();
+  }
+
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
@@ -567,6 +582,11 @@ class CentralSchoolCloud {
                acceptedTicket['id'] != ticket['id']))) {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
+      if(returnAfterDurableCloudflareHandoff &&
+          (action!='managed/records' ||
+           ticket['lane']!='records' ||
+           ticket['id']!=expectedRecordStageTicket(body)))
+        throw StateError('Cloudflare stage ticket is not bound to the original operation.');
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
