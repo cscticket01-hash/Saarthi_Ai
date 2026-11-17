@@ -853,13 +853,36 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       (d)=>hasExactCloudflareHandoff(d.data())).toList();
     final foregroundRecords=general.docs.where(
       (d)=>!hasExactCloudflareHandoff(d.data())).toList();
+    // R2 file bytes and the immutable original document generation have a
+    // separate Cloudflare owner. A school-scoped, exact staged ticket means
+    // no more OUTGOING device upload; it does not mean Drive was verified.
+    bool hasExactCloudflareDocumentHandoff(Map<String,dynamic> row) {
+      if (row['syncState'] != 'cloudAccepted' ||
+          row['schoolId'] != _activeSchoolSyncId ||
+          row['documentRevision'] is! String ||
+          !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
+              .hasMatch(row['documentRevision']) ||
+          row['contentHash'] is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash']) ||
+          row['cloudContentHash'] != row['contentHash'] ||
+          row['cloudTicketId'] is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) ||
+          row['cloudTicketLane'] != 'file-${row['cloudTicketId']}' ||
+          row['deleted'] == true ||
+          row['atomicBundleId'] != null) return false;
+      return true;
+    }
+    final cloudOwnedDocuments=documents.docs.where(
+      (d)=>hasExactCloudflareDocumentHandoff(d.data())).toList();
+    final foregroundDocuments=documents.docs.where(
+      (d)=>!hasExactCloudflareDocumentHandoff(d.data())).toList();
     final items = [
       ...foregroundRecords,
-      ...documents.docs,
+      ...foregroundDocuments,
       ...legacy.docs,
       ...restores,
     ];
-    final outbound = [...foregroundRecords, ...documents.docs, ...legacy.docs]
+    final outbound = [...foregroundRecords, ...foregroundDocuments, ...legacy.docs]
         .map((row) => row.data())
         .where(
           (row) =>
@@ -903,7 +926,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ...d.data(),
           '_queueCollection': '_windows_firebase_outbox',
         },
-      for (final d in documents.docs)
+      for (final d in foregroundDocuments)
         {
           'id': d.id,
           ...d.data(),
@@ -978,7 +1001,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
       'pending': items.length,
-      'cloudflareOwnedPendingDrive': cloudOwned.length,
+      'cloudflareOwnedPendingDrive': cloudOwned.length + cloudOwnedDocuments.length,
       'conflictCount': items
           .where(
             (d) =>
@@ -1006,7 +1029,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (binary?['damaged'] as int? ?? 0) +
             (binary?['unavailable'] as int? ?? 0),
       'documentPending':
-          documents.docs.length +
+          foregroundDocuments.length +
           foregroundRecords
               .where((d) => d.data()['collection'] == 'documents')
               .length,
@@ -1039,7 +1062,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             ...d.data(),
             '_queueCollection': '_windows_firebase_outbox',
           },
-        for (final d in documents.docs)
+        for (final d in foregroundDocuments)
           {
             'id': d.id,
             ...d.data(),
@@ -1764,6 +1787,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _changeWatch.reset();
       _changeHeadsSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
+      WindowsFirebaseRemote.documentStageSupported = false;
       _changeFeedSupported = false;
       _remoteFeed.stop();
       _lastIntegrityAttempt = null;
@@ -2250,6 +2274,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
           WindowsFirebaseRemote.edgeDeliverySupported =
               health['brokerEdgeDeliveryVersion'] == 1;
+          WindowsFirebaseRemote.documentStageSupported =
+              health['brokerDocumentStageVersion'] == 1 &&
+              health['documentVersions'] == 1 &&
+              health['uploadResumableVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&
               health['brokerRecordWriteBatchVersion'] == 1;

@@ -377,8 +377,18 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   if(values.state==='completed'||values.result){
    const result=values.result as Json;demand(result&&typeof result==='object'&&result.success===true&&result.schoolId===school,'Verified Drive result required');
    const original=JSON.parse(row.payload) as Json;
-   if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
-   else if(original.action==='managed_records_batch'){
+   if(lane.startsWith('file-')){
+    demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
+    if(original.document){
+    const document=original.document as Json,ack=(result.documentRecord||{}) as Json;
+    demand(document.version===1&&document.schoolId===school&&
+     ack.id===document.id&&ack.operationId===document.operationId&&
+     ack.fileId===result.fileId&&ack.contentHash===original.sha256&&
+     typeof ack.recordRevision==='string'&&!!ack.recordRevision&&
+     !/^(live-|cf-)/.test(ack.recordRevision),
+     'Document metadata requires exact verified Drive record receipt');
+    }
+   }else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
    }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
