@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -9,7 +11,12 @@ import '../lib/windows_runtime_flags.dart';
 
 const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const other='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-const ticket='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const foreignTicket='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+String exactTicket(Map original) => sha256.convert(utf8.encode(jsonEncode([
+  school,'managed_records',[
+    original['collection'],original['documentId'],original['operationId'],
+  ]
+]))).toString();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,21 +28,26 @@ void main() {
       identity:{'schoolSyncId':school});
   });
 
-  test('canary is explicitly disabled for real schools, documents, deletes and fees', () {
+  test('real records enter two-phase only with authenticated broker capability', () {
     final row={'schoolId':school,'collection':'school_calendar',
       'documentId':'event-1','operation':'set','operationId':'original-op-1234567890',
-      'baseCloudRevision':'','data':{'syntheticTest':true}};
-    expect(eligibleForRecordHandoff(row,school),false);
-    expect(eligibleForRecordHandoff(row,school,enabledTestSchool:school),true);
-    expect(eligibleForRecordHandoff(row,school,enabledTestSchool:other),false);
-    for(final collection in ['students_directory','documents','fee_payments']) {
+      'baseCloudRevision':'','data':{'title':'Real event'}};
+    expect(eligibleForRecordHandoff(row,school,edgeDeliverySupported:false),false);
+    expect(eligibleForRecordHandoff(row,school,edgeDeliverySupported:true),true);
+    expect(eligibleForRecordHandoff({...row,'schoolId':other},school,edgeDeliverySupported:true),false);
+    for(final collection in ['students_directory','teachers_directory',
+      'fee_payments','fee_ledger','attendance_records','school_expenses']) {
       expect(eligibleForRecordHandoff({...row,'collection':collection},school,
-        enabledTestSchool:school),false);
+        edgeDeliverySupported:true),true);
     }
+    expect(eligibleForRecordHandoff({...row,'collection':'documents'},school,
+      edgeDeliverySupported:true),false);
     expect(eligibleForRecordHandoff({...row,'operation':'delete'},school,
-      enabledTestSchool:school),false);
-    expect(eligibleForRecordHandoff({...row,'data':{'syntheticTest':false}},school,
-      enabledTestSchool:school),false);
+      edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...row,'atomicBundleId':'owner-123'},school,
+      edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...row,'priorDeletion':{'operation':'delete'}},school,
+      edgeDeliverySupported:true),false);
   });
 
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
@@ -44,7 +56,7 @@ void main() {
     final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
     final before=row.data();
     await expectLater(db.recordOutboxCloudHandoff(
-      row.reference,before,ticketId:ticket),throwsStateError);
+      row.reference,before,ticketId:foreignTicket),throwsStateError);
     final after=(await row.reference.get()).data()!;
     expect(after['syncState'],before['syncState']);
     expect(after['operationId'],before['operationId']);
@@ -59,6 +71,7 @@ void main() {
     final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
     final original=row.data();
     expect(original['operationId'],isA<String>());
+    final ticket=exactTicket(original);
 
     await WindowsDriveDeliveryQueue.retainEdge({
       'source':'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -111,6 +124,7 @@ void main() {
       .set({'schoolId':school,'syntheticTest':true,'title':'Synthetic test'});
     final row=(await db.collection('_windows_firebase_outbox').get()).docs.single;
     final original=row.data();
+    final ticket=exactTicket(original);
     await WindowsDriveDeliveryQueue.retainEdge({
       'source':'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       'schoolId':school,'profileId':db.activeProfileId,
