@@ -18,5 +18,7 @@ test('invalid or foreign school selectors always fail closed',()=>{
  assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true',R2_STAGING_SCHOOLS:school},'wrong'),false);
 });
 test('pre-allowlist isolated TEST configuration remains compatible',()=>{
- assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true'},school),true);
+ assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true'},school),false);
+ assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true',LIVE_SYNC_TEST_SCHOOL_ID:school},school),true);
+ assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true',LIVE_SYNC_TEST_SCHOOL_ID:school},other),false);
 });
