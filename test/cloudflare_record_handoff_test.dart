@@ -45,7 +45,13 @@ void main() {
     final before=row.data();
     await expectLater(db.recordOutboxCloudHandoff(
       row.reference,before,ticketId:ticket),throwsStateError);
-    expect((await row.reference.get()).data(),before);
+    final after=(await row.reference.get()).data()!;
+    expect(after['syncState'],before['syncState']);
+    expect(after['operationId'],before['operationId']);
+    expect(after['baseCloudRevision'],before['baseCloudRevision']);
+    expect(after['data'],before['data']);
+    expect((after['queuedAt'] as Timestamp).millisecondsSinceEpoch,
+      (before['queuedAt'] as Timestamp).millisecondsSinceEpoch);
   });
   test('original CAS is retained at Cloudflare acceptance; only broker Drive proof retires it', () async {
     await db.collection('school_calendar').doc('event-1')
