@@ -51,6 +51,35 @@ function recordRequest(request:Json,school:string){
  demand(request.action==='managed_records'&&collections.has(String(request.collection))&&['write','delete'].includes(String(request.operation))&&request.syncProtocol===2&&typeof request.id==='string'&&request.id.length>0&&request.id.length<=200&&!request.id.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(request.id)&&/^[A-Za-z0-9_-]{16,100}$/.test(String(request.operationId))&&typeof request.expectedRecordRevision==='string'&&request.expectedRecordRevision.length<=100,'Invalid versioned record');
  if(request.operation==='write')demand(request.data&&typeof request.data==='object'&&(request.data as Json).schoolId===school,'Foreign record',403);
 }
+// The original file lane owns optional dependent document metadata through
+// the same immutable manifest and R2-backed bytes. An arbitrary file upload
+// cannot impersonate another school's student or a completed Drive file.
+function checkedFileDocumentIntent(m:Json,school:string) {
+ const intent=m.documentIntent as Json|undefined;
+ if(intent===undefined)return;
+ const record=intent?.data as Json|undefined;
+ demand(intent&&typeof intent==='object'&&intent.version===1&&
+   intent.schoolId===school&&intent.collection==='documents'&&
+   intent.operation==='write'&&intent.syncProtocol===2&&
+   typeof intent.id==='string'&&intent.id.length>0&&intent.id.length<=200&&
+   !intent.id.includes('/')&&
+   /^[A-Za-z0-9_-]{16,100}$/.test(String(intent.operationId))&&
+   typeof intent.expectedRecordRevision==='string'&&
+   String(intent.expectedRecordRevision).length<=100&&
+   typeof intent.expectedDocumentRevision==='string'&&
+   String(intent.expectedDocumentRevision).length<=100&&
+   record&&typeof record==='object'&&
+   record.schoolId===school&&record.documentId===intent.id&&
+   record.documentRevision===intent.operationId&&
+   record.contentHash===m.sha256&&record.fileName===m.name&&
+   record.mimeType===m.mime&&record.fileId===undefined&&
+   record.fileUrl===undefined&&
+   typeof record.studentId==='string'&&record.studentId.length>0&&
+   Number.isSafeInteger(record.uploadedAt)&&Number(record.uploadedAt)>0&&
+   JSON.stringify(intent).length<=16000,
+   'Invalid original document+file handoff',409);
+}
+
 export async function spoolCommand(storage:DurableObjectStorage,school:string,lane:string,b:Json,wake:(at:number)=>Promise<void>):Promise<unknown>{
  const get=(id:string)=>storage.sql.exec<Row>('SELECT * FROM edge_ops WHERE id=?',id).toArray()[0];
  const action=String(b.command||''),id=String(b.id||'');
@@ -246,6 +275,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   demand(bytes.length===m.sizeBytes&&Buffer.from(bytes).toString('base64')===b.base64,'Small file byte length mismatch');
   const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
   demand(actual===m.sha256,'Small file hash mismatch',409);
+  checkedFileDocumentIntent(m,school);
   const fingerprint=await digest(canonical(m)),old=get(id);
   if(old){
    demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);
@@ -264,6 +294,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  if(action==='begin'){
   demand(lane.startsWith('file-')&&operationPattern.test(id)&&lane==='file-'+id&&b.manifest&&typeof b.manifest==='object');const m=b.manifest as Json;
   demand(typeof m.uploadKey==='string'&&/^[A-Za-z0-9_-]{1,150}$/.test(m.uploadKey)&&await digest(JSON.stringify([school,m.uploadKey]))===id&&typeof m.sha256==='string'&&operationPattern.test(m.sha256)&&Number.isSafeInteger(m.sizeBytes)&&Number(m.sizeBytes)>0&&Number(m.sizeBytes)<=20*1024*1024&&typeof m.name==='string'&&m.name.length>0&&m.name.length<=200&&typeof m.mime==='string'&&/^[-\w.+]+\/[-\w.+]+$/.test(m.mime)&&!m.mime.startsWith('application/vnd.google-apps.'),'Invalid file manifest');
+  checkedFileDocumentIntent(m,school);
   const fingerprint=await digest(canonical(m)),old=get(id);if(old){demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));return {...receipt(old),manifest:JSON.parse(old.payload)};}
   storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due) VALUES(?,?,?,'receiving',?)",id,fingerprint,JSON.stringify({...m,received:0,driveOffset:0}),Number.MAX_SAFE_INTEGER);return {...receipt(get(id)),manifest:JSON.parse(get(id).payload)};
  }
@@ -377,7 +408,26 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   if(values.state==='completed'||values.result){
    const result=values.result as Json;demand(result&&typeof result==='object'&&result.success===true&&result.schoolId===school,'Verified Drive result required');
    const original=JSON.parse(row.payload) as Json;
-   if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
+   if(lane.startsWith('file-')){
+    demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
+    if(original.documentIntent){
+     checkedFileDocumentIntent(original,school);
+     const intent=original.documentIntent as Json,receipt=result.documentReceipt as Json|undefined;
+     const record=receipt?.record as Json|undefined;
+     demand(receipt?.version===1&&receipt.schoolId===school&&
+       receipt.id===intent.id&&receipt.documentRevision===intent.operationId&&
+       receipt.operationId===intent.operationId&&
+       typeof receipt.recordRevision==='string'&&
+       receipt.recordRevision.length>0&&!/^(live-|cf-)/.test(receipt.recordRevision)&&
+       record?.schoolId===school&&record.documentId===intent.id&&
+       record.documentRevision===intent.operationId&&
+       record.fileId===result.fileId&&
+       record.contentHash===original.sha256&&
+       record._syncRevision===receipt.recordRevision&&
+       record._syncOperationId===intent.operationId,
+       'Document Drive metadata not verified',409);
+    }
+   }
    else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
