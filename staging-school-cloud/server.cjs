@@ -51,7 +51,7 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       // Native parts carry up to 512 KiB binary as <=700000 base64 bytes.
       // Keep ordinary JSON at 256 KiB and the existing full-upload cap unchanged.
       const nativePart=body?.action==='managed/file/upload/resumable'&&body.operation==='part';
-      const bodyLimit=body?.action==='managed/file/upload'?28*1024*1024:nativePart?700000+4096:256*1024;
+      const bodyLimit=['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?700000+4096:256*1024;
       if(bytes>bodyLimit||nativePart&&(typeof body.base64!=='string'||body.base64.length>700000))
         return send(413,{success:false,code:'REQUEST_TOO_LARGE',message:'Request is too large'});
       // First Windows login has no saved school ID yet. Bind its authenticated

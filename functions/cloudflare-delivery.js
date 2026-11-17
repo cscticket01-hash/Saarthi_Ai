@@ -3,6 +3,8 @@ const {createHash,randomUUID}=require('node:crypto');
 const {canGcRecord,scrubDomainReceipt,hydrateDomainReceipt}=require('./live-domain-delivery');
 const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
+const OP=/^[A-Za-z0-9_-]{16,100}$/;
+const REV=/^[A-Za-z0-9_-]{1,200}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
 const terminal=new Set(['DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
 function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,atomicSmallFilesEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
@@ -95,6 +97,21 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
   if(typeof request.base64!=='string'||! /^[A-Za-z0-9+/]*={0,2}$/.test(request.base64))fail(400,'INVALID_EDGE_FILE');
   const bytes=Buffer.from(request.base64,'base64');if(bytes.toString('base64')!==request.base64||!bytes.length||bytes.length>20*1024*1024)fail(400,'INVALID_EDGE_FILE');
   const m={uploadKey:request.uploadKey,sha256:digest(bytes),sizeBytes:bytes.length,name:request.name,mime:request.mime};
+  // Opt-in document sidecar: immutable Cloudflare ownership includes the
+  // metadata operation, not only the bytes. Never invent a Drive fileId.
+  if(request.document!==undefined){
+   const d=request.document,meta=d?.data;
+   if(d?.version!==1||d.schoolId!==school||!REV.test(d.id||'')||
+      !OP.test(d.operationId||'')||typeof d.expectedRecordRevision!=='string'||
+      d.expectedRecordRevision.length>100||!meta||typeof meta!=='object'||Array.isArray(meta)||
+      meta.schoolId!==school||meta.documentId!==d.id||
+      meta.documentRevision!==d.operationId||meta.contentHash!==m.sha256||
+      typeof meta.studentId!=='string'||!meta.studentId||
+      Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
+       ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
+      JSON.stringify(d).length>24000)fail(400,'INVALID_DOCUMENT_STAGE');
+   m.document=structuredClone(d);
+  }
   const {id,lane}=fileIdentity(school,m.uploadKey);
   if(atomicSmallFilesEnabled&&bytes.length<=256*1024){
    // One verified durable Cloudflare put, then an immediate pending ACK.
@@ -198,6 +215,41 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      return {processed:0};
     }
     result={...progress,fileUrl:'https://drive.google.com/file/d/'+progress.fileId+'/view'};
+    if(original.document){
+     // The client can exit after Cloudflare staging. The broker alone
+     // publishes the document metadata AFTER a verified Google fileId.
+     // Failed metadata CAS retains the SAME original file operation for retry.
+     phase='publishDocument';
+     const document=original.document;
+     const write={action:'managed_records',collection:'documents',operation:'write',
+      syncProtocol:2,id:document.id,operationId:document.operationId,
+      expectedRecordRevision:document.expectedRecordRevision,
+      ...(document.expectedRevision!==undefined?{expectedRevision:document.expectedRevision}:{}),
+      ...(document.expectedUploadedAt!==undefined?{expectedUploadedAt:document.expectedUploadedAt}:{}),
+      data:{...document.data,fileId:progress.fileId,fileUrl:result.fileUrl}};
+     const ack=await deliver(write);
+     phase='verifyDocument';
+     if(!verifiedRecord(ack,school,write))fail(502,'DOCUMENT_ACK_UNVERIFIED');
+     let record=ack.record;
+     if(!record || record.fileId!==progress.fileId||
+        record._syncRevision!==ack.recordRevision){
+      const read=await deliver({action:'managed_records',collection:'documents',
+       operation:'read',id:document.id,syncProtocol:2});
+      if(read?.success!==true||read.schoolId!==school||read.syncProtocol!==2)
+       fail(502,'DOCUMENT_ACK_UNVERIFIED');
+      record=read.records?.[document.id];
+     }
+     if(!record||record.schoolId!==school||
+       record.id!==document.id||record.fileId!==progress.fileId||
+       record.documentRevision!==document.operationId||
+       record.contentHash!==original.sha256||
+       record._syncOperationId!==document.operationId||
+       record._syncRevision!==ack.recordRevision)
+      fail(502,'DOCUMENT_ACK_UNVERIFIED');
+     result.documentRecord={id:document.id,operationId:document.operationId,
+      recordRevision:ack.recordRevision,fileId:progress.fileId,
+      contentHash:original.sha256};
+    }
    }
    phase='commit';
    let cleanup={};
@@ -217,7 +269,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
-   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
+   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','DOCUMENT_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
    // Cloudflare preserves the operation, including partial verified receipts.

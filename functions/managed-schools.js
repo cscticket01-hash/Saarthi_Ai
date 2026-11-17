@@ -1598,6 +1598,52 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
   const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
  }
+ if(action==='managed/document/stage'){
+  // New independent document owner is explicitly opt-in. Legacy clients keep
+  // their version-safe Drive-dependent flow until the app journal is upgraded.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare document delivery is not enabled','DOCUMENT_STAGE_UNAVAILABLE');
+  const d=b.document,meta=d?.data;
+  if(d?.version!==1||d.schoolId!==m.schoolId||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(d.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(d.operationId||'')||
+     typeof d.expectedRecordRevision!=='string'||d.expectedRecordRevision.length>100||
+     !meta||typeof meta!=='object'||Array.isArray(meta)||
+     meta.schoolId!==m.schoolId||meta.documentId!==d.id||
+     meta.documentRevision!==d.operationId||
+     typeof meta.studentId!=='string'||!meta.studentId||
+     !/^[a-f0-9]{64}$/.test(meta.contentHash||'')||
+     Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
+      ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
+     JSON.stringify(d).length>24000)
+   fail(400,'Invalid immutable document staging request');
+  if(!/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     b.uploadKey!==hash(d.id+':'+d.operationId)||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||
+     typeof b.base64!=='string'||b.base64.length>28*1024*1024||
+     !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64))
+   fail(400,'Invalid document file staging request');
+  const bytes=Buffer.from(b.base64,'base64');
+  if(!bytes.length||bytes.length>20*1024*1024||
+     bytes.toString('base64')!==b.base64||
+     hash(bytes)!==meta.contentHash)
+   fail(400,'Document content SHA-256 mismatch');
+  // No client may obtain a Cloudflare ACK for an unconfigured Drive owner.
+  const capability=await cachedRead(uploadCapabilities,m.schoolId,
+   ()=>signedRequest(m,{action:'managed_health'}),300000);
+  if(capability.schoolId!==m.schoolId||capability.storageReady!==true||
+     capability.uploadResumableVersion!==1)
+   fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+  const result=await edgeDelivery.wholeFile(m.schoolId,{
+   uploadKey:b.uploadKey,name:b.name,mime:b.mime,base64:b.base64,
+   document:clean(d)});
+  if(result?.success!==true||result.schoolId!==m.schoolId||
+     result.cloudflareAccepted!==true||
+     !['pending','verified'].includes(result.driveState))
+   fail(502,'Durable Cloudflare document staging ACK missing','DOCUMENT_STAGE_UNVERIFIED');
+  return result;
+ }
  if(action==='managed/file/upload/resumable'){
   if(!['begin','status','part'].includes(b.operation)||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||!/^[a-f0-9]{64}$/.test(b.sha256||'')||!Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>20*1024*1024||typeof b.name!=='string'||!b.name||b.name.length>200||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||b.mime.startsWith('application/vnd.google-apps.'))fail(400,'Invalid resumable school upload');
   const payload={action:'managed_upload_resumable',operation:b.operation,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime};
