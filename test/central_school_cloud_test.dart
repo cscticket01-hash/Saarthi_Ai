@@ -65,10 +65,12 @@ void main() {
   test('opt-in two-phase transport returns only after durable journal without Drive poll', () async {
     final notices = <Map<String, dynamic>>[];
     final journalGate = Completer<void>();
+    final journalStarted = Completer<void>();
     var calls = 0;
     CentralSchoolCloud.edgeDeliveryProfile = () => 'original-profile';
     CentralSchoolCloud.onEdgeDelivery = (notice) async {
       notices.add(notice);
+      journalStarted.complete();
       await journalGate.future; // simulate disk flush before foreground Idle
     };
     final id = List.filled(64, 'a').join();
@@ -88,7 +90,7 @@ void main() {
         'operationId': 'original-operation-id', 'collection': 'school_expenses',
         'id': 'one', 'data': {'privateName': 'stay-local'}},
         returnAfterDurableCloudflareHandoff: true);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await journalStarted.future;
     expect(notices, hasLength(1));
     expect(calls, 1);
     journalGate.complete();
