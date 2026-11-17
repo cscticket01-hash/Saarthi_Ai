@@ -706,7 +706,10 @@ class WindowsPendingSchoolSync {
           throw StateError('Cloudflare handoff changed original operation identity.');
         }
         final saved=await db.recordOutboxCloudHandoff(
-          queued.reference,item,ticketId:accepted.ticketId);
+          queued.reference,item,ticketId:accepted.ticketId,
+          lane:accepted.lane,
+          mediaSourceHash:accepted.mediaSourceHash,
+          mediaFileSha256:accepted.mediaFileSha256);
         unchanged();
         if(saved)report('cloudflareAccepted',queued.id,item);
         continue; // No canonical revision / no outbox deletion.

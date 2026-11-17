@@ -848,7 +848,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
         row['cloudTicketId'] is String &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
-        row['cloudTicketLane']=='records';
+        (row['cloudTicketLane']=='records' ||
+         // Original photo identity was revalidated by the serialized SQLite
+         // owner before the original record outbox became cloudAccepted.
+         row['cloudTicketLane']=='file-${row['cloudTicketId']}' &&
+         {'students_directory','teachers_directory'}.contains(row['collection']) &&
+         row['cloudMediaSourceHash'] is String &&
+         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaSourceHash']) &&
+         row['cloudMediaFileSha256'] is String &&
+         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaFileSha256']));
     final cloudOwned=general.docs.where(
       (d)=>hasExactCloudflareHandoff(d.data())).toList();
     final foregroundRecords=general.docs.where(
@@ -1788,6 +1796,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _changeHeadsSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
       WindowsFirebaseRemote.documentStageSupported = false;
+      WindowsFirebaseRemote.photoRecordStageSupported = false;
       _changeFeedSupported = false;
       _remoteFeed.stop();
       _lastIntegrityAttempt = null;
@@ -2277,6 +2286,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           WindowsFirebaseRemote.documentStageSupported =
               health['brokerDocumentStageVersion'] == 1 &&
               health['documentVersions'] == 1 &&
+              health['uploadResumableVersion'] == 1;
+          WindowsFirebaseRemote.photoRecordStageSupported =
+              health['brokerPhotoRecordStageVersion'] == 1 &&
+              health['recordSyncVersion'] == 2 &&
               health['uploadResumableVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&

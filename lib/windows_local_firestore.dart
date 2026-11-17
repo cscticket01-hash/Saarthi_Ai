@@ -274,11 +274,14 @@ class FirebaseFirestore {
   /// eventual Drive delivery; this retained row is not another upload.
   Future<bool> recordOutboxCloudHandoff(
       DocumentReference<Map<String,dynamic>> ref,
-      Map<String,dynamic> expected, {required String ticketId}) {
+      Map<String,dynamic> expected, {required String ticketId,
+        String lane='records',String? mediaSourceHash,String? mediaFileSha256}) {
     ref.requireOriginProfile();
     if(ref.collectionPath!='_windows_firebase_outbox')
       throw ArgumentError('Outbox reference required');
-    return _database.recordOutboxCloudHandoff(ref.id,expected,ticketId:ticketId);
+    return _database.recordOutboxCloudHandoff(ref.id,expected,ticketId:ticketId,
+      lane:lane,mediaSourceHash:mediaSourceHash,
+      mediaFileSha256:mediaFileSha256);
   }
 
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
@@ -2393,10 +2396,37 @@ class _LocalSchoolDatabase {
   /// The Cloudflare ACK is durable before this marker is saved.
   /// A CAS transition retains the original bytes until provider proof.
   Future<bool> recordOutboxCloudHandoff(String queueId,
-      Map<String,dynamic> expected, {required String ticketId}) {
+      Map<String,dynamic> expected, {required String ticketId,
+        String lane='records',String? mediaSourceHash,String? mediaFileSha256}) {
     final origin=_activeProfileId;
     final school=_activeIdentity['schoolSyncId'];
     final original=_encodeMap(expected);
+    // The record lane has its original operation identity; a photo lane must
+    // independently prove original raw media and optimized immutable bytes.
+    bool photoFileTicket() {
+      if(school is! String || lane!='file-$ticketId'||
+         !{'students_directory','teachers_directory'}.contains(original['collection'])||
+         original['wireMode']=='fieldPatch1'||original['data'] is! Map||
+         mediaSourceHash is! String||mediaFileSha256 is! String||
+         !RegExp(r'^[a-f0-9]{64}$').hasMatch(mediaSourceHash)||
+         !RegExp(r'^[a-f0-9]{64}$').hasMatch(mediaFileSha256)) return false;
+      final data=original['data'] as Map;
+      final base64=data['photoBase64'];
+      final raw=base64 is String && base64.startsWith('data:image/')
+        ? base64 : data['photoUrl'];
+      if(raw is! String||!raw.startsWith('data:image/')) return false;
+      try {
+        if(sha256.convert(UriData.parse(raw).contentAsBytes()).toString()!=mediaSourceHash)
+          return false;
+      } catch(_) {return false;}
+      final uploadKey=sha256.convert(utf8.encode(jsonEncode([
+        school,original['collection'],original['documentId'],
+        original['operationId'],mediaFileSha256,
+      ]))).toString();
+      return ticketId==sha256.convert(utf8.encode(
+        jsonEncode([school,uploadKey]))).toString();
+    }
+    final boundPhotoTicket=photoFileTicket();
     final done=Completer<bool>();
     _writeTail=_writeTail.then((_) async {
       try {
@@ -2416,11 +2446,11 @@ class _LocalSchoolDatabase {
             original['data'] is! Map ||
             original['operationId'] is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
-            ticketId!=sha256.convert(utf8.encode(jsonEncode([
+            !(lane=='records'&&ticketId==sha256.convert(utf8.encode(jsonEncode([
               school,'managed_records',[
                 original['collection'],original['documentId'],original['operationId'],
               ],
-            ]))).toString())
+            ]))).toString() || boundPhotoTicket))
           throw StateError('Original school-bound Cloudflare ticket required.');
         final root=await _readRoot(collections:{'_windows_firebase_outbox'});
         if(origin!=_activeProfileId)throw StateError('School changed during handoff.');
@@ -2436,7 +2466,11 @@ class _LocalSchoolDatabase {
         queue[queueId]={...Map<String,dynamic>.from(current),
           'syncState':'cloudAccepted',
           'cloudTicketId':ticketId,
-          'cloudTicketLane':'records',
+          'cloudTicketLane':boundPhotoTicket?'file-$ticketId':'records',
+          if(boundPhotoTicket) ...{
+            'cloudMediaSourceHash':mediaSourceHash,
+            'cloudMediaFileSha256':mediaFileSha256,
+          },
           'cloudAcceptedAt':DateTime.now().millisecondsSinceEpoch};
         _storeCollections(root,collections);await _writeRoot(root);
         final signal=_signals['_windows_firebase_outbox'];

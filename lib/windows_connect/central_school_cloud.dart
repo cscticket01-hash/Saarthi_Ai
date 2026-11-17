@@ -518,10 +518,13 @@ class CentralSchoolCloud {
     final action=body['action'];
     final documentStage = action=='managed/document/stage/resumable' &&
         body['document'] is Map && body['uploadKey'] is String;
+    final mediaRecordStage = action=='managed/record/media/stage/resumable' &&
+        body['record'] is Map && body['uploadKey'] is String;
+    final fileSidecarStage = documentStage || mediaRecordStage;
     final staged = action=='managed/records' && body['operation']!='read' && body['syncProtocol']==2
         || action=='managed/records/batch'
         || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String
-        || documentStage;
+        || fileSidecarStage;
     final origin = expectedSchoolId != null ? await saved() : null;
     Object? ordered(Object? value) {
       if (value is Map) {
@@ -531,11 +534,12 @@ class CentralSchoolCloud {
       if (value is List) return value.map(ordered).toList();
       return value;
     }
-    final source = documentStage && onEdgeDelivery != null
+    final source = fileSidecarStage && onEdgeDelivery != null
         // The identity remains stable across every chunk and after a retry.
         ? edge_crypto.sha256.convert(utf8.encode(jsonEncode([
             body['schoolId'], body['uploadKey'],
-            (body['document'] as Map)['operationId'], body['sha256'],
+            ((documentStage ? body['document'] : body['record']) as Map)['operationId'],
+            body['sha256'],
           ]))).toString()
         : staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
         ? edge_crypto.sha256.convert(utf8.encode(
@@ -561,10 +565,16 @@ class CentralSchoolCloud {
           'originalOperationId': (body['document'] as Map)['operationId'],
           'operation': 'write',
         },
-        if (!documentStage && body['collection'] is String) 'collection': body['collection'],
-        if (!documentStage && body['id'] is String) 'id': body['id'],
-        if (!documentStage && body['operationId'] is String) 'originalOperationId': body['operationId'],
-        if (!documentStage && (body['operation'] == 'write' || body['operation'] == 'delete')) 'operation': body['operation'],
+        if (mediaRecordStage) ...{
+          'collection': (body['record'] as Map)['collection'],
+          'id': (body['record'] as Map)['id'],
+          'originalOperationId': (body['record'] as Map)['operationId'],
+          'operation': 'write',
+        },
+        if (!fileSidecarStage && body['collection'] is String) 'collection': body['collection'],
+        if (!fileSidecarStage && body['id'] is String) 'id': body['id'],
+        if (!fileSidecarStage && body['operationId'] is String) 'originalOperationId': body['operationId'],
+        if (!fileSidecarStage && (body['operation'] == 'write' || body['operation'] == 'delete')) 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
             'edgeDeliveryVersion', 'driveState', 'delivery', 'committed', 'fileId'])
@@ -598,7 +608,7 @@ class CentralSchoolCloud {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
       if (returnAfterDurableCloudflareHandoff) {
-        if (documentStage) {
+        if (fileSidecarStage) {
           final expected = edge_crypto.sha256.convert(utf8.encode(jsonEncode([
             body['schoolId'], body['uploadKey'],
           ]))).toString();
@@ -639,6 +649,31 @@ class CentralSchoolCloud {
       // Long-poll the authenticated owner; never resend a new business operation.
       result=await send('POST',Uri.parse(endpoint),token:token,body:{'action':'managed/cloudflare/operation',
         'schoolId':body['schoolId'],'lane':ticket['lane'],'id':ticket['id'],'waitMillis':20000});
+    }
+    if (returnAfterDurableCloudflareHandoff && fileSidecarStage &&
+        result['success'] == true &&
+        result['schoolId'] == body['schoolId'] &&
+        result['cloudflareAccepted'] == true &&
+        result['driveState'] == 'verified') {
+      // A replay may already have finished at Google. It still has an
+      // immutable R2/DO owner and must first persist its authenticated
+      // ticket; no second original business operation may be submitted.
+      final proof = documentStage
+          ? result['documentRecord'] : result['mediaRecord'];
+      if (proof is! Map || proof['fileId'] != result['fileId'] ||
+          proof['recordRevision'] is! String ||
+          (proof['recordRevision'] as String).isEmpty) {
+        throw StateError('Provider file completion has no matching record proof.');
+      }
+      final expected = edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+        body['schoolId'],body['uploadKey'],
+      ]))).toString();
+      final verified = <String,dynamic>{
+        ...result,'edgeDeliveryVersion':1,
+        'delivery':{'id':expected,'lane':'file-$expected'},
+      };
+      await observe(verified);
+      return {...verified,'cloudflareHandoffVersion':1};
     }
     if (acceptedTicket != null &&
         (result['schoolId'] != body['schoolId'] ||
