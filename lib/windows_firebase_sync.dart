@@ -403,19 +403,19 @@ class WindowsFirebaseRemote {
       if(utf8.encode(jsonEncode(candidate)).length<=250000)
         requestBody['cachedBaseline']=candidate['cachedBaseline'];
     }
-    // Only explicitly build-allowlisted, synthetic TEST calendar records can
-    // switch to a two-phase Cloudflare owner. Every real school and every
-    // document/file dependency retains the existing canonical Drive proof.
-    const pilotSchool=String.fromEnvironment('SAARTHI_SYNC3_HANDOFF_TEST_SCHOOL_ID');
-    final pilot=batchReply==null&&eligibleForRecordHandoff(
-      item,school,enabledTestSchool:pilotSchool);
+    // No test school or hardcoded school IDs: every genuine school receives
+    // the same two-phase protocol, but ONLY after its authenticated broker
+    // advertises the durable edge-delivery capability. File-dependent rows
+    // remain with the original version-safe owner.
+    final cloudHandoff=batchReply==null&&eligibleForRecordHandoff(
+      item,school,edgeDeliverySupported:edgeDeliverySupported);
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
             school,
             'managed/records',
             requestBody,
-            returnAfterDurableCloudflareHandoff:pilot,
+            returnAfterDurableCloudflareHandoff:cloudHandoff,
           );
     final preparationMicros = stageWatch.elapsedMicroseconds;
     stageWatch.reset();
@@ -434,7 +434,7 @@ class WindowsFirebaseRemote {
     stageWatch.reset();
     if(result['cloudflareHandoffVersion']==1) {
       final delivery=result['delivery'];
-      if(!pilot||result['success']!=true||
+      if(!cloudHandoff||result['success']!=true||
           result['schoolId']!=school||
           result['cloudflareAccepted']!=true||
           result['driveState']!='pending'||
@@ -594,8 +594,8 @@ class WindowsFirebaseRemote {
       final item = row.data();
       if (item['schoolId'] != school ||
           item['atomicBundleId']!=null ||
-          eligibleForRecordHandoff(item,school,enabledTestSchool:
-            const String.fromEnvironment('SAARTHI_SYNC3_HANDOFF_TEST_SCHOOL_ID')) ||
+          eligibleForRecordHandoff(item,school,edgeDeliverySupported:
+            edgeDeliverySupported) ||
           !{'pending', 'retry'}.contains(item['syncState']) ||
           item['operation'] != 'set' ||
           {
