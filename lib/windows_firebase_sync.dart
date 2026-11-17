@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'windows_drive_delivery_queue.dart';
 import 'windows_record_change_policy.dart';
 import 'live_sync_protocol.dart';
@@ -402,12 +403,19 @@ class WindowsFirebaseRemote {
       if(utf8.encode(jsonEncode(candidate)).length<=250000)
         requestBody['cachedBaseline']=candidate['cachedBaseline'];
     }
+    // Only explicitly build-allowlisted, synthetic TEST calendar records can
+    // switch to a two-phase Cloudflare owner. Every real school and every
+    // document/file dependency retains the existing canonical Drive proof.
+    const pilotSchool=String.fromEnvironment('SAARTHI_SYNC3_HANDOFF_TEST_SCHOOL_ID');
+    final pilot=batchReply==null&&eligibleForRecordHandoff(
+      item,school,enabledTestSchool:pilotSchool);
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
             school,
             'managed/records',
             requestBody,
+            returnAfterDurableCloudflareHandoff:pilot,
           );
     final preparationMicros = stageWatch.elapsedMicroseconds;
     stageWatch.reset();
@@ -424,6 +432,1208 @@ class WindowsFirebaseRemote {
     }
     final requestMicros = stageWatch.elapsedMicroseconds;
     stageWatch.reset();
+    if(result['cloudflareHandoffVersion']==1) {
+      final delivery=result['delivery'];
+      if(!pilot||result['success']!=true||
+          result['schoolId']!=school||
+          result['cloudflareAccepted']!=true||
+          result['driveState']!='pending'||
+          result['edgeDeliveryVersion']!=1||
+          delivery is! Map||delivery['lane']!='records'||
+          delivery['id'] is! String||
+          !RegExp(r'^[a-f0-9]{64}
+      collection: collection, id: id, operationId: item['operationId'].toString(),
+      deleting: item['operation'] == 'delete');
+    // The dedicated legacy notice lane commits a tombstone and its durable
+    // delivery job atomically. The device may go Idle while the Worker retries
+    // Drive deletion. Never conflate this edge ACK with Drive/Firebase success.
+    final noticeEdgeCommit = verifyLegacyCloudflareNoticeReceipt(
+      result, school: school, collection: collection, id: id,
+      operationId: item['operationId'].toString(),
+      deleting: item['operation'] == 'delete',
+    );
+    if (liveCommit) await WindowsDriveDeliveryQueue.retain(school, collection, id,
+        item['operationId'].toString(), result, deleting: item['operation'] == 'delete');
+    if (item['operation'] == 'delete' && !liveCommit && !noticeEdgeCommit &&
+        (result['deleteEverywhereVersion'] != 1 ||
+         result['driveDeletionComplete'] != true ||
+         result['firebaseDeletionComplete'] != true)) {
+      throw StateError('Cloud deletion is not verified. Pending operation retained.');
+    }
+    if (result['schoolId'] != school ||
+        result['syncProtocol'] != 2 ||
+        result['recordRevision'] is! String)
+      throw StateError(
+        'Version-safe acknowledgement missing. Pending operation retained.',
+      );
+    if (result['record'] is Map &&
+        (result['record']['schoolId'] != school ||
+            result['record']['_syncRevision'] != result['recordRevision']))
+      throw StateError('Canonical acknowledgement record did not verify.');
+    if (collection == 'students_directory' && result['record'] is Map) {
+      for (final generation in verifiedDeletedStudentGenerations(
+        result['record'],
+      ))
+        await FirebaseFirestore.instance.applyVerifiedStudentDeletion(
+          school,
+          id,
+          generation,
+          result['recordRevision'],
+        );
+    }
+    if (!liveCommit && !noticeEdgeCommit && result['record'] is Map)
+      await cacheVerifiedSheetRecord(
+        school,
+        collection,
+        id,
+        Map<String, dynamic>.from(result['record'] as Map),
+      );
+    if (!liveCommit && result['record'] == null &&
+        data != null &&
+        item['wireMode'] != 'fieldPatch1') {
+      result['record'] = {
+        ...data,
+        'id': id,
+        '_syncRevision': result['recordRevision'],
+        '_syncOperationId': item['operationId'],
+      };
+    }
+    // Local-only phase evidence. Do not mutate/relabel the provider receipt,
+    // persist these fields in canonical records, or count batch consumption as
+    // another network request. Successful verification remains mandatory above.
+    stageWatch.stop();
+    return {...result, 'clientSyncTiming': {
+      'version': 1,
+      'source': batchReply == null ? 'network' : 'batchReceipt',
+      'preparationMicros': preparationMicros,
+      'requestMicros': batchReply == null ? requestMicros : 0,
+      'receiptProcessingMicros': stageWatch.elapsedMicroseconds,
+    }};
+  }
+
+  static bool recordWriteBatchSupported = false;
+  static bool edgeDeliverySupported = false;
+  static Future<Map<String, Object>> prepareManagedBatch(
+    String school, {
+    required bool Function() canAdmit,
+    Future<Map<String, dynamic>?> Function(
+      DocumentReference<Map<String, dynamic>>,
+      Map<String, dynamic>,
+      String,
+    )?
+    prepareRecord,
+    Future<Map<String, dynamic>> Function(String, List<Map<String, dynamic>>)?
+    send,
+  }) async {
+    if (!recordWriteBatchSupported || !canAdmit()) return {};
+    final db = FirebaseFirestore.instance, profile = db.activeProfileId;
+    final rows = (await db.collection('_windows_firebase_outbox').get()).docs;
+    // Keep parent creation and deletion dependency ordering with the original owner.
+    if (rows.any(
+      (r) =>
+          {
+            'students_directory',
+            'teachers_directory',
+          }.contains(r.data()['collection']) &&
+          {'pending', 'retry'}.contains(r.data()['syncState']) &&
+          r.data()['atomicBundleId']==null,
+    ))
+      return {};
+    final healthRef = db.collection('_windows_sync_status').doc('managed-batch-window');
+    final health = (await healthRef.get()).data();
+    void requireBatchScope() {
+      if (db.activeProfileId != profile ||
+          db.activeProfileIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed during batch admission.');
+      }
+    }
+    requireBatchScope();
+    if (health != null && health['schoolId'] != school) {
+      throw StateError('Foreign batch health journal.');
+    }
+    var limit = (health?['nextLimit'] as int? ?? 10).clamp(2, 10).toInt();
+    for(final row in rows){
+      final module=row.data()['collection'];
+      if(module is! String)continue;
+      final cap=WindowsSharedRepairKnowledge.value('batch_cap',school,module:module,
+        category:health?['failureCategory'] is String?health!['failureCategory'] as String:'unknown');
+      if(cap!=null && cap<limit)limit=cap;
+    }
+    final ready = <Map<String, dynamic>>[], operations = <Map<String, dynamic>>[];
+    Future<void> recordHealth(int micros, int successful, bool complete, {String? category}) async {
+      requireBatchScope();
+      final next = managedBatchWindow(current: limit, requestMicros: micros, complete: complete);
+      try { await healthRef.set({
+        'schoolId': school,
+        'measurementScope': 'broker_request_only',
+        'requestMicros': micros,
+        'submitted': operations.length,
+        'successfulReceipts': successful,
+        'complete': complete,
+        'nextLimit': next,
+        'previousLimit': limit,
+        'adjustmentReason': !complete ? 'reduce_error'
+            : next < limit ? 'reduce_slow' : next > limit ? 'grow_fast' : 'hold',
+        'observedAt': DateTime.now().millisecondsSinceEpoch,
+        if (category != null) 'failureCategory': category,
+      }); } catch (_) { /* Tuning metadata is never a business ACK requirement. */ }
+      requireBatchScope();
+    }
+    for (final row in rows) {
+      if (ready.length >= limit || !canAdmit()) break;
+      if (db.activeProfileId != profile)
+        throw StateError('School changed before batch preparation.');
+      final item = row.data();
+      if (item['schoolId'] != school ||
+          item['atomicBundleId']!=null ||
+          !{'pending', 'retry'}.contains(item['syncState']) ||
+          item['operation'] != 'set' ||
+          {
+            'students_directory',
+            'teachers_directory',
+            'documents',
+            'backups',
+            'school_config',
+          }.contains(item['collection']) ||
+          (edgeDeliverySupported && item['collection'] == 'school_notices') ||
+          item['priorDeletion'] != null ||
+          item['data'] is! Map ||
+          item['operationId'] is! String ||
+          (item['retryAtMillis'] as num? ?? 0) >
+              DateTime.now().millisecondsSinceEpoch)
+        continue;
+      final bound = await (prepareRecord ?? prepareQueuedRecord)(
+        row.reference,
+        item,
+        school,
+      );
+      if (bound == null) continue;
+      final op = <String, dynamic>{
+        'collection': bound['collection'],
+        'id': bound['documentId'],
+        'operation': 'write',
+        'syncProtocol': 2,
+        'operationId': bound['operationId'],
+        'expectedRecordRevision': bound['baseCloudRevision'] ?? '',
+        if (bound['createIntent'] == true) 'createIntent': true,
+        'data': migrationJsonValue(bound['wireData']),
+      };
+      if (utf8.encode(jsonEncode([...operations, op])).length > 250000) break;
+      ready.add(bound);
+      operations.add(op);
+    }
+    if (ready.length < 2 || !canAdmit()) return {};
+    final requestWatch = Stopwatch()..start();
+    Map<String, dynamic> reply;
+    try {
+      reply = await (send != null
+          ? send(school, operations)
+          : ManagedSchoolSession.callForSchool(school, 'managed/records/batch', {
+              'operations': operations,
+            }));
+    } catch (error) {
+      requestWatch.stop();
+      await recordHealth(requestWatch.elapsedMicroseconds, 0, false,
+          category: windowsSyncRecovery(error).kind.name);
+      rethrow;
+    }
+    requestWatch.stop();
+    if (db.activeProfileId != profile)
+      throw StateError('School changed during batch.');
+    try {
+    if (reply['schoolId'] != school ||
+        reply['syncProtocol'] != 2 ||
+        reply['recordWriteBatchVersion'] != 1 ||
+        reply['acknowledgements'] is! List)
+      throw StateError(
+        'Batch receipts unverified; original operations retained.',
+      );
+    final results = <String, Object>{};
+    for (final raw in reply['acknowledgements']) {
+      if (raw is! Map ||
+          !ready.any((r) => r['operationId'] == raw['operationId']) ||
+          results.containsKey(raw['operationId']) ||
+          raw['success'] is! bool)
+        throw StateError('Invalid batch receipt identity.');
+      final id = raw['operationId'] as String;
+      if (raw['success'] == true) {
+        if (raw['recordRevision'] is! String ||
+            (raw['recordRevision'] as String).isEmpty)
+          throw const MissingSyncAcknowledgement();
+        results[id] = {
+          'batchRequestMicros': requestWatch.elapsedMicroseconds,
+          'schoolId': school,
+          'syncProtocol': 2,
+          ...Map<String, dynamic>.from(raw),
+        };
+      } else {
+        final code = raw['code']?.toString() ?? 'SCRIPT_OPERATION_FAILED';
+        final conflict = {
+          'SCRIPT_RECORD_REVISION_CONFLICT',
+          'SCRIPT_OPERATION_ID_CONFLICT',
+        }.contains(code);
+        results[id] = CentralCloudException(
+          conflict
+              ? 409
+              : code == 'SCRIPT_PERMISSION_DENIED'
+              ? 403
+              : code == 'SCRIPT_QUOTA_EXCEEDED'
+              ? 429
+              : 503,
+          'school_cloud',
+          'Batch record retained for verified recovery.',
+          diagnosticCode: conflict
+              ? code == 'SCRIPT_OPERATION_ID_CONFLICT'
+                    ? 'OPERATION_ID_CONFLICT'
+                    : 'RECORD_REVISION_CONFLICT'
+              : code,
+        );
+      }
+    }
+    final successful = results.values.whereType<Map<String, dynamic>>().length;
+    await recordHealth(requestWatch.elapsedMicroseconds, successful,
+        results.length == operations.length && successful == operations.length);
+    return results;
+    } catch (error) {
+      await recordHealth(requestWatch.elapsedMicroseconds, 0, false,
+          category: windowsSyncRecovery(error).kind.name);
+      rethrow;
+    }
+  }
+
+  static bool recordFieldPatchSupported = false;
+  static bool recordPointReadSupported = false;
+  static Future<Map<String, dynamic>?> prepareQueuedRecord(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> item,
+    String school, {
+    Future<Map<String,dynamic>> Function(String,String)? readRecord,
+    Future<Map<String,dynamic>> Function(Map<String,dynamic>)? prepareData,
+  }) async {
+    if (item['wireData'] is Map) return item;
+    if (recordPointReadSupported &&
+        item['createIntent'] == true &&
+        (item['baseCloudRevision'] ?? '') == '') {
+      final reply = await ManagedSchoolSession.callForSchool(
+        school,
+        'managed/records',
+        {
+          'operation': 'read',
+          'collection': item['collection'],
+          'id': item['documentId'],
+          'syncProtocol': 2,
+        },
+      );
+      if (reply['schoolId'] != school ||
+          reply['syncProtocol'] != 2 ||
+          reply['pointRead'] != true ||
+          reply['records'] is! Map)
+        throw StateError('Unverified record preflight. Original retained.');
+      final found = reply['records'][item['documentId']];
+      if (found is Map && found['_syncDeleted'] != true) {
+        await FirebaseFirestore.instance.recordOutboxConflict(ref, item, {
+          ...Map<String, dynamic>.from(found),
+          'id': item['documentId'],
+        });
+        return null;
+      }
+    }
+    Map<String,dynamic>? delta=item['fieldPatch'] is Map?Map<String,dynamic>.from(item['fieldPatch']):null;
+    final requiresPatch=registeredRecordRequiresPatch(item);
+    if(requiresPatch && !recordFieldPatchSupported)throw FieldDeltaUnavailable();
+    if(requiresPatch && delta==null) {
+      if(!recordPointReadSupported||item['baseCloudRevision'] is! String||(item['baseCloudRevision'] as String).isEmpty)throw FieldDeltaUnavailable();
+      final reply=await (readRecord!=null?readRecord(item['collection'],item['documentId']):
+        ManagedSchoolSession.callForSchool(school,'managed/records',{
+          'operation':'read','collection':item['collection'],'id':item['documentId'],'syncProtocol':2}));
+      if(reply['schoolId']!=school||reply['syncProtocol']!=2||reply['pointRead']!=true||reply['records'] is! Map)
+        throw FieldDeltaUnavailable();
+      final found=reply['records'][item['documentId']];
+      if(found is! Map||found['schoolId']!=school||found['_syncRevision'] is! String)throw FieldDeltaUnavailable();
+      if(found['_syncRevision']!=item['baseCloudRevision']||found['_syncDeleted']==true) {
+        await FirebaseFirestore.instance.recordOutboxConflict(ref,item,{...Map<String,dynamic>.from(found),'id':item['documentId']});
+        return null;
+      }
+      delta=buildRecordFieldPatch(item['collection'],found,item['data']);
+      if(delta==null)throw FieldDeltaUnavailable();
+    }
+    final patch=recordFieldPatchSupported&&delta!=null;
+    final source=Map<String,dynamic>.from(patch?delta!['set'] as Map:item['data'] as Map);
+    final data=await (prepareData!=null?prepareData(source):prepareManagedRecord(source,school,
+      (action,body)=>ManagedSchoolSession.callForSchool(school,action,body)));
+    final before=patch?Map<String,dynamic>.from(delta!['before'] as Map):<String,dynamic>{};
+    if(patch)for(final key in data.keys.where((k)=>k!='schoolId'&&k!='updatedAt'&&!before.containsKey(k))) {
+      final saved=item['data'] as Map,fields=saved['_syncFieldRevisions'];
+      before[key]={'exists':saved.containsKey(key),
+        'revision':fields is Map&&fields[key] is String?fields[key]:saved.containsKey(key)?item['baseCloudRevision']:'absent'};
+    }
+    final wire=patch?<String,dynamic>{'schoolId':school,'_syncFieldPatch':{
+      ...delta!,'before':before,'set':({...data}..remove('schoolId'))}}:data;
+    return FirebaseFirestore.instance.bindOutboxWireData(
+      ref,
+      item,
+      wire,
+      patch ? 'fieldPatch1' : 'snapshot2',
+    );
+  }
+
+  static Future<Map<String, dynamic>> readManagedPoints(
+    String school,
+    String collection,
+    Set<String> ids,
+  ) async {
+    if (ids.length > 64)
+      throw StateError('Bounded record notification required.');
+    final records = <String, dynamic>{};
+    for (final id in ids) {
+      final result = await ManagedSchoolSession.callForSchool(
+        school,
+        'managed/records',
+        {
+          'operation': 'read',
+          'collection': collection,
+          'id': id,
+          'syncProtocol': 2,
+        },
+      );
+      if (result['schoolId'] != school ||
+          result['syncProtocol'] != 2 ||
+          result['pointRead'] != true ||
+          result['records'] is! Map ||
+          (result['records'] as Map).keys.any((key) => key != id))
+        throw StateError('Unverified point read; notification retained.');
+      final row = result['records'][id];
+      if (row is! Map ||
+          row['schoolId'] != school ||
+          row['_syncRevision'] is! String ||
+          (row['_syncRevision'] as String).isEmpty)
+        throw StateError('Notified record requires authoritative recovery.');
+      records[id] = Map<String, dynamic>.from(row);
+    }
+    return records;
+  }
+
+  /// Authenticated collection heads are discovery hints, never receipts.
+  static Future<Map<String, String>> readManagedHeads(
+    String school,
+    Map<String, String> revisions,
+  ) async {
+    final result = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/changes',
+      {
+        'collections': revisions.keys.toList(),
+        'knownRevisions': revisions,
+        'headOnly': true,
+      },
+    );
+    final heads = result['revisions'];
+    if (result['schoolId'] != school ||
+        result['syncProtocol'] != 2 ||
+        result['headOnly'] != true ||
+        heads is! Map ||
+        heads.length != revisions.length ||
+        revisions.keys.any(
+          (key) => heads[key] is! String || (heads[key] as String).isEmpty,
+        )) {
+      throw StateError('Unverified school change heads.');
+    }
+    return Map<String, String>.from(heads);
+  }
+
+  static Future<Map<String, dynamic>> readManagedBatch(
+    String school,
+    Map<String, String> revisions, {
+    Map<String, Map<String, String>> knownRecordRevisions = const {},
+  }) async {
+    final body = boundedManagedDeltaRequest(revisions, knownRecordRevisions);
+    final sentCheckpoints = body['knownRecordRevisions'] as Map? ?? const {};
+    final result = await ManagedSchoolSession.callForSchool(
+      school, 'managed/changes', body,
+    );
+    if (result['schoolId'] != school ||
+        result['syncProtocol'] != 2 ||
+        result['changes'] is! Map)
+      throw StateError('Version-safe school delta unavailable.');
+    final changes = Map<String, dynamic>.from(result['changes'] as Map);
+    if (changes.length != revisions.length)
+      throw StateError('Incomplete school delta.');
+    for (final collection in revisions.keys) {
+      final group = Map<String, dynamic>.from(changes[collection] as Map);
+      if (group['partialRecords'] != null && group['partialRecords'] is! bool ||
+          group['partialRecords'] == true &&
+              !sentCheckpoints.containsKey(collection) ||
+          group['syncProtocol'] != 2 ||
+          group['collectionRevision'] is! String ||
+          group['records'] is! Map)
+        throw StateError('Invalid school delta checkpoint.');
+      group['records'] = (group['records'] as Map).map(
+        (key, value) => MapEntry(
+          key.toString(),
+          Map<String, dynamic>.from(_restoreManagedValue(value) as Map),
+        ),
+      );
+      if ((group['records'] as Map).values.any(
+        (row) => row['schoolId'] != school,
+      ))
+        throw StateError('Foreign school delta rejected.');
+      changes[collection] = group;
+    }
+    return changes;
+  }
+
+  static Future<Map<String, dynamic>> readManagedChanges(
+    String school,
+    String collection,
+    String revision,
+  ) async {
+    final result = await ManagedSchoolSession.callForSchool(
+      school,
+      'managed/records',
+      {
+        'operation': 'read',
+        'collection': collection,
+        'syncProtocol': 2,
+        'knownRevision': revision,
+      },
+    );
+    if (result['schoolId'] != school ||
+        result['syncProtocol'] != 2 ||
+        result['collectionRevision'] is! String)
+      throw StateError('Version-safe school manifest unavailable.');
+    return {
+      ...result,
+      'records': (result['records'] as Map).map(
+        (k, v) => MapEntry(
+          k.toString(),
+          Map<String, dynamic>.from(_restoreManagedValue(v) as Map),
+        ),
+      ),
+    };
+  }
+
+  static Future<Map<String, Map<String, dynamic>>> readCollection({
+    required String projectId,
+    required String idToken,
+    required String collection,
+  }) async {
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      final result = await _managedRecords(idToken, {
+        'operation': 'read',
+        'collection': collection,
+      });
+      return (result['records'] as Map).map(
+        (k, v) => MapEntry(
+          k.toString(),
+          Map<String, dynamic>.from(_restoreManagedValue(v) as Map),
+        ),
+      );
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    final output = <String, Map<String, dynamic>>{};
+
+    String? pageToken;
+
+    do {
+      final query = <String, String>{
+        'pageSize': '500',
+        if (pageToken != null && pageToken!.isNotEmpty) 'pageToken': pageToken!,
+      };
+
+      final uri = Uri.https(
+        'firestore.googleapis.com',
+        '/v1/projects/'
+            '${Uri.encodeComponent(projectId)}/'
+            'databases/(default)/documents/'
+            '$remoteCollection',
+        query,
+      );
+
+      final response = await _request('GET', uri, bearerToken: idToken);
+
+      if (response.statusCode == 404) {
+        return output;
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          _firebaseErrorMessage(
+            response.body,
+            fallback: 'Firestore collection read failed: $collection',
+          ),
+        );
+      }
+
+      if (response.body.trim().isEmpty) {
+        break;
+      }
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! Map) {
+        throw StateError('Firestore collection response invalid hai.');
+      }
+
+      final documents = decoded['documents'];
+
+      if (documents is List) {
+        for (final raw in documents) {
+          if (raw is! Map) continue;
+
+          final document = Map<String, dynamic>.from(raw);
+
+          final name = document['name']?.toString() ?? '';
+
+          if (name.isEmpty) continue;
+
+          final id = Uri.decodeComponent(name.split('/').last);
+
+          final fields = document['fields'];
+
+          output[id] = fields is Map
+              ? _decodeFirestoreFields(Map<String, dynamic>.from(fields))
+              : <String, dynamic>{};
+        }
+      }
+
+      pageToken = decoded['nextPageToken']?.toString().trim();
+
+      if (pageToken != null && pageToken!.isEmpty) {
+        pageToken = null;
+      }
+    } while (pageToken != null);
+
+    return output;
+  }
+
+  static Future<void> writeDocument({
+    required String projectId,
+    required String idToken,
+    required String collection,
+    required String documentId,
+    required Map<String, dynamic> data,
+    String? expectedRevision,
+    num? expectedUploadedAt,
+    String? reviewedRecordRevision,
+    void Function(Map<String, dynamic>)? onManagedAcknowledgement,
+  }) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
+    final school =
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+            ?.toString() ??
+        '';
+    void unchanged() {
+      if (FirebaseFirestore.instance.activeProfileId != origin ||
+          FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] !=
+              school)
+        throw StateError('School changed during sync.');
+    }
+
+    final saved = await CentralSchoolCloud.saved();
+    unchanged();
+    if (saved['managed'] == true) {
+      if (saved['schoolId'] != school)
+        throw StateError('School identity mismatch.');
+      final safe = await prepareManagedRecord(data, school, (action, body) {
+        unchanged();
+        return ManagedSchoolSession.callForSchool(school, action, body);
+      });
+      unchanged();
+      final acknowledgement = await _managedRecords(idToken, {
+        'operation': 'write',
+        'collection': collection,
+        'id': documentId,
+        'data': migrationJsonValue(safe),
+        if (reviewedRecordRevision != null) ...{
+          'syncProtocol': 2,
+          'operationId': data['documentRevision'],
+          'expectedRecordRevision': reviewedRecordRevision,
+        },
+        if (expectedRevision != null) 'expectedRevision': expectedRevision,
+        if (expectedUploadedAt != null)
+          'expectedUploadedAt': expectedUploadedAt,
+      }, expectedSchoolId: school);
+      unchanged();
+      onManagedAcknowledgement?.call(acknowledgement);
+      if (collection == 'school_config' &&
+          documentId == 'school_profile_cache' &&
+          (data['schoolName']?.toString().length ?? 0) >= 2 &&
+          (data['principalName']?.toString().length ?? 0) >= 2) {
+        unchanged();
+        await ManagedSchoolSession.callForSchool(school, 'managed/profile', {
+          'operation': 'initialize',
+          'schoolName': data['schoolName'],
+          'principalName': data['principalName'],
+        });
+      }
+      return;
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty ||
+        documentId.contains('/') ||
+        documentId == '.' ||
+        documentId == '..')
+      throw StateError('Invalid school document ID.');
+    final documentName =
+        'projects/$projectId/'
+        'databases/(default)/documents/'
+        '$remoteCollection/$documentId';
+
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/'
+      'projects/${Uri.encodeComponent(projectId)}/'
+      'databases/(default)/documents:commit',
+    );
+
+    final response = await _postJson(uri, <String, dynamic>{
+      'writes': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'update': <String, dynamic>{
+            'name': documentName,
+            'fields': _encodeFirestoreFields(
+              projectId == platformProjectId
+                  ? centralSchoolData(
+                      data,
+                      (await CentralSchoolCloud.saved())['schoolId'],
+                    )
+                  : schoolTextData(data),
+            ),
+          },
+        },
+      ],
+    }, bearerToken: idToken);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback:
+              'Firestore document sync failed: '
+              '$collection/$documentId',
+        ),
+      );
+    }
+  }
+
+  static Future<void> deleteDocument({
+    required String projectId,
+    required String idToken,
+    required String collection,
+    required String documentId,
+    String? expectedRevision,
+    num? expectedUploadedAt,
+    String? operationId,
+    String? expectedRecordRevision,
+    void Function(Map<String, dynamic>)? onManagedAcknowledgement,
+  }) async {
+    if ((await CentralSchoolCloud.saved())['managed'] == true) {
+      final result = await _managedRecords(idToken, {
+        'operation': 'delete',
+        'collection': collection,
+        'id': documentId,
+        if (operationId != null && expectedRecordRevision != null) ...{
+          'syncProtocol': 2,
+          'operationId': operationId,
+          'expectedRecordRevision': expectedRecordRevision,
+        },
+        if (expectedRevision != null) 'expectedRevision': expectedRevision,
+        if (expectedUploadedAt != null)
+          'expectedUploadedAt': expectedUploadedAt,
+      });
+      onManagedAcknowledgement?.call({
+        ...result,
+        'collection': collection,
+        'documentId': documentId,
+        'operationId': operationId,
+      });
+      return;
+    }
+    final remoteCollection = await _remoteCollection(projectId, collection);
+    if (documentId.isEmpty ||
+        documentId.contains('/') ||
+        documentId == '.' ||
+        documentId == '..')
+      throw StateError('Invalid school document ID.');
+    final documentName =
+        'projects/$projectId/'
+        'databases/(default)/documents/'
+        '$remoteCollection/$documentId';
+
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/'
+      'projects/${Uri.encodeComponent(projectId)}/'
+      'databases/(default)/documents:commit',
+    );
+
+    final response = await _postJson(uri, <String, dynamic>{
+      'writes': <Map<String, dynamic>>[
+        <String, dynamic>{'delete': documentName},
+      ],
+    }, bearerToken: idToken);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback:
+              'Firestore delete sync failed: '
+              '$collection/$documentId',
+        ),
+      );
+    }
+  }
+
+  static dynamic _restoreManagedValue(dynamic value) {
+    if (value is List) return value.map(_restoreManagedValue).toList();
+    if (value is Map) {
+      if (value.length == 1 && value['__vsTimestamp'] is String)
+        return Timestamp.fromDate(DateTime.parse(value['__vsTimestamp']));
+      return value.map(
+        (k, v) => MapEntry(k.toString(), _restoreManagedValue(v)),
+      );
+    }
+    return value;
+  }
+
+  static Future<String> _remoteCollection(
+    String projectId,
+    String collection,
+  ) async {
+    if (projectId == platformProjectId) {
+      final central = await CentralSchoolCloud.saved();
+      if (central.isEmpty)
+        throw StateError('Verified school cloud connection is required.');
+      return tenantCollectionPath(central['schoolId'], collection);
+    }
+    requireSchoolProjectId(projectId);
+    if (!RegExp(r'^[a-z][a-z0-9_]{0,79}$').hasMatch(collection))
+      throw StateError('Invalid school collection.');
+    return collection;
+  }
+
+  static Map<String, dynamic> _encodeFirestoreFields(
+    Map<String, dynamic> data,
+  ) {
+    final output = <String, dynamic>{};
+
+    for (final entry in data.entries) {
+      output[entry.key] = _encodeFirestoreValue(entry.value);
+    }
+
+    return output;
+  }
+
+  static Map<String, dynamic> _decodeFirestoreFields(
+    Map<String, dynamic> fields,
+  ) {
+    final output = <String, dynamic>{};
+
+    for (final entry in fields.entries) {
+      if (entry.value is Map) {
+        output[entry.key] = _decodeFirestoreValue(
+          Map<String, dynamic>.from(entry.value as Map),
+        );
+      }
+    }
+
+    return output;
+  }
+
+  static Map<String, dynamic> _encodeFirestoreValue(dynamic value) {
+    if (value == null) {
+      return <String, dynamic>{'nullValue': null};
+    }
+
+    if (value is bool) {
+      return <String, dynamic>{'booleanValue': value};
+    }
+
+    if (value is int) {
+      return <String, dynamic>{'integerValue': value.toString()};
+    }
+
+    if (value is double) {
+      return <String, dynamic>{'doubleValue': value};
+    }
+
+    if (value is num) {
+      return <String, dynamic>{'doubleValue': value.toDouble()};
+    }
+
+    if (value is Timestamp) {
+      return <String, dynamic>{
+        'timestampValue': value.toDate().toUtc().toIso8601String(),
+      };
+    }
+
+    if (value is DateTime) {
+      return <String, dynamic>{
+        'timestampValue': value.toUtc().toIso8601String(),
+      };
+    }
+
+    if (value is String) {
+      return <String, dynamic>{'stringValue': value};
+    }
+
+    if (value is Iterable) {
+      return <String, dynamic>{
+        'arrayValue': <String, dynamic>{
+          'values': value.map(_encodeFirestoreValue).toList(),
+        },
+      };
+    }
+
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+
+      return <String, dynamic>{
+        'mapValue': <String, dynamic>{'fields': _encodeFirestoreFields(map)},
+      };
+    }
+
+    return <String, dynamic>{'stringValue': value.toString()};
+  }
+
+  static dynamic _decodeFirestoreValue(Map<String, dynamic> value) {
+    if (value.containsKey('nullValue')) {
+      return null;
+    }
+
+    if (value.containsKey('booleanValue')) {
+      return value['booleanValue'] == true;
+    }
+
+    if (value.containsKey('integerValue')) {
+      final raw = value['integerValue']?.toString() ?? '';
+      return int.tryParse(raw) ?? 0;
+    }
+
+    if (value.containsKey('doubleValue')) {
+      final raw = value['doubleValue'];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse(raw?.toString() ?? '') ?? 0.0;
+    }
+
+    if (value.containsKey('timestampValue')) {
+      final raw = value['timestampValue']?.toString() ?? '';
+      final parsed = DateTime.tryParse(raw);
+      return parsed == null ? raw : Timestamp.fromDate(parsed);
+    }
+
+    if (value.containsKey('stringValue')) {
+      return value['stringValue']?.toString() ?? '';
+    }
+
+    if (value.containsKey('bytesValue')) {
+      return value['bytesValue']?.toString() ?? '';
+    }
+
+    if (value.containsKey('referenceValue')) {
+      return value['referenceValue']?.toString() ?? '';
+    }
+
+    if (value.containsKey('geoPointValue')) {
+      final raw = value['geoPointValue'];
+      return raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+    }
+
+    if (value.containsKey('arrayValue')) {
+      final raw = value['arrayValue'];
+
+      if (raw is Map) {
+        final values = raw['values'];
+
+        if (values is List) {
+          return values
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    _decodeFirestoreValue(Map<String, dynamic>.from(item)),
+              )
+              .toList();
+        }
+      }
+
+      return <dynamic>[];
+    }
+
+    if (value.containsKey('mapValue')) {
+      final raw = value['mapValue'];
+
+      if (raw is Map && raw['fields'] is Map) {
+        return _decodeFirestoreFields(
+          Map<String, dynamic>.from(raw['fields'] as Map),
+        );
+      }
+
+      return <String, dynamic>{};
+    }
+
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> _signIn({
+    required String apiKey,
+    required String email,
+    required String password,
+  }) async {
+    final uri = Uri.parse(
+      'https://identitytoolkit.googleapis.com/'
+      'v1/accounts:signInWithPassword'
+      '?key=${Uri.encodeQueryComponent(apiKey)}',
+    );
+
+    final response = await _postJson(uri, <String, dynamic>{
+      'email': email,
+      'password': password,
+      'returnSecureToken': true,
+    });
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback: 'Firebase Admin login failed.',
+        ),
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+
+    if (decoded is! Map) {
+      throw StateError('Firebase login response invalid hai.');
+    }
+
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  static Future<Map<String, dynamic>> _refreshIdToken({
+    required String apiKey,
+    required String refreshToken,
+  }) async {
+    final uri = Uri.parse(
+      'https://securetoken.googleapis.com/'
+      'v1/token'
+      '?key=${Uri.encodeQueryComponent(apiKey)}',
+    );
+
+    final client = HttpClient();
+
+    try {
+      final request = await client.postUrl(uri);
+
+      request.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/x-www-form-urlencoded',
+      );
+
+      final body =
+          'grant_type=refresh_token'
+          '&refresh_token=${Uri.encodeQueryComponent(refreshToken)}';
+
+      request.write(body);
+
+      final response = await request.close();
+
+      final responseBody = await utf8.decoder.bind(response).join();
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+          _firebaseErrorMessage(
+            responseBody,
+            fallback: 'Firebase session refresh failed.',
+          ),
+        );
+      }
+
+      final decoded = jsonDecode(responseBody);
+
+      if (decoded is! Map) {
+        throw StateError('Firebase token response invalid hai.');
+      }
+
+      return Map<String, dynamic>.from(decoded);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<void> _verifyFirestore({
+    required String projectId,
+    required String idToken,
+  }) async {
+    requireSchoolProjectId(projectId);
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/'
+      'projects/${Uri.encodeComponent(projectId)}/'
+      'databases/(default)/documents:runQuery',
+    );
+
+    final response = await _postJson(uri, <String, dynamic>{
+      'structuredQuery': <String, dynamic>{
+        'from': <Map<String, dynamic>>[
+          <String, dynamic>{'collectionId': 'school_config'},
+        ],
+        'limit': 1,
+      },
+    }, bearerToken: idToken);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        _firebaseErrorMessage(
+          response.body,
+          fallback: 'Firestore access verify nahi hua.',
+        ),
+      );
+    }
+  }
+
+  static Future<_SimpleHttpResponse> _request(
+    String method,
+    Uri uri, {
+    String? bearerToken,
+    Map<String, String>? headers,
+    String? body,
+  }) async {
+    final client = HttpClient();
+
+    try {
+      final request = await client.openUrl(method, uri);
+
+      if (bearerToken != null && bearerToken.isNotEmpty) {
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $bearerToken',
+        );
+      }
+
+      if (headers != null) {
+        for (final entry in headers.entries) {
+          request.headers.set(entry.key, entry.value);
+        }
+      }
+
+      if (body != null) {
+        request.write(body);
+      }
+
+      final response = await request.close();
+
+      final responseBody = await utf8.decoder.bind(response).join();
+
+      return _SimpleHttpResponse(
+        statusCode: response.statusCode,
+        body: responseBody,
+      );
+    } on SocketException {
+      throw StateError('Internet connection nahi mil raha.');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<_SimpleHttpResponse> _postJson(
+    Uri uri,
+    Map<String, dynamic> data, {
+    String? bearerToken,
+  }) async {
+    final client = HttpClient();
+
+    try {
+      final request = await client.postUrl(uri);
+
+      request.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'application/json; charset=utf-8',
+      );
+
+      if (bearerToken != null && bearerToken.isNotEmpty) {
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $bearerToken',
+        );
+      }
+
+      request.write(jsonEncode(data));
+
+      final response = await request.close();
+
+      final body = await utf8.decoder.bind(response).join();
+
+      return _SimpleHttpResponse(statusCode: response.statusCode, body: body);
+    } on SocketException {
+      throw StateError('Internet connection nahi mil raha.');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static String _firebaseErrorMessage(String body, {required String fallback}) {
+    try {
+      final decoded = jsonDecode(body);
+
+      if (decoded is Map) {
+        final error = decoded['error'];
+
+        if (error is Map) {
+          final message = error['message']?.toString().trim() ?? '';
+
+          if (message.isNotEmpty) {
+            switch (message) {
+              case 'INVALID_LOGIN_CREDENTIALS':
+              case 'INVALID_PASSWORD':
+              case 'EMAIL_NOT_FOUND':
+                return 'Firebase Admin Email ya Password galat hai.';
+
+              case 'USER_DISABLED':
+                return 'Firebase Admin account disabled hai.';
+
+              case 'API_KEY_INVALID':
+                return 'Firebase API key invalid hai.';
+
+              default:
+                if (message.contains('PERMISSION_DENIED')) {
+                  return 'Firebase login hua, lekin Firestore permission denied hai.';
+                }
+
+                return message;
+            }
+          }
+
+          final status = error['status']?.toString().trim() ?? '';
+
+          if (status.isNotEmpty) {
+            if (status == 'PERMISSION_DENIED') {
+              return 'Firebase login hua, lekin Firestore permission denied hai.';
+            }
+
+            return status;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return fallback;
+  }
+}
+
+class _SimpleHttpResponse {
+  const _SimpleHttpResponse({required this.statusCode, required this.body});
+
+  final int statusCode;
+  final String body;
+}
+).hasMatch(delivery['id'])) {
+        throw StateError('Unverified Cloudflare handoff; original retained.');
+      }
+      // The durable receipt callback has already completed. Never pass this
+      // non-Drive receipt through a canonical revision / delete ACK consumer.
+      throw CloudflareRecordHandoff(
+        school:school,collection:collection,id:id,
+        operationId:item['operationId'].toString(),
+        ticketId:delivery['id']);
+    }
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
