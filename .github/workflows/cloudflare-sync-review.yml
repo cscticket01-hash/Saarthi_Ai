@@ -25,6 +25,7 @@ on:
       - 'functions/cloudflare-sync.js'
       - 'functions/cloudflare-delivery.js'
       - 'functions/test/edge-document-independent-handoff.test.js'
+      - 'functions/test/edge-document-replacement-owner.test.js'
       - 'lib/windows_connect/managed_resumable_upload.dart'
       - 'test/managed_resumable_upload_test.dart'
       - 'functions/live-sync.js'

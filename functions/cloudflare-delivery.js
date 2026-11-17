@@ -6,7 +6,7 @@ const FILE=/^file-[a-f0-9]{64}$/;
 const OP=/^[A-Za-z0-9_-]{16,100}$/;
 const REV=/^[A-Za-z0-9_-]{1,200}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
-const terminal=new Set(['DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
+const terminal=new Set(['DOCUMENT_OWNER_CONFLICT','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
 function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payloadGcEnabled=false,atomicSmallFilesEnabled=false,diagnostics=entry=>console.info(JSON.stringify(entry))}){
  const gcEnabled=school=>typeof payloadGcEnabled==='function'?payloadGcEnabled(school)===true:payloadGcEnabled===true;
  const identity=request=>({action:request.action,collection:request.collection,id:request.id,operation:request.operation,syncProtocol:2,operationId:request.operationId,expectedRecordRevision:request.expectedRecordRevision});
@@ -88,7 +88,12 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    if(d?.version!==1||d.schoolId!==school||!REV.test(d.id||'')||
       !OP.test(d.operationId||'')||d.data?.schoolId!==school||
       d.data?.documentId!==d.id||d.data?.documentRevision!==d.operationId||
-      d.data?.contentHash!==manifest.sha256)
+      d.data?.contentHash!==manifest.sha256||
+      (d.expectedRevision!==undefined &&
+       (typeof d.expectedRevision!=='string'||d.expectedRevision.length>100||
+        d.expectedRevision.length>0&&!d.expectedRecordRevision))||
+      (d.expectedUploadedAt!==undefined &&
+       (!Number.isFinite(d.expectedUploadedAt)||d.expectedUploadedAt<0)))
     fail(400,'INVALID_DOCUMENT_STAGE');
    manifest.document=structuredClone(d);
   }
@@ -118,7 +123,13 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
       typeof meta.studentId!=='string'||!meta.studentId||
       Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
        ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
-      JSON.stringify(d).length>24000)fail(400,'INVALID_DOCUMENT_STAGE');
+      JSON.stringify(d).length>24000||
+      (d.expectedRevision!==undefined &&
+       (typeof d.expectedRevision!=='string'||d.expectedRevision.length>100||
+        d.expectedRevision.length>0&&!d.expectedRecordRevision))||
+      (d.expectedUploadedAt!==undefined &&
+       (!Number.isFinite(d.expectedUploadedAt)||d.expectedUploadedAt<0)))
+       fail(400,'INVALID_DOCUMENT_STAGE');
    m.document=structuredClone(d);
   }
   const {id,lane}=fileIdentity(school,m.uploadKey);
@@ -230,6 +241,29 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      // Failed metadata CAS retains the SAME original file operation for retry.
      phase='publishDocument';
      const document=original.document;
+     if(typeof document.expectedRevision==='string' &&
+        document.expectedRevision.length>0) {
+      // Immutable ownership of the OLD document is checked by the backend,
+      // after Cloudflare has taken bytes and before replacing metadata.
+      // No app wait, no guessed fileId, no newer student's document loss.
+      phase='verifyOriginalDocumentOwner';
+      const owned=await deliver({action:'managed_records',
+        operation:'read',collection:'documents',id:document.id,syncProtocol:2});
+      if(owned?.success!==true||owned.schoolId!==school||
+         owned.syncProtocol!==2||owned.pointRead!==true||
+         !owned.records||typeof owned.records!=='object')
+        fail(502,'DOCUMENT_OWNER_READ_UNVERIFIED');
+      const old=owned.records[document.id];
+      if(!old||old.schoolId!==school||
+         old.studentId!==document.data.studentId||
+         old._syncDeleted===true||
+         old.documentRevision!==document.expectedRevision||
+         old._syncRevision!==document.expectedRecordRevision||
+         (document.expectedUploadedAt!==undefined &&
+          old.uploadedAt!==document.expectedUploadedAt))
+        fail(409,'DOCUMENT_OWNER_CONFLICT');
+     }
+     phase='publishDocument';
      const write={action:'managed_records',collection:'documents',operation:'write',
       syncProtocol:2,id:document.id,operationId:document.operationId,
       expectedRecordRevision:document.expectedRecordRevision,
@@ -278,7 +312,7 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    const stored=await finish({state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result,completedAt:now(),...cleanup});return {processed:stored===true?1:0};
   }catch(error){
    // Fixed categories only: no school/person/operation IDs, payloads or errors.
-   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','DOCUMENT_ACK_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
+   const known=new Set([...terminal,'ACK_UNVERIFIED','UPLOAD_ACK_UNVERIFIED','DOCUMENT_ACK_UNVERIFIED','DOCUMENT_OWNER_READ_UNVERIFIED','EDGE_DELIVERY_PENDING','SCRIPT_TIMEOUT','SCRIPT_TRANSPORT_ERROR','SCRIPT_RESPONSE_READ_FAILED','SCRIPT_HTTP_ERROR','SCRIPT_OPERATION_FAILED','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR','SCRIPT_IDENTITY_MISMATCH','SCRIPT_SIGNED_RESPONSE_UNVERIFIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','CLOUDFLARE_SYNC_UNAVAILABLE']);
    try{diagnostics({event:'edge_delivery_failure',lane:lane==='records'?'records':'file',phase,code:known.has(error.code)?error.code:'EDGE_DELIVERY_PENDING',status:Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:503});}catch(_){}
    const review=terminal.has(error.code)||[400,401,403,409,422].includes(error.status);
    // Cloudflare preserves the operation, including partial verified receipts.

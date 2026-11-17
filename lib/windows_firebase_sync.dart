@@ -524,6 +524,7 @@ class WindowsFirebaseRemote {
   // Bound only to the current authenticated school's checked backend and
   // Script capability, reset with the session. Never infer from school ID.
   static bool documentStageSupported = false;
+  static bool documentReplacementStageSupported = false;
   static Future<Map<String, Object>> prepareManagedBatch(
     String school, {
     required bool Function() canAdmit,
