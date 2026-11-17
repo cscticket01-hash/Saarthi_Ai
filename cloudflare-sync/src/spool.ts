@@ -71,7 +71,7 @@ function checkedFileDocumentIntent(m:Json,school:string) {
    record&&typeof record==='object'&&
    record.schoolId===school&&record.documentId===intent.id&&
    record.documentRevision===intent.operationId&&
-   record.contentHash===m.sha256&&record.fileName===m.name&&
+   record.contentHash===m.sha256&&typeof record.fileName==='string'&&record.fileName.length>0&&record.fileName.length<=200&&
    record.mimeType===m.mime&&record.fileId===undefined&&
    record.fileUrl===undefined&&
    typeof record.studentId==='string'&&record.studentId.length>0&&
