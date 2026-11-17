@@ -1,6 +1,7 @@
 import {brokerRetryDelay} from './broker-retry.mjs';
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
 import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
+import {r2StagingForSchool} from './r2-scoped-admission.mjs';
 import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
 import {initLive,liveCommand} from './live-records';
@@ -73,7 +74,7 @@ export class SyncLane extends DurableObject<Env>{
   if(lane==='live'){
    demand(liveSchoolEnabled(this.env as Env&{LIVE_SYNC_SCHOOLS?:string;LIVE_SYNC_TEST_SCHOOL_ID?:string},school),'Live authority is not enabled for this school',412);
    initLive(this.ctx.storage);
-   const staged=this.env.R2_STAGING_ENABLED==='true';
+   const staged=r2StagingForSchool(this.env,school);
    const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
    if(staged&&b.command==='commit'){
     demand(this.env.R2_STAGE!==undefined,'Private R2 bucket binding required',503);
@@ -236,7 +237,7 @@ export class SyncLane extends DurableObject<Env>{
   }
   if(spoolLane(lane)){
    const cmd=String(b.command||''),id=String(b.id||'');
-   const staged=this.env.R2_STAGING_ENABLED==='true';
+   const staged=r2StagingForSchool(this.env,school);
    const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
    if(staged){
     demand(this.env.R2_STAGE!==undefined,'Private R2 bucket binding required',503);
@@ -309,7 +310,7 @@ export class SyncLane extends DurableObject<Env>{
   // Legacy notices and encrypted attendance have their own already-durable
   // school-lane owner. Stage exactly their immutable original request before
   // their existing visible Cloudflare ACK, not before Google Drive delivery.
-  const stageOther=this.env.R2_STAGING_ENABLED==='true'&&
+  const stageOther=r2StagingForSchool(this.env,school)&&
    ((lane==='notices'&&action==='write')||(lane.startsWith('attendance-')&&action==='create'));
   const budget=()=>this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1');
   if(stageOther){
