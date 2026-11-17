@@ -1,0 +1,35 @@
+name: Export isolated TEST Worker bundle for verified deployment
+on:
+  push:
+    branches: [feature/smart-sync-3]
+    paths:
+      - '.github/workflows/export-isolated-worker-bundle.yml'
+permissions:
+  contents: write
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and test pinned Cloudflare Worker
+        working-directory: cloudflare-sync
+        run: |
+          npm install --ignore-scripts --no-package-lock
+          cp .dev.vars.example .dev.vars
+          npm run types
+          npm run check
+          npm run build
+          npm test
+      - name: Export only compiled, tested Worker JS into a separate build branch
+        run: |
+          test -s cloudflare-sync/dist/worker.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c sync3-test-worker-bundle-20261117
+          git add -f cloudflare-sync/dist/worker.js
+          git commit -m 'build(sync3): isolated TEST Worker module; no secrets'
+          git push origin HEAD:refs/heads/sync3-test-worker-bundle-20261117
