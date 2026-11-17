@@ -140,8 +140,8 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/id-publication-tests
       run: flutter test --concurrency=1 test/windows_document_review_owner_test.dart test/windows_sync_comparison_test.dart
-    - name: Verify central school cloud and paths
-      run: flutter test test/central_school_cloud_test.dart
+    - name: Verify central school cloud and two-phase handoff
+      run: flutter test --concurrency=1 test/central_school_cloud_test.dart test/cloudflare_record_handoff_test.dart
     - name: Verify school connection automation
       run: |
         python tool/build_school_setup_bundle.py --check

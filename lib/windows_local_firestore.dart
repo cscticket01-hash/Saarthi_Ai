@@ -269,6 +269,18 @@ class FirebaseFirestore {
       diagnostic:diagnostic);
   }
 
+  /// Mark a verified Cloudflare staging handoff without acknowledging or
+  /// deleting the original CAS-bound business operation. The backend owns
+  /// eventual Drive delivery; this retained row is not another upload.
+  Future<bool> recordOutboxCloudHandoff(
+      DocumentReference<Map<String,dynamic>> ref,
+      Map<String,dynamic> expected, {required String ticketId}) {
+    ref.requireOriginProfile();
+    if(ref.collectionPath!='_windows_firebase_outbox')
+      throw ArgumentError('Outbox reference required');
+    return _database.recordOutboxCloudHandoff(ref.id,expected,ticketId:ticketId);
+  }
+
   /// Check the live outbox inside the serialized disk write, not a stale pull snapshot.
   Future<void> applySyncedDocument(DocumentReference<Map<String,dynamic>> ref, Map<String,dynamic>? data, {String? tombstoneRevision, int? tombstoneUpdatedAt}) {
     ref.requireOriginProfile();
@@ -2376,6 +2388,63 @@ class _LocalSchoolDatabase {
         done.complete(_decodeMap(bound));
       } catch(error,stack){done.completeError(error,stack);}
     });return done.future;
+  }
+
+  /// The Cloudflare ACK is durable before this marker is saved.
+  /// A CAS transition retains the original bytes until provider proof.
+  Future<bool> recordOutboxCloudHandoff(String queueId,
+      Map<String,dynamic> expected, {required String ticketId}) {
+    final origin=_activeProfileId;
+    final school=_activeIdentity['schoolSyncId'];
+    final original=_encodeMap(expected);
+    final done=Completer<bool>();
+    _writeTail=_writeTail.then((_) async {
+      try {
+        if(origin!=_activeProfileId ||
+            original['schoolId']!=school ||
+            // Preserve the immutable real-school original and require its
+            // exact broker-derived SHA-256 identity before changing owner.
+            original['collection'] is! String ||
+            (original['collection'] as String).isEmpty ||
+            original['collection']=='documents' ||
+            original['documentId'] is! String ||
+            (original['documentId'] as String).isEmpty ||
+            !{'set','update'}.contains(original['operation']) ||
+            original['atomicBundleId']!=null ||
+            original['priorDeletion']!=null ||
+            original['baseCloudRevision'] is! String ||
+            original['data'] is! Map ||
+            original['operationId'] is! String ||
+            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
+            ticketId!=sha256.convert(utf8.encode(jsonEncode([
+              school,'managed_records',[
+                original['collection'],original['documentId'],original['operationId'],
+              ],
+            ]))).toString())
+          throw StateError('Original school-bound Cloudflare ticket required.');
+        final root=await _readRoot(collections:{'_windows_firebase_outbox'});
+        if(origin!=_activeProfileId)throw StateError('School changed during handoff.');
+        final collections=_collections(root), queue=collections['_windows_firebase_outbox'];
+        final current=queue is Map?queue[queueId]:null;
+        if(current is! Map ||
+            _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(original)) {
+          done.complete(false);return;
+        }
+        if(!{null,'pending','retry'}.contains(current['syncState'])) {
+          done.complete(false);return;
+        }
+        queue[queueId]={...Map<String,dynamic>.from(current),
+          'syncState':'cloudAccepted',
+          'cloudTicketId':ticketId,
+          'cloudTicketLane':'records',
+          'cloudAcceptedAt':DateTime.now().millisecondsSinceEpoch};
+        _storeCollections(root,collections);await _writeRoot(root);
+        final signal=_signals['_windows_firebase_outbox'];
+        if(signal!=null&&!signal.isClosed)signal.add(null);
+        done.complete(true);
+      } catch(error,stack){done.completeError(error,stack);}
+    });
+    return done.future;
   }
 
   Future<bool> recordOutboxFailure(String queueId, Map<String,dynamic> expected,

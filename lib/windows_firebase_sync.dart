@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'windows_drive_delivery_queue.dart';
 import 'windows_record_change_policy.dart';
 import 'live_sync_protocol.dart';
@@ -402,12 +403,19 @@ class WindowsFirebaseRemote {
       if(utf8.encode(jsonEncode(candidate)).length<=250000)
         requestBody['cachedBaseline']=candidate['cachedBaseline'];
     }
+    // No test school or hardcoded school IDs: every genuine school receives
+    // the same two-phase protocol, but ONLY after its authenticated broker
+    // advertises the durable edge-delivery capability. File-dependent rows
+    // remain with the original version-safe owner.
+    final cloudHandoff=batchReply==null&&eligibleForRecordHandoff(
+      item,school,edgeDeliverySupported:edgeDeliverySupported);
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
             school,
             'managed/records',
             requestBody,
+            returnAfterDurableCloudflareHandoff:cloudHandoff,
           );
     final preparationMicros = stageWatch.elapsedMicroseconds;
     stageWatch.reset();
@@ -424,6 +432,23 @@ class WindowsFirebaseRemote {
     }
     final requestMicros = stageWatch.elapsedMicroseconds;
     stageWatch.reset();
+    if(result['cloudflareHandoffVersion']==1) {
+      final delivery=result['delivery'];
+      if(!cloudHandoff||result['success']!=true||
+          result['schoolId']!=school||
+          result['cloudflareAccepted']!=true||
+          result['driveState']!='pending'||
+          result['edgeDeliveryVersion']!=1||
+          delivery is! Map||delivery['lane']!='records'||
+          delivery['id'] is! String||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(delivery['id'])) {
+        throw StateError('Unverified Cloudflare handoff; original retained.');
+      }
+      throw CloudflareRecordHandoff(
+        school:school,collection:collection,id:id,
+        operationId:item['operationId'].toString(),
+        ticketId:delivery['id']);
+    }
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
@@ -569,6 +594,8 @@ class WindowsFirebaseRemote {
       final item = row.data();
       if (item['schoolId'] != school ||
           item['atomicBundleId']!=null ||
+          eligibleForRecordHandoff(item,school,edgeDeliverySupported:
+            edgeDeliverySupported) ||
           !{'pending', 'retry'}.contains(item['syncState']) ||
           item['operation'] != 'set' ||
           {

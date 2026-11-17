@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'cloudflare_record_handoff.dart';
 import 'live_sync_protocol.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
@@ -113,7 +114,10 @@ class WindowsDriveDeliveryQueue {
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(source) || proof is! Map ||
         proof['success'] != true || proof['schoolId'] != school ||
         proof['cloudflareAccepted'] != true || proof['edgeDeliveryVersion'] != 1 ||
-        !const ['managed/records', 'managed/records/batch', 'managed/file/upload'].contains(notice['action'])) {
+        !const ['managed/records', 'managed/records/batch', 'managed/file/upload'].contains(notice['action']) ||
+        (notice['originalOperationId'] != null &&
+          (notice['originalOperationId'] is! String ||
+           !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(notice['originalOperationId'])))) {
       throw StateError('Unverified Cloudflare staging receipt.');
     }
     final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
@@ -138,6 +142,9 @@ class WindowsDriveDeliveryQueue {
     if (old != null) {
       if (old['schoolId'] != school || old['edgeDeliveryVersion'] != 1 ||
           old['action'] != notice['action'] ||
+          (old['originalOperationId']!=null &&
+           notice['originalOperationId']!=null &&
+           old['originalOperationId']!=notice['originalOperationId']) ||
           ticket is Map && old['ticketId'] != null && (old['ticketId'] != ticket['id'] || old['lane'] != ticket['lane'])) {
         throw StateError('Cloudflare staging receipt identity changed.');
       }
@@ -148,6 +155,11 @@ class WindowsDriveDeliveryQueue {
       () => ref.set({
         'schoolId': school, 'operationId': operationId, 'edgeDeliveryVersion': 1,
         'action': notice['action'], 'cloudflareAccepted': true,
+        if(notice['originalOperationId'] is String)
+          'originalOperationId':notice['originalOperationId'],
+        if(notice['originalOperationId'] is! String &&
+           old?['originalOperationId'] is String)
+          'originalOperationId':old!['originalOperationId'],
         if (notice['operation'] == 'write' || notice['operation'] == 'delete') 'operation': notice['operation'],
         'collection': notice['collection'] is String ? notice['collection'] : 'school_files',
         'id': notice['id'] is String ? notice['id'] : source.substring(0, 8),
@@ -345,6 +357,33 @@ class WindowsDriveDeliveryQueue {
             }
           }
           if (proof['driveState'] == 'verified') {
+            // The original staged mutation stays in durable local CAS outbox
+            // until this exact broker-owned ticket proves its final revision.
+            if (lane=='records'&&item['originalOperationId'] is String) {
+              final originals=(await db.collection('_windows_firebase_outbox').get()).docs
+                  .where((row)=>row.data()['operationId']==item['originalOperationId'] &&
+                      row.data()['schoolId']==school).toList();
+              _scope(school, profile);
+              if(originals.length==1) {
+                final original=originals.single.data();
+                // Journal persistence and original CAS marking are distinct
+                // durable writes. If the broker finishes unusually fast,
+                // retry the final receipt rather than lose that race or
+                // declare the local original completed.
+                if(original['syncState']!='cloudAccepted' &&
+                    original['cloudTicketId']==null &&
+                    original['operationId']==item['originalOperationId'] &&
+                    original['schoolId']==school)
+                  throw StateError('Original Cloudflare handoff CAS is not yet committed.');
+                if(original['syncState']=='cloudAccepted') {
+                  if(!verifiedStagedRecordFinal(original,item,proof,school))
+                    throw StateError('Canonical staged record revision unverified; original retained.');
+                  await db.acknowledgeOutbox(originals.single.reference,original,
+                      revision:proof['recordRevision']);
+                  _scope(school, profile);
+                }
+              }
+            }
             if (lane == 'file-$id' &&
                 (proof['committed'] != true ||
                  proof['fileId'] is! String ||

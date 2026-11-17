@@ -484,9 +484,28 @@ class CentralSchoolCloud {
       edge_crypto.sha256.convert(base64Decode(encoded)).toString()]))).toString();
   }
 
+  /// Match the broker's immutable single-record queue ticket. A 64-char
+  /// opaque token by itself is not proof that the staged operation is ours.
+  static String expectedRecordStageTicket(Map<String,dynamic> body) {
+    final school=body['schoolId'],collection=body['collection'],
+        id=body['id'],operationId=body['operationId'];
+    if(school is! String||!validSchoolId(school)||
+        collection is! String||collection.isEmpty||
+        id is! String||id.isEmpty||
+        operationId is! String||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(operationId))
+      throw StateError('Original school-scoped operation identity required.');
+    return edge_crypto.sha256.convert(utf8.encode(
+      jsonEncode([school,'managed_records',[collection,id,operationId]]))).toString();
+  }
+
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
+    // Opt-in *transport* boundary for a future two-phase queue owner.
+    // The existing version-safe record/file callers MUST keep the default:
+    // a staged receipt is not a canonical revision or a Drive file ID.
+    bool returnAfterDurableCloudflareHandoff = false,
   }) async {
     final receiptProfile = edgeDeliveryProfile?.call();
     if (expectedSchoolId != null &&
@@ -513,6 +532,12 @@ class CentralSchoolCloud {
         ? edge_crypto.sha256.convert(utf8.encode(
             jsonEncode(ordered(migrationJsonValue(body))))).toString()
         : null;
+    if (returnAfterDurableCloudflareHandoff &&
+        (!staged || source == null || onEdgeDelivery == null)) {
+      throw StateError(
+        'Durable Cloudflare handoff requires an installed school-scoped receipt journal.',
+      );
+    }
     Future<void> observe(Map<String, dynamic> proof) async {
       final observer = onEdgeDelivery;
       if (source == null || observer == null ||
@@ -523,6 +548,7 @@ class CentralSchoolCloud {
         'profileId': receiptProfile,
         if (body['collection'] is String) 'collection': body['collection'],
         if (body['id'] is String) 'id': body['id'],
+        if (body['operationId'] is String) 'originalOperationId': body['operationId'],
         if (body['operation'] == 'write' || body['operation'] == 'delete') 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
@@ -556,12 +582,27 @@ class CentralSchoolCloud {
                acceptedTicket['id'] != ticket['id']))) {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
+      if(returnAfterDurableCloudflareHandoff &&
+          (action!='managed/records' ||
+           ticket['lane']!='records' ||
+           ticket['id']!=expectedRecordStageTicket(body)))
+        throw StateError('Cloudflare stage ticket is not bound to the original operation.');
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
       if (!receiptRetained) {
         await observe(result);
         receiptRetained = true;
+      }
+      // A future two-phase client owner can stop foreground network waiting
+      // here only after the exact stage ticket was persisted. This result
+      // must never be passed to acknowledgeOutbox or a fileId consumer.
+      // Existing callers keep polling for their original canonical Drive
+      // revision because this opt-in is deliberately disabled by default.
+      if (returnAfterDurableCloudflareHandoff &&
+          result['cloudflareAccepted'] == true &&
+          result['driveState'] == 'pending') {
+        return {...result, 'cloudflareHandoffVersion': 1};
       }
       final retry = edgeDeliveryRetry(result['deliveryStatus'], DateTime.now());
       if (retry != null) {

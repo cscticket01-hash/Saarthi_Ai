@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'windows_platform_client.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
@@ -498,6 +499,10 @@ class WindowsPendingSchoolSync {
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
       if (canAdmit?.call() == false) break;
       var item = queued.data();
+      // Cloudflare owns this immutable original. The device never submits a
+      // second mutation merely to poll Google Drive; the receipt journal can
+      // settle it when the authenticated provider proof eventually arrives.
+      if(item['syncState']=='cloudAccepted')continue;
       // This exact original operation belongs to the isolated atomic
       // Person/Card recovery owner. Never issue a second independent upload.
       if(item['atomicBundleId']!=null) {
@@ -692,6 +697,19 @@ class WindowsPendingSchoolSync {
           report('waitingForResponse', queued.id, item);
           await response;
         }
+      } on CloudflareRecordHandoff catch (accepted) {
+        unchanged();
+        if(item['schoolId']!=accepted.school||
+            item['collection']!=accepted.collection||
+            item['documentId']!=accepted.id||
+            item['operationId']!=accepted.operationId) {
+          throw StateError('Cloudflare handoff changed original operation identity.');
+        }
+        final saved=await db.recordOutboxCloudHandoff(
+          queued.reference,item,ticketId:accepted.ticketId);
+        unchanged();
+        if(saved)report('cloudflareAccepted',queued.id,item);
+        continue; // No canonical revision / no outbox deletion.
       } catch (caught, stack) {
         unchanged();
         final e = caught is FileSystemException && caught is! PendingDocumentFileFailure &&

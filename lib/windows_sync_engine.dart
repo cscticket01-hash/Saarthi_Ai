@@ -837,13 +837,29 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         )
         .toList();
     if (db.activeProfileId != origin) return;
+    // A stage-owned operation remains physically in its exact local outbox
+    // until the broker returns a canonical Drive revision. It is no longer
+    // an outgoing device upload; show it in the separate Drive delivery
+    // journal, never as a second upload or fake foreground spinner.
+    bool hasExactCloudflareHandoff(Map<String,dynamic> row) =>
+        row['syncState']=='cloudAccepted' &&
+        row['schoolId']==_activeSchoolSyncId &&
+        row['operationId'] is String &&
+        RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
+        row['cloudTicketId'] is String &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
+        row['cloudTicketLane']=='records';
+    final cloudOwned=general.docs.where(
+      (d)=>hasExactCloudflareHandoff(d.data())).toList();
+    final foregroundRecords=general.docs.where(
+      (d)=>!hasExactCloudflareHandoff(d.data())).toList();
     final items = [
-      ...general.docs,
+      ...foregroundRecords,
       ...documents.docs,
       ...legacy.docs,
       ...restores,
     ];
-    final outbound = [...general.docs, ...documents.docs, ...legacy.docs]
+    final outbound = [...foregroundRecords, ...documents.docs, ...legacy.docs]
         .map((row) => row.data())
         .where(
           (row) =>
@@ -881,7 +897,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
     if (_quotaRetryAt != null && (_nextRetry == null || _quotaRetryAt!.isAfter(_nextRetry!))) _nextRetry = _quotaRetryAt;
     final liveQueue = <Map<String, dynamic>>[
-      for (final d in general.docs)
+      for (final d in foregroundRecords)
         {
           'id': d.id,
           ...d.data(),
@@ -962,6 +978,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'pauseBoundaryPending': isPaused && _syncing,
       'pausedUntilMillis': pausedUntil?.millisecondsSinceEpoch,
       'pending': items.length,
+      'cloudflareOwnedPendingDrive': cloudOwned.length,
       'conflictCount': items
           .where(
             (d) =>
@@ -990,7 +1007,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (binary?['unavailable'] as int? ?? 0),
       'documentPending':
           documents.docs.length +
-          general.docs
+          foregroundRecords
               .where((d) => d.data()['collection'] == 'documents')
               .length,
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int
@@ -1016,7 +1033,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           )
           .length,
       'items': [
-        for (final d in general.docs)
+        for (final d in foregroundRecords)
           {
             'id': d.id,
             ...d.data(),
