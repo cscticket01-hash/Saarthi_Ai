@@ -487,6 +487,10 @@ class CentralSchoolCloud {
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
+    // Opt-in *transport* boundary for a future two-phase queue owner.
+    // The existing version-safe record/file callers MUST keep the default:
+    // a staged receipt is not a canonical revision or a Drive file ID.
+    bool returnAfterDurableCloudflareHandoff = false,
   }) async {
     final receiptProfile = edgeDeliveryProfile?.call();
     if (expectedSchoolId != null &&
@@ -513,6 +517,12 @@ class CentralSchoolCloud {
         ? edge_crypto.sha256.convert(utf8.encode(
             jsonEncode(ordered(migrationJsonValue(body))))).toString()
         : null;
+    if (returnAfterDurableCloudflareHandoff &&
+        (!staged || source == null || onEdgeDelivery == null)) {
+      throw StateError(
+        'Durable Cloudflare handoff requires an installed school-scoped receipt journal.',
+      );
+    }
     Future<void> observe(Map<String, dynamic> proof) async {
       final observer = onEdgeDelivery;
       if (source == null || observer == null ||
@@ -562,6 +572,16 @@ class CentralSchoolCloud {
       if (!receiptRetained) {
         await observe(result);
         receiptRetained = true;
+      }
+      // A future two-phase client owner can stop foreground network waiting
+      // here only after the exact stage ticket was persisted. This result
+      // must never be passed to acknowledgeOutbox or a fileId consumer.
+      // Existing callers keep polling for their original canonical Drive
+      // revision because this opt-in is deliberately disabled by default.
+      if (returnAfterDurableCloudflareHandoff &&
+          result['cloudflareAccepted'] == true &&
+          result['driveState'] == 'pending') {
+        return {...result, 'cloudflareHandoffVersion': 1};
       }
       final retry = edgeDeliveryRetry(result['deliveryStatus'], DateTime.now());
       if (retry != null) {
