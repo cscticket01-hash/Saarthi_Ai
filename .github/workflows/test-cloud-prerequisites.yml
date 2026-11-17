@@ -59,6 +59,12 @@ on:
       - lib/mobile/attendance_confirmation_schedule.dart
       - lib/mobile/school_request_deadlines.dart
       - lib/windows_connect/managed_record_media.dart
+      - lib/cloudflare_record_handoff.dart
+      - lib/windows_backend_bridge.dart
+      - cloudflare-sync/src/spool.ts
+      - cloudflare-sync/test/photo-record-finalization.test.mjs
+      - test/managed_photo_record_stage_test.dart
+      - test/cloudflare_record_handoff_test.dart
       - lib/windows_school_image_cache.dart
       - lib/windows_binary_downloads.dart
       - test/windows_binary_downloads_test.dart
