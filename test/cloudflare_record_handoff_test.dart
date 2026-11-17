@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../lib/cloudflare_record_handoff.dart';
+import '../lib/windows_pending_school_sync.dart';
 import '../lib/windows_drive_delivery_queue.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
@@ -53,7 +54,18 @@ void main() {
         'edgeDeliveryVersion':1,'cloudflareAccepted':true,
         'driveState':'pending','delivery':{'lane':'records','id':ticket}},
     });
-    expect(await db.recordOutboxCloudHandoff(row.reference,original,ticketId:ticket),true);
+    var mutationCalls=0;
+    await WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      send:(a,b,c,d) async => fail('Unexpected legacy send'),
+      sendVersioned:(item) async {
+        mutationCalls++;
+        throw CloudflareRecordHandoff(
+          school:school,collection:'school_calendar',id:'event-1',
+          operationId:original['operationId'],ticketId:ticket);
+      },
+    );
+    expect(mutationCalls,1,reason:'one durable owner admission');
     final retained=(await row.reference.get()).data()!;
     expect(retained['syncState'],'cloudAccepted');
     expect(retained['operationId'],original['operationId']);
