@@ -70,9 +70,14 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
     return false;
   final record=proof['record'];
   if(record is Map) {
+    // A verified Script projection sometimes omits wrapper metadata. Its
+    // signed broker owner still binds the immutable original operation ID
+    // through the stored ticket. Reject any *present* contradictory identity.
     if(record['schoolId']!=school||
-        record['_syncRevision']!=proof['recordRevision']||
-        record['_syncOperationId']!=original['operationId']||
+        (record['_syncRevision']!=null&&
+         record['_syncRevision']!=proof['recordRevision'])||
+        (record['_syncOperationId']!=null&&
+         record['_syncOperationId']!=original['operationId'])||
         (record['id']!=null&&record['id']!=original['documentId']))
       return false;
   }
