@@ -366,6 +366,15 @@ class WindowsDriveDeliveryQueue {
               _scope(school, profile);
               if(originals.length==1) {
                 final original=originals.single.data();
+                // Journal persistence and original CAS marking are distinct
+                // durable writes. If the broker finishes unusually fast,
+                // retry the final receipt rather than lose that race or
+                // declare the local original completed.
+                if(original['syncState']!='cloudAccepted' &&
+                    original['collection']=='school_calendar' &&
+                    original['data'] is Map &&
+                    (original['data'] as Map)['syntheticTest']==true)
+                  throw StateError('Original cloud handoff transition is still pending.');
                 if(original['syncState']=='cloudAccepted') {
                   if(!verifiedStagedRecordFinal(original,item,proof,school))
                     throw StateError('Canonical staged record revision unverified; original retained.');
