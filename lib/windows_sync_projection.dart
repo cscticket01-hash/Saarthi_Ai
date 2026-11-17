@@ -117,14 +117,10 @@ String projectWindowsSyncState(
   bool reviewRequired = false,
   int incomingPending = 0,
 }) {
+  assert(incomingPending >= 0);
   if (paused) return 'paused';
-  // Durable outbound completion, not the lifetime of a background poll,
-  // determines whether the device's school sync has finished. A record is
-  // absent from this queue only after its authoritative ACK is persisted.
-  // Keep incoming work and every error/review state visible.
-  if (rows.isEmpty && incomingPending == 0 &&
-      !blocked && !offline && !failed && !reviewRequired) return 'idle';
-  if (syncing) return 'syncing';
+  // Conflicts and unverified local uploads are always actionable, even when
+  // incoming cloud checks run concurrently. Never fabricate an operation ACK.
   if (blocked ||
       reviewRequired ||
       rows.any(
@@ -140,7 +136,11 @@ String projectWindowsSyncState(
   }
   if (offline) return 'offline';
   if (failed) return 'waiting';
-  if (rows.isEmpty) return incomingPending>0?'pending':'idle';
+  // Cloud hints, inbound record downloads and separate Google Drive receipt
+  // polls are NOT new device uploads. A drained durable outgoing queue is
+  // Idle immediately, regardless of a continuing client reconciliation cycle.
+  if (rows.isEmpty) return 'idle';
+  if (syncing) return 'syncing';
   if (rows.every(
     (r) =>
         r['_queueCollection'] == '_windows_google_outbox' ||
@@ -149,6 +149,28 @@ String projectWindowsSyncState(
     return 'waiting';
   }
   return 'pending';
+}
+
+/// Foreground device status is strictly derived from durable outgoing work.
+ /// Inbound cloud reconciliation is rendered separately, never as a fake upload
+ /// or a spinning "Preparing changed data" state.
+String projectWindowsDevicePhase({
+  required String? durableState,
+  required int uploadPending,
+  required bool syncing,
+  required bool transferActive,
+  required bool paused,
+  required bool stalled,
+}) {
+  assert(uploadPending >= 0);
+  if (paused) return 'paused';
+  if (stalled) return 'stalled';
+  if (durableState == 'needsAttention' ||
+      durableState == 'offline' ||
+      durableState == 'waiting') return durableState!;
+  if (uploadPending == 0) return 'idle';
+  if (syncing) return transferActive ? 'syncing' : 'preparing';
+  return durableState ?? 'pending';
 }
 
 /// Earliest future row deadline. Review-only and legacy managed rows do not
