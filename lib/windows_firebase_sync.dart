@@ -594,6 +594,8 @@ class WindowsFirebaseRemote {
       final item = row.data();
       if (item['schoolId'] != school ||
           item['atomicBundleId']!=null ||
+          eligibleForRecordHandoff(item,school,enabledTestSchool:
+            const String.fromEnvironment('SAARTHI_SYNC3_HANDOFF_TEST_SCHOOL_ID')) ||
           !{'pending', 'retry'}.contains(item['syncState']) ||
           item['operation'] != 'set' ||
           {
