@@ -1363,7 +1363,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
@@ -1597,6 +1597,68 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
   if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
   const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
+ }
+ if(action==='managed/document/stage/resumable'){
+  // Every chunk carries the identical, immutable document sidecar. No client
+  // receives a Drive fileId until the broker has published its metadata.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare document delivery is not enabled','DOCUMENT_STAGE_UNAVAILABLE');
+  const d=b.document,meta=d?.data;
+  if(d?.version!==1||d.schoolId!==m.schoolId||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(d.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(d.operationId||'')||
+     typeof d.expectedRecordRevision!=='string'||d.expectedRecordRevision.length>100||
+     !meta||typeof meta!=='object'||Array.isArray(meta)||
+     meta.schoolId!==m.schoolId||meta.documentId!==d.id||
+     meta.documentRevision!==d.operationId||
+     typeof meta.studentId!=='string'||!meta.studentId||
+     !/^[a-f0-9]{64}$/.test(meta.contentHash||'')||
+     Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
+      ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
+     JSON.stringify(d).length>24000)
+   fail(400,'Invalid immutable document staging request');
+  if(!['begin','part'].includes(b.operation)||
+     !/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     b.uploadKey!==hash(d.id+':'+d.operationId)||
+     !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+     b.sha256!==meta.contentHash||
+     !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+     b.sizeBytes>20*1024*1024||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||''))
+   fail(400,'Invalid document chunk manifest');
+  if(b.operation==='part'){
+   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||
+      typeof b.base64!=='string'||!b.base64||b.base64.length>700000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      !/^[a-f0-9]{64}$/.test(b.chunkSha256||''))
+    fail(400,'Invalid document chunk');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(!bytes.length||bytes.length>512*1024||
+      b.offset+bytes.length>b.sizeBytes||
+      bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.chunkSha256)
+    fail(400,'Invalid document chunk SHA-256');
+  }else{
+   const capability=await cachedRead(uploadCapabilities,m.schoolId,
+     ()=>signedRequest(m,{action:'managed_health'}),300000);
+   if(capability.schoolId!==m.schoolId||capability.storageReady!==true||
+      capability.uploadResumableVersion!==1)
+    fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+  }
+  const out=await edgeDelivery.file(m.schoolId,{
+   action:'managed_upload_resumable',operation:b.operation,
+   uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,
+   name:b.name,mime:b.mime,document:clean(d),
+   ...(b.operation==='part'?{offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256}:{})});
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.cloudflareAccepted===true&&out.edgeDeliveryVersion===1&&
+     out.delivery?.lane==='file-'+out.delivery.id)return out;
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.uploadResumableVersion===1&&out.uploadKey===b.uploadKey&&
+     out.sha256===b.sha256&&out.sizeBytes===b.sizeBytes&&
+     out.cloudflareAccepted===true&&out.driveState==='receiving')return out;
+  fail(502,'Document staged upload receipt unverified','DOCUMENT_STAGE_UNVERIFIED');
  }
  if(action==='managed/document/stage'){
   // New independent document owner is explicitly opt-in. Legacy clients keep

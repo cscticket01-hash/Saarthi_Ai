@@ -516,9 +516,12 @@ class CentralSchoolCloud {
         'Developer must configure the central school cloud service. Schools do not need Firebase configuration.',
       );
     final action=body['action'];
+    final documentStage = action=='managed/document/stage/resumable' &&
+        body['document'] is Map && body['uploadKey'] is String;
     final staged = action=='managed/records' && body['operation']!='read' && body['syncProtocol']==2
         || action=='managed/records/batch'
-        || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String;
+        || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String
+        || documentStage;
     final origin = expectedSchoolId != null ? await saved() : null;
     Object? ordered(Object? value) {
       if (value is Map) {
@@ -528,7 +531,13 @@ class CentralSchoolCloud {
       if (value is List) return value.map(ordered).toList();
       return value;
     }
-    final source = staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
+    final source = documentStage && onEdgeDelivery != null
+        // The identity remains stable across every chunk and after a retry.
+        ? edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+            body['schoolId'], body['uploadKey'],
+            (body['document'] as Map)['operationId'], body['sha256'],
+          ]))).toString()
+        : staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
         ? edge_crypto.sha256.convert(utf8.encode(
             jsonEncode(ordered(migrationJsonValue(body))))).toString()
         : null;
@@ -546,10 +555,16 @@ class CentralSchoolCloud {
       await observer({
         'source': source, 'schoolId': body['schoolId'], 'action': action,
         'profileId': receiptProfile,
-        if (body['collection'] is String) 'collection': body['collection'],
-        if (body['id'] is String) 'id': body['id'],
-        if (body['operationId'] is String) 'originalOperationId': body['operationId'],
-        if (body['operation'] == 'write' || body['operation'] == 'delete') 'operation': body['operation'],
+        if (documentStage) ...{
+          'collection': 'documents',
+          'id': (body['document'] as Map)['id'],
+          'originalOperationId': (body['document'] as Map)['operationId'],
+          'operation': 'write',
+        },
+        if (!documentStage && body['collection'] is String) 'collection': body['collection'],
+        if (!documentStage && body['id'] is String) 'id': body['id'],
+        if (!documentStage && body['operationId'] is String) 'originalOperationId': body['operationId'],
+        if (!documentStage && (body['operation'] == 'write' || body['operation'] == 'delete')) 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
             'edgeDeliveryVersion', 'driveState', 'delivery', 'committed', 'fileId'])
@@ -582,11 +597,19 @@ class CentralSchoolCloud {
                acceptedTicket['id'] != ticket['id']))) {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
-      if(returnAfterDurableCloudflareHandoff &&
-          (action!='managed/records' ||
-           ticket['lane']!='records' ||
-           ticket['id']!=expectedRecordStageTicket(body)))
-        throw StateError('Cloudflare stage ticket is not bound to the original operation.');
+      if (returnAfterDurableCloudflareHandoff) {
+        if (documentStage) {
+          final expected = edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+            body['schoolId'], body['uploadKey'],
+          ]))).toString();
+          if (ticket['lane'] != 'file-$expected' || ticket['id'] != expected)
+            throw StateError('Cloudflare document ticket is not bound to its file.');
+        } else if (action!='managed/records' ||
+                   ticket['lane']!='records' ||
+                   ticket['id']!=expectedRecordStageTicket(body)) {
+          throw StateError('Cloudflare stage ticket is not bound to the original operation.');
+        }
+      }
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}

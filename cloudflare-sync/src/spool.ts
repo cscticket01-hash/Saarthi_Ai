@@ -379,9 +379,9 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    const original=JSON.parse(row.payload) as Json;
    if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
    if(lane.startsWith('file-')&&original.document){
-    const document=original.document as Json,ack=result.documentRecord as Json|undefined;
+    const document=original.document as Json,ack=(result.documentRecord||{}) as Json;
     demand(document.version===1&&document.schoolId===school&&
-     ack?.id===document.id&&ack.operationId===document.operationId&&
+     ack.id===document.id&&ack.operationId===document.operationId&&
      ack.fileId===result.fileId&&ack.contentHash===original.sha256&&
      typeof ack.recordRevision==='string'&&!!ack.recordRevision&&
      !/^(live-|cf-)/.test(ack.recordRevision),

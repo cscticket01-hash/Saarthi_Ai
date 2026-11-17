@@ -83,6 +83,15 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function file(school,request){
   const {id,lane}=fileIdentity(school,request.uploadKey);
   const manifest={uploadKey:request.uploadKey,sha256:request.sha256,sizeBytes:request.sizeBytes,name:request.name,mime:request.mime};
+  if(request.document!==undefined){
+   const d=request.document;
+   if(d?.version!==1||d.schoolId!==school||!REV.test(d.id||'')||
+      !OP.test(d.operationId||'')||d.data?.schoolId!==school||
+      d.data?.documentId!==d.id||d.data?.documentRevision!==d.operationId||
+      d.data?.contentHash!==manifest.sha256)
+    fail(400,'INVALID_DOCUMENT_STAGE');
+   manifest.document=structuredClone(d);
+  }
   const row=await edge.rpc(school,lane,{command:'begin',id,manifest});
   if(request.operation==='part'){
    const bytes=Buffer.from(request.base64,'base64');

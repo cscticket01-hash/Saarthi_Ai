@@ -114,7 +114,7 @@ class WindowsDriveDeliveryQueue {
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(source) || proof is! Map ||
         proof['success'] != true || proof['schoolId'] != school ||
         proof['cloudflareAccepted'] != true || proof['edgeDeliveryVersion'] != 1 ||
-        !const ['managed/records', 'managed/records/batch', 'managed/file/upload'].contains(notice['action']) ||
+        !const ['managed/records', 'managed/records/batch', 'managed/file/upload', 'managed/document/stage/resumable'].contains(notice['action']) ||
         (notice['originalOperationId'] != null &&
           (notice['originalOperationId'] is! String ||
            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(notice['originalOperationId'])))) {
@@ -389,6 +389,63 @@ class WindowsDriveDeliveryQueue {
                  proof['fileId'] is! String ||
                  (proof['fileId'] as String).isEmpty)) {
               throw StateError('Drive file completion unverified.');
+            }
+            if (lane == 'file-$id' &&
+                item['action'] == 'managed/document/stage/resumable') {
+              final document = proof['documentRecord'];
+              final docId = item['id'], opId = item['originalOperationId'];
+              if (docId is! String || docId.isEmpty ||
+                  opId is! String ||
+                  document is! Map ||
+                  document['id'] != docId ||
+                  document['operationId'] != opId ||
+                  document['fileId'] != proof['fileId'] ||
+                  document['recordRevision'] is! String ||
+                  (document['recordRevision'] as String).isEmpty ||
+                  document['contentHash'] is! String ||
+                  !RegExp(r'^[a-f0-9]{64}$')
+                      .hasMatch(document['contentHash'] as String)) {
+                throw StateError('Document metadata requires exact Google record proof.');
+              }
+              final ref = db.collection('_windows_document_outbox').doc(docId);
+              final snapshot = await ref.get();
+              _scope(school, profile);
+              final original = snapshot.data();
+              if (original != null && original['schoolId'] == school &&
+                  original['documentRevision'] == opId) {
+                if (original['syncState'] != 'cloudAccepted' ||
+                    original['cloudTicketId'] != id ||
+                    original['cloudTicketLane'] != lane ||
+                    original['contentHash'] != document['contentHash'] ||
+                    original['cloudContentHash'] != document['contentHash']) {
+                  throw StateError('Original document handoff has not yet committed.');
+                }
+                final local = db.collection('_local_student_documents').doc(docId);
+                final localSnapshot = await local.get();
+                _scope(school, profile);
+                final localRow = localSnapshot.data();
+                if (localRow?['schoolId'] != school ||
+                    localRow?['documentRevision'] != opId ||
+                    localRow?['contentHash'] != document['contentHash']) {
+                  throw StateError('Document local generation changed; retain exact original.');
+                }
+                await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+                  () async {
+                    _scope(school, profile);
+                    final batch = db.batch();
+                    batch.set(local, {
+                      'syncState': 'Synced',
+                      'cloudFileUrl': proof['fileUrl'],
+                      'cloudRevision': opId,
+                      'cloudRecordRevision': document['recordRevision'],
+                      'cloudUploadedAt': localRow?['uploadedAt'],
+                    }, const SetOptions(merge: true));
+                    batch.delete(ref);
+                    await batch.commit();
+                  },
+                );
+                _scope(school, profile);
+              }
             }
             values = {
               'state': 'completed',

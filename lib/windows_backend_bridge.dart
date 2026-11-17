@@ -15,6 +15,7 @@ import 'windows_school_image_cache.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_school_map.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'windows_connect/managed_resumable_upload.dart';
 import 'windows_connect/google_authorization.dart';
 
 import 'dart:async';
@@ -1007,6 +1008,9 @@ class WindowsBackendBridge {
           } catch (_) {}
         }
 
+        // A signed, immutable Cloudflare file+metadata ticket already owns
+        // this original. Local proof remains until server-side Drive readback.
+        if (record['syncState'] == 'cloudAccepted') continue;
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
           continue;
@@ -1083,6 +1087,57 @@ class WindowsBackendBridge {
           final response = (send ?? _handleCentral)(payload);
           report('waitingForAck');
           final result = await response;
+          if (result['cloudflareHandoffVersion'] == 1) {
+            // Do not label R2 staging as a Google Drive file receipt.
+            final ticket = result['delivery'];
+            final expectedKey = crypto.sha256.convert(
+              utf8.encode('${queued.id}:${record['documentRevision']}'),
+            ).toString();
+            final expectedTicket = crypto.sha256.convert(
+              utf8.encode(jsonEncode([record['schoolId'], expectedKey])),
+            ).toString();
+            if (result['success'] != true ||
+                result['cloudflareAccepted'] != true ||
+                result['driveState'] != 'pending' ||
+                result['schoolId'] != record['schoolId'] ||
+                ticket is! Map ||
+                ticket['id'] != expectedTicket ||
+                ticket['lane'] != 'file-$expectedTicket' ||
+                payload['contentHash'] !=
+                    crypto.sha256.convert(bytes).toString()) {
+              throw const MissingSyncAcknowledgement();
+            }
+            await _documentWrite(() async {
+              if (FirebaseFirestore.instance.activeProfileId != origin)
+                throw StateError('School changed before document Cloudflare receipt.');
+              final current = (await queued.reference.get()).data();
+              if (current == null ||
+                  current['documentRevision'] != record['documentRevision'] ||
+                  current['localPath'] != generationPath ||
+                  current['schoolId'] != record['schoolId'] ||
+                  current['contentHash'] != payload['contentHash']) {
+                // A newer local generation must not be cleared by an older ACK.
+                return;
+              }
+              final batch = FirebaseFirestore.instance.batch();
+              batch.set(queued.reference, {
+                'syncState': 'cloudAccepted',
+                'cloudTicketId': expectedTicket,
+                'cloudTicketLane': 'file-$expectedTicket',
+                'cloudContentHash': payload['contentHash'],
+              }, SetOptions(merge: true));
+              batch.set(
+                FirebaseFirestore.instance
+                    .collection('_local_student_documents')
+                    .doc(queued.id),
+                {'syncState': 'CloudflareSaved'},
+                SetOptions(merge: true),
+              );
+              await batch.commit();
+            });
+            report('cloudAccepted');
+            continue;
+          }
           failureStage = 'verifyAcknowledgement';
           if (!verifiedDocumentAcknowledgement(payload, result))
             throw const MissingSyncAcknowledgement();
@@ -2047,6 +2102,77 @@ class WindowsBackendBridge {
     }
 
     final action = body['action']?.toString() ?? '';
+    // Only a new, unbased document generation can use this separate early
+    // Cloudflare handoff. Replacements/deletes keep their existing CAS owner
+    // until a version-safe dependency migration explicitly supports them.
+    if (connection['managed'] == true &&
+        action == 'upload_student_document' &&
+        (body['baseCloudRevision']?.toString() ?? '').isEmpty &&
+        (body['reviewedRecordRevision']?.toString() ?? '').isEmpty &&
+        body['documentId'] is String &&
+        body['documentRevision'] is String) {
+      final id = body['documentId'] as String;
+      final revision = body['documentRevision'] as String;
+      if (id.isNotEmpty && id.length <= 200 && !id.contains('/') &&
+          RegExp(r'^[A-Za-z0-9_-]{16,100}).hasMatch(revision)) {
+        // An authenticated broker advertises this specific capability.
+        // Unsupported schools keep the previous, Drive-verified path.
+        final available = await cloud.api({
+          'action': 'managed/storage/check', 'schoolId': school,
+        }, token: token);
+        await ensureSchool();
+        if (available['brokerDocumentStageVersion'] == 1 &&
+            available['documentVersions'] == 1) {
+          final raw = body['fileBase64']?.toString() ?? '';
+          final bytes = Uint8List.fromList(base64Decode(
+            raw.contains(',') ? raw.split(',').last : raw,
+          ));
+          if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024)
+            throw StateError('Document is outside the verified Cloudflare file size.');
+          final hash = crypto.sha256.convert(bytes).toString();
+          if (body['contentHash'] != hash)
+            throw StateError('Original document SHA-256 changed during Cloudflare upload.');
+          final data = <String, dynamic>{
+            for (final key in [
+              'studentId','studentName','studentClass','rollNo',
+              'documentName','fileName','mimeType','uploadedBy',
+              'documentKind','ownerRole','personId','inputRevision',
+              'documentRevision','uploadedAt','sizeBytes','sourceBytes',
+              'contentHash','cleanupStatus','targetMet',
+            ])
+              if (body[key] != null) key: body[key],
+            'schoolId': school,
+            'documentId': id,
+            'contentHash': hash,
+          };
+          final uploadKey = crypto.sha256.convert(
+            utf8.encode('$id:$revision'),
+          ).toString();
+          final document = <String, dynamic>{
+            'version': 1, 'schoolId': school, 'id': id,
+            'operationId': revision, 'expectedRecordRevision': '',
+            'data': data,
+          };
+          final staged = await uploadManagedChunks(
+            schoolId: school, uploadKey: uploadKey,
+            name: 'Document_$uploadKey.${body['mimeType'] == 'application/pdf' ? 'pdf' : 'jpg'}',
+            mime: body['mimeType']?.toString() ?? 'application/octet-stream',
+            bytes: bytes, action: 'managed/document/stage/resumable',
+            document: document, acceptDurableCloudflareHandoff: true,
+            request: (part) async {
+              await ensureSchool();
+              return cloud.api(part, token: token,
+                returnAfterDurableCloudflareHandoff: true);
+            },
+          );
+          await ensureSchool();
+          if (staged['cloudflareHandoffVersion'] == 1)
+            return staged; // Background Drive owner has the exact whole file.
+          // A rare immediate Drive completion uses the existing canonical
+          // document readback/compare-and-swap path below.
+        }
+      }
+    }
     Map<String, dynamic>? initialDocumentRead;
     Map<String, dynamic>? documentWriteAck;
     if (connection['managed'] == true &&
