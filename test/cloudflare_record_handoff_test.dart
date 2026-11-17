@@ -142,4 +142,95 @@ void main() {
     expect((await row.reference.get()).data()?['syncState'],'cloudAccepted');
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'pending');
   });
+  test('exact original portrait file and person record must BOTH verify before local ACK', () {
+    const ticket='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const fileHash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const rawHash='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+    final original={
+      'schoolId':school,'collection':'students_directory',
+      'documentId':'student-portrait-original','operationId':'photo-original-operation-00000001',
+      'operation':'set','syncState':'cloudAccepted','atomicBundleId':null,
+      'data':{'schoolId':school},'cloudTicketId':ticket,
+      'cloudTicketLane':'file-$ticket',
+      'cloudMediaSourceHash':rawHash,'cloudMediaFileSha256':fileHash,
+    };
+    final journal={'ticketId':ticket,'schoolId':school,
+      'action':'managed/record/media/stage/resumable',
+      'collection':'students_directory','id':'student-portrait-original',
+      'originalOperationId':'photo-original-operation-00000001'};
+    final proof={'success':true,'schoolId':school,'cloudflareAccepted':true,
+      'driveState':'verified','committed':true,'fileId':'realDrivePhotoId',
+      'sha256':fileHash,
+      'mediaRecord':{'collection':'students_directory','id':'student-portrait-original',
+        'operationId':'photo-original-operation-00000001',
+        'fileId':'realDrivePhotoId','recordRevision':'real-revision-1',
+        'sourceHash':rawHash,'fileSha256':fileHash}};
+    expect(verifiedStagedPhotoRecordFinal(original,journal,proof,school),true);
+    expect(verifiedStagedPhotoRecordFinal(original,journal,{
+      ...proof,'fileId':'substituted-file',
+    },school),false);
+    expect(verifiedStagedPhotoRecordFinal({
+      ...original,'cloudMediaSourceHash':'0'*64,
+    },journal,proof,school),false);
+    expect(verifiedStagedPhotoRecordFinal(original,journal,{
+      ...proof,'mediaRecord':{...proof['mediaRecord'] as Map,
+        'recordRevision':'cf-unverified'}
+    },school),false);
+    expect(verifiedStagedPhotoRecordFinal(original,journal,proof,other),false);
+  });
+  test('immutable original photo outbox is never cleared before exact file and record proof', () async {
+    final raw='data:image/jpeg;base64,${base64Encode(utf8.encode('original portrait'))}';
+    const op='photo-original-operation-00000001',docId='school-photo-person-01';
+    const fileHash='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+    final rawHash=sha256.convert(utf8.encode('original portrait')).toString();
+    final original={
+      'schoolId':school,'collection':'students_directory',
+      'documentId':docId,'operation':'set','operationId':op,
+      'baseCloudRevision':'','syncState':'pending',
+      'data':{'schoolId':school,'studentId':docId,'photoUrl':raw},
+    };
+    final ref=db.collection('_windows_firebase_outbox').doc('photo-op-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+      ()=>ref.set(original));
+    final live=(await ref.get()).data()!;
+    final key=sha256.convert(utf8.encode(jsonEncode([
+      school,'students_directory',docId,op,fileHash,
+    ]))).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    await expectLater(db.recordOutboxCloudHandoff(ref,live,
+      ticketId:ticket,lane:'file-$ticket',mediaSourceHash:'0'*64,
+      mediaFileSha256:fileHash),throwsStateError);
+    expect((await ref.get()).data()?['syncState'],'pending');
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/record/media/stage/resumable',
+      'collection':'students_directory','id':docId,
+      'operation':'write','originalOperationId':op,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'file-$ticket','id':ticket}},
+    });
+    final bound=await db.recordOutboxCloudHandoff(ref,live,
+      ticketId:ticket,lane:'file-$ticket',
+      mediaSourceHash:rawHash,mediaFileSha256:fileHash);
+    expect(bound,true);
+    expect((await ref.get()).data()?['cloudTicketLane'],'file-$ticket');
+    var polls=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body)async{
+      polls++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['lane'],'file-$ticket');
+      return{'success':true,'schoolId':school,
+        'cloudflareAccepted':true,'driveState':'verified',
+        'committed':true,'fileId':'verifiedOriginalPhoto','sha256':fileHash,
+        'mediaRecord':{'collection':'students_directory','id':docId,
+          'operationId':op,'recordRevision':'google-record-revision-01',
+          'fileId':'verifiedOriginalPhoto','sourceHash':rawHash,
+          'fileSha256':fileHash}};
+    });
+    expect(polls,1);
+    expect((await ref.get()).data(),isNull,
+      reason:'only verified Google photo AND exact record retire local outbox');
+  });
 }

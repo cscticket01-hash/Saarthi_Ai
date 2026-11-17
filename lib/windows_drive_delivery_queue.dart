@@ -114,7 +114,7 @@ class WindowsDriveDeliveryQueue {
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(source) || proof is! Map ||
         proof['success'] != true || proof['schoolId'] != school ||
         proof['cloudflareAccepted'] != true || proof['edgeDeliveryVersion'] != 1 ||
-        !const ['managed/records', 'managed/records/batch', 'managed/file/upload', 'managed/document/stage/resumable'].contains(notice['action']) ||
+        !const ['managed/records', 'managed/records/batch', 'managed/file/upload', 'managed/document/stage/resumable', 'managed/record/media/stage/resumable'].contains(notice['action']) ||
         (notice['originalOperationId'] != null &&
           (notice['originalOperationId'] is! String ||
            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(notice['originalOperationId'])))) {
@@ -389,6 +389,43 @@ class WindowsDriveDeliveryQueue {
                  proof['fileId'] is! String ||
                  (proof['fileId'] as String).isEmpty)) {
               throw StateError('Drive file completion unverified.');
+            }
+            if (lane == 'file-$id' &&
+                item['action'] == 'managed/record/media/stage/resumable') {
+              final media=proof['mediaRecord'];
+              if (media is! Map ||
+                  media['collection'] != item['collection'] ||
+                  media['id'] != item['id'] ||
+                  media['operationId'] != item['originalOperationId'] ||
+                  media['fileId'] != proof['fileId'] ||
+                  media['fileSha256'] != proof['sha256'] ||
+                  media['recordRevision'] is! String ||
+                  (media['recordRevision'] as String).isEmpty) {
+                throw StateError('Original photo record has no verified Google proof.');
+              }
+              final matches=(await db.collection('_windows_firebase_outbox').get())
+                  .docs.where((entry)=>
+                    entry.data()['operationId']==item['originalOperationId'] &&
+                    entry.data()['collection']==item['collection'] &&
+                    entry.data()['documentId']==item['id'] &&
+                    entry.data()['schoolId']==school).toList();
+              _scope(school, profile);
+              if(matches.length>1) {
+                throw StateError('Multiple original photo record owners detected.');
+              }
+              if(matches.length==1) {
+                final original=matches.single.data();
+                if(original['syncState']!='cloudAccepted' &&
+                    original['cloudTicketId']==null) {
+                  throw StateError('Original portrait Cloudflare CAS not yet committed.');
+                }
+                if(!verifiedStagedPhotoRecordFinal(original,item,proof,school)) {
+                  throw StateError('Photo record Drive and original CAS proof mismatch.');
+                }
+                await db.acknowledgeOutbox(matches.single.reference,original,
+                  revision:media['recordRevision'] as String);
+                _scope(school, profile);
+              }
             }
             if (lane == 'file-$id' &&
                 item['action'] == 'managed/document/stage/resumable') {

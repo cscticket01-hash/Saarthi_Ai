@@ -15,6 +15,7 @@ Future<Map<String, dynamic>> uploadManagedChunks({
   required Future<Map<String, dynamic>> Function(Map<String, dynamic>) request,
   String action = 'managed/file/upload/resumable',
   Map<String, dynamic>? document,
+  Map<String, dynamic>? record,
   bool acceptDurableCloudflareHandoff = false,
 }) async {
   if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024) {
@@ -24,6 +25,7 @@ Future<Map<String, dynamic>> uploadManagedChunks({
   final metadata = <String, dynamic>{
     'action': action, 'schoolId': schoolId,
     if (document != null) 'document': document,
+    if (record != null) 'record': record,
     'uploadKey': uploadKey, 'name': name, 'mime': mime,
     'sha256': digest, 'sizeBytes': bytes.length,
   };
@@ -47,7 +49,10 @@ Future<Map<String, dynamic>> uploadManagedChunks({
         out['success'] != true ||
         out['schoolId'] != schoolId ||
         out['cloudflareAccepted'] != true ||
-        out['driveState'] != 'pending') return null;
+        !(out['driveState'] == 'pending' ||
+          out['driveState'] == 'verified' && out['committed'] == true &&
+          out['fileId'] is String &&
+          (out['fileId'] as String).isNotEmpty)) return null;
     final ticket = out['delivery'];
     final expected = sha256.convert(utf8.encode(
       jsonEncode([schoolId, uploadKey]),

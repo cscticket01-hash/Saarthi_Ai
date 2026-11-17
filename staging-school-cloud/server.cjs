@@ -50,8 +50,8 @@ function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtim
       action=ACTIONS.has(body?.action)?body.action:/^(managed\/|developer\/managed\/)/.test(body?.action||'')?'MANAGED':'UNKNOWN';
       // Native parts carry up to 512 KiB binary as <=700000 base64 bytes.
       // Keep ordinary JSON at 256 KiB and the existing full-upload cap unchanged.
-      const nativePart=['managed/file/upload/resumable','managed/document/stage/resumable'].includes(body?.action)&&body.operation==='part';
-      const bodyLimit=['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?(body.action==='managed/document/stage/resumable'?700000+32768:700000+4096):256*1024;
+      const nativePart=['managed/file/upload/resumable','managed/document/stage/resumable','managed/record/media/stage/resumable'].includes(body?.action)&&body.operation==='part';
+      const bodyLimit=['managed/file/upload','managed/document/stage'].includes(body?.action)?28*1024*1024:nativePart?(body.action==='managed/record/media/stage/resumable'?900000:body.action==='managed/document/stage/resumable'?700000+32768:700000+4096):256*1024;
       if(bytes>bodyLimit||nativePart&&(typeof body.base64!=='string'||body.base64.length>700000))
         return send(413,{success:false,code:'REQUEST_TOO_LARGE',message:'Request is too large'});
       // First Windows login has no saved school ID yet. Bind its authenticated

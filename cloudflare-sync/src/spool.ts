@@ -388,6 +388,21 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
      !/^(live-|cf-)/.test(ack.recordRevision),
      'Document metadata requires exact verified Drive record receipt');
     }
+    if(original.record){
+     const record=original.record as Json,ack=(result.mediaRecord||{}) as Json;
+     demand(record.version===1&&record.schoolId===school&&
+       record.mediaPrefix==='photo'&&
+       ['students_directory','teachers_directory'].includes(String(record.collection))&&
+       record.operation==='write'&&
+       typeof record.sourceHash==='string'&&operationPattern.test(record.sourceHash)&&
+       ack.collection===record.collection&&ack.id===record.id&&
+       ack.operationId===record.operationId&&
+       ack.fileId===result.fileId&&ack.sourceHash===record.sourceHash&&
+       ack.fileSha256===original.sha256&&
+       typeof ack.recordRevision==='string'&&!!ack.recordRevision&&
+       !/^(live-|cf-)/.test(ack.recordRevision),
+       'Original portrait and canonical record require same-owner Google proof');
+    }
    }else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
