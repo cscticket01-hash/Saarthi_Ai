@@ -62,6 +62,58 @@ void main() {
     cloud.close();
   });
 
+  test('opt-in two-phase transport returns only after durable journal without Drive poll', () async {
+    final notices = <Map<String, dynamic>>[];
+    final journalGate = Completer<void>();
+    var calls = 0;
+    CentralSchoolCloud.edgeDeliveryProfile = () => 'original-profile';
+    CentralSchoolCloud.onEdgeDelivery = (notice) async {
+      notices.add(notice);
+      await journalGate.future; // simulate disk flush before foreground Idle
+    };
+    final id = List.filled(64, 'a').join();
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+        client: MockClient((request) async {
+          calls++;
+          final body = jsonDecode(request.body) as Map;
+          expect(body['action'], 'managed/records');
+          return http.Response(jsonEncode({
+            'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+            'cloudflareAccepted': true, 'driveState': 'pending',
+            'delivery': {'lane': 'records', 'id': id},
+          }), 200);
+        }));
+    final future = cloud.api({'action': 'managed/records', 'schoolId': school,
+        'syncProtocol': 2, 'operation': 'write',
+        'operationId': 'original-operation-id', 'collection': 'school_expenses',
+        'id': 'one', 'data': {'privateName': 'stay-local'}},
+        returnAfterDurableCloudflareHandoff: true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(notices, hasLength(1));
+    expect(calls, 1);
+    journalGate.complete();
+    final stage = await future;
+    expect(stage['cloudflareHandoffVersion'], 1);
+    expect(stage['driveState'], 'pending');
+    expect(stage['recordRevision'], isNull);
+    expect(stage['fileId'], isNull);
+    expect(jsonEncode(notices), isNot(contains('stay-local')));
+    expect(calls, 1, reason: 'no client-side Drive delivery long-poll');
+    cloud.close();
+  });
+  test('stage-only handoff refuses missing durable receipt observer before upload', () async {
+    var calls = 0;
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+      client: MockClient((_) async {
+        calls++;
+        return http.Response(jsonEncode({'success': true, 'schoolId': school}), 200);
+      }));
+    await expectLater(cloud.api({'action': 'managed/records', 'schoolId': school,
+      'syncProtocol': 2, 'operation': 'write'},
+      returnAfterDurableCloudflareHandoff: true), throwsStateError);
+    expect(calls, 0);
+    cloud.close();
+  });
   test('retained delivery retry preserves Script reason and deadline without 90-second polling', () async {
     var calls = 0;
     final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
