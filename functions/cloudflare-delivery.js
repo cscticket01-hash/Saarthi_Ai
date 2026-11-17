@@ -1,6 +1,7 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
 const {canGcRecord,scrubDomainReceipt,hydrateDomainReceipt}=require('./live-domain-delivery');
+const {validateIntent,recordRequest,verifyDocumentAck}=require('./document-file-intent');
 const digest=v=>createHash('sha256').update(v).digest('hex');
 const FILE=/^file-[a-f0-9]{64}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
@@ -81,6 +82,9 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
  async function file(school,request){
   const {id,lane}=fileIdentity(school,request.uploadKey);
   const manifest={uploadKey:request.uploadKey,sha256:request.sha256,sizeBytes:request.sizeBytes,name:request.name,mime:request.mime};
+  // File-parts keep their current owner; only a whole-file immutable intent
+  // can atomically admit the dependent document metadata with its original.
+  if(request.documentIntent!==undefined)fail(400,'EDGE_DOCUMENT_REQUIRES_WHOLE_FILE');
   const row=await edge.rpc(school,lane,{command:'begin',id,manifest});
   if(request.operation==='part'){
    const bytes=Buffer.from(request.base64,'base64');
@@ -95,6 +99,10 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
   if(typeof request.base64!=='string'||! /^[A-Za-z0-9+/]*={0,2}$/.test(request.base64))fail(400,'INVALID_EDGE_FILE');
   const bytes=Buffer.from(request.base64,'base64');if(bytes.toString('base64')!==request.base64||!bytes.length||bytes.length>20*1024*1024)fail(400,'INVALID_EDGE_FILE');
   const m={uploadKey:request.uploadKey,sha256:digest(bytes),sizeBytes:bytes.length,name:request.name,mime:request.mime};
+  if(request.documentIntent!==undefined){
+   const intent=validateIntent(school,{...m,documentIntent:request.documentIntent});
+   m.documentIntent=intent;
+  }
   const {id,lane}=fileIdentity(school,m.uploadKey);
   if(atomicSmallFilesEnabled&&bytes.length<=256*1024){
    // One verified durable Cloudflare put, then an immediate pending ACK.
@@ -198,6 +206,19 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
      return {processed:0};
     }
     result={...progress,fileUrl:'https://drive.google.com/file/d/'+progress.fileId+'/view'};
+    if(original.documentIntent){
+      // Cloudflare has already ACKed and stores both immutable file bytes
+      // and metadata intent. Now, entirely without an app connection, the
+      // broker first completes Google file bytes and THEN writes matching
+      // versioned document metadata into the school's own Script.
+      const documentRequest=recordRequest(school,original,progress);
+      phase='deliver-document-metadata';
+      const documentAck=await deliver(documentRequest);
+      phase='verify-document-metadata';
+      const receipt=verifyDocumentAck(
+        school,original,progress,documentRequest,documentAck);
+      result.documentReceipt=receipt;
+    }
    }
    phase='commit';
    let cleanup={};
