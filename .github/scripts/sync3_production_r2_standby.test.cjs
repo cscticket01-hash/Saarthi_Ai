@@ -34,3 +34,27 @@ test('default production file still has no automatic R2 admission',()=>{
  assert.equal(production.r2_buckets,undefined);
  assert.notEqual(production.vars.R2_STAGING_ENABLED,'true');
 });
+
+const active=load('cloudflare-sync/wrangler.production-active.jsonc');
+test('explicit production ACTIVE config reproduces verified live R2 admission without changing secrets or lanes',()=>{
+ assert.equal(active.name,production.name);
+ assert.equal(active.main,production.main);
+ assert.deepEqual(active.compatibility_flags,production.compatibility_flags);
+ assert.deepEqual(active.durable_objects,production.durable_objects);
+ assert.deepEqual(active.migrations,production.migrations);
+ assert.deepEqual(active.observability,production.observability);
+ assert.equal(active.vars.BROKER_URL,production.vars.BROKER_URL);
+ assert.deepEqual(active.r2_buckets,standby.r2_buckets);
+ assert.equal(active.vars.R2_STAGING_ENABLED,'true');
+ assert.equal(active.vars.R2_STAGING_ALL_SCHOOLS_ENABLED,'true');
+ assert.equal(active.vars.R2_STAGING_SCHOOLS,'*');
+ assert.equal(active.vars.EDGE_KEY,undefined);
+ assert.equal(active.vars.LIVE_SYNC_TEST_SCHOOL_ID,undefined);
+ assert.notEqual(active.r2_buckets[0].bucket_name,testWorker.r2_buckets[0].bucket_name);
+});
+test('active production R2 requires manual, reviewed deploy; default and standby remain fail-closed',()=>{
+ assert.equal(production.r2_buckets,undefined);
+ assert.equal(standby.vars.R2_STAGING_ENABLED,'false');
+ assert.equal(active.name,standby.name);
+ assert.notDeepEqual(active.vars,standby.vars);
+});
