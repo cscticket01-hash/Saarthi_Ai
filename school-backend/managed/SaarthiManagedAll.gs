@@ -3999,6 +3999,2466 @@ function saveSchoolProfile(data) {
 
   const rowValues = [
     schoolName,
+    principalName,
+    logo.url,
+    logo.fileId,
+    seal.url,
+    seal.fileId,
+    signature.url,
+    signature.fileId,
+    updatedBy,
+    now,
+    schoolContactNo,
+    latitude,
+    longitude,
+    attendanceRadiusMeters
+  ];
+
+  if (sheet.getLastRow() <= 1) {
+    sheet.appendRow(rowValues);
+  } else {
+    sheet
+      .getRange(2, 1, 1, SCHOOL_PROFILE_HEADERS.length)
+      .setValues([rowValues]);
+  }
+
+  const profile = schoolProfileRowToObject(rowValues);
+
+  return jsonResponse({
+    success: true,
+    action: "save_school_profile",
+    message: "School profile Google Drive me save ho gaya",
+    profile: profile,
+    sheetUrl: sheet.getParent().getUrl()
+  });
+}
+
+
+// ============================================================
+// SCHOOL EXPENSES
+// ============================================================
+
+function listSchoolExpenses(data) {
+  const sheet = getOrCreateDatabaseSheet(
+    SCHOOL_EXPENSE_SHEET_NAME,
+    SCHOOL_EXPENSE_HEADERS
+  );
+
+  if (sheet.getLastRow() <= 1) {
+    return jsonResponse({
+      success: true,
+      action: "list_school_expenses",
+      expenses: []
+    });
+  }
+
+  const rows = sheet
+    .getRange(2, 1, sheet.getLastRow() - 1, SCHOOL_EXPENSE_HEADERS.length)
+    .getValues();
+
+  const expenses = rows.map(function(row) {
+    return {
+      expenseId: String(row[0] || ""),
+      title: String(row[1] || ""),
+      category: String(row[2] || "General"),
+      amount: Number(row[3] || 0),
+      paidTo: String(row[4] || ""),
+      note: String(row[5] || ""),
+      dateText: String(row[6] || ""),
+      timestamp: dateToMillis(row[7]) || Number(row[7] || 0)
+    };
+  });
+
+  return jsonResponse({
+    success: true,
+    action: "list_school_expenses",
+    expenses: expenses
+  });
+}
+
+function saveSchoolExpense(data) {
+  const expenseId = String(
+    data.expenseId || ("EXP-" + new Date().getTime())
+  ).trim();
+  const title = String(data.title || "").trim();
+  const amount = Number(data.amount || 0);
+
+  if (!title || !isFinite(amount) || amount <= 0) {
+    throw new Error("Expense title aur valid amount required hai");
+  }
+
+  const sheet = getOrCreateDatabaseSheet(
+    SCHOOL_EXPENSE_SHEET_NAME,
+    SCHOOL_EXPENSE_HEADERS
+  );
+
+  const last = sheet.getLastRow();
+  let rowNumber = -1;
+  if (last > 1) {
+    const ids = sheet.getRange(2, 1, last - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || "").trim() === expenseId) {
+        rowNumber = i + 2;
+        break;
+      }
+    }
+  }
+
+  const row = [
+    expenseId,
+    title,
+    String(data.category || "General"),
+    amount,
+    String(data.paidTo || ""),
+    String(data.note || ""),
+    String(data.dateText || ""),
+    new Date()
+  ];
+
+  if (rowNumber > 1) {
+    sheet.getRange(rowNumber, 1, 1, SCHOOL_EXPENSE_HEADERS.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+
+  return jsonResponse({success:true, action:"save_school_expense", expenseId:expenseId});
+}
+
+function deleteSchoolExpense(data) {
+  const expenseId = String(data.expenseId || "").trim();
+  if (!expenseId) throw new Error("Expense ID required hai");
+
+  const sheet = getOrCreateDatabaseSheet(
+    SCHOOL_EXPENSE_SHEET_NAME,
+    SCHOOL_EXPENSE_HEADERS
+  );
+
+  if (sheet.getLastRow() > 1) {
+    const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0] || "").trim() === expenseId) {
+        sheet.deleteRow(i + 2);
+        break;
+      }
+    }
+  }
+
+  return jsonResponse({success:true, action:"delete_school_expense"});
+}
+
+
+// ============================================================
+// ATTENDANCE
+// ============================================================
+
+// Smart endpoint for future QR scanner.
+// personType / type / qrType can be "student" or "teacher".
+function markAttendance(data) {
+  const personType = String(
+    data.personType ||
+    data.type ||
+    data.qrType ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (personType === "student") {
+    return markStudentAttendance(data);
+  }
+
+  if (personType === "teacher") {
+    return markTeacherAttendance(data);
+  }
+
+  throw new Error(
+    "Attendance personType student ya teacher required hai"
+  );
+}
+
+
+// ------------------------------------------------------------
+// ATTENDANCE DATE / TIME HELPERS
+// ------------------------------------------------------------
+
+function attendanceTimeZone() {
+  return (
+    Session.getScriptTimeZone() ||
+    "Asia/Kolkata"
+  );
+}
+
+
+function attendanceNowMeta() {
+  const now = new Date();
+  const timeZone = attendanceTimeZone();
+
+  return {
+    now: now,
+    dateKey: Utilities.formatDate(
+      now,
+      timeZone,
+      "yyyy-MM-dd"
+    ),
+    dateText: Utilities.formatDate(
+      now,
+      timeZone,
+      "dd/MM/yyyy"
+    ),
+    timeText: Utilities.formatDate(
+      now,
+      timeZone,
+      "hh:mm:ss a"
+    )
+  };
+}
+
+
+function normalizeAttendanceMode(value) {
+  const mode = String(
+    value || "entry"
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    mode === "exit" ||
+    mode === "out" ||
+    mode === "checkout" ||
+    mode === "check-out"
+  ) {
+    return "exit";
+  }
+
+  return "entry";
+}
+
+
+function attendanceId(
+  prefix,
+  personId,
+  dateKey
+) {
+  const cleanPerson =
+    safeDriveFileName(
+      personId || "UNKNOWN"
+    );
+
+  return (
+    prefix +
+    "-" +
+    cleanPerson +
+    "-" +
+    String(dateKey || "")
+      .replace(/\D/g, "")
+  );
+}
+
+
+// ------------------------------------------------------------
+// FIND ATTENDANCE ROW
+// One person = one row per day.
+// Duplicate scans never create duplicate attendance rows.
+// ------------------------------------------------------------
+
+function findAttendanceRow(
+  sheet,
+  idColumnIndex,
+  personId,
+  dateKey
+) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow <= 1) {
+    return -1;
+  }
+
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      lastRow - 1,
+      sheet.getLastColumn()
+    )
+    .getValues();
+
+  const targetId = String(
+    personId || ""
+  ).trim();
+
+  const targetDate = String(
+    dateKey || ""
+  ).trim();
+
+  for (
+    let i = 0;
+    i < values.length;
+    i++
+  ) {
+    const rowPersonId = String(
+      values[i][idColumnIndex - 1] || ""
+    ).trim();
+
+    // Date Key is column 6 in both attendance sheets.
+    const rowDateKey = String(
+      values[i][5] || ""
+    ).trim();
+
+    if (
+      rowPersonId === targetId &&
+      rowDateKey === targetDate
+    ) {
+      return i + 2;
+    }
+  }
+
+  return -1;
+}
+
+
+// ------------------------------------------------------------
+// STUDENT ATTENDANCE
+// ------------------------------------------------------------
+
+function markStudentAttendance(data) {
+  const studentId = String(
+    data.studentId ||
+    data.personId ||
+    data.id ||
+    ""
+  ).trim();
+
+  let studentName = String(
+    data.studentName ||
+    data.name ||
+    ""
+  ).trim();
+
+  let studentClass = String(
+    data.studentClass ||
+    data.class ||
+    ""
+  ).trim();
+
+  let rollNo = String(
+    data.rollNo ||
+    data.roll ||
+    ""
+  ).trim();
+
+  if (!studentId) {
+    throw new Error(
+      "Student ID required hai"
+    );
+  }
+
+  // If class + roll are available, existing student sheet se
+  // missing name/class/roll values fill karne ki koshish karega.
+  if (studentClass && rollNo) {
+    try {
+      const studentSheet =
+        getOrCreateDatabaseSheet(
+          STUDENT_SHEET_NAME,
+          STUDENT_HEADERS
+        );
+
+      const studentRow =
+        findStudentRow(
+          studentSheet,
+          studentClass,
+          rollNo
+        );
+
+      if (studentRow > 1) {
+        const values =
+          studentSheet
+            .getRange(
+              studentRow,
+              1,
+              1,
+              STUDENT_HEADERS.length
+            )
+            .getValues()[0];
+
+        if (!studentName) {
+          studentName =
+            String(values[0] || "").trim();
+        }
+
+        if (!studentClass) {
+          studentClass =
+            String(values[2] || "").trim();
+        }
+
+        if (!rollNo) {
+          rollNo =
+            String(values[3] || "").trim();
+        }
+      }
+    } catch (lookupError) {
+      console.log(
+        "Student attendance lookup warning: " +
+        lookupError
+      );
+    }
+  }
+
+  const meta = attendanceNowMeta();
+  const mode =
+    normalizeAttendanceMode(
+      data.mode ||
+      data.scanMode ||
+      data.attendanceMode
+    );
+
+  const source = String(
+    data.source ||
+    data.scanSource ||
+    "QR"
+  ).trim();
+
+  const markedBy = String(
+    data.markedBy ||
+    data.updatedBy ||
+    ""
+  ).trim();
+
+  const sheet =
+    getOrCreateDatabaseSheet(
+      STUDENT_ATTENDANCE_SHEET_NAME,
+      STUDENT_ATTENDANCE_HEADERS
+    );
+
+  const existingRow =
+    findAttendanceRow(
+      sheet,
+      2,
+      studentId,
+      meta.dateKey
+    );
+
+  if (existingRow > 1) {
+    const oldValues =
+      sheet
+        .getRange(
+          existingRow,
+          1,
+          1,
+          STUDENT_ATTENDANCE_HEADERS.length
+        )
+        .getValues()[0];
+
+    const firstEntry =
+      String(oldValues[7] || "").trim() ||
+      meta.timeText;
+
+    const oldExit =
+      String(oldValues[9] || "").trim();
+
+    const scanCount =
+      Number(oldValues[11] || 0) + 1;
+
+    const exitTime =
+      mode === "exit"
+        ? meta.timeText
+        : oldExit;
+
+    const status =
+      mode === "exit"
+        ? "EXIT"
+        : "PRESENT";
+
+    const rowValues = [
+      String(oldValues[0] || attendanceId(
+        "SAT",
+        studentId,
+        meta.dateKey
+      )),
+      studentId,
+      studentName ||
+        String(oldValues[2] || "") ||
+        "Student",
+      studentClass ||
+        String(oldValues[3] || ""),
+      rollNo ||
+        String(oldValues[4] || ""),
+      meta.dateKey,
+      meta.dateText,
+      firstEntry,
+      meta.timeText,
+      exitTime,
+      status,
+      scanCount,
+      source ||
+        String(oldValues[12] || "QR"),
+      markedBy ||
+        String(oldValues[13] || ""),
+      meta.now
+    ];
+
+    sheet
+      .getRange(
+        existingRow,
+        1,
+        1,
+        STUDENT_ATTENDANCE_HEADERS.length
+      )
+      .setValues([rowValues]);
+
+    return jsonResponse({
+      success: true,
+      action:
+        "mark_student_attendance",
+      duplicate: mode !== "exit",
+      updatedExisting: true,
+      mode: mode,
+      message:
+        mode === "exit"
+          ? "Student exit attendance updated"
+          : "Student already present tha; duplicate row create nahi hua",
+      attendance:
+        studentAttendanceRowToObject(
+          rowValues
+        )
+    });
+  }
+
+  if (mode === "exit") {
+    throw new Error(
+      "Aaj ka student entry attendance nahi mila; pehle Entry scan karein"
+    );
+  }
+
+  const rowValues = [
+    attendanceId(
+      "SAT",
+      studentId,
+      meta.dateKey
+    ),
+    studentId,
+    studentName || "Student",
+    studentClass,
+    rollNo,
+    meta.dateKey,
+    meta.dateText,
+    meta.timeText,
+    meta.timeText,
+    "",
+    "PRESENT",
+    1,
+    source,
+    markedBy,
+    meta.now
+  ];
+
+  sheet.appendRow(rowValues);
+
+  return jsonResponse({
+    success: true,
+    action:
+      "mark_student_attendance",
+    duplicate: false,
+    updatedExisting: false,
+    mode: "entry",
+    message:
+      "Student attendance marked PRESENT",
+    attendance:
+      studentAttendanceRowToObject(
+        rowValues
+      )
+  });
+}
+
+
+function studentAttendanceRowToObject(
+  row
+) {
+  return {
+    attendanceId:
+      String(row[0] || ""),
+    studentId:
+      String(row[1] || ""),
+    studentName:
+      String(row[2] || ""),
+    studentClass:
+      String(row[3] || ""),
+    rollNo:
+      String(row[4] || ""),
+    dateKey:
+      String(row[5] || ""),
+    dateText:
+      String(row[6] || ""),
+    firstEntryTime:
+      String(row[7] || ""),
+    lastScanTime:
+      String(row[8] || ""),
+    exitTime:
+      String(row[9] || ""),
+    status:
+      String(row[10] || ""),
+    scanCount:
+      Number(row[11] || 0),
+    source:
+      String(row[12] || ""),
+    markedBy:
+      String(row[13] || ""),
+    timestamp:
+      dateToMillis(row[14])
+  };
+}
+
+
+function listStudentAttendance(data) {
+  const sheet =
+    getOrCreateDatabaseSheet(
+      STUDENT_ATTENDANCE_SHEET_NAME,
+      STUDENT_ATTENDANCE_HEADERS
+    );
+
+  const studentId = String(
+    data.studentId ||
+    data.personId ||
+    ""
+  ).trim();
+
+  const studentClass =
+    normalizeClass(
+      data.studentClass ||
+      data.class ||
+      ""
+    );
+
+  const dateKey = String(
+    data.dateKey ||
+    data.date ||
+    ""
+  ).trim();
+
+  const rows =
+    sheet.getLastRow() <= 1
+      ? []
+      : sheet
+          .getRange(
+            2,
+            1,
+            sheet.getLastRow() - 1,
+            STUDENT_ATTENDANCE_HEADERS.length
+          )
+          .getValues();
+
+  const attendance = [];
+
+  for (
+    let i = rows.length - 1;
+    i >= 0;
+    i--
+  ) {
+    const item =
+      studentAttendanceRowToObject(
+        rows[i]
+      );
+
+    if (
+      studentId &&
+      item.studentId !== studentId
+    ) {
+      continue;
+    }
+
+    if (
+      studentClass &&
+      normalizeClass(
+        item.studentClass
+      ) !== studentClass
+    ) {
+      continue;
+    }
+
+    if (
+      dateKey &&
+      item.dateKey !== dateKey
+    ) {
+      continue;
+    }
+
+    attendance.push(item);
+  }
+
+  return jsonResponse({
+    success: true,
+    action:
+      "list_student_attendance",
+    count: attendance.length,
+    attendance: attendance,
+    sheetUrl:
+      sheet.getParent().getUrl()
+  });
+}
+
+
+// ------------------------------------------------------------
+// TEACHER ATTENDANCE
+// ------------------------------------------------------------
+
+function markTeacherAttendance(data) {
+  let teacherId = String(
+    data.teacherId ||
+    data.personId ||
+    data.id ||
+    ""
+  ).trim();
+
+  let teacherName = String(
+    data.teacherName ||
+    data.name ||
+    ""
+  ).trim();
+
+  let designation = String(
+    data.designation ||
+    ""
+  ).trim();
+
+  let phone =
+    normalizePhone(
+      data.phone ||
+      data.mobile ||
+      data.contact
+    );
+
+  if (!teacherId && !phone) {
+    throw new Error(
+      "Teacher ID ya Mobile Number required hai"
+    );
+  }
+
+  // Existing teacher DB se details auto-fill karega.
+  try {
+    const teacherSheet =
+      getOrCreateDatabaseSheet(
+        TEACHER_SHEET_NAME,
+        TEACHER_HEADERS
+      );
+
+    const teacherRow =
+      findTeacherRow(
+        teacherSheet,
+        teacherId,
+        phone
+      );
+
+    if (teacherRow > 1) {
+      const values =
+        teacherSheet
+          .getRange(
+            teacherRow,
+            1,
+            1,
+            TEACHER_HEADERS.length
+          )
+          .getValues()[0];
+
+      teacherId =
+        teacherId ||
+        String(values[0] || "").trim();
+
+      teacherName =
+        teacherName ||
+        String(values[1] || "").trim();
+
+      designation =
+        designation ||
+        String(values[2] || "").trim();
+
+      phone =
+        phone ||
+        normalizePhone(values[5]);
+    }
+  } catch (lookupError) {
+    console.log(
+      "Teacher attendance lookup warning: " +
+      lookupError
+    );
+  }
+
+  if (!teacherId) {
+    // Stable fallback for old records where only phone is available.
+    teacherId = "PHONE-" + phone;
+  }
+
+  const meta = attendanceNowMeta();
+
+  const mode =
+    normalizeAttendanceMode(
+      data.mode ||
+      data.scanMode ||
+      data.attendanceMode
+    );
+
+  const source = String(
+    data.source ||
+    data.scanSource ||
+    "QR"
+  ).trim();
+
+  const markedBy = String(
+    data.markedBy ||
+    data.updatedBy ||
+    ""
+  ).trim();
+
+  const sheet =
+    getOrCreateDatabaseSheet(
+      TEACHER_ATTENDANCE_SHEET_NAME,
+      TEACHER_ATTENDANCE_HEADERS
+    );
+
+  const existingRow =
+    findAttendanceRow(
+      sheet,
+      2,
+      teacherId,
+      meta.dateKey
+    );
+
+  if (existingRow > 1) {
+    const oldValues =
+      sheet
+        .getRange(
+          existingRow,
+          1,
+          1,
+          TEACHER_ATTENDANCE_HEADERS.length
+        )
+        .getValues()[0];
+
+    const firstEntry =
+      String(oldValues[7] || "").trim() ||
+      meta.timeText;
+
+    const oldExit =
+      String(oldValues[9] || "").trim();
+
+    const scanCount =
+      Number(oldValues[11] || 0) + 1;
+
+    const exitTime =
+      mode === "exit"
+        ? meta.timeText
+        : oldExit;
+
+    const status =
+      mode === "exit"
+        ? "EXIT"
+        : "PRESENT";
+
+    const rowValues = [
+      String(oldValues[0] || attendanceId(
+        "TAT",
+        teacherId,
+        meta.dateKey
+      )),
+      teacherId,
+      teacherName ||
+        String(oldValues[2] || "") ||
+        "Teacher",
+      designation ||
+        String(oldValues[3] || ""),
+      phone ||
+        String(oldValues[4] || ""),
+      meta.dateKey,
+      meta.dateText,
+      firstEntry,
+      meta.timeText,
+      exitTime,
+      status,
+      scanCount,
+      source ||
+        String(oldValues[12] || "QR"),
+      markedBy ||
+        String(oldValues[13] || ""),
+      meta.now
+    ];
+
+    sheet
+      .getRange(
+        existingRow,
+        1,
+        1,
+        TEACHER_ATTENDANCE_HEADERS.length
+      )
+      .setValues([rowValues]);
+
+    return jsonResponse({
+      success: true,
+      action:
+        "mark_teacher_attendance",
+      duplicate: mode !== "exit",
+      updatedExisting: true,
+      mode: mode,
+      message:
+        mode === "exit"
+          ? "Teacher exit attendance updated"
+          : "Teacher already present tha; duplicate row create nahi hua",
+      attendance:
+        teacherAttendanceRowToObject(
+          rowValues
+        )
+    });
+  }
+
+  if (mode === "exit") {
+    throw new Error(
+      "Aaj ka teacher entry attendance nahi mila; pehle Entry scan karein"
+    );
+  }
+
+  const rowValues = [
+    attendanceId(
+      "TAT",
+      teacherId,
+      meta.dateKey
+    ),
+    teacherId,
+    teacherName || "Teacher",
+    designation,
+    phone,
+    meta.dateKey,
+    meta.dateText,
+    meta.timeText,
+    meta.timeText,
+    "",
+    "PRESENT",
+    1,
+    source,
+    markedBy,
+    meta.now
+  ];
+
+  sheet.appendRow(rowValues);
+
+  return jsonResponse({
+    success: true,
+    action:
+      "mark_teacher_attendance",
+    duplicate: false,
+    updatedExisting: false,
+    mode: "entry",
+    message:
+      "Teacher attendance marked PRESENT",
+    attendance:
+      teacherAttendanceRowToObject(
+        rowValues
+      )
+  });
+}
+
+
+function teacherAttendanceRowToObject(
+  row
+) {
+  return {
+    attendanceId:
+      String(row[0] || ""),
+    teacherId:
+      String(row[1] || ""),
+    teacherName:
+      String(row[2] || ""),
+    designation:
+      String(row[3] || ""),
+    phone:
+      String(row[4] || ""),
+    dateKey:
+      String(row[5] || ""),
+    dateText:
+      String(row[6] || ""),
+    firstEntryTime:
+      String(row[7] || ""),
+    lastScanTime:
+      String(row[8] || ""),
+    exitTime:
+      String(row[9] || ""),
+    status:
+      String(row[10] || ""),
+    scanCount:
+      Number(row[11] || 0),
+    source:
+      String(row[12] || ""),
+    markedBy:
+      String(row[13] || ""),
+    timestamp:
+      dateToMillis(row[14])
+  };
+}
+
+
+function listTeacherAttendance(data) {
+  const sheet =
+    getOrCreateDatabaseSheet(
+      TEACHER_ATTENDANCE_SHEET_NAME,
+      TEACHER_ATTENDANCE_HEADERS
+    );
+
+  const teacherId = String(
+    data.teacherId ||
+    data.personId ||
+    ""
+  ).trim();
+
+  const phone =
+    normalizePhone(
+      data.phone ||
+      data.mobile ||
+      ""
+    );
+
+  const dateKey = String(
+    data.dateKey ||
+    data.date ||
+    ""
+  ).trim();
+
+  const rows =
+    sheet.getLastRow() <= 1
+      ? []
+      : sheet
+          .getRange(
+            2,
+            1,
+            sheet.getLastRow() - 1,
+            TEACHER_ATTENDANCE_HEADERS.length
+          )
+          .getValues();
+
+  const attendance = [];
+
+  for (
+    let i = rows.length - 1;
+    i >= 0;
+    i--
+  ) {
+    const item =
+      teacherAttendanceRowToObject(
+        rows[i]
+      );
+
+    if (
+      teacherId &&
+      item.teacherId !== teacherId
+    ) {
+      continue;
+    }
+
+    if (
+      phone &&
+      normalizePhone(item.phone) !== phone
+    ) {
+      continue;
+    }
+
+    if (
+      dateKey &&
+      item.dateKey !== dateKey
+    ) {
+      continue;
+    }
+
+    attendance.push(item);
+  }
+
+  return jsonResponse({
+    success: true,
+    action:
+      "list_teacher_attendance",
+    count: attendance.length,
+    attendance: attendance,
+    sheetUrl:
+      sheet.getParent().getUrl()
+  });
+}
+
+
+// ============================================================
+// EXAM CENTER
+// ============================================================
+
+function listExamCenter(data) {
+  const examSheet = getOrCreateDatabaseSheet(
+    EXAM_SHEET_NAME,
+    EXAM_HEADERS
+  );
+
+  const resultSheet = getOrCreateDatabaseSheet(
+    EXAM_RESULT_SHEET_NAME,
+    EXAM_RESULT_HEADERS
+  );
+
+  const exams = [];
+
+  if (examSheet.getLastRow() > 1) {
+    const rows = examSheet
+      .getRange(
+        2,
+        1,
+        examSheet.getLastRow() - 1,
+        EXAM_HEADERS.length
+      )
+      .getValues();
+
+    rows.forEach(function(row) {
+      let subjects = [];
+
+      try {
+        subjects = JSON.parse(
+          String(row[3] || "[]")
+        );
+      } catch (_) {
+        subjects = [];
+      }
+
+      exams.push({
+        examId: String(row[0] || ""),
+        examName: String(row[1] || ""),
+        studentClass: String(row[2] || ""),
+        subjects: Array.isArray(subjects)
+          ? subjects
+          : [],
+        fullMarks: Number(row[4] || 0),
+        passMarks: Number(row[5] || 0),
+        createdBy: String(row[6] || ""),
+        timestamp: dateToMillis(row[7])
+      });
+    });
+  }
+
+  exams.sort(function(a, b) {
+    return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+  });
+
+  const results = [];
+
+  if (resultSheet.getLastRow() > 1) {
+    const rows = resultSheet
+      .getRange(
+        2,
+        1,
+        resultSheet.getLastRow() - 1,
+        EXAM_RESULT_HEADERS.length
+      )
+      .getValues();
+
+    rows.forEach(function(row) {
+      let marks = {};
+
+      try {
+        marks = JSON.parse(
+          String(row[6] || "{}")
+        );
+      } catch (_) {
+        marks = {};
+      }
+
+      results.push({
+        examId: String(row[0] || ""),
+        examName: String(row[1] || ""),
+        studentId: String(row[2] || ""),
+        studentName: String(row[3] || ""),
+        studentClass: String(row[4] || ""),
+        rollNo: String(row[5] || ""),
+        marks: marks,
+        total: Number(row[7] || 0),
+        maximum: Number(row[8] || 0),
+        percentage: Number(row[9] || 0),
+        grade: String(row[10] || ""),
+        result: String(row[11] || ""),
+        reportCardUrl: String(row[12] || ""),
+        updatedBy: String(row[13] || ""),
+        timestamp: dateToMillis(row[14])
+      });
+    });
+  }
+
+  return jsonResponse({
+    success: true,
+    action: "list_exam_center",
+    exams: exams,
+    results: results,
+    examSheetUrl: examSheet.getParent().getUrl(),
+    resultSheetUrl: resultSheet.getParent().getUrl()
+  });
+}
+
+
+function saveExam(data) {
+  const examName = String(data.examName || "").trim();
+  const studentClass = String(
+    data.studentClass ||
+    data.class ||
+    ""
+  ).trim();
+
+  const subjects = Array.isArray(data.subjects)
+    ? data.subjects
+        .map(function(value) {
+          return String(value || "").trim();
+        })
+        .filter(function(value) {
+          return !!value;
+        })
+    : [];
+
+  const fullMarks = Number(data.fullMarks || 0);
+  const passMarks = Number(data.passMarks || 0);
+
+  if (!examName) {
+    throw new Error("Exam name required hai");
+  }
+
+  if (!studentClass) {
+    throw new Error("Class required hai");
+  }
+
+  if (!subjects.length) {
+    throw new Error("Kam se kam ek subject required hai");
+  }
+
+  if (
+    !isFinite(fullMarks) ||
+    fullMarks <= 0
+  ) {
+    throw new Error("Full marks invalid hai");
+  }
+
+  if (
+    !isFinite(passMarks) ||
+    passMarks < 0 ||
+    passMarks > fullMarks
+  ) {
+    throw new Error("Pass marks invalid hai");
+  }
+
+  const examId = String(
+    data.examId ||
+    (
+      "EXM-" +
+      new Date().getTime() +
+      "-" +
+      Utilities.getUuid()
+        .substring(0, 6)
+        .toUpperCase()
+    )
+  ).trim();
+
+  const sheet = getOrCreateDatabaseSheet(
+    EXAM_SHEET_NAME,
+    EXAM_HEADERS
+  );
+
+  const rowValues = [
+    examId,
+    examName,
+    studentClass,
+    JSON.stringify(subjects),
+    fullMarks,
+    passMarks,
+    String(data.createdBy || "").trim(),
+    new Date()
+  ];
+
+  const existingRow = findRowByFirstColumn(
+    sheet,
+    examId
+  );
+
+  if (existingRow > 1) {
+    sheet
+      .getRange(
+        existingRow,
+        1,
+        1,
+        EXAM_HEADERS.length
+      )
+      .setValues([rowValues]);
+  } else {
+    sheet.appendRow(rowValues);
+  }
+
+  return jsonResponse({
+    success: true,
+    action: "save_exam",
+    message: "Exam saved successfully",
+    exam: {
+      examId: examId,
+      examName: examName,
+      studentClass: studentClass,
+      subjects: subjects,
+      fullMarks: fullMarks,
+      passMarks: passMarks,
+      createdBy: String(data.createdBy || "").trim(),
+      timestamp: new Date().getTime()
+    },
+    sheetUrl: sheet.getParent().getUrl()
+  });
+}
+
+
+function saveExamResult(data) {
+  const examId = String(data.examId || "").trim();
+  const studentId = String(data.studentId || "").trim();
+
+  if (!examId || !studentId) {
+    throw new Error("Exam ID aur Student ID required hain");
+  }
+
+  const examSheet = getOrCreateDatabaseSheet(
+    EXAM_SHEET_NAME,
+    EXAM_HEADERS
+  );
+
+  const examRow = findRowByFirstColumn(
+    examSheet,
+    examId
+  );
+
+  if (examRow === -1) {
+    throw new Error("Exam record nahi mila");
+  }
+
+  const examValues = examSheet
+    .getRange(
+      examRow,
+      1,
+      1,
+      EXAM_HEADERS.length
+    )
+    .getValues()[0];
+
+  let subjects = [];
+
+  try {
+    subjects = JSON.parse(
+      String(examValues[3] || "[]")
+    );
+  } catch (_) {
+    subjects = [];
+  }
+
+  if (!Array.isArray(subjects) || !subjects.length) {
+    throw new Error("Exam subjects invalid hain");
+  }
+
+  const fullMarks = Number(examValues[4] || 0);
+  const passMarks = Number(examValues[5] || 0);
+  const incomingMarks =
+    data.marks &&
+    typeof data.marks === "object" &&
+    !Array.isArray(data.marks)
+      ? data.marks
+      : {};
+
+  const finalMarks = {};
+  let total = 0;
+  let passedEverySubject = true;
+
+  subjects.forEach(function(subject) {
+    const mark = Number(incomingMarks[subject]);
+
+    if (
+      !isFinite(mark) ||
+      mark < 0 ||
+      mark > fullMarks
+    ) {
+      throw new Error(
+        subject +
+        " marks 0 se " +
+        fullMarks +
+        " ke beech hona chahiye"
+      );
+    }
+
+    finalMarks[subject] = mark;
+    total += mark;
+
+    if (mark < passMarks) {
+      passedEverySubject = false;
+    }
+  });
+
+  const maximum = fullMarks * subjects.length;
+  const percentage = maximum > 0
+    ? Number(
+        (
+          total * 100 / maximum
+        ).toFixed(2)
+      )
+    : 0;
+
+  const resultText =
+    passedEverySubject
+      ? "PASS"
+      : "FAIL";
+
+  const grade = examGrade(
+    percentage,
+    passedEverySubject
+  );
+
+  const exam = {
+    examId: examId,
+    examName: String(examValues[1] || ""),
+    studentClass: String(examValues[2] || ""),
+    subjects: subjects,
+    fullMarks: fullMarks,
+    passMarks: passMarks
+  };
+
+  const resultData = {
+    examId: examId,
+    examName: exam.examName,
+    studentId: studentId,
+    studentName: String(data.studentName || "").trim(),
+    studentClass: String(
+      data.studentClass ||
+      data.class ||
+      exam.studentClass
+    ).trim(),
+    rollNo: String(data.rollNo || data.roll || "").trim(),
+    marks: finalMarks,
+    total: total,
+    maximum: maximum,
+    percentage: percentage,
+    grade: grade,
+    result: resultText,
+    updatedBy: String(data.updatedBy || "").trim()
+  };
+
+  const reportCard = createExamReportCardPdf(
+    exam,
+    resultData
+  );
+
+  const resultSheet = getOrCreateDatabaseSheet(
+    EXAM_RESULT_SHEET_NAME,
+    EXAM_RESULT_HEADERS
+  );
+
+  const rowValues = [
+    examId,
+    exam.examName,
+    studentId,
+    resultData.studentName,
+    resultData.studentClass,
+    resultData.rollNo,
+    JSON.stringify(finalMarks),
+    total,
+    maximum,
+    percentage,
+    grade,
+    resultText,
+    reportCard.fileUrl,
+    resultData.updatedBy,
+    new Date()
+  ];
+
+  const existingRow = findExamResultRow(
+    resultSheet,
+    examId,
+    studentId
+  );
+
+  if (existingRow > 1) {
+    const oldUrl = String(
+      resultSheet
+        .getRange(
+          existingRow,
+          13
+        )
+        .getValue() ||
+      ""
+    ).trim();
+
+    resultSheet
+      .getRange(
+        existingRow,
+        1,
+        1,
+        EXAM_RESULT_HEADERS.length
+      )
+      .setValues([rowValues]);
+
+    if (oldUrl && oldUrl !== reportCard.fileUrl) {
+      try {
+        const oldId = extractDriveFileId(oldUrl);
+        if (oldId) {
+          DriveApp
+            .getFileById(oldId)
+            .setTrashed(true);
+        }
+      } catch (error) {
+        console.log(
+          "Old report card delete warning: " +
+          error
+        );
+      }
+    }
+  } else {
+    resultSheet.appendRow(rowValues);
+  }
+
+  resultData.reportCardUrl =
+    reportCard.fileUrl;
+  resultData.timestamp =
+    new Date().getTime();
+
+  return jsonResponse({
+    success: true,
+    action: "save_exam_result",
+    message:
+      "Marks saved aur report card Google Drive me generate ho gaya",
+    result: resultData,
+    sheetUrl: resultSheet.getParent().getUrl()
+  });
+}
+
+
+function createExamReportCardPdf(
+  exam,
+  result
+) {
+  const reportFolder = getOrCreateFolder(
+    EXAM_REPORT_FOLDER
+  );
+
+  const tempName =
+    "TEMP_REPORT_" +
+    safeDriveFileName(exam.examName) +
+    "_" +
+    safeDriveFileName(result.studentName) +
+    "_" +
+    new Date().getTime();
+
+  let tempSpreadsheet = null;
+  let tempFile = null;
+
+  try {
+    // Report card PDF temporary Google Sheet se generate hota hai.
+    // Existing backend already SpreadsheetApp + DriveApp permissions use karta hai.
+    tempSpreadsheet = SpreadsheetApp.create(
+      tempName
+    );
+
+    const sheet =
+      tempSpreadsheet.getSheets()[0];
+
+    sheet.setName("Report Card");
+
+    try {
+      sheet.setHiddenGridlines(true);
+    } catch (_) {
+      // Ignore if unavailable.
+    }
+
+    // --------------------------------------------------------
+    // PAGE / COLUMN LAYOUT
+    // --------------------------------------------------------
+    sheet.setColumnWidth(1, 250);
+    sheet.setColumnWidth(2, 105);
+    sheet.setColumnWidth(3, 105);
+    sheet.setColumnWidth(4, 105);
+
+    // --------------------------------------------------------
+    // SCHOOL HEADER
+    // --------------------------------------------------------
+    const schoolProfile = getSchoolProfileDataObject();
+
+    sheet.getRange("A1:D1").merge();
+    sheet
+      .getRange("A1")
+      .setValue(
+        String(schoolProfile.schoolName || "School")
+      )
+      .setFontSize(17)
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setFontColor("#0B3558");
+
+    sheet.setRowHeight(1, 34);
+
+    sheet.getRange("A2:D2").merge();
+    sheet
+      .getRange("A2")
+      .setValue("EXAM REPORT CARD")
+      .setFontSize(14)
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setBackground("#E7F7F2")
+      .setFontColor("#00796B");
+
+    sheet.setRowHeight(2, 28);
+
+    // --------------------------------------------------------
+    // STUDENT / EXAM DETAILS
+    // --------------------------------------------------------
+    sheet.getRange("A4:D4").merge();
+    sheet
+      .getRange("A4")
+      .setValue(
+        "Exam: " +
+        String(exam.examName || "")
+      )
+      .setFontWeight("bold")
+      .setFontColor("#263238");
+
+    sheet.getRange("A5:D5").merge();
+    sheet
+      .getRange("A5")
+      .setValue(
+        "Student: " +
+        String(result.studentName || "")
+      )
+      .setFontWeight("bold")
+      .setFontColor("#263238");
+
+    sheet.getRange("A6:B6").merge();
+    sheet
+      .getRange("A6")
+      .setValue(
+        "Class: " +
+        String(result.studentClass || "")
+      )
+      .setFontColor("#455A64");
+
+    sheet.getRange("C6:D6").merge();
+    sheet
+      .getRange("C6")
+      .setValue(
+        "Roll: " +
+        String(result.rollNo || "")
+      )
+      .setHorizontalAlignment("right")
+      .setFontColor("#455A64");
+
+    // --------------------------------------------------------
+    // SUBJECT TABLE
+    // --------------------------------------------------------
+    const headerRow = 8;
+
+    sheet
+      .getRange(
+        headerRow,
+        1,
+        1,
+        4
+      )
+      .setValues([[
+        "Subject",
+        "Marks",
+        "Full Marks",
+        "Pass Marks"
+      ]])
+      .setFontWeight("bold")
+      .setFontColor("#FFFFFF")
+      .setBackground("#0B6E75")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setBorder(
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      );
+
+    sheet.setRowHeight(headerRow, 28);
+
+    const subjectRows = [];
+
+    exam.subjects.forEach(function(subject) {
+      subjectRows.push([
+        String(subject),
+        Number(result.marks[subject] || 0),
+        Number(exam.fullMarks || 0),
+        Number(exam.passMarks || 0)
+      ]);
+    });
+
+    if (subjectRows.length > 0) {
+      const subjectRange =
+        sheet.getRange(
+          headerRow + 1,
+          1,
+          subjectRows.length,
+          4
+        );
+
+      subjectRange
+        .setValues(subjectRows)
+        .setVerticalAlignment("middle")
+        .setBorder(
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        );
+
+      sheet
+        .getRange(
+          headerRow + 1,
+          2,
+          subjectRows.length,
+          3
+        )
+        .setHorizontalAlignment("center");
+
+      for (
+        let i = 0;
+        i < subjectRows.length;
+        i++
+      ) {
+        if (i % 2 === 1) {
+          sheet
+            .getRange(
+              headerRow + 1 + i,
+              1,
+              1,
+              4
+            )
+            .setBackground("#F7FAFB");
+        }
+      }
+    }
+
+    // --------------------------------------------------------
+    // RESULT SUMMARY
+    // --------------------------------------------------------
+    const summaryStart =
+      headerRow +
+      subjectRows.length +
+      2;
+
+    sheet
+      .getRange(
+        summaryStart,
+        1,
+        1,
+        2
+      )
+      .merge()
+      .setValue("Total")
+      .setFontWeight("bold")
+      .setBackground("#EEF3F5");
+
+    sheet
+      .getRange(
+        summaryStart,
+        3,
+        1,
+        2
+      )
+      .merge()
+      .setValue(
+        String(result.total) +
+        " / " +
+        String(result.maximum)
+      )
+      .setFontWeight("bold")
+      .setHorizontalAlignment("right")
+      .setBackground("#EEF3F5");
+
+    sheet
+      .getRange(
+        summaryStart + 1,
+        1,
+        1,
+        2
+      )
+      .merge()
+      .setValue("Percentage")
+      .setFontWeight("bold");
+
+    sheet
+      .getRange(
+        summaryStart + 1,
+        3,
+        1,
+        2
+      )
+      .merge()
+      .setValue(
+        String(result.percentage) + "%"
+      )
+      .setFontWeight("bold")
+      .setHorizontalAlignment("right");
+
+    sheet
+      .getRange(
+        summaryStart + 2,
+        1,
+        1,
+        2
+      )
+      .merge()
+      .setValue("Grade")
+      .setFontWeight("bold");
+
+    sheet
+      .getRange(
+        summaryStart + 2,
+        3,
+        1,
+        2
+      )
+      .merge()
+      .setValue(
+        String(result.grade || "")
+      )
+      .setFontWeight("bold")
+      .setHorizontalAlignment("right");
+
+    const passed =
+      String(result.result || "")
+        .toUpperCase() ===
+      "PASS";
+
+    const resultColor =
+      passed
+        ? "#00897B"
+        : "#D32F2F";
+
+    const resultBackground =
+      passed
+        ? "#E7F7F2"
+        : "#FDECEC";
+
+    sheet
+      .getRange(
+        summaryStart + 3,
+        1,
+        1,
+        2
+      )
+      .merge()
+      .setValue("Result")
+      .setFontWeight("bold")
+      .setBackground(resultBackground)
+      .setFontColor(resultColor);
+
+    sheet
+      .getRange(
+        summaryStart + 3,
+        3,
+        1,
+        2
+      )
+      .merge()
+      .setValue(
+        String(result.result || "")
+      )
+      .setFontSize(13)
+      .setFontWeight("bold")
+      .setHorizontalAlignment("right")
+      .setBackground(resultBackground)
+      .setFontColor(resultColor);
+
+    sheet
+      .getRange(
+        summaryStart,
+        1,
+        4,
+        4
+      )
+      .setBorder(
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      );
+
+    // --------------------------------------------------------
+    // FOOTER
+    // --------------------------------------------------------
+    sheet
+      .getRange(
+        summaryStart + 5,
+        3,
+        1,
+        2
+      )
+      .merge()
+      .setValue(
+        String(schoolProfile.principalName || "Principal") +
+        "\nPrincipal"
+      )
+      .setHorizontalAlignment("center")
+      .setFontSize(9)
+      .setFontWeight("bold")
+      .setFontColor("#455A64");
+
+    sheet
+      .getRange(
+        summaryStart + 6,
+        1,
+        1,
+        4
+      )
+      .merge()
+      .setValue(
+        "Generated by Vidya Saarthi"
+      )
+      .setHorizontalAlignment("center")
+      .setFontSize(9)
+      .setFontColor("#78909C");
+
+    // Optional school logo / seal / principal signature from Drive.
+    try {
+      if (schoolProfile.logoFileId) {
+        const logoBlob = VS_schoolFile(schoolProfile.logoFileId).getBlob();
+        const logoImage = sheet.insertImage(logoBlob, 1, 1);
+        logoImage.setWidth(48).setHeight(48);
+      }
+    } catch (logoError) {
+      console.log("Report card logo warning: " + logoError);
+    }
+
+    try {
+      if (schoolProfile.sealFileId) {
+        const sealBlob = VS_schoolFile(schoolProfile.sealFileId).getBlob();
+        const sealImage = sheet.insertImage(sealBlob, 1, summaryStart + 5);
+        sealImage.setWidth(54).setHeight(54);
+      }
+    } catch (sealError) {
+      console.log("Report card seal warning: " + sealError);
+    }
+
+    try {
+      if (schoolProfile.principalSignatureFileId) {
+        const signatureBlob = DriveApp
+          .getFileById(schoolProfile.principalSignatureFileId)
+          .getBlob();
+        const signatureImage = sheet.insertImage(
+          signatureBlob,
+          3,
+          summaryStart + 5
+        );
+        signatureImage.setWidth(90).setHeight(35);
+      }
+    } catch (signatureError) {
+      console.log("Report card signature warning: " + signatureError);
+    }
+
+    const dataRange =
+      sheet.getRange(
+        1,
+        1,
+        summaryStart + 6,
+        4
+      );
+
+    dataRange
+      .setFontFamily("Arial")
+      .setWrap(true)
+      .setVerticalAlignment("middle");
+
+    SpreadsheetApp.flush();
+
+    Utilities.sleep(300);
+
+    const pdfFileName =
+      safeDriveFileName(exam.examName) +
+      "_" +
+      safeDriveFileName(result.studentClass) +
+      "_Roll_" +
+      safeDriveFileName(result.rollNo) +
+      "_" +
+      safeDriveFileName(result.studentName) +
+      ".pdf";
+
+    tempFile =
+      DriveApp.getFileById(
+        tempSpreadsheet.getId()
+      );
+
+    const pdfBlob =
+      tempFile
+        .getBlob()
+        .getAs(MimeType.PDF)
+        .setName(pdfFileName);
+
+    const pdfFile =
+      reportFolder.createFile(
+        pdfBlob
+      );
+
+    return {
+      fileId: pdfFile.getId(),
+      fileUrl:
+        "https://drive.google.com/file/d/" +
+        pdfFile.getId() +
+        "/view"
+    };
+
+  } finally {
+    // Temporary Sheet clean-up.
+    try {
+      if (
+        tempSpreadsheet &&
+        !tempFile
+      ) {
+        tempFile =
+          DriveApp.getFileById(
+            tempSpreadsheet.getId()
+          );
+      }
+
+      if (tempFile) {
+        tempFile.setTrashed(true);
+      }
+    } catch (cleanupError) {
+      console.log(
+        "Temporary report sheet cleanup warning: " +
+        cleanupError
+      );
+    }
+  }
+}
+
+
+function examGrade(
+  percentage,
+  passed
+) {
+  if (!passed) return "F";
+  if (percentage >= 90) return "A+";
+  if (percentage >= 80) return "A";
+  if (percentage >= 70) return "B+";
+  if (percentage >= 60) return "B";
+  if (percentage >= 50) return "C";
+  if (percentage >= 40) return "D";
+  return "E";
+}
+
+
+function findExamResultRow(
+  sheet,
+  examId,
+  studentId
+) {
+  if (sheet.getLastRow() <= 1) {
+    return -1;
+  }
+
+  const rows = sheet
+    .getRange(
+      2,
+      1,
+      sheet.getLastRow() - 1,
+      3
+    )
+    .getValues();
+
+  for (let i = 0; i < rows.length; i++) {
+    if (
+      String(rows[i][0] || "").trim() === examId &&
+      String(rows[i][2] || "").trim() === studentId
+    ) {
+      return i + 2;
+    }
+  }
+
+  return -1;
+}
+
+
+function findRowByFirstColumn(
+  sheet,
+  value
+) {
+  const target = String(value || "").trim();
+
+  if (
+    !target ||
+    sheet.getLastRow() <= 1
+  ) {
+    return -1;
+  }
+
+  const values = sheet
+    .getRange(
+      2,
+      1,
+      sheet.getLastRow() - 1,
+      1
+    )
+    .getValues();
+
+  for (let i = 0; i < values.length; i++) {
+    if (
+      String(values[i][0] || "").trim() === target
+    ) {
+      return i + 2;
+    }
+  }
+
+  return -1;
+}
+
+
+function getOrCreateChildFolder(
+  parentFolder,
+  folderName
+) {
+  const folders = parentFolder.getFoldersByName(
+    folderName
+  );
+
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+
+  return parentFolder.createFolder(
+    folderName
+  );
+}
+
+
+function extractDriveFileId(url) {
+  const value = String(url || "");
+
+  let match = value.match(
+    /\/d\/([^\/?]+)/i
+  );
+
+  if (!match) {
+    match = value.match(
+      /[?&]id=([^&]+)/i
+    );
+  }
+
+  return match
+    ? match[1]
+    : "";
+}
+
+
+function dateToMillis(value) {
+  if (
+    Object.prototype.toString.call(value) ===
+    "[object Date]"
+  ) {
+    return value.getTime();
+  }
+
+  const parsed = new Date(value);
+
+  return isNaN(parsed.getTime())
+    ? 0
+    : parsed.getTime();
+}
+
+
+// ============================================================
+// SAFE DRIVE FILE NAME
+// ============================================================
+
+function safeDriveFileName(value) {
+
+  const cleaned =
+    String(
+      value || ""
+    )
+      .trim()
+      .replace(
+        /[\\/:*?"<>|#%{}[\]]/g,
+        "_"
+      )
+      .replace(
+        /\s+/g,
+        "_"
+      );
+
+  return cleaned || "NA";
+}
+
+
+// ============================================================
+// GENERIC IMAGE UPLOAD
+// ============================================================
+
+function uploadImageToDrive(
+  folderName,
+  data,
+  defaultFileName
+) {
+
+  if (
+    !data.photoBase64 ||
+    !String(
+      data.photoBase64
+    ).trim()
+  ) {
+
+    throw new Error(
+      "Photo Base64 missing"
+    );
+  }
+
+
+  const folder =
+    getOrCreateFolder(
+      folderName
+    );
+
+
+  const base64Data =
+    String(
+      data.photoBase64
+    ).replace(
+      /^data:image\/[\w.+-]+;base64,/,
+      ""
+    );
+
+
+  const bytes =
+    Utilities.base64Decode(
+      base64Data
+    );
+
+
+  const mimeType =
+    String(
+      data.photoMimeType ||
+      "image/jpeg"
+    );
+
+
+  let extension = ".jpg";
+
+
+  if (
+    mimeType
+      .toLowerCase()
+      .includes("png")
+  ) {
+
+    extension = ".png";
+
+  } else if (
+    mimeType
+      .toLowerCase()
+      .includes("webp")
+  ) {
+
+    extension = ".webp";
+  }
+
+
+  const safeName =
+    String(
+      defaultFileName ||
+      "Photo"
+    )
+      .replace(
+        /[\\/:*?"<>|#%{}[\]]/g,
+        "_"
+      )
+      .replace(
+        /\s+/g,
+        "_"
+      );
+
+
+  let fileName =
+    safeName +
+    extension;
+
+
+  if (
+    data.photoName &&
+    String(
+      data.photoName
+    ).trim()
+  ) {
+
+    fileName =
+      String(
+        data.photoName
+      ).trim();
+  }
+
+
+  const blob =
+    Utilities.newBlob(
+      bytes,
+      mimeType,
+      fileName
+    );
+
+
+  const photoFile =
+    folder.createFile(
+      blob
+    );
+
+
+  try {
+
+    photoFile.setSharing(
+      DriveApp.Access
+        .ANYONE_WITH_LINK,
+
+      DriveApp.Permission
+        .VIEW
+    );
+
+  } catch (error) {
+
+    console.log(
+      "Photo sharing warning: " +
+      error
+    );
+  }
+
+
+  const fileId =
+    photoFile.getId();
+
+
+  const photoUrl =
+    "https://lh3.googleusercontent.com/d/" +
+    fileId +
+    "=w800";
+
+
+  return {
+    success: true,
+    fileId: fileId,
+    url: photoUrl
+  };
+}
+
+
+// ============================================================
+// GET / CREATE FOLDER
+// ============================================================
+
+function getOrCreateFolder(
+  folderName
+) {
+
+  const schoolRoot = VS_schoolDriveRoot();
+  const folders = schoolRoot.getFoldersByName(folderName);
+
+
+  if (folders.hasNext()) {
+
+    return folders.next();
+  }
+
+
+  return schoolRoot.createFolder(folderName);
+}
+
+
+// ============================================================
+// DELETE DRIVE PHOTO BY URL
+// ============================================================
+
+function deleteDrivePhotoByUrl(
+  photoUrl
+) {
+
+  if (!photoUrl) {
+    return false;
+  }
+
+
+  let match =
+    String(
+      photoUrl
+    ).match(
+      /googleusercontent\.com\/d\/([^=\/]+)/i
+    );
+
+
+  if (!match) {
+
+    match =
+      String(
+        photoUrl
+      ).match(
+        /[?&]id=([^&]+)/i
+      );
+  }
+
+
+  if (!match) {
+
+    console.log(
+      "Drive file ID nahi mila: " +
+      photoUrl
+    );
+
+    return false;
+  }
+
+
+  const fileId =
+    match[1];
+
+
+  try {
+
+    const file =
+      VS_schoolFile(fileId);
+
+
+    file.setTrashed(
+      true
+    );
+
+
+    return true;
+
+  } catch (error) {
+
+    console.log(
+      "Drive photo delete error: " +
+      error
+    );
+
+    return false;
+  }
+}
+
+
+// ============================================================
+// JSON RESPONSE
+// ============================================================
+
+function jsonResponse(data) {
+  const configuredProject = PropertiesService.getScriptProperties()
+    .getProperty('VS_FIREBASE_PROJECT_ID');
+  if (configuredProject) data = Object.assign({projectId: configuredProject}, data);
+
+  return ContentService
+    .createTextOutput(
+      JSON.stringify(
+        data
+      )
+    )
+    .setMimeType(
+      ContentService
+        .MimeType
+        .JSON
+    );
+}
 /** Native Drive resumable sessions stay private to this school Script.
  * The existing durable uploadKey remains the owner; offsets never certify ACKs.
  */
