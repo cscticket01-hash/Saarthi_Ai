@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:saarthi_ai/windows_connect/managed_record_media.dart';
 import 'package:saarthi_ai/windows_local_firestore.dart';
 import 'package:saarthi_ai/windows_runtime_flags.dart';
@@ -11,6 +12,7 @@ void main() {
   const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   final db=FirebaseFirestore.instance;
   setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile(
       'photo-cloudflare-${DateTime.now().microsecondsSinceEpoch}',
