@@ -5058,17 +5058,16 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   bool showStudentUid = false;
   String? photoUrl = _studentPhotoUrl;
 
+  final resolved = await WindowsIdCardRecordLookup.find(
+    schoolClass: _directoryClass, roll: roll);
+  if (resolved == null) {
+    throw StateError('Student record not found. Search Record again.');
+  }
+  final docId = resolved.id;
+  if (resolved.data['name']?.toString().trim() != name) {
+    throw StateError('Student record changed. Search Record again.');
+  }
   try {
-    final resolved = await WindowsIdCardRecordLookup.find(
-      schoolClass: _directoryClass, roll: roll);
-    if (resolved == null) {
-      throw StateError('Student record not found. Search Record again.');
-    }
-    final docId = resolved.id;
-    if (resolved.data['name']?.toString().trim() != name) {
-      throw StateError('Student record changed. Search Record again.');
-    }
-
     final doc = await FirebaseFirestore.instance
         .collection('students_directory')
         .doc(docId)
