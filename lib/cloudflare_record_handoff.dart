@@ -7,8 +7,12 @@ class CloudflareRecordHandoff implements Exception {
     required this.id,
     required this.operationId,
     required this.ticketId,
+    this.lane = 'records',
+    this.mediaSourceHash,
+    this.mediaFileSha256,
   });
-  final String school, collection, id, operationId, ticketId;
+  final String school, collection, id, operationId, ticketId, lane;
+  final String? mediaSourceHash, mediaFileSha256;
 
   @override
   String toString() => 'Cloudflare accepted the original operation; '
@@ -81,5 +85,41 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
         (record['id']!=null&&record['id']!=original['documentId']))
       return false;
   }
+  return true;
+}
+
+
+/// The broker has verified the original Google file and its canonical
+/// same-operation photo record; only this exact file/record pair may ACK.
+bool verifiedStagedPhotoRecordFinal(Map original, Map journal, Map proof,
+    String school) {
+  final id=journal['ticketId'], media=proof['mediaRecord'];
+  if(id is! String||!RegExp(r'^[a-f0-9]{64}$').hasMatch(id)||
+      journal['schoolId']!=school||original['schoolId']!=school||
+      journal['action']!='managed/record/media/stage/resumable'||
+      journal['originalOperationId']!=original['operationId']||
+      journal['collection']!=original['collection']||
+      journal['id']!=original['documentId']||
+      original['cloudTicketId']!=id||
+      original['cloudTicketLane']!='file-$id'||
+      original['syncState']!='cloudAccepted'||
+      !{'set','update'}.contains(original['operation'])||
+      !{'students_directory','teachers_directory'}.contains(original['collection'])||
+      original['atomicBundleId']!=null||original['priorDeletion']!=null||
+      original['data'] is! Map||
+      proof['success']!=true||proof['schoolId']!=school||
+      proof['cloudflareAccepted']!=true||
+      proof['driveState']!='verified'||proof['committed']!=true||
+      proof['fileId'] is! String||proof['sha256'] is! String||
+      media is! Map||media['collection']!=original['collection']||
+      media['id']!=original['documentId']||
+      media['operationId']!=original['operationId']||
+      media['fileId']!=proof['fileId']||
+      media['fileSha256']!=proof['sha256']||
+      original['cloudMediaSourceHash']!=media['sourceHash']||
+      original['cloudMediaFileSha256']!=media['fileSha256']||
+      media['recordRevision'] is! String||
+      (media['recordRevision'] as String).isEmpty||
+      RegExp(r'^(live-|cf-)').hasMatch(media['recordRevision'])) return false;
   return true;
 }

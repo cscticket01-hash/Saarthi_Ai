@@ -10,6 +10,114 @@ import '../windows_school_image_cache.dart';
 import '../windows_local_firestore.dart';
 import 'central_school_cloud.dart';
 import 'school_drive_images.dart' show schoolDriveFileId;
+import 'managed_resumable_upload.dart';
+
+/// Cloudflare receives ONE optimized original portrait plus the original
+/// person record metadata. The caller keeps the immutable local outbox until
+/// the Worker verifies a *real* Google Drive file and matching record revision.
+/// Multi-media, field patches, deletes and atomic bundles use their established
+/// version-safe path rather than publishing partial metadata.
+Future<Map<String,dynamic>?> stageManagedOriginalPhotoRecord(
+  Map<String,dynamic> item,
+  String school, {
+  required Future<Map<String,dynamic>> Function(Map<String,dynamic>) request,
+  Future<Map<String,dynamic>> Function(Uint8List)? optimize,
+}) async {
+  final collection=item['collection'],id=item['documentId'],
+      operationId=item['operationId'], data=item['data'];
+  if(!{'students_directory','teachers_directory'}.contains(collection) ||
+      !{'set','update'}.contains(item['operation']) ||
+      item['schoolId']!=school || data is! Map ||
+      item['atomicBundleId']!=null || item['priorDeletion']!=null ||
+      item['wireData'] is Map || item['wireMode']=='fieldPatch1' ||
+      id is! String||id.isEmpty||id.length>200||id.contains('/') ||
+      operationId is! String ||
+      !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(operationId) ||
+      item['baseCloudRevision'] is! String) return null;
+  final source=Map<String,dynamic>.from(data);
+  if(source['schoolId']!=null && source['schoolId']!=school) {
+    throw StateError('Foreign person/photo owner.');
+  }
+  final fromBase64=source['photoBase64'];
+  final raw=fromBase64 is String && fromBase64.startsWith('data:image/')
+      ? fromBase64 : source['photoUrl'];
+  if(raw is! String||!raw.startsWith('data:image/')) return null;
+  for(final key in ['logo','seal','principalSignature']) {
+    if((source[key+'Url'] is String &&
+        (source[key+'Url'] as String).startsWith('data:')) ||
+       (source[key+'Base64'] is String &&
+        (source[key+'Base64'] as String).startsWith('data:'))) return null;
+  }
+  final db=FirebaseFirestore.instance, profile=db.activeProfileId;
+  void own() {
+    if(db.activeProfileId!=profile ||
+       db.activeProfileIdentity['schoolSyncId']!=school) {
+      throw StateError('School changed during original photo handoff.');
+    }
+  }
+  own();
+  final original=UriData.parse(raw).contentAsBytes();
+  if(original.isEmpty || original.length>20*1024*1024) {
+    throw StateError('Original portrait exceeds safe Cloudflare upload limit.');
+  }
+  final sourceHash=sha256.convert(original).toString();
+  final processed=await (optimize?.call(Uint8List.fromList(original)) ??
+      compute(DocumentProcessingEngine.portraitUpload, {
+        'bytes':Uint8List.fromList(original),'kind':'portrait',
+        'targetBytes':DocumentProcessingEngine.portraitTarget,
+      }));
+  own();
+  final bytes=processed['optimized'];
+  final mime=processed['mimeType'];
+  if(bytes is! Uint8List || bytes.isEmpty ||
+     bytes.length>20*1024*1024 ||
+     !['image/jpeg','image/png','image/webp'].contains(mime)) {
+    throw StateError('Verified optimized photo is unavailable.');
+  }
+  final fileSha256=sha256.convert(bytes).toString();
+  // Keep student stable ID semantics of the existing record media preflight.
+  if(source['studentId'] is String && source['personId']==null &&
+     source['role']!='teacher' && source['ownerRole']!='teacher') {
+    final parent=(await db.collection('students_directory')
+       .doc(source['studentId'] as String).get()).data();
+    own();
+    if(parent?['mobileStableId'] is String)
+       source['personId']=parent!['mobileStableId'];
+  }
+  final safe=centralSchoolData(source,school)
+    ..remove('photoUrl')
+    ..remove('photoFileId')
+    ..remove('photoBase64');
+  safe['photoSourceHash']=sourceHash;
+  final record=<String,dynamic>{
+    'version':1,'schoolId':school,'collection':collection,
+    'operation':'write','id':id,'operationId':operationId,
+    'expectedRecordRevision':item['baseCloudRevision'],
+    'mediaPrefix':'photo','sourceHash':sourceHash,'data':safe,
+  };
+  if(jsonEncode(record).length>190000) return null;
+  final uploadKey=sha256.convert(utf8.encode(
+    jsonEncode([school,collection,id,operationId,fileSha256]))).toString();
+  final result=await uploadManagedChunks(
+    schoolId:school,uploadKey:uploadKey,
+    name:'photo_optimized_'+sourceHash+'_'+fileSha256+
+      (mime=='image/jpeg'?'.jpg':mime=='image/png'?'.png':'.webp'),
+    mime:mime as String,bytes:bytes,record:record,
+    action:'managed/record/media/stage/resumable',
+    acceptDurableCloudflareHandoff:true,request:request,
+  );
+  own();
+  if(result['cloudflareHandoffVersion']!=1 ||
+     result['cloudflareAccepted']!=true ||
+     !['pending','verified'].contains(result['driveState']) ||
+     result['delivery'] is! Map) {
+    throw StateError('Original portrait Cloudflare custody unverified.');
+  }
+  return {
+    'delivery':result['delivery'],'sourceHash':sourceHash,
+    'fileSha256':fileSha256,
+  };
+}
 
 /// Upload images to this school's Drive before publishing a text-only record.
 Future<Map<String, dynamic>> prepareManagedRecord(

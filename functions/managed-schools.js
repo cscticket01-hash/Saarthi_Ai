@@ -1363,7 +1363,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
@@ -1597,6 +1597,70 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
   if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
   const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
+ }
+ if(action==='managed/record/media/stage/resumable'){
+  // Original school person record + ONE original portrait share an immutable
+  // R2-backed Cloudflare file receipt. Other media and atomic bundles retain
+  // their original version-safe owners until explicitly migrated.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare media record delivery is disabled','PHOTO_RECORD_STAGE_UNAVAILABLE');
+  const r=b.record,d=r?.data;
+  if(r?.version!==1||r.schoolId!==m.schoolId||
+     !['students_directory','teachers_directory'].includes(r.collection)||
+     r.operation!=='write'||r.mediaPrefix!=='photo'||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(r.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(r.operationId||'')||
+     typeof r.expectedRecordRevision!=='string'||r.expectedRecordRevision.length>100||
+     !/^[a-f0-9]{64}$/.test(r.sourceHash||'')||
+     !d||typeof d!=='object'||Array.isArray(d)||
+     d.schoolId!==m.schoolId||d.photoSourceHash!==r.sourceHash||
+     Object.hasOwn(d,'photoUrl')||Object.hasOwn(d,'photoFileId')||
+     Object.keys(d).some(k=>/base64|localpath|password|private_key|secret/i.test(k))||
+     JSON.stringify(r).length>190000)
+   fail(400,'Invalid original person/photo stage');
+  if(!['begin','part'].includes(b.operation)||
+     !/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+     b.uploadKey!==hash(JSON.stringify([m.schoolId,r.collection,r.id,r.operationId,b.sha256]))||
+     !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+     b.sizeBytes>20*1024*1024||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||''))
+   fail(400,'Invalid portrait chunk stage');
+  if(b.operation==='part'){
+   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||
+      typeof b.base64!=='string'||!b.base64||b.base64.length>700000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      !/^[a-f0-9]{64}$/.test(b.chunkSha256||''))
+    fail(400,'Invalid portrait chunk');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(!bytes.length||bytes.length>512*1024||
+      b.offset+bytes.length>b.sizeBytes||
+      bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.chunkSha256)
+    fail(400,'Invalid portrait chunk SHA-256');
+  }else{
+   // Never wait on slow Google Apps Script just to accept durable bytes.
+   // School linkage is checked by the broker; later Drive retries own itself.
+   const configured=await cachedRead(storageStates,m.schoolId,
+     ()=>db.doc('school_storage_private/'+m.schoolId).get());
+   if(!configured.exists||configured.data().ready!==true)
+    fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
+  }
+  const out=await edgeDelivery.file(m.schoolId,{
+    action:'managed_upload_resumable',operation:b.operation,
+    uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,
+    name:b.name,mime:b.mime,record:clean(r),
+    ...(b.operation==='part'?{
+      offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256}:{})});
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.cloudflareAccepted===true&&out.edgeDeliveryVersion===1&&
+     out.delivery?.lane==='file-'+out.delivery.id)return out;
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.uploadResumableVersion===1&&out.uploadKey===b.uploadKey&&
+     out.sha256===b.sha256&&out.sizeBytes===b.sizeBytes&&
+     out.cloudflareAccepted===true&&out.driveState==='receiving')return out;
+  fail(502,'Original portrait stage ACK unverified','PHOTO_RECORD_STAGE_UNVERIFIED');
  }
  if(action==='managed/document/stage/resumable'){
   // Every chunk carries the identical, immutable document sidecar. No client

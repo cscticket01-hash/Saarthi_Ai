@@ -369,6 +369,31 @@ class WindowsFirebaseRemote {
       throw StateError(
         'School Script field-patch support is required for this saved request.',
       );
+    // One-photo immutable operation: Cloudflare owns bytes AND the eventual
+    // provider record. The same original local outbox stays until Google proof.
+    if (batchReply==null && edgeDeliverySupported &&
+        photoRecordStageSupported) {
+      final staged=await stageManagedOriginalPhotoRecord(item,school,
+        request:(part)=>ManagedSchoolSession.callForSchool(
+          school,'managed/record/media/stage/resumable',part,
+          returnAfterDurableCloudflareHandoff:true),
+      );
+      if(staged!=null) {
+        final delivery=staged['delivery'];
+        if(delivery is! Map || delivery['id'] is! String ||
+           delivery['lane']!='file-${delivery['id']}') {
+          throw StateError('Original portrait file owner is unverified.');
+        }
+        throw CloudflareRecordHandoff(
+          school:school,collection:collection,id:id,
+          operationId:item['operationId'].toString(),
+          ticketId:delivery['id'] as String,
+          lane:delivery['lane'] as String,
+          mediaSourceHash:staged['sourceHash'] as String,
+          mediaFileSha256:staged['fileSha256'] as String,
+        );
+      }
+    }
     final stageWatch = Stopwatch()..start();
     final data = item['operation'] == 'delete'
         ? null
@@ -521,6 +546,7 @@ class WindowsFirebaseRemote {
 
   static bool recordWriteBatchSupported = false;
   static bool edgeDeliverySupported = false;
+  static bool photoRecordStageSupported = false;
   // Bound only to the current authenticated school's checked backend and
   // Script capability, reset with the session. Never infer from school ID.
   static bool documentStageSupported = false;
