@@ -49,6 +49,7 @@ jobs:
           cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
           npm --prefix cloudflare-sync run types
           npm --prefix cloudflare-sync run check
+          npm --prefix cloudflare-sync run build
           npm --prefix cloudflare-sync test
           node --test .github/scripts/sync3_production_r2_standby.test.cjs
       - name: Build bundled Worker using explicit ACTIVE production configuration ONLY
