@@ -62,9 +62,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VS_EXPECTED_RUNTIME: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
-      VS_VERIFIED_RENDER_COMMIT: 5da8ae1e8571fd0f47cd1f304458434a5218bd7d
-      VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbsi1nec6qcc73980p00
+      VS_EXPECTED_RUNTIME: a28a95b5712f06e7d14bafa94c3815d0fd0dc478
+      VS_VERIFIED_RENDER_COMMIT: a28a95b5712f06e7d14bafa94c3815d0fd0dc478
+      VS_VERIFIED_RENDER_DEPLOYMENT: dep-dbukf2om7kps73cmdia0
     steps:
       - uses: actions/checkout@v4
         with:
