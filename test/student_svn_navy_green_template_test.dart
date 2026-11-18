@@ -25,6 +25,29 @@ void main() {
         r.side == 'front' && r.kind == 'qr'), isTrue);
   });
 
+  test('SVN front/back print is a complete generated PDF under the 85 KiB contract', () async {
+    final entry = await IdCardCatalog.find('student-svn-navy-green-v1');
+    final bytes = await IdCardEngine.render(
+      await entry.manifest(),
+      {
+        'schoolName': 'Example School',
+        'schoolLocation': 'School Town',
+        'name': 'Sample Student',
+        'parentName': 'Parent',
+        'class': 'Class 1',
+        'rollNo': '01',
+        'studentUid': 'SAMPLE-001',
+        'dob': '01/01/2016',
+        'contact': '0000000000',
+        'address': 'Sample Address',
+      },
+      backgrounds: await entry.backgrounds(),
+      qr: 'synthetic-verification-id-card-001',
+    );
+    expect(bytes.sublist(0, 5), [37, 80, 68, 70, 45]);
+    expect(bytes.length, lessThanOrEqualTo(85 * 1024));
+  });
+
   test('SVN template binds school identity and student fields, never fixed source PDF identity', () async {
     final manifest = await (await IdCardCatalog.find('student-svn-navy-green-v1')).manifest();
     final mapped = IdCardEngine.normalizedInput(manifest, {
