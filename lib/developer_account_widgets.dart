@@ -8,6 +8,9 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'school_password_panel.dart';
 import 'release_download.dart';
+import 'website_installer_transfer.dart';
+import 'website_installer_transfer_stub.dart'
+    if (dart.library.html) 'website_installer_transfer_web.dart' as transfers;
 class DeveloperAccountProfile extends StatelessWidget {
   const DeveloperAccountProfile({super.key});
   @override Widget build(BuildContext context)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(FirebaseAuth.instance.currentUser?.email??'',style:const TextStyle(fontSize:20)),const Text('Developer administrator'),SchoolPasswordPanel(change:(current,next)async{final user=FirebaseAuth.instance.currentUser;if(user==null||user.email==null)throw StateError('Sign in again');await user.reauthenticateWithCredential(EmailAuthProvider.credential(email:user.email!,password:current));await user.updatePassword(next);await FirebaseAuth.instance.signOut();})]);
@@ -26,121 +29,168 @@ class _DeveloperIdleSessionState extends State<DeveloperIdleSession> with Widget
   void check(){if(!ready)return;if(DateTime.now().difference(activity)>=widget.idle){ready=false;unawaited(FirebaseAuth.instance.signOut());}else if(mounted)setState((){});}
   @override void didChangeAppLifecycleState(AppLifecycleState state){if(state==AppLifecycleState.resumed)check();}
   @override void dispose(){timer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
-  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(color:const Color(0xFF16242E),child:Padding(padding:const EdgeInsets.all(8),child:Text('Auto logout ${seconds~/60}:${(seconds%60).toString().padLeft(2,'0')}')))))])));}
-}
-/// Windows/Android only: browser-native downloads do not expose trustworthy
-/// per-byte progress to Flutter after redirecting to a GitHub release.
+  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(colo/// Both cards have independent transfers. Browser-native downloads cannot be
+/// cancelled by Flutter once dispatched, so Web first downloads the verified
+/// installer over an abortable same-origin-allowlisted HTTP request.
 class AppDownloadButtons extends StatefulWidget {
-  const AppDownloadButtons({super.key});
+  const AppDownloadButtons({super.key, this.createTransfer});
+
+  /// Dependency injection for widget tests; the production implementation
+  /// performs a cancellable web XMLHttpRequest.
+  final WebsiteInstallerTransfer Function()? createTransfer;
 
   @override
   State<AppDownloadButtons> createState() => _AppDownloadButtonsState();
 }
 
 class _AppDownloadButtonsState extends State<AppDownloadButtons> {
-  String? busy;
-  String? error;
+  static const _installerOrigin = 'https://saarthi-oauth-staging.onrender.com';
+  final Map<String, WebsiteInstallerTransfer> _active = {};
+  final Map<String, int> _received = {};
+  final Map<String, int> _totals = {};
+  final Map<String, String> _errors = {};
+  final Set<String> _transferred = {};
 
-  Future<void> download(String platform) async {
-    if (busy != null) return;
+  String _displayBytes(int bytes) =>
+      '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+  Future<void> _start(String platform) async {
+    if (_active.containsKey(platform)) return;
     setState(() {
-      busy = platform;
-      error = null;
+      _errors.remove(platform);
+      _transferred.remove(platform);
+      _received.remove(platform);
+      _totals.remove(platform);
     });
-    try {
-      if (kIsWeb) {
-        // Preserve the latest GitHub release selection and the same verified
-        // Firebase Hosting redirect as the existing website.
-        Uri? chosen;
-        try {
-          final response = await http
-              .get(Uri.parse(
-                  'https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100'))
-              .timeout(const Duration(seconds: 8));
-          if (response.statusCode == 200) {
-            chosen = latestReleasedInstaller(
-              jsonDecode(response.body) as List,
-              platform,
-            );
+    if (!kIsWeb && widget.createTransfer == null) {
+      await _nativeDownload(platform);
+      return;
+    }
+    final transfer = widget.createTransfer?.call() ??
+        transfers.createWebsiteInstallerTransfer();
+    _active[platform] = transfer;
+    setState(() {});
+    transfer.start(
+      url: '$_installerOrigin/downloads/${platform == 'windows' ? 'windows.exe' : 'android.apk'}',
+      filename: platform == 'windows'
+          ? 'Vidya_Saarthi_Setup.exe'
+          : 'Vidya_Saarthi_Student.apk',
+      onProgress: (received, total) {
+        if (!mounted || !identical(_active[platform], transfer)) return;
+        setState(() {
+          _received[platform] = received;
+          if (total != null && total > 0) {
+            _totals[platform] = total;
           }
-        } catch (_) {
-          // GitHub rate limiting must not remove the release redirect fallback.
-        }
-        chosen ??= Uri.base.resolve(platform == 'windows'
-            ? '/downloads/windows.exe'
-            : '/downloads/android.apk');
-        if (!await launchUrl(chosen, webOnlyWindowName: '_self')) {
-          throw StateError('Download unavailable');
-        }
-        return;
-      }
+        });
+      },
+      onTransferred: () {
+        if (!mounted || !identical(_active[platform], transfer)) return;
+        setState(() {
+          _active.remove(platform);
+          _transferred.add(platform);
+        });
+      },
+      onCancelled: () {
+        if (!mounted || !identical(_active[platform], transfer)) return;
+        setState(() {
+          _active.remove(platform);
+          _received.remove(platform);
+          _totals.remove(platform);
+        });
+      },
+      onFailure: (message) {
+        if (!mounted || !identical(_active[platform], transfer)) return;
+        setState(() {
+          _active.remove(platform);
+          _errors[platform] = message;
+        });
+      },
+    );
+  }
+
+  // Non-web developer builds keep the old release-link behavior. Browser UI
+  // never silently falls back to an uncancellable native download.
+  Future<void> _nativeDownload(String platform) async {
+    try {
       final response = await http
           .get(Uri.parse(
               'https://api.github.com/repos/cscticket01-hash/Saarthi_Ai/releases?per_page=100'))
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
-        throw StateError('Download list unavailable');
+        throw StateError('Latest release unavailable');
       }
-      final selected =
-          latestReleasedInstaller(jsonDecode(response.body) as List, platform);
-      if (selected == null) {
-        throw StateError('No released installer available');
-      }
-      if (!await launchUrl(selected, webOnlyWindowName: '_self')) {
-        throw StateError('Download unavailable');
+      final installer = latestReleasedInstaller(
+        jsonDecode(response.body) as List, platform);
+      if (installer == null ||
+          !await launchUrl(installer, webOnlyWindowName: '_self')) {
+        throw StateError('No installer available');
       }
     } catch (_) {
       if (mounted) {
-        setState(() =>
-            error = 'Download unavailable. Please try again shortly.');
+        setState(() => _errors[platform] =
+            'Download unavailable. Please try again later.');
       }
-    } finally {
-      if (mounted) setState(() => busy = null);
     }
+  }
+
+  void _cancel(String platform) {
+    // Immediately aborts the active HTTP transfer, not a browser download
+    // already handed off. onCancelled resets the button when abort completes.
+    _active[platform]?.cancel();
+  }
+
+  @override
+  void dispose() {
+    for (final download in _active.values.toList()) {
+      download.cancel();
+    }
+    super.dispose();
+  }
+
+  Widget _card(String platform) {
+    final windows = platform == 'windows';
+    final busy = _active.containsKey(platform);
+    final transferred = _transferred.contains(platform);
+    final total = _totals[platform];
+    final received = _received[platform] ?? 0;
+    final fraction = busy && total != null && total > 0
+        ? (received / total).clamp(0.0, 1.0)
+        : null;
+    final progressLabel = !busy
+        ? transferred
+            ? 'Installer received. Check the browser save prompt.'
+            : null
+        : total != null && total > 0
+            ? '${_displayBytes(received)} / ${_displayBytes(total)}'
+            : received > 0
+                ? '${_displayBytes(received)} received'
+                : 'Preparing secure download…';
+
+    return _AnimatedDownloadCard(
+      title: windows ? 'Windows App' : 'Android App',
+      subtitle: windows
+          ? 'Windows desktop installer'
+          : 'Student Android application',
+      icon: windows ? Icons.desktop_windows_rounded : Icons.android_rounded,
+      accent: windows ? const Color(0xFF1475F5) : const Color(0xFF16A76B),
+      busy: busy,
+      fraction: fraction,
+      progressLabel: progressLabel,
+      error: _errors[platform],
+      onDownload: () => _start(platform),
+      onCancel: () => _cancel(platform),
+    );
   }
 
   @override
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _AnimatedDownloadCard(
-            title: 'Windows App',
-            subtitle: 'Windows desktop installer',
-            platform: 'windows',
-            icon: Icons.desktop_windows_rounded,
-            accent: const Color(0xFF1475F5),
-            busy: busy == 'windows',
-            disabled: busy != null,
-            onDownload: () => download('windows'),
-          ),
+          _card('windows'),
           const SizedBox(height: 18),
-          _AnimatedDownloadCard(
-            title: 'Android App',
-            subtitle: 'Student Android application',
-            platform: 'android',
-            icon: Icons.android_rounded,
-            accent: const Color(0xFF16A76B),
-            busy: busy == 'android',
-            disabled: busy != null,
-            onDownload: () => download('android'),
-          ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                error!,
-                style: const TextStyle(color: Color(0xFFAE2843)),
-              ),
-            ),
-          const SizedBox(height: 9),
-          const Text(
-            'The browser manages file transfer progress after download starts.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF697B9D),
-              fontSize: 12,
-            ),
-          ),
+          _card('android'),
+          // No explanatory text below the Android download card.
         ],
       );
 }
@@ -149,22 +199,26 @@ class _AnimatedDownloadCard extends StatefulWidget {
   const _AnimatedDownloadCard({
     required this.title,
     required this.subtitle,
-    required this.platform,
     required this.icon,
     required this.accent,
     required this.busy,
-    required this.disabled,
+    required this.fraction,
+    required this.progressLabel,
+    required this.error,
     required this.onDownload,
+    required this.onCancel,
   });
 
   final String title;
   final String subtitle;
-  final String platform;
   final IconData icon;
   final Color accent;
   final bool busy;
-  final bool disabled;
+  final double? fraction;
+  final String? progressLabel;
+  final String? error;
   final VoidCallback onDownload;
+  final VoidCallback onCancel;
 
   @override
   State<_AnimatedDownloadCard> createState() =>
@@ -208,26 +262,22 @@ class _AnimatedDownloadCardState extends State<_AnimatedDownloadCard> {
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 410;
               final action = FilledButton.icon(
-                onPressed: widget.disabled ? null : widget.onDownload,
+                key: ValueKey('${widget.title}-action'),
+                onPressed: widget.busy
+                    ? widget.onCancel
+                    : widget.onDownload,
                 icon: widget.busy
-                    ? const SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
-                      )
+                    ? const Icon(Icons.close_rounded, size: 19)
                     : const Icon(Icons.file_download_outlined, size: 19),
                 label: Text(
-                  widget.busy ? 'Preparing…' : 'Download',
+                  widget.busy ? 'Cancel' : 'Download',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 style: FilledButton.styleFrom(
                   foregroundColor: Colors.white,
-                  backgroundColor: widget.accent,
-                  disabledBackgroundColor: widget.accent.withOpacity(0.70),
-                  disabledForegroundColor: Colors.white,
+                  backgroundColor: widget.busy
+                      ? const Color(0xFF425879)
+                      : widget.accent,
                   shape: const StadiumBorder(),
                   padding: const EdgeInsets.symmetric(
                     vertical: 12,
@@ -246,11 +296,7 @@ class _AnimatedDownloadCardState extends State<_AnimatedDownloadCard> {
                       color: widget.accent.withOpacity(0.09),
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Icon(
-                      widget.icon,
-                      color: widget.accent,
-                      size: 39,
-                    ),
+                    child: Icon(widget.icon, color: widget.accent, size: 39),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -293,23 +339,36 @@ class _AnimatedDownloadCardState extends State<_AnimatedDownloadCard> {
                         action,
                       ],
                     ),
-                  if (widget.busy) ...[
+                  if (widget.busy || widget.progressLabel != null) ...[
                     const SizedBox(height: 13),
-                    LinearProgressIndicator(
-                      minHeight: 3,
-                      color: widget.accent,
-                      backgroundColor: widget.accent.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+                    if (widget.busy)
+                      LinearProgressIndicator(
+                        value: widget.fraction,
+                        minHeight: 5,
+                        color: widget.accent,
+                        backgroundColor: widget.accent.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     const SizedBox(height: 7),
                     Text(
-                      'Finding the latest released installer…',
+                      widget.progressLabel ?? 'Preparing secure download…',
                       style: TextStyle(
                         color: widget.accent,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
                   ],
+                  if (widget.error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 9),
+                      child: Text(
+                        widget.error!,
+                        style: const TextStyle(
+                          color: Color(0xFFAE2843),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
                 ],
               );
             },
