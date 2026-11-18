@@ -771,3 +771,24 @@ test('financial school PDF cannot be read after its original document is deleted
    id:before.value.id})).status,409,
    'Deleted original cannot authorize stale Cloudflare PDF bytes');
 });
+
+test('school-scoped previous-hour Drive summary excludes unverified pending live records',async()=>{
+ const before=await rpc({command:'verifiedHourSummary'});
+ assert.equal(before.status,200);
+ assert.equal(before.value.schoolId,A);
+ assert.equal(before.value.scope,'liveRecordBackups');
+ assert.equal(before.value.liveProtocol,1);
+ assert.equal(before.value.hourEnd-before.value.hourStart,60*60*1000);
+ assert.equal(before.value.hourStart%(60*60*1000),0);
+ assert.ok(Number.isSafeInteger(before.value.verifiedCount)&&before.value.verifiedCount>=0);
+ const denied=await rpc({command:'verifiedHourSummary'},B);
+ assert.equal(denied.status,412);
+ const queued=await rpc({...write('hour-summary-pending'),operationId:'hour-summary-pending-operation'});
+ assert.equal(queued.status,200);
+ assert.equal(queued.value.backupState,'pending');
+ const after=await rpc({command:'verifiedHourSummary'});
+ assert.equal(after.status,200);
+ if(after.value.hourStart===before.value.hourStart)
+  assert.equal(after.value.verifiedCount,before.value.verifiedCount,
+   'Cloudflare-only acceptance must never count as verified Google Drive');
+});
