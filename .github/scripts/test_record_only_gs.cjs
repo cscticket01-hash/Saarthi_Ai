@@ -10,8 +10,9 @@ vm.runInContext(source, ctx, {filename:'SaarthiManagedAll.gs',timeout:10000});
 function sheet(cols, rows=[]) {
   const items=rows.map(r=>[...r]);
   return {items, getLastRow(){return items.length+1},
-    getRange(row,col){return {
+    getRange(row,col,height=1,width=1){return {
       getValue(){return items[row-2]?.[col-1]||''},
+      getValues(){return items.slice(row-2,row-2+height).map(r=>r.slice(col-1,col-1+width));},
       setValues(values){for(let i=0;i<values.length;i++)items[row-2+i]=[...values[i]];return this;}
     }},
     appendRow(values){assert.equal(values.length,cols);items.push([...values]);},
