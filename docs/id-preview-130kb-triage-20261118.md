@@ -51,3 +51,15 @@ Desired *future* flow:
 - **Cloudflare card source -> Google Drive source-data migration remains NOT IMPLEMENTED**; the current automatic generated-PDF publication lane is unchanged deliberately to avoid breaking Android, retries, school delivery and legacy data.
 
 This draft is a targeted code fix, not a production/live release.
+
+## User-supplied SVN ID design added to Windows Student ID Templates
+
+Reference: the uploaded one-page `SVN_ID_Card_Mohit_Das_Roll_01.pdf` (approximately 435,960 bytes). The uploaded document contains a real student identity; **neither the PDF nor its portrait/name/QR/signature has been committed into the app**.
+
+- Catalog entry: `student-svn-navy-green-v1`, visible as `SVN Navy & Green • Front + Back (Clean Photo)` under `Student ID` templates.
+- Bundled visual assets: `assets/student_svn_navy_green_front.png` and `assets/student_svn_navy_green_back.png` contain only generic navy/green decorative artwork; no identifying student data or photographs. The front follows the submitted PDF's landscape format (85.6 × 54 mm), navy header and footer, green stripe and title, left field list, right photo and bottom verification QR/signature. There is no `ACTIVE` photo overlay.
+- Dynamic manifest: `assets/student_svn_navy_green_manifest.json` provides actual name, guardian, class, roll, school, logo, student ID, DOB, contact, address, photo, QR and principal signature from the active school record.
+- The source PDF supplies only the front. A matching neutral back was newly designed to meet the existing front/back template contract; it is not claimed to reproduce an unseen source back.
+- Fixed `WindowsDocumentTemplates.selected` to use the persisted `school_settings/document_templates.studentId` setting rather than always overriding it with the maroon-gold template. Flutter-only live preview also honors the selected template. Print/Download and revision fingerprint now consume that selection.
+- Added catalog/field-binding/budget/selection tests. The 85 KiB generated-card rule remains unchanged.
+- GitHub CI and real Windows rendering remain pending; keep PR draft and do not release or deploy.
