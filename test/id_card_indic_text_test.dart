@@ -39,6 +39,34 @@ void main() {
     );
   });
 
+  test('compact PDF font is safe for shaped Indic fields and ASCII vectors', () async {
+    final template = IdCardManifest.fromJson(Map<String,dynamic>.from(
+      jsonDecode(File('assets/school_id_manifest_v1.json').readAsStringSync())
+          as Map));
+    // These displayed fields are rendered by the bundled shaping engine into
+    // unchanged lossless PNGs. They do not need a second embedded PDF font.
+    final indic = await IdCardEngine.prepare(template, {
+      'schoolName': 'বিদ্যা',
+      'name': 'मोहन',
+      'parentName': 'অসমীয়া',
+      'address': 'Silchar',
+      'unusedMetadata': 'বাংলা', // Not part of the PDF's vector text.
+    });
+    expect(indic.shapedText.keys,
+      containsAll(['front:schoolName', 'front:name', 'back:parentName']));
+    expect(IdCardEngine.canUseCompactPdfFont(indic), isTrue);
+
+    // A remaining non-ASCII vector field must never be silently rewritten
+    // with Helvetica; preserve the original embedded Unicode font instead.
+    final nonAsciiVector = await IdCardEngine.prepare(template, {
+      'schoolName': 'Own School',
+      'name': 'Student',
+      'address': 'Café Road',
+    });
+    expect(nonAsciiVector.shapedText.containsKey('back:address'), isFalse);
+    expect(IdCardEngine.canUseCompactPdfFont(nonAsciiVector), isFalse);
+  });
+
   test('actual student ID renderer can embed Indic fields in a PDF', () async {
     final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(
       jsonDecode(File('assets/school_id_manifest_v1.json').readAsStringSync())
