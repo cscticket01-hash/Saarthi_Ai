@@ -47,6 +47,24 @@ void main() {
         {'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
         previewOnly: true), throwsStateError);
   });
+  test('school-selected SVN template generates student PDF from live record fields', () async {
+    await db.collection('school_settings').doc('document_templates').set({
+      'studentId': 'manifest:student-svn-navy-green-v1',
+    });
+    final bytes = await WindowsDocumentTemplates.selected('studentId', {
+      'schoolId': school,
+      'schoolName': 'Sample School',
+      'name': 'Sample Student',
+      'class': 'Class 1',
+      'rollNo': '01',
+      'studentUid': 'SAMPLE-01',
+      'dob': '01/01/2016',
+    });
+    expect(bytes, isNotNull);
+    expect(bytes!.take(5).toList(), [37, 80, 68, 70, 45]);
+    expect(bytes.length, lessThanOrEqualTo(85 * 1024));
+  });
+
   test('normal no-photo PDF generation remains available for publication', () async {
     final bytes = await WindowsDocumentTemplates.selected('studentId', {
       'schoolId': school, 'name': 'Synthetic TEST', 'class': '1',
