@@ -46,6 +46,22 @@ function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir()
  return async function(req,res){
   const platform={'/downloads/windows.exe':'windows','/downloads/android.apk':'android'}[req.url?.split('?')[0]];
   if(!platform)return false;
+  // A website-controlled XHR must be able to read the download and abort it.
+  // Exact-origin CORS only: never expose OAuth or school-cloud endpoints.
+  const origin=req.headers.origin;
+  if(origin==='https://vidyasaarthi.web.app'||
+     origin==='https://vidyasaarthi.firebaseapp.com'){
+   res.setHeader('Access-Control-Allow-Origin',origin);
+   res.setHeader('Access-Control-Expose-Headers',
+     'Content-Length, Content-Disposition, X-Saarthi-Release');
+   res.setHeader('Access-Control-Allow-Methods','GET, HEAD, OPTIONS');
+   res.setHeader('Vary','Origin');
+  }
+  if(req.method==='OPTIONS'){
+   res.writeHead(origin==='https://vidyasaarthi.web.app'||
+      origin==='https://vidyasaarthi.firebaseapp.com'?204:403);
+   res.end();return true;
+  }
   if(!['GET','HEAD'].includes(req.method)){res.writeHead(405,{Allow:'GET, HEAD'});res.end();return true;}
   try{
    const item=await installer(platform);let start=0,end=item.size-1,status=200;
