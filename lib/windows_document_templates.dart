@@ -148,6 +148,43 @@ class WindowsDocumentTemplates {
     return image;
   }
 
+  /// The same school-owned image slots used by the printable ID renderer,
+  /// resolved for a native record preview. Never renders a PDF or marks a
+  /// document/Drive transfer complete.
+  static Future<Map<String, Uint8List>> previewManifestImages(
+      Map<String, dynamic> person, Map<String, dynamic> profile) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (person['schoolId'] != null && person['schoolId'] != school) {
+      throw StateError('Another school ID image is not accessible.');
+    }
+    final sources = <dynamic>[
+      person['schoolLogoUrl'] ?? profile['logoUrl'],
+      person['principalSignatureUrl'] ?? profile['principalSignatureUrl'],
+      profile['sealUrl'],
+    ];
+    final reads = await Future.wait<Uint8List?>([
+      _personPhoto(person),
+      for (final source in sources) _image(source),
+    ]);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed while loading ID artwork.');
+    }
+    for (var i = 0; i < sources.length; i++) {
+      if ((sources[i]?.toString().trim() ?? '').isNotEmpty &&
+          (reads[i + 1] == null || reads[i + 1]!.isEmpty)) {
+        throw StateError('Configured school ID artwork is unavailable.');
+      }
+    }
+    return <String, Uint8List>{
+      for (var i = 0; i < reads.length; i++)
+        if (reads[i] != null && reads[i]!.isNotEmpty)
+          ['photo', 'logo', 'signature', 'seal'][i]: reads[i]!,
+    };
+  }
+
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
     final url = data['photoUrl']?.toString().trim() ?? '';
     if (url.isNotEmpty) {
