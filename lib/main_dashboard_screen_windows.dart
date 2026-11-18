@@ -10911,7 +10911,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
     final paymentData = <String, dynamic>{
       'schoolId': FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-      'receiptDocumentId': 'FEE-${paymentRef.id}',
       'paidAt': Timestamp.fromDate(now),
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
@@ -10945,7 +10944,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
     };
 
-      final pdfBytes = await _buildReceiptPdf(paymentData);
       if (FirebaseFirestore.instance.activeProfileId != originProfile ||
           _activeStudentId != studentDoc.id || _selectedMonth != originMonth)
         throw StateError('School or student changed. Reopen fees before collecting.');
@@ -10961,7 +10959,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
       await WindowsBackendBridge.collectFeePayment(
         profileId: originProfile, paymentId: paymentRef.id, payment: paymentData,
-        ledgerId: ledgerRef.id, previousPaid: oldPaid, pdfBytes: pdfBytes,
+        ledgerId: ledgerRef.id, previousPaid: oldPaid,
         ledger: {
           'studentId': studentDoc.id,
           'personId': student['mobileStableId'] ?? studentDoc.id,
@@ -22681,7 +22679,7 @@ class _ExamMarksEntryScreenState
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save ke baad total, %, grade, PASS/FAIL aur Report Card PDF automatic generate hoga.',
+                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save par marks hi sync honge. Report Card PDF sirf Download PDF par banega.',
                       style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10,
@@ -22739,12 +22737,9 @@ class _ExamMarksEntryScreenState
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
-                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', {...widget.exam, ...student, ...resultData});
-                        if (reportBytes == null) throw StateError('Report card could not be generated.');
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
-                          'pdfBase64': base64Encode(reportBytes),
                           ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,
