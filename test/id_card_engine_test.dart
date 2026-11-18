@@ -101,8 +101,23 @@ void main() {
     final data = latin1.decode(pdf);
     expect(data.startsWith('%PDF'), isTrue);
     expect(pdf.length, lessThanOrEqualTo(85 * 1024));
-    // Exact same encoded image, from different byte lists, is stored once.
-    expect(RegExp(r'/Subtype\s*/Image\b').allMatches(data).length, 1);
+    // Count PDF XObjects relatively. Transparent PNGs can include an SMask
+    // image object, so one identical background need not equal one /Image.
+    final differentArtwork = img.Image(width: 64, height: 64);
+    img.fill(differentArtwork, color: img.ColorRgb8(155, 40, 65));
+    final distinctPdf = await IdCardEngine.render(template, {
+      'schoolName': 'Own School',
+      'name': 'Student',
+    }, backgrounds: {
+      'front': source,
+      'back': Uint8List.fromList(img.encodePng(differentArtwork)),
+    });
+    final images = RegExp(r'/Subtype\s*/Image\b');
+    final repeatedResources = images.allMatches(data).length;
+    final distinctResources = images.allMatches(latin1.decode(distinctPdf)).length;
+    expect(repeatedResources, greaterThan(0));
+    expect(repeatedResources, lessThan(distinctResources),
+        reason: 'same exact artwork must reuse its PDF image XObjects');
     expect(source, original, reason: 'must never rewrite source artwork');
   });
 
