@@ -1,3 +1,4 @@
+# Release candidate: ID PDF resource optimization PR #333, 45 card tests + Windows TemplateForge/OCR checks PASS; physical user acceptance remains separate.
 # Release request: publish reviewed Cloudflare-first UI improvements from PR #277.
 # CI validated the source on main; release jobs remain subject to their existing signing and security gates.
 # This file-only change triggers the explicitly approved Windows/Android publication after hosting-only push.
