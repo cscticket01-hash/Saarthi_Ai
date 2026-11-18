@@ -42,11 +42,10 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec("CREATE INDEX IF NOT EXISTS live_bundles_mobile_owner ON live_bundles(json_extract(receipt,'$.owner.role'),json_extract(receipt,'$.owner.personId'))");
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_backup(seq INTEGER PRIMARY KEY,collection TEXT NOT NULL,id TEXT NOT NULL,operation_id TEXT NOT NULL,operation TEXT NOT NULL,body TEXT NOT NULL,state TEXT NOT NULL,due INTEGER NOT NULL,claim TEXT NOT NULL DEFAULT '',claim_until INTEGER NOT NULL DEFAULT 0,drive_revision TEXT)");
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
- // Report only physically verified Drive receipts in the last closed hour.
- // Index remains school-local inside this Durable Object.
- storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_verified_hour ON live_backup(state,verified_at)');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='accepted_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN accepted_at INTEGER NOT NULL DEFAULT 0');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
+ // Create only after the verified_at migration, including on older school DOs.
+ storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_verified_hour ON live_backup(state,verified_at)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_record_owners(collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(collection,id))");
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='request_metadata'))storage.sql.exec("ALTER TABLE live_backup ADD COLUMN request_metadata TEXT NOT NULL DEFAULT '{}'");
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_backup_dependencies(sequence INTEGER NOT NULL,predecessor INTEGER NOT NULL,PRIMARY KEY(sequence,predecessor))');
