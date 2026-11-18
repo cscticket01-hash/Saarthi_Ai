@@ -1,6 +1,9 @@
 import '../lib/school_qr_link.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:image/image.dart' as img;
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -85,6 +88,24 @@ void main() {
       throwsFormatException,
     );
   });
+  test('identical front/back artwork shares a PDF resource without changing pixels', () async {
+    final template = IdCardManifest.fromJson(manifest());
+    final artwork = img.Image(width: 64, height: 64);
+    img.fill(artwork, color: img.ColorRgb8(45, 70, 95));
+    final source = Uint8List.fromList(img.encodePng(artwork));
+    final original = Uint8List.fromList(source);
+    final pdf = await IdCardEngine.render(template, {
+      'schoolName': 'Own School',
+      'name': 'Student',
+    }, backgrounds: {'front': source, 'back': Uint8List.fromList(source)});
+    final data = latin1.decode(pdf);
+    expect(data.startsWith('%PDF'), isTrue);
+    expect(pdf.length, lessThanOrEqualTo(85 * 1024));
+    // Exact same encoded image, from different byte lists, is stored once.
+    expect(RegExp(r'/Subtype\\s*/Image\\b').allMatches(data).length, 1);
+    expect(source, original, reason: 'must never rewrite source artwork');
+  });
+
   test('shared manifest renders Student Teacher and Other Staff as one physical front/back PDF page', () async {
     final template = IdCardManifest.fromJson(manifest());
     for (final role in ['Student', 'Teacher', 'Other Staff']) {
