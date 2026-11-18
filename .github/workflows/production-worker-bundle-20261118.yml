@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8' || test "$(git rev-list --max-parents=1 HEAD | tail -n1)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8'
+          test "$(git rev-parse HEAD^)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8'
           node - <<'NODE'
           const fs=require('node:fs');
           const config=JSON.parse(fs.readFileSync('cloudflare-sync/wrangler.production-active.jsonc','utf8'));
