@@ -1,0 +1,78 @@
+name: Build verified Sync3 production Worker candidate (NO DEPLOY)
+on:
+  push:
+    branches:
+      - release/sync3-production-worker-bundle-20261118
+    paths:
+      - '.github/workflows/production-worker-bundle-20261118.yml'
+permissions:
+  contents: write
+jobs:
+  exact-source-worker-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Fence exact approved production source and ACTIVE R2 / DO config
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8' || test "$(git rev-list --max-parents=1 HEAD | tail -n1)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8'
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const config=JSON.parse(fs.readFileSync('cloudflare-sync/wrangler.production-active.jsonc','utf8'));
+          if(config.name!=='vidya-saarthi-sync' ||
+              config.main!=='src/worker.ts' ||
+              config.compatibility_date!=='2026-10-28' ||
+              config.durable_objects?.bindings?.length!==1 ||
+              config.durable_objects.bindings[0].name!=='LANES' ||
+              config.durable_objects.bindings[0].class_name!=='SyncLane' ||
+              config.migrations?.[0]?.tag!=='v1' ||
+              config.r2_buckets?.[0]?.binding!=='R2_STAGE' ||
+              config.r2_buckets[0].bucket_name!=='saarthi-sync-r2-prod' ||
+              config.vars?.BROKER_URL!=='https://saarthi-oauth-staging.onrender.com/school-cloud' ||
+              config.vars?.R2_STAGING_ENABLED!=='true' ||
+              config.vars?.R2_STAGING_SCHOOLS!=='*' ||
+              config.vars?.R2_STAGING_ALL_SCHOOLS_ENABLED!=='true')
+            throw Error('Production Worker config drift; no bundle created');
+          NODE
+      - name: Run complete pinned Cloudflare source tests
+        run: |
+          npm ci --prefix cloudflare-sync --ignore-scripts
+          cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
+          npm --prefix cloudflare-sync run check
+          npm --prefix cloudflare-sync test
+          node --test .github/scripts/sync3_production_r2_standby.test.cjs
+      - name: Build bundled Worker using explicit ACTIVE production configuration ONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloudflare-sync
+          npx wrangler deploy --config wrangler.production-active.jsonc --dry-run --minify --outdir ../.worker-production-bundle
+          cd ..
+          test -d .worker-production-bundle
+          find .worker-production-bundle -maxdepth 2 -type f -printf '%p %s bytes\n'
+          mapfile -t scripts < <(find .worker-production-bundle -maxdepth 1 -type f -name '*.js')
+          test "${#scripts[@]}" = 1
+          test "$(wc -c < "${scripts[0]}")" -gt 20000
+          mkdir -p .production-worker-bundle
+          cp "${scripts[0]}" .production-worker-bundle/worker.js
+          cp cloudflare-sync/wrangler.production-active.jsonc .production-worker-bundle/ACTIVE-CONFIG.jsonc
+          sha256sum .production-worker-bundle/worker.js > .production-worker-bundle/sha256sum.txt
+          node --check .production-worker-bundle/worker.js
+          echo 'Verified source: 9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8'
+          cat .production-worker-bundle/sha256sum.txt
+      - name: Retain exact tested JS candidate on isolated branch ONLY, never deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git add .production-worker-bundle/worker.js .production-worker-bundle/ACTIVE-CONFIG.jsonc .production-worker-bundle/sha256sum.txt
+          git commit -m 'build: source-pinned active production Worker candidate [skip ci]'
+          git push origin "HEAD:$GITHUB_REF_NAME"
