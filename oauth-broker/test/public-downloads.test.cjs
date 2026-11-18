@@ -25,3 +25,23 @@ test('verified file stays server-side, supports retry/ranges, and never redirect
  const missing=await fetch(base+'/downloads/unknown');assert.equal(missing.status,404);
 }));
 test('bad upstream bytes cannot be delivered as an installer',()=>serve(true,async base=>{const r=await fetch(base+'/downloads/windows.exe');assert.equal(r.status,503);assert.equal(r.headers.get('content-disposition'),null);}));
+
+
+test('website CORS permits only the public login origins and not other sites',()=>serve(false,async(base,bytes)=>{
+ const allowed=await fetch(base+'/downloads/windows.exe',{headers:{Origin:'https://vidyasaarthi.web.app'}});
+ assert.equal(allowed.status,200);
+ assert.equal(allowed.headers.get('access-control-allow-origin'),'https://vidyasaarthi.web.app');
+ assert.match(allowed.headers.get('access-control-expose-headers'),/Content-Length/);
+ assert.deepEqual(Buffer.from(await allowed.arrayBuffer()),bytes);
+ const denied=await fetch(base+'/downloads/windows.exe',{headers:{Origin:'https://malicious.example'}});
+ assert.equal(denied.status,200);
+ assert.equal(denied.headers.get('access-control-allow-origin'),null);
+ const preflight=await fetch(base+'/downloads/windows.exe',{method:'OPTIONS',headers:{Origin:'https://vidyasaarthi.web.app'}});
+ assert.equal(preflight.status,204);
+ assert.equal(preflight.headers.get('access-control-allow-origin'),'https://vidyasaarthi.web.app');
+ const unknownPreflight=await fetch(base+'/downloads/windows.exe',{method:'OPTIONS',headers:{Origin:'https://unknown.example'}});
+ assert.equal(unknownPreflight.status,403);
+ const unrelated=await fetch(base+'/school-cloud',{headers:{Origin:'https://vidyasaarthi.web.app'}});
+ assert.equal(unrelated.status,404);
+ assert.equal(unrelated.headers.get('access-control-allow-origin'),null);
+}));
