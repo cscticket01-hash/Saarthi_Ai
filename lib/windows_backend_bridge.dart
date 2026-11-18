@@ -2108,16 +2108,20 @@ class WindowsBackendBridge {
     }
 
     final action = body['action']?.toString() ?? '';
-    // Only a new, unbased document generation can use this separate early
-    // Cloudflare handoff. Replacements/deletes keep their existing CAS owner
-    // until a version-safe dependency migration explicitly supports them.
+    final originalDocumentRevision = body['baseCloudRevision']?.toString() ?? '';
+    final originalRecordRevision = body['reviewedRecordRevision']?.toString() ?? '';
+    final newDocumentStage = originalDocumentRevision.isEmpty && originalRecordRevision.isEmpty;
+    final replacementStage = originalDocumentRevision.isNotEmpty &&
+        originalRecordRevision.isNotEmpty &&
+        WindowsFirebaseRemote.documentReplacementStageSupported;
+    // A replacement may stage only when the exact original document and record
+    // revisions were locally verified. The broker performs the final owner CAS.
     if (connection['managed'] == true &&
         action == 'upload_student_document' &&
-        (body['baseCloudRevision']?.toString() ?? '').isEmpty &&
-        (body['reviewedRecordRevision']?.toString() ?? '').isEmpty &&
-        body['documentId'] is String &&
+        (newDocumentStage || replacementStage) &&
+        (body['documentId'] ?? body['replaceDocumentId']) is String &&
         body['documentRevision'] is String) {
-      final id = body['documentId'] as String;
+      final id = (body['documentId'] ?? body['replaceDocumentId']) as String;
       final revision = body['documentRevision'] as String;
       if (id.isNotEmpty && id.length <= 200 && !id.contains('/') &&
           RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(revision)) {
@@ -2152,7 +2156,11 @@ class WindowsBackendBridge {
           ).toString();
           final document = <String, dynamic>{
             'version': 1, 'schoolId': school, 'id': id,
-            'operationId': revision, 'expectedRecordRevision': '',
+            'operationId': revision,
+            'expectedRecordRevision': originalRecordRevision,
+            if (replacementStage) 'expectedRevision': originalDocumentRevision,
+            if (replacementStage && body['baseCloudUploadedAt'] is num)
+              'expectedUploadedAt': body['baseCloudUploadedAt'],
             'data': data,
           };
           final staged = await uploadManagedChunks(
