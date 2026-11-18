@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:image/image.dart' as img;
+import 'package:crypto/crypto.dart';
 import 'package:zxing2/qrcode.dart' as zx;
 import 'package:printing/printing.dart';
 
@@ -204,6 +205,25 @@ class IdCardEngine {
 
   static Future<Uint8List> render(IdCardManifest template, Map<String,dynamic> data, {Map<String,Uint8List> images=const {},String qr='',Map<String,Uint8List> backgrounds=const {}}) => _render(template,data,images:images,qr:qr,backgrounds:backgrounds);
 
+  /// A standard non-embedded PDF font is safe only for the glyphs that will
+  /// actually be written as vector text. Indic fields are already shaped into
+  /// lossless PNGs; other input metadata must not block a compact font retry.
+  /// Never replace a font when any remaining vector glyph needs Unicode.
+  static bool canUseCompactPdfFont(PreparedIdCard prepared) {
+    for (final region in prepared.template.regions) {
+      if (region.kind != 'text') continue;
+      if (prepared.shapedText.containsKey('${region.side}:${region.key}')) {
+        continue;
+      }
+      final text = '${region.label}${prepared.data[region.key] ?? ''}';
+      final ascii = text.runes.every((code) =>
+          code == 9 || code == 10 || code == 13 ||
+          (code >= 32 && code <= 126));
+      if (!ascii) return false;
+    }
+    return true;
+  }
+
   static Future<Uint8List> _render(
     IdCardManifest template,
     Map<String, dynamic> data, {
@@ -259,18 +279,11 @@ class IdCardEngine {
     );
     final output = await pdf.save();
     if (!useCompactVectorFont && output.length > SchoolMediaBudgets.idCard) {
-      // Original catalog font wins when it fits. Only ASCII-only oversized
-      // cards retry with a non-embedded vector font; no QR/text rasterization,
-      // geometry shift or loss of Indic glyphs.
-      final asciiText = data.values.whereType<String>().every(
-        (value) => value.runes.every((code) =>
-            code == 9 || code == 10 || code == 13 ||
-            (code >= 32 && code <= 126)));
-      final asciiLabels = template.regions
-          .where((r) => r.kind == 'text')
-          .every((r) => r.label.runes.every((code) =>
-              code >= 32 && code <= 126));
-      if (asciiText && asciiLabels) {
+      // Keep the original embedded font when it fits. When the PDF exceeds
+      // 85 KiB, try a smaller core font only for actual vector ASCII fields.
+      // Bengali/Assamese/Devanagari fields are preserved as shaped PNGs.
+      // No QR, layout, source media or unsafe Unicode glyph is modified.
+      if (canUseCompactPdfFont(prepared)) {
         return _render(template, data, images: images, qr: qr,
             backgrounds: backgrounds, useCompactVectorFont: true);
       }
@@ -307,6 +320,16 @@ class PreparedIdCard {
   // The same school logo appears on front and back; duplicate PDF objects
   // increase byte size but add no print fidelity.
   final Map<String, pw.MemoryImage> _printImageCache = {};
+
+  // QPDF/pdfcpu-style immutable PDF resource reuse, implemented in Dart:
+  // identical encoded media on both faces must not consume two PDF objects.
+  // Exact SHA-256 identity means no resampling or changes to printed pixels.
+  pw.MemoryImage _cachedImage(Uint8List bytes) =>
+      _printImageCache.putIfAbsent(
+        sha256.convert(bytes).toString(),
+        () => pw.MemoryImage(bytes),
+      );
+
   final String qr;
   final pw.Font font;
   final int printMediaStage;
@@ -319,7 +342,7 @@ class PreparedIdCard {
         if (backgrounds[name] != null)
           pw.Positioned.fill(
             child: pw.Image(
-              pw.MemoryImage(backgrounds[name]!),
+              _cachedImage(backgrounds[name]!),
               fit: pw.BoxFit.contain,
             ),
           ),
@@ -355,7 +378,7 @@ class PreparedIdCard {
                               )
                       : shapedText['${r.side}:${r.key}'] != null
                       ? pw.Image(
-                          pw.MemoryImage(shapedText['${r.side}:${r.key}']!),
+                          _cachedImage(shapedText['${r.side}:${r.key}']!),
                           fit: pw.BoxFit.fill,
                         )
                       : IdCardLayout.text(
