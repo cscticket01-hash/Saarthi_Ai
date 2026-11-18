@@ -43,7 +43,7 @@ export class OfflineBinaryLane extends SyncLane {
    const raw=await request.text(),stamp=request.headers.get('x-vidya-time');
    assert.equal(request.headers.get('authorization'),'Bearer cloudflare-delivery');
    assert.equal(request.headers.get('x-vidya-signature'),
-     createHmac('sha256',secret).update(stamp+'\\n'+raw).digest('hex'));
+     createHmac('sha256',secret).update(stamp+'\n'+raw).digest('hex'));
    const b=JSON.parse(raw);assert.equal(b.schoolId,school);
    brokerCalls++;
    const outcome=await delivery.drain(school,b.lane,async op=>{
