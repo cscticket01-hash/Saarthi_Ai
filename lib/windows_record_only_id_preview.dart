@@ -87,7 +87,6 @@ class WindowsRecordOnlyIdPreview {
       throw StateError('Another school ID card cannot be displayed.');
     }
     final person = Map<String, dynamic>.from(data);
-    final photo = WindowsDocumentTemplates.previewPersonPhoto(person);
     final qr = person['qrData']?.toString() ?? '';
     final schoolName = (person['schoolName'] ?? 'School').toString();
     final name = (person['name'] ?? '').toString();
@@ -144,7 +143,7 @@ class WindowsRecordOnlyIdPreview {
           if (front) ...[
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               FutureBuilder<Uint8List?>(
-                future: photo,
+                future: WindowsDocumentTemplates.previewPersonPhoto(person),
                 builder: (_, snap) => ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: snap.hasData && snap.data!.isNotEmpty
