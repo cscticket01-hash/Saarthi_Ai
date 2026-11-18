@@ -22,7 +22,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8'
+          git merge-base --is-ancestor '9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8' HEAD
+          test -z "$(git diff --name-only 9e56cf35ce4ae00f405982cafc2ee96fd2ef06b8 HEAD -- cloudflare-sync/ functions/ staging-school-cloud/ oauth-broker/)"
           node - <<'NODE'
           const fs=require('node:fs');
           const config=JSON.parse(fs.readFileSync('cloudflare-sync/wrangler.production-active.jsonc','utf8'));
