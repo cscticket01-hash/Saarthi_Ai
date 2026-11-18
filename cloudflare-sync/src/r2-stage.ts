@@ -33,6 +33,7 @@ async function stageR2Unlocked(storage:DurableObjectStorage,bucket:R2Bucket|unde
  init(storage);
  const key='saarthi-v1/'+school+'/'+lane+'/'+receiptId+'/'+segment;
  const bytes=new Uint8Array(buffer),sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',buffer))].map(x=>x.toString(16).padStart(2,'0')).join('');
+ let firstAdmission=false;
  let existing=storage.sql.exec<StageRow>('SELECT * FROM r2_staged WHERE key=?',key).toArray()[0];
  if(existing){
   demand(existing.school===school&&existing.lane===lane&&existing.receipt_id===receiptId&&
@@ -48,12 +49,16 @@ async function stageR2Unlocked(storage:DurableObjectStorage,bucket:R2Bucket|unde
    storage.sql.exec("INSERT INTO r2_staged(key,school,lane,receipt_id,bytes,sha256,category,state,accepted_at) VALUES(?,?,?,?,?,?,?,'reserved',?)",
     key,school,lane,receiptId,bytes.byteLength,sha256,category,Date.now());
   });
+  firstAdmission=true;
   existing=storage.sql.exec<StageRow>('SELECT * FROM r2_staged WHERE key=?',key).toArray()[0];
  }
  // R2 put precedes a user-visible Cloudflare ACK. If this fails, the DO's
  // durable reservation remains. On identical retry it rechecks/reputs R2.
  try{
-  const current=await bucket.head(key);
+  // A newly created immutable quota reservation cannot have an earlier
+  // upload from this owner. Save one R2 HEAD roundtrip on first admission;
+  // only interrupted/replayed reservations need HEAD for crash recovery.
+  const current=firstAdmission?null:await bucket.head(key);
   if(!current||current.size!==bytes.byteLength||current.customMetadata?.sha256!==sha256){
    const stored=await bucket.put(key,buffer,{customMetadata:{schema:'saarthi-r2-stage-v1',sha256}});
    if(!stored||stored.size!==bytes.byteLength)fail('R2 staging did not confirm bytes');

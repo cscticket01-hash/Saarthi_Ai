@@ -13,6 +13,7 @@ export function r2StagingForSchool(env, school) {
   if (typeof raw !== 'string') return false;
   if (raw.trim() === '*') return env.R2_STAGING_ALL_SCHOOLS_ENABLED === 'true';
   const scopes = raw.split(',').map(s => s.trim());
-  if (scopes.some(s => s !== '' && !/^vs-[a-f0-9]{32}$/.test(s))) return false;
+  // A malformed selector must never silently become a broader valid list.
+  if (scopes.some(s => !/^vs-[a-f0-9]{32}$/.test(s))) return false;
   return scopes.includes(school);
 }
