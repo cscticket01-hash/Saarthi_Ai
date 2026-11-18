@@ -47,6 +47,7 @@ jobs:
         run: |
           npm ci --prefix cloudflare-sync --ignore-scripts
           cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
+          npm --prefix cloudflare-sync run types
           npm --prefix cloudflare-sync run check
           npm --prefix cloudflare-sync test
           node --test .github/scripts/sync3_production_r2_standby.test.cjs
