@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_indic_text.dart';
 import '../lib/id_card_manifest.dart';
 import '../lib/id_card_engine.dart';
+import '../lib/id_card_catalog.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -65,6 +66,25 @@ void main() {
     });
     expect(nonAsciiVector.shapedText.containsKey('back:address'), isFalse);
     expect(IdCardEngine.canUseCompactPdfFont(nonAsciiVector), isFalse);
+  });
+
+  test('real bundled front/back school artwork with Indic text fits the unchanged 85 KiB limit', () async {
+    final entry = await IdCardCatalog.find('student-maroon-gold-v1');
+    final bytes = await IdCardEngine.render(
+      await entry.manifest(),
+      {
+        'schoolName': 'বিদ্যা বিদ্যালয়',
+        'name': 'मोहन',
+        'parentName': 'অসমীয়া',
+        'class': 'VII',
+        'rollNo': '014',
+        'address': 'Silchar',
+        'contact': '1234567890',
+      },
+      backgrounds: await entry.backgrounds(),
+    );
+    expect(latin1.decode(bytes.take(4).toList()), '%PDF');
+    expect(bytes.length, lessThanOrEqualTo(85 * 1024));
   });
 
   test('actual student ID renderer can embed Indic fields in a PDF', () async {
