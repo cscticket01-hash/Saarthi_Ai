@@ -32,9 +32,6 @@ jobs:
   windows-id-compat:
     runs-on: windows-latest
     timeout-minutes: 25
-    env:
-      APPDATA: ${{ runner.temp }}/saarthi-native-id-proof
-      LOCALAPPDATA: ${{ runner.temp }}/saarthi-native-id-proof
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -43,4 +40,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Verify native selected-template and historical Windows ID regressions
+        env:
+          APPDATA: ${{ runner.temp }}/saarthi-native-id-proof
+          LOCALAPPDATA: ${{ runner.temp }}/saarthi-native-id-proof
         run: flutter test --concurrency=1 test/windows_manifest_record_id_preview_test.dart test/windows_id_card_preview_test.dart
