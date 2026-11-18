@@ -44,6 +44,7 @@ import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
+import 'windows_id_card_record_lookup.dart';
 import 'windows_document_templates.dart';
 import 'windows_record_only_id_preview.dart';
 import 'windows_save_pdf.dart';
@@ -5058,8 +5059,16 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   bool showStudentUid = false;
   String? photoUrl = _studentPhotoUrl;
 
+  final resolved = await WindowsIdCardRecordLookup.find(
+      schoolClass: _directoryClass, roll: roll);
+  if (resolved == null) {
+    throw StateError('Student record not found. Search Record again.');
+  }
+  final docId = resolved.id;
+  if (resolved.data['name']?.toString().trim() != name) {
+    throw StateError('Student record changed. Search Record again.');
+  }
   try {
-    final docId = '${_directoryClass}_Roll_$roll';
 
     final doc = await FirebaseFirestore.instance
         .collection('students_directory')

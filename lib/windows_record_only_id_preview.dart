@@ -28,9 +28,8 @@ class WindowsRecordOnlyIdPreview {
     final kind = role == 'Student'
         ? 'studentId' : role == 'Teacher' ? 'teacherId' : 'otherStaffId';
     final selections = await WindowsDocumentTemplates.selections();
-    final selection = kind == 'studentId'
-        ? 'manifest:$studentIdTemplateId'
-        : selections[kind];
+    final selection = selections[kind] ??
+        (kind == 'studentId' ? 'manifest:$studentIdTemplateId' : null);
     if (selection is! String ||
         (!selection.startsWith('manifest:') &&
          !selection.startsWith('reviewed:'))) {

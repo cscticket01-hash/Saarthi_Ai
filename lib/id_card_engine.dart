@@ -125,6 +125,28 @@ class IdCardEngine {
   }
 
   static Map<String,dynamic> normalizedInput(IdCardManifest template,Map<String,dynamic> data) {
+    if (template.id == 'student-svn-navy-green-v1') {
+      String first(List<String> keys) {
+        for (final key in keys) {
+          final value = data[key]?.toString().trim() ?? '';
+          if (value.isNotEmpty && value.toLowerCase() != 'null') return value;
+        }
+        return '';
+      }
+      return {
+        ...data,
+        'schoolName': first(['schoolName', 'nameOfSchool']),
+        'schoolLocation': first(['schoolLocation', 'schoolAddress', 'schoolArea']),
+        'name': first(['name', 'studentName']),
+        'parentName': first(['parentName', 'fatherName', 'guardianName']),
+        'class': first(['studentClass', 'class']),
+        'rollNo': first(['rollNo', 'roll']),
+        'studentUid': first(['studentUid', 'studentCardId', 'studentId']),
+        'dob': first(['dateOfBirth', 'dob']),
+        'contact': first(['parentContact', 'contact', 'contactNo', 'phone']),
+        'address': first(['streetAddress', 'address']),
+      };
+    }
     if(template.id == 'student-maroon-gold-v1') {
       String first(List<String> keys) {
         for(final key in keys) {
