@@ -604,7 +604,7 @@
       "height": 111,
       "kind": "image",
       "label": "",
-      "fontSize": "9",
+      "fontSize": 9,
       "minFontSize": 6,
       "fit": "cover",
       "align": "left",
