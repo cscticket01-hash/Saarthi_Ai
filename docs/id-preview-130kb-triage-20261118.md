@@ -20,3 +20,23 @@
 
 ## External reference reviewed
 - `DavBfr/dart_pdf` / `printing` already has a working Flutter `PdfPreview` API. This can inform preview presentation, but it does not fix the local record-ID mismatch or allow an oversized generated ID PDF to be accepted.
+
+## 2026-11-18 owner-approved target: PDF on Download only
+
+Desired *future* flow:
+1. On screen: read current-school card source record, validated card template and QR, then display the existing front/back artwork with Flutter widgets. Do **not** invoke PDF creation when the card becomes visible.
+2. On Save: durably persist the school-bound person/card data locally, upload the canonical card-data revision to Cloudflare immediately, and enter Idle on verified Cloudflare ACK as required by Sync Engine 3.0. The frontend must not wait for Google Drive.
+3. Cloudflare should persist the verified card source and image references, then independently deliver the data to the school's own configured Drive backup with retries and receipts. Never declare Drive completed from a mere Cloudflare ACK.
+4. On **Download**: generate a PDF using the existing manifest, photo, QR, fonts and 85 KiB ID-card budget. If the file cannot safely fit, report the true failure; never silently exceed the cap or reduce print fidelity.
+5. Existing document publish/repair queues currently produce a derived PDF automatically. Replacing that with JSON/media source delivery requires a protocol/version migration, Worker/Drive consumer changes, retries, checksum proof, legacy-client compatibility and regression tests. **Not implemented here**.
+
+### Draft code included
+- `lib/id_card_live_preview.dart`: Flutter front/back widget using the existing template region coordinates, without creating a PDF.
+- `WindowsDocumentTemplates.liveIdCardPreview`: current-school-guarded facade to obtain the catalog template, photo and background for on-screen preview.
+- `test/id_card_live_preview_test.dart`: preliminary widget regression tests; **not executed** here.
+
+### Missing integration / release blockers
+- Dashboard's actual View ID Card button needs to invoke the new widget instead of invoking `selected(previewOnly: true)` / `WindowsSchoolIdentity.ensure` with a stale ID. The rendered binary may not correspond to the default-branch source; reproduce against the exact Windows build.
+- The new facade doesn't authorize records by itself; authenticated record resolution must be performed by the caller, with a canonical ID and active-school guard.
+- Replace automatic PDF publication only after Cloudflare and school-specific Drive backup accept a versioned *card-data* record and verify source media. Preserve legacy PDF readers.
+- No real 130.8 KB PDF source provided, no hosted or physical tests run, and no merge/deploy authorized.
