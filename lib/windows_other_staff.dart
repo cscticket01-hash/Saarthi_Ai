@@ -2,6 +2,8 @@ import 'windows_person_fields.dart';
 import 'windows_appearance.dart';
 import 'india_address_fields.dart';
 import 'windows_document_templates.dart';
+import 'windows_record_only_id_preview.dart';
+import 'windows_save_pdf.dart';
 
 import 'dart:async';
 
@@ -133,22 +135,36 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
   Future<void> _idCard(Map<String, dynamic> person) async {
     try {
       OtherStaffDirectory.requireSchool(profile);
-      final bytes = await WindowsDocumentTemplates.selected('otherStaffId', {
+      final school = (await FirebaseFirestore.instance
+          .collection('school_config').doc('school_profile_cache').get()).data() ?? {};
+      OtherStaffDirectory.requireSchool(profile);
+      if (!mounted) return;
+      final fields = <String, dynamic>{
         ...person,
         'contact': person['mobile'] ?? '',
         'rollNo': person['employeeId'] ?? '',
-      }, previewOnly: true);
-      OtherStaffDirectory.requireSchool(profile);
-      if (mounted && bytes != null)
-        await WindowsDocumentTemplates.preview(
-          context,
-          bytes,
-          title: 'Other Staff ID • Front + Back',
-        );
+        'schoolName': school['schoolName'] ?? school['name'] ?? 'School',
+      };
+      await WindowsRecordOnlyIdPreview.show(context,
+        title: 'Other Staff ID • Front + Back',
+        data: fields,
+        onDownload: () async {
+          try {
+            OtherStaffDirectory.requireSchool(profile);
+            final bytes = await WindowsDocumentTemplates.selected('otherStaffId',
+              fields);
+            if (bytes == null) throw StateError('Unable to render staff ID PDF.');
+            OtherStaffDirectory.requireSchool(profile);
+            await WindowsSavePdf.save(bytes, 'other-staff-id.pdf');
+          } catch (e) {
+            if (mounted) ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text('ID PDF save failed: $e')));
+          }
+        },
+      );
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+      if (mounted) ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
