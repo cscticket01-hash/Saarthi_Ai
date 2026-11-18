@@ -29,7 +29,9 @@ class _DeveloperIdleSessionState extends State<DeveloperIdleSession> with Widget
   void check(){if(!ready)return;if(DateTime.now().difference(activity)>=widget.idle){ready=false;unawaited(FirebaseAuth.instance.signOut());}else if(mounted)setState((){});}
   @override void didChangeAppLifecycleState(AppLifecycleState state){if(state==AppLifecycleState.resumed)check();}
   @override void dispose(){timer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
-  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(colo/// Both cards have independent transfers. Browser-native downloads cannot be
+  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(color:const Color(0xFF16242E),child:Padding(padding:const EdgeInsets.all(8),child:Text('Auto logout ${seconds~/60}:${(seconds%60).toString().padLeft(2,'0')}')))))])));}
+}
+/// Both cards have independent transfers. Browser-native downloads cannot be
 /// cancelled by Flutter once dispatched, so Web first downloads the verified
 /// installer over an abortable same-origin-allowlisted HTTP request.
 class AppDownloadButtons extends StatefulWidget {
