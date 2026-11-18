@@ -21,6 +21,7 @@ import 'id_card_catalog.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'id_card_live_preview.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -63,6 +64,54 @@ class WindowsDocumentTemplates {
       backgrounds: await entry.backgrounds(),
       images: {
         if (photo != null) 'photo': photo,
+        if (logo != null) 'logo': logo,
+        if (signature != null) 'signature': signature,
+        if (seal != null) 'seal': seal,
+      },
+    );
+  }
+
+  /// Card presentation is independent of PDF generation and the sync queue.
+  /// The caller must supply an authorized current-school record and QR; this
+  /// method never calls WindowsSchoolIdentity.ensure or creates a PDF.
+  static Future<Widget> liveIdCardPreview(
+    String kind,
+    Map<String, dynamic> data, {
+    required String qr,
+    String? templateId,
+    Uint8List? photo,
+    Uint8List? logo,
+    Uint8List? signature,
+    Uint8List? seal,
+  }) async {
+    if (!{'studentId', 'teacherId', 'otherStaffId'}.contains(kind)) {
+      throw ArgumentError.value(kind, 'kind', 'Not an ID card');
+    }
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    if (origin.isEmpty || school.isEmpty ||
+        (data['schoolId'] != null && data['schoolId'].toString() != school) ||
+        (data['schoolSyncId'] != null && data['schoolSyncId'].toString() != school) ||
+        data['_syncDeleted'] == true || data['deleted'] == true) {
+      throw StateError('Current school ID card record is not available.');
+    }
+    final entry = await IdCardCatalog.find(
+        templateId ?? (kind == 'studentId' ? studentIdTemplateId : 'school-id-v1'));
+    final manifest = await entry.manifest();
+    final backgrounds = await entry.backgrounds();
+    final portrait = photo ?? await _personPhoto(data);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during ID card preview.');
+    }
+    return IdCardLivePreview(
+      template: manifest,
+      data: data,
+      qr: IdCardEngine.compactQr(qr),
+      backgrounds: backgrounds,
+      images: {
+        if (portrait != null) 'photo': portrait,
         if (logo != null) 'logo': logo,
         if (signature != null) 'signature': signature,
         if (seal != null) 'seal': seal,
