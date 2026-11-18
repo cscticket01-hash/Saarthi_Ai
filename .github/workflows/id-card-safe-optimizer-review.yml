@@ -1,0 +1,46 @@
+name: ID card safe PDF optimization review
+on:
+  push:
+    branches:
+      - fix/id-card-safe-resource-optimization-20261118
+  pull_request:
+    branches:
+      - windows/easy-connect-draft
+      - main
+    paths:
+      - lib/id_card_engine.dart
+      - lib/id_card_indic_text.dart
+      - lib/school_pdf_media.dart
+      - lib/school_media_budgets.dart
+      - test/id_card_indic_text_test.dart
+      - test/id_card_engine_test.dart
+      - test/school_media_budgets_test.dart
+      - .github/workflows/id-card-safe-optimizer-review.yml
+permissions:
+  contents: read
+concurrency:
+  group: id-card-safe-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check-id-card-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve existing app dependencies without new plugins
+        run: flutter pub get
+      - name: Analyze existing ID card code and regressions
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/id_card_engine.dart test/id_card_indic_text_test.dart test/id_card_engine_test.dart
+      - name: Exercise exact 85 KiB budgets, QR, Indic shaping, original media and Windows card rendering
+        run: |
+          flutter test --concurrency=1 \
+            test/id_card_indic_text_test.dart \
+            test/id_card_engine_test.dart \
+            test/id_card_layout_test.dart \
+            test/school_media_budgets_test.dart \
+            test/windows_student_id_cards_test.dart \
+            test/windows_reference_documents_test.dart
