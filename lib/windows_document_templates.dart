@@ -132,6 +132,22 @@ class WindowsDocumentTemplates {
         : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
+  /// Resolve the existing school-scoped portrait without rendering a PDF.
+  static Future<Uint8List?> previewPersonPhoto(Map<String, dynamic> data) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (data['schoolId'] != null && data['schoolId'] != school) {
+      throw StateError('Another school portrait cannot be displayed.');
+    }
+    final image = await _personPhoto(data);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during ID preview.');
+    }
+    return image;
+  }
+
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
     final url = data['photoUrl']?.toString().trim() ?? '';
     if (url.isNotEmpty) {
