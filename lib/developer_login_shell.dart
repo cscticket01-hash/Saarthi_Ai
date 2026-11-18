@@ -293,39 +293,60 @@ class _DeveloperLoginShellState extends State<DeveloperLoginShell>
         ],
       );
 
-  Widget _header() => LayoutBuilder(
-        builder: (context, size) => Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 20,
-          runSpacing: 12,
+  Widget _securePill() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.66),
+          borderRadius: BorderRadius.circular(50),
+          border: Border.all(color: const Color(0xFFDBE6F7)),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _brand(),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.66),
-                borderRadius: BorderRadius.circular(50),
-                border: Border.all(color: const Color(0xFFDBE6F7)),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.lock_outline_rounded, size: 17, color: _blue),
-                  SizedBox(width: 8),
-                  Text(
-                    'Secure Developer Login',
-                    style: TextStyle(
-                      color: _ink,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+            Icon(Icons.lock_outline_rounded, size: 17, color: _blue),
+            SizedBox(width: 8),
+            Text(
+              'Secure Developer Login',
+              style: TextStyle(
+                color: _ink,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
+      );
+
+  Widget _header() => LayoutBuilder(
+        builder: (context, size) {
+          if (size.maxWidth < 540) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: size.maxWidth,
+                  child: FittedBox(
+                    alignment: Alignment.centerLeft,
+                    fit: BoxFit.scaleDown,
+                    child: _brand(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: size.maxWidth,
+                  child: FittedBox(
+                    alignment: Alignment.centerLeft,
+                    fit: BoxFit.scaleDown,
+                    child: _securePill(),
+                  ),
+                ),
+              ],
+            );
+          }
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [_brand(), _securePill()],
+          );
+        },
       );
 
   Widget _loginCard() => Container(
@@ -391,18 +412,22 @@ class _DeveloperLoginShellState extends State<DeveloperLoginShell>
       );
 
   Widget _feature(IconData icon, String text) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 19, vertical: 12),
+        constraints: BoxConstraints(
+          // The three badges must wrap instead of overflowing narrow phones.
+          maxWidth: math.max(100, MediaQuery.sizeOf(context).width - 52),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 19, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.76),
           borderRadius: BorderRadius.circular(30),
           border: Border.all(color: Colors.white),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 11,
+          runSpacing: 6,
           children: [
             Icon(icon, color: _blue, size: 23),
-            const SizedBox(width: 11),
             Text(
               text,
               style: const TextStyle(
@@ -414,6 +439,7 @@ class _DeveloperLoginShellState extends State<DeveloperLoginShell>
           ],
         ),
       );
+
 }
 
 class _DownloadSection extends StatelessWidget {
