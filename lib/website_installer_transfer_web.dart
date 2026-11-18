@@ -37,7 +37,7 @@ class _BrowserWebsiteInstallerTransfer implements WebsiteInstallerTransfer {
 
     req.onProgress.listen((event) {
       if (_settled || _cancelled) return;
-      onProgress(event.loaded, event.lengthComputable ? event.total : null);
+      onProgress(event.loaded ?? 0, event.lengthComputable ? event.total : null);
     });
     req.onError.listen((_) => fail(
         'The download server is unavailable. Please retry.'));
