@@ -44,6 +44,7 @@ import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
+import 'windows_id_card_record_lookup.dart';
 import 'windows_document_templates.dart';
 import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
@@ -5058,7 +5059,15 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   String? photoUrl = _studentPhotoUrl;
 
   try {
-    final docId = '${_directoryClass}_Roll_$roll';
+    final resolved = await WindowsIdCardRecordLookup.find(
+      schoolClass: _directoryClass, roll: roll);
+    if (resolved == null) {
+      throw StateError('Student record not found. Search Record again.');
+    }
+    final docId = resolved.id;
+    if (resolved.data['name']?.toString().trim() != name) {
+      throw StateError('Student record changed. Search Record again.');
+    }
 
     final doc = await FirebaseFirestore.instance
         .collection('students_directory')
@@ -5145,7 +5154,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   final studentId =
       'VS-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
 
-  final docId = '${_directoryClass}_Roll_$roll';
+  // Reuse the exact verified document ID resolved above.
 
   final existingStudentDoc = await FirebaseFirestore.instance
       .collection('students_directory')
@@ -5204,13 +5213,41 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
-    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString(), previewOnly: true);
-    if (mounted && bytes != null) {
-      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
-        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-        onDownload: _downloadIdCard, onPrint: _printIdCard);
-    }
+    final card = await WindowsDocumentTemplates.liveIdCardPreview(
+      'studentId', data, qr: data['qrData'].toString());
+    if (!mounted) return;
+    // Flutter preview is instant once card assets load: it creates no PDF.
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 650),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('Student ID card • Front & back'),
+              const SizedBox(height: 12),
+              Flexible(child: SingleChildScrollView(
+                child: SizedBox(width: 650, child: card))),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, children: [
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close')),
+                OutlinedButton.icon(
+                  onPressed: _printIdCard,
+                  icon: const Icon(Icons.print),
+                  label: const Text('Print ID Card')),
+                FilledButton.icon(
+                  onPressed: _downloadIdCard,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download PDF')),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
   } catch (e) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('ID card preview unavailable: $e')));
