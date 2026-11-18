@@ -94,31 +94,60 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     if (FirebaseFirestore.instance.activeProfileId != profile) return status;
     final combined = {for (final row in history) row['id']: row};
     Map<String, dynamic>? verifiedHourSummary;
-    if (_liveRuntime != null && !isPaused && !_resetPaused) {
+    if (!isPaused && !_resetPaused) {
       try {
-        final response = await ManagedSchoolSession.callForSchool(school, 'managed/live/backupHistory', {'liveProtocol':1});
-        if (FirebaseFirestore.instance.activeProfileId != profile) return status;
-        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) combined[row['id']] = row;
-      } catch (_) { /* The durable local receipt list survives a provider outage. */ }
-      try {
-        // A previous-hour count comes from the signed, school-local Durable
-        // Object's verified Drive journal, not the truncated UI history.
+        // Covers all Cloudflare R2-staged lanes, deduplicating multipart file
+        // chunks and retries. A pre-R2 legacy row cannot silently become a
+        // school-wide verified transfer. The backend reports partial coverage.
         final report = await ManagedSchoolSession.callForSchool(
-          school, 'managed/live/verifiedHourSummary', {'liveProtocol': 1});
+            school, 'managed/cloudflare/verified-hour', {});
         if (FirebaseFirestore.instance.activeProfileId != profile ||
             FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
           return status;
         }
         if (report['success'] == true && report['schoolId'] == school &&
-            report['liveProtocol'] == 1 && report['scope'] == 'liveRecordBackups' &&
+            report['version'] == 1 &&
+            report['scope'] == 'r2VerifiedDeliveries' &&
+            report['coverage'] == 'r2-staged-only' &&
+            report['partial'] == true &&
             report['hourStart'] is int && report['hourEnd'] is int &&
             report['verifiedCount'] is int &&
             (report['verifiedCount'] as int) >= 0) {
           verifiedHourSummary = Map<String, dynamic>.from(report);
         }
       } catch (_) {
-        // Older Workers are compatible: no hourly summary is shown until
-        // that school has real verified Cloudflare/Drive evidence.
+        // Previous broker versions have no R2 aggregate. No invented count.
+      }
+    }
+    if (_liveRuntime != null && !isPaused && !_resetPaused) {
+      try {
+        final response = await ManagedSchoolSession.callForSchool(school,
+            'managed/live/backupHistory', {'liveProtocol': 1});
+        if (FirebaseFirestore.instance.activeProfileId != profile) return status;
+        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) {
+          combined[row['id']] = row;
+        }
+      } catch (_) { /* The durable local receipt list survives a provider outage. */ }
+      if (verifiedHourSummary == null) {
+        try {
+          // Old Worker fallback: live records only, never all-school count.
+          final report = await ManagedSchoolSession.callForSchool(school,
+              'managed/live/verifiedHourSummary', {'liveProtocol': 1});
+          if (FirebaseFirestore.instance.activeProfileId != profile ||
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+            return status;
+          }
+          if (report['success'] == true && report['schoolId'] == school &&
+              report['liveProtocol'] == 1 &&
+              report['scope'] == 'liveRecordBackups' &&
+              report['hourStart'] is int && report['hourEnd'] is int &&
+              report['verifiedCount'] is int &&
+              (report['verifiedCount'] as int) >= 0) {
+            verifiedHourSummary = Map<String, dynamic>.from(report);
+          }
+        } catch (_) {
+          // A missing/invalid authoritative report displays no count.
+        }
       }
     }
     final rows = combined.values.toList()..sort((a,b)=>(b['acceptedAt'] as num? ?? 0).compareTo(a['acceptedAt'] as num? ?? 0));
