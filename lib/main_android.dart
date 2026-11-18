@@ -20,7 +20,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 
 import 'mobile/school_session.dart';
-import 'mobile/published_id_card.dart';
 import 'mobile/record_id_card.dart';
 import 'mobile/attendance_history.dart';
 import 'platform/github_updates.dart';
