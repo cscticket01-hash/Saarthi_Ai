@@ -96,8 +96,15 @@ class WindowsDocumentTemplates {
         data['_syncDeleted'] == true || data['deleted'] == true) {
       throw StateError('Current school ID card record is not available.');
     }
-    final entry = await IdCardCatalog.find(
-        templateId ?? (kind == 'studentId' ? studentIdTemplateId : 'school-id-v1'));
+    final selectedTemplate = templateId ??
+        (kind == 'studentId' ? (await selections())['studentId']?.toString() : null);
+    final resolvedTemplateId = selectedTemplate?.startsWith('manifest:') == true
+        ? selectedTemplate!.substring('manifest:'.length)
+        : (selectedTemplate != null &&
+                selectedTemplate.startsWith('student-'))
+            ? selectedTemplate
+            : (kind == 'studentId' ? studentIdTemplateId : 'school-id-v1');
+    final entry = await IdCardCatalog.find(resolvedTemplateId);
     final manifest = await entry.manifest();
     final backgrounds = await entry.backgrounds();
     final assets = await Future.wait<Uint8List?>([
@@ -112,7 +119,7 @@ class WindowsDocumentTemplates {
     }
     return IdCardLivePreview(
       template: manifest,
-      data: data,
+      data: IdCardEngine.normalizedInput(manifest, data),
       qr: IdCardEngine.compactQr(qr),
       backgrounds: backgrounds,
       images: {
@@ -700,9 +707,8 @@ class WindowsDocumentTemplates {
       }
     }
     final templateSettings=await selections();
-    final v = kind == 'studentId'
-        ? 'manifest:$studentIdTemplateId'
-        : templateSettings[kind] ?? 0;
+    final v = templateSettings[kind] ??
+        (kind == 'studentId' ? 'manifest:$studentIdTemplateId' : 0);
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -1188,12 +1194,12 @@ class _SchoolDocumentTemplatesScreenState
     if(_openingDesigner)return;
     setState(()=>_openingDesigner=true);
     try {
-      const value = 'manifest:$studentIdTemplateId';
+      final value = _selected['studentId'] ?? 'manifest:$studentIdTemplateId';
       final id = value is String && value.startsWith('manifest:')
           ? value.substring(9)
           : value is String && value.startsWith('reviewed:')
           ? value.split(':')[1]
-          : 'school-id-v1';
+          : studentIdTemplateId;
       final entry = await IdCardCatalog.find(id);
       if (mounted)
         await WindowsIdCardDesignerEntry.openBulk(
