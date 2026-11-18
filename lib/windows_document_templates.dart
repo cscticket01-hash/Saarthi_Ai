@@ -100,7 +100,12 @@ class WindowsDocumentTemplates {
         templateId ?? (kind == 'studentId' ? studentIdTemplateId : 'school-id-v1'));
     final manifest = await entry.manifest();
     final backgrounds = await entry.backgrounds();
-    final portrait = photo ?? await _personPhoto(data);
+    final assets = await Future.wait<Uint8List?>([
+      photo == null ? _personPhoto(data) : Future.value(photo),
+      logo == null ? _image(data['schoolLogoUrl']) : Future.value(logo),
+      signature == null ? _image(data['principalSignatureUrl']) : Future.value(signature),
+      seal == null ? _image(data['schoolSealUrl']) : Future.value(seal),
+    ]);
     if (db.activeProfileId != origin ||
         db.activeProfileIdentity['schoolSyncId'] != school) {
       throw StateError('School changed during ID card preview.');
@@ -111,10 +116,10 @@ class WindowsDocumentTemplates {
       qr: IdCardEngine.compactQr(qr),
       backgrounds: backgrounds,
       images: {
-        if (portrait != null) 'photo': portrait,
-        if (logo != null) 'logo': logo,
-        if (signature != null) 'signature': signature,
-        if (seal != null) 'seal': seal,
+        if (assets[0] != null) 'photo': assets[0]!,
+        if (assets[1] != null) 'logo': assets[1]!,
+        if (assets[2] != null) 'signature': assets[2]!,
+        if (assets[3] != null) 'seal': assets[3]!,
       },
     );
   }
