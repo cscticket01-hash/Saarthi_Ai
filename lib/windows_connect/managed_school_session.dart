@@ -60,7 +60,7 @@ class ManagedSchoolSession {
       // Read-only background status polling must never turn a Cloudflare-ACKed
       // idle Save into a visible upload/spinner. No operation is acknowledged
       // by this UI counter; only actual transfer owners enter it.
-      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/live/verifiedHourSummary' && action!='managed/cloudflare/status';
+      final visibleTransfer=action!='managed/events' && action!='managed/theme/state' && action!='managed/theme/unlock' && action!='managed/repair-knowledge/pull' && action!='managed/live/operationReceipt' && action!='managed/live/backupHistory' && action!='managed/live/verifiedHourSummary' && action!='managed/cloudflare/verified-hour' && action!='managed/cloudflare/status';
       if(visibleTransfer)activeTransfers.value++;
       final dataTransfer=WindowsSyncEvidence.dataAction(action);
       final dataSchool=saved['schoolId'].toString();
