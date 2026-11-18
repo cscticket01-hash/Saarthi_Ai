@@ -102,7 +102,7 @@ void main() {
     expect(data.startsWith('%PDF'), isTrue);
     expect(pdf.length, lessThanOrEqualTo(85 * 1024));
     // Exact same encoded image, from different byte lists, is stored once.
-    expect(RegExp(r'/Subtype\\s*/Image\\b').allMatches(data).length, 1);
+    expect(RegExp(r'/Subtype\s*/Image\b').allMatches(data).length, 1);
     expect(source, original, reason: 'must never rewrite source artwork');
   });
 
