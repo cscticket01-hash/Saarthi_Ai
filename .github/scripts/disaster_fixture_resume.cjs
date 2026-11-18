@@ -32,11 +32,24 @@ async function prepareDisasterFixture(call, identity, schoolId, pdf, report) {
  assert.ok(original.recordRevision);report.fixtureAckMode='fresh_durable_ack';
  return {id,op,upload,original};
 }
-function fixtureMonitorVerified(evidence,resumed) {
+async function prepareMonitorProbe(call,schoolId,report){
+ // Notice snapshots may be served by Cloudflare without overwriting Script
+ // monitoring evidence. Probe one explicit signed, read-only settings row
+ // instead of interpreting an older failed write as this fixture's status.
+ const proof=await call({action:'managed/records',operation:'read',collection:'school_settings',id:'school_location',syncProtocol:2});
+ assert.equal(proof.success,true);assert.equal(proof.schoolId,schoolId);
+ assert.equal(proof.syncProtocol,2);assert.equal(proof.pointRead,true);
+ assert.ok(proof.records&&typeof proof.records==='object'&&!Array.isArray(proof.records));
+ report.monitorProbe={readOnly:true,collection:'school_settings',pointRead:true};
+}
+function fixtureMonitorVerified(evidence,resumed,lastRead='managed_records') {
  if(!evidence || typeof evidence!=='object')return false;
- const accepted=resumed?['verified_response','durable_ack']:['durable_ack'];
- return accepted.includes(evidence.outcome) && evidence.stage==='managed_records' &&
-  evidence.protocol===2 && Number.isSafeInteger(evidence.observedAt) && evidence.observedAt>0 &&
+ // The backend records metadata for record/delta/mobile sync only. An owned
+ // file read verifies bytes independently and leaves record evidence intact.
+ const read=resumed&&evidence.outcome==='verified_response'&&
+  lastRead==='managed_records'&&evidence.stage==='managed_records'&&evidence.protocol===2;
+ const ack=evidence.outcome==='durable_ack'&&evidence.stage==='managed_records'&&evidence.protocol===2;
+ return (read||ack) && evidence.version===1&&Number.isSafeInteger(evidence.observedAt) && evidence.observedAt>0 &&
   Object.keys(evidence).every(key=>['version','observedAt','outcome','stage','protocol'].includes(key));
 }
-module.exports={prepareDisasterFixture,fixtureMonitorVerified};
+module.exports={prepareDisasterFixture,prepareMonitorProbe,fixtureMonitorVerified};

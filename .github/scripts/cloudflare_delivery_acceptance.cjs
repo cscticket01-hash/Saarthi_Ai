@@ -39,9 +39,43 @@ async function acceptance({env=process.env,request=transport}={}){
    return r.data;
   }
   stage='verified TEST school membership';const session=await call({action:'managed/session'});requireCheck(session.allowed===true&&session.uid===r.data.localId);
-  stage='new delivery capability';const health=await call({action:'managed/storage/check'});
-  requireCheck(health.storageReady===true&&health.brokerEdgeDeliveryVersion===1&&health.recordSyncVersion===2&&health.uploadResumableVersion===1);
+  stage='matching owner-deployed TEST Script contract';const health=await call({action:'managed/storage/check'});
+  const expectedScript=require('./reviewed_script_version.cjs').currentReviewedScriptVersion();
+  report.scriptBundleVersion=typeof health.scriptBundleVersion==='string'?health.scriptBundleVersion:'unknown';
+  report.expectedScriptBundleVersion=expectedScript;
+  requireCheck(health.storageReady===true&&health.scriptBundleVersion===expectedScript);
   report.checks.push({name:stage,status:'PASS'});
+  stage='new delivery capability';
+  requireCheck(health.brokerEdgeDeliveryVersion===1&&health.recordSyncVersion===2&&health.uploadResumableVersion===1);
+  report.checks.push({name:stage,status:'PASS'});
+  if(env.VS_CF_OFFLINE_PHASE!==undefined){
+   stage='explicit isolated offline file phase';
+   requireCheck(['accept','verify'].includes(env.VS_CF_OFFLINE_PHASE));
+   requireCheck(env.GITHUB_ACTIONS==='true'&&env.GITHUB_REPOSITORY==='cscticket01-hash/Saarthi_Ai'&&env.GITHUB_REF==='refs/heads/test/offline-google-20261113');
+   requireCheck(health.brokerAtomicSmallFilesVersion===1);
+   const bytes=Buffer.from('%PDF-1.4\n% SYNTHETIC OFFLINE DELIVERY TEST ONLY\n%%EOF\n');
+   const uploadKey='cf_offline_'+run,sha256=hash(bytes),id=hash(JSON.stringify([SCHOOL,uploadKey]));
+   const identity={schoolId:SCHOOL,runtimeCommit:env.VS_EXPECTED_RUNTIME,run,uploadKey,sha256,sizeBytes:bytes.length,lane:'file-'+id,id};
+   const evidencePath='build/cloud-prerequisites/offline-accepted.json';
+   if(env.VS_CF_OFFLINE_PHASE==='accept'){
+    stage='durable file acceptance before terminating uploader';const started=Date.now();
+    const accepted=await call({action:'managed/file/upload',edgeDeliveryVersion:1,uploadKey,name:uploadKey+'.pdf',mime:'application/pdf',base64:bytes.toString('base64')});
+    requireCheck(accepted.cloudflareAccepted===true&&accepted.driveState==='pending'&&!accepted.fileId&&accepted.delivery?.id===id&&accepted.delivery?.lane===identity.lane);
+    const proof={...identity,acceptedAtClient:Date.now(),ackMillis:Date.now()-started,phase:'accepted'};
+    fs.mkdirSync('build/cloud-prerequisites',{recursive:true});fs.writeFileSync(evidencePath,JSON.stringify(proof));
+    return {...report,status:'ACCEPTED',phase:'uploader_exits_after_this_receipt',ackMillis:proof.ackMillis};
+   }
+   stage='exact retained acceptance identity and client-offline interval';
+   const proof=JSON.parse(fs.readFileSync(evidencePath,'utf8'));
+   requireCheck(Object.entries(identity).every(([key,value])=>proof[key]===value)&&proof.phase==='accepted'&&Number.isSafeInteger(proof.acceptedAtClient)&&Date.now()-proof.acceptedAtClient>=180000);
+   stage='first read-only receipt after uploader process exit';
+   const receipt=await call({action:'managed/cloudflare/operation',lane:identity.lane,id,waitMillis:0});
+   requireCheck(receipt.cloudflareAccepted===true&&receipt.driveState==='verified'&&!receipt.delivery&&receipt.committed===true&&receipt.sha256===sha256&&receipt.sizeBytes===bytes.length&&typeof receipt.fileId==='string');
+   stage='independent exact Google Drive byte readback';
+   const file=await call({action:'managed/file/read',fileId:receipt.fileId});
+   requireCheck(file.mime==='application/pdf'&&Buffer.from(file.base64||'','base64').equals(bytes));
+   return {...report,status:'PASS',phase:'verified_by_new_process',uploaderProcessExited:true,minimumNoClientRequestsMillis:180000,firstReceiptAfterQuietVerified:true,bytesReadbackVerified:true,ackMillis:proof.ackMillis,...(receipt.deliveryTiming?{deliveryTiming:receipt.deliveryTiming}:{}),...(Number.isSafeInteger(receipt.driveDurationMillis)?{driveDurationMillis:receipt.driveDurationMillis}:{}),scope:'real Google file delivery while synthetic uploader process is stopped; not physical Windows shutdown or atomic person bundle'};
+  }
   async function settle(result){
    const ticket=result.delivery;requireCheck(result.cloudflareAccepted===true&&result.driveState==='pending'&&ticket&&/^[a-f0-9]{64}$/.test(ticket.id)&&/^(records|file-[a-f0-9]{64})$/.test(ticket.lane));
    requireCheck(!result.fileId&&!result.recordRevision);
@@ -61,7 +95,11 @@ async function acceptance({env=process.env,request=transport}={}){
    requireCheck(result.cloudflareAccepted===true&&result.driveState==='verified'&&typeof result.recordRevision==='string'&&!result.recordRevision.startsWith('cf-'));
    const replay=await call(body);requireCheck(replay.recordRevision===result.recordRevision&&replay.driveState==='verified');
    const read=await call({action:'managed/records',operation:'read',syncProtocol:2,collection,id});
-   requireCheck(read.records?.[id]?._syncRevision===result.recordRevision);
+   const saved=read.records?.[id];
+   requireCheck(saved?.schoolId===SCHOOL&&saved?._syncRevision===result.recordRevision);
+   if(collection==='documents')
+    requireCheck(saved.fileId===data.fileId&&saved.contentHash===data.contentHash
+      &&saved.documentKind===data.documentKind);
    report.checks.push({name:stage,status:'PASS'});return result;
   }
   stage='teacher record edge acceptance, verified Drive write and exact replay';
@@ -70,7 +108,11 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='staff record edge acceptance and verified Drive write';
   const staff='CF_TEST_STAFF_'+run;
   await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
-  const bytes=Buffer.alloc(768*1024,32);Buffer.from('%PDF-1.4\n% SYNTHETIC CLOUD DELIVERY TEST ONLY\n%%EOF\n').copy(bytes);
+  // Valid bounded synthetic PDF container. Original provider bytes are retained,
+  // not a real student's report card or a generated template.
+  const bytes=Buffer.alloc(768*1024,32);
+  Buffer.from('%PDF-1.4\n% SYNTHETIC TEST SCHOOL ONLY\n').copy(bytes);
+  bytes.write('%%EOF\n',bytes.length-6,'ascii');
   const uploadKey='cf_test_document_'+run,meta={action:'managed/file/upload/resumable',uploadKey,
    name:uploadKey+'.pdf',mime:'application/pdf',sizeBytes:bytes.length,sha256:hash(bytes),edgeDeliveryVersion:1};
   stage='hash-verified resumable document staging';let progress=await call({...meta,operation:'begin'});
@@ -86,10 +128,22 @@ async function acceptance({env=process.env,request=transport}={}){
   }
   requireCheck(progress.committed===true&&progress.sha256===meta.sha256&&progress.sizeBytes===bytes.length&&progress.offset===bytes.length&&/^[A-Za-z0-9_-]{1,200}$/.test(progress.fileId||''));
   const fileId=progress.fileId;
-  stage='exact permanent Drive byte readback';const file=await call({action:'managed/file/read',fileId});requireCheck(file.mime===meta.mime&&hash(Buffer.from(file.base64||'','base64'))===meta.sha256);
+  stage='exact permanent Drive byte readback';
+  const file=await call({action:'managed/file/read',fileId});
+  const fetched=Buffer.from(file.base64||'','base64');
+  requireCheck(file.mime===meta.mime&&fetched.length===meta.sizeBytes
+    &&fetched.equals(bytes)&&hash(fetched)===meta.sha256);
+  report.bytesReadbackVerified=true;report.bytesWritten=meta.sizeBytes;report.sha256=meta.sha256;
   report.checks.push({name:stage,status:'PASS'});
   stage='ID card document metadata waits for verified real Drive file ID';
-  await record('documents','CF_TEST_IDCARD_'+run,{documentKind:'idCard',ownerRole:'teacher',teacherId:teacher,personId:teacher,documentRevision:hash(run),fileId,fileUrl:'https://drive.google.com/file/d/'+fileId+'/view',mimeType:meta.mime,uploadedAt:1793232000000},{expectedRevision:''});
+  await record('documents','CF_TEST_IDCARD_'+run,{documentKind:'idCard',ownerRole:'teacher',teacherId:teacher,personId:teacher,documentRevision:hash(run),contentHash:meta.sha256,fileId,fileUrl:'https://drive.google.com/file/d/'+fileId+'/view',mimeType:meta.mime,uploadedAt:1793232000000},{expectedRevision:''});
+  stage='second independent signed Drive read after metadata commit';
+  const second=await call({action:'managed/file/read',fileId});
+  const reloaded=Buffer.from(second.base64||'','base64');
+  requireCheck(second.schoolId===SCHOOL&&second.mime===meta.mime
+    &&reloaded.length===meta.sizeBytes&&hash(reloaded)===meta.sha256
+    &&reloaded.equals(bytes));
+  report.checks.push({name:stage,status:'PASS'});
   stage='another school cannot poll the accepted receipt';
   const foreign=await request(ENDPOINT,{action:'managed/cloudflare/operation',schoolId:'vs-'+'0'.repeat(32),lane:'records',id:hash('foreign')},token);requireCheck(foreign.status===403);
   report.checks.push({name:stage,status:'PASS'});
@@ -100,6 +154,6 @@ async function acceptance({env=process.env,request=transport}={}){
 if(require.main===module)acceptance().then(report=>{
  fs.mkdirSync('build/cloud-prerequisites',{recursive:true});
  fs.writeFileSync('build/cloud-prerequisites/cloudflare-delivery.json',JSON.stringify(report,null,2));
- console.log(JSON.stringify(report));if(report.status!=='PASS')process.exitCode=1;
+ console.log(JSON.stringify(report));if(!['PASS','ACCEPTED'].includes(report.status))process.exitCode=1;
 });
 module.exports={acceptance,SCHOOL,ENDPOINT,LOGIN};

@@ -3,7 +3,9 @@ import {Buffer} from 'node:buffer';
 type Json=Record<string,unknown>;
 type Row={seq:number;id:string;fingerprint:string;payload:string;state:string;due:number;claim:string;claim_until:number;response:string|null;resources:string|null;created:number;verified_at:number;purge_due:number};
 export const verifiedPayloadTtlMs=24*60*60*1000;
-export const verifiedPayloadExpired=(state:string,verifiedAt:number,purgeDue:number,now:number)=>state==='completed'&&verifiedAt>0&&purgeDue>=verifiedAt+verifiedPayloadTtlMs&&now>=purgeDue;
+export const verifiedPayloadExpired=(state:string,verifiedAt:number,purgeDue:number,now:number,acceptedAt=verifiedAt)=>
+ state==='completed'&&[acceptedAt,verifiedAt,purgeDue,now].every(Number.isSafeInteger)&&
+ acceptedAt>0&&verifiedAt>=acceptedAt&&purgeDue>=Math.max(acceptedAt+verifiedPayloadTtlMs,verifiedAt)&&now>=purgeDue;
 export const spoolLane=(lane:string)=>lane==='records'||/^file-[a-f0-9]{64}$/.test(lane);
 const collections=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 export function canonical(value:unknown):string {
@@ -60,7 +62,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     demand(chunk.offset===received,'File chunk gap',409);await writer.write(new Uint8Array(chunk.body));received+=chunk.size;
    }
    await writer.close();const actual=[...new Uint8Array(await stream.digest)].map(x=>x.toString(16).padStart(2,'0')).join('');demand(received===manifest.sizeBytes&&actual===manifest.sha256,'File hash mismatch',409);
-   if(get(id).state==='receiving')storage.sql.exec("UPDATE edge_ops SET state='pending',due=? WHERE id=?",Date.now(),id);
+   if(get(id).state==='receiving'){const accepted=Date.now();storage.sql.exec("UPDATE edge_ops SET state='pending',due=?,created=? WHERE id=?",accepted,accepted,id);}
    await wake(Date.now()+250);
   }
 
@@ -70,10 +72,10 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   // This cleanup runs only from an authenticated existing school-lane alarm;
   // a stale unverified request can stay queued past 24h without data loss.
   return storage.transactionSync(()=>{
-   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
+   const eligible=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0 AND purge_due<=? AND (payload!='' OR ?=1) ORDER BY seq LIMIT 200",Date.now(),lane.startsWith('file-')?1:0).toArray();
    let cleared=0;
    for(const row of eligible){
-    if(!verifiedPayloadExpired(row.state,row.verified_at,row.purge_due,Date.now()))continue;
+    if(!verifiedPayloadExpired(row.state,row.verified_at,row.purge_due,Date.now(),row.created))continue;
     if(lane.startsWith('file-')){
      storage.sql.exec("UPDATE edge_chunks SET body=x''");
      // Keep the immutable manifest/Drive identity for a safe idempotent retry.
@@ -83,16 +85,138 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     }
     cleared++;
    }
-   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0").toArray()[0]?.due;
    return {expired:cleared,nextCleanupAt:next??null};
   });
  }
  if(action==='retention'){
-  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND purge_due>0").toArray()[0]?.due;
+  const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0").toArray()[0]?.due;
   return {retentionHours:24,nextCleanupAt:next??null};
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ if(action==='settleTestStudentSlotReview'){
+  const successorId=String(b.successorId||'');
+  demand(lane==='records'&&operationPattern.test(id)&&operationPattern.test(successorId)&&id!==successorId,
+    'Invalid student slot review receipts');
+  const failed=get(id),accepted=get(successorId);
+  demand(failed&&accepted&&accepted.seq>failed.seq&&accepted.state==='completed'&&
+    ['needsAttention','superseded'].includes(failed.state),'Original and successor receipts required',409);
+  const original=JSON.parse(failed.payload) as Json,next=JSON.parse(accepted.payload) as Json;
+  const failure=JSON.parse(failed.response||'{}') as Json,ack=(JSON.parse(accepted.response||'{}') as Json).result as Json;
+  const validCreate=(request:Json)=>request.action==='managed_records'&&
+    request.collection==='students_directory'&&request.operation==='write'&&request.syncProtocol===2&&
+    request.expectedRecordRevision===''&&request.id===b.recordId&&
+    (request.data as Json)?.schoolId===school&&(request.data as Json)?.syntheticTest===true&&
+    (request.data as Json)?.mobileStableId===b.generation;
+  demand(validCreate(original)&&validCreate(next)&&/^p-[a-f0-9]{32,64}$/.test(String(b.generation))&&
+    original.operationId!==next.operationId&&next.operationId===b.operationId&&
+    failure.failureCode==='STUDENT_SLOT_CONFLICT'&&failure.failureStatus===409&&
+    ack?.success===true&&ack.schoolId===school&&ack.syncProtocol===2&&ack.recordRevision===b.revision&&
+    (ack.record as Json)?._syncOperationId===b.operationId&&(ack.record as Json)?._syncRevision===b.revision,
+    'Verified synthetic student slot successor required',409);
+  const {rollNo:oldRoll,...oldIdentity}=original.data as Json;
+  const {rollNo:newRoll,...newIdentity}=next.data as Json;
+  demand(oldRoll!==undefined&&newRoll!==undefined&&oldRoll!==newRoll&&canonical(oldIdentity)===canonical(newIdentity),
+    'Successor must be the same synthetic student with a corrected roll number',409);
+  for(const row of [failed,accepted]){
+   const request=JSON.parse(row.payload) as Json;
+   demand(await digest(canonical(request))===row.fingerprint&&
+     await digest(JSON.stringify([school,request.action,[request.collection,request.id,request.operationId]]))===row.id,
+     'Immutable student slot receipt mismatch',409);
+  }
+  return storage.transactionSync(()=>{
+   const current=get(id),successor=get(successorId);
+   demand(current?.fingerprint===failed.fingerprint&&successor?.state==='completed'&&
+     successor.fingerprint===accepted.fingerprint&&successor.response===accepted.response,
+     'Student slot successor changed',409);
+   if(current.state==='superseded'){
+    demand(JSON.parse(current.response||'{}').supersededBy===successorId,'Student slot review successor changed',409);
+   }else{
+    demand(current.state==='needsAttention'&&current.response===failed.response,'Student slot review changed',409);
+    storage.sql.exec("UPDATE edge_ops SET state='superseded',response=? WHERE id=?",
+      JSON.stringify({...failure,supersededBy:successorId}),id);
+   }
+   return {schoolId:school,id,successorId,state:'superseded'};
+  });
+ }
+ if(action==='diagnoseDeleteReview'){
+  // TEST-only read-only owner diagnosis. No payload, private fields, raw
+  // service-account fingerprint, mutation or receipt retirement is returned.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  const request=JSON.parse(row.payload) as Json;
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+    request.operation==='delete'&&request.operationId===b.operationId&&
+    request.id===b.recordId&&request.expectedRecordRevision===b.expectedRecordRevision&&
+    request.deletedStudentGeneration===b.deletedStudentGeneration,
+    'Original delete review identity mismatch',409);
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  const count=Number(previous.reviewRetryCount||0);
+  const immutable=await digest(JSON.stringify([school,request.action,
+    [request.collection,request.id,request.operationId]]))===id&&
+    await digest(canonical(request))===row.fingerprint;
+  const known=new Set(['DELETE_EVERYWHERE_ACK_UNVERIFIED',
+    'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED']);
+  return {state:row.state,retryCount:Number.isInteger(count)&&count>=0?count:-1,
+    failureClass:typeof previous.failureCode==='string'&&known.has(previous.failureCode)?previous.failureCode:'OTHER',
+    failureStatus:Number.isInteger(previous.failureStatus)?previous.failureStatus:0,
+    sameRuntimeCredential:typeof previous.reviewCredentialFingerprint==='string'&&
+      previous.reviewCredentialFingerprint===b.credentialFingerprint,
+    previousCredentialBound:typeof previous.reviewCredentialFingerprint==='string',
+    immutable};
+ }
+ if(action==='retryDeleteReview'){
+  // One authenticated school-admin retry for the exact original synthetic or
+  // real student Delete Everywhere receipt. Never enqueue a replacement ID,
+  // alter the payload, or reopen a different review category.
+  demand(lane==='records'&&operationPattern.test(id),'Invalid delete review receipt');
+  const row=get(id);demand(row,'Original delete receipt unavailable',404);
+  demand(row.state==='needsAttention','Only a review-needed delete may be reopened',409);
+  const request=JSON.parse(row.payload) as Json;
+  const previous=row.response?JSON.parse(row.response) as Json:{};
+  demand(request.action==='managed_records'&&request.collection==='students_directory'&&
+   request.operation==='delete'&&request.syncProtocol===2&&request.deleteEverywhereVersion===1&&
+   request.operationId===b.operationId&&request.id===b.recordId&&
+   request.expectedRecordRevision===b.expectedRecordRevision&&
+   request.deletedStudentGeneration===b.deletedStudentGeneration&&
+   typeof request.deletedStudentGeneration==='string'&&
+   /^p-[a-f0-9]{32,64}$/.test(request.deletedStudentGeneration),
+   'Original delete identity does not match the review request',409);
+  const retryCount=Number(previous.reviewRetryCount||0);
+  const credentialFingerprint=b.credentialFingerprint;
+  demand(typeof credentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(credentialFingerprint),
+   'Verified Render Firebase credential fingerprint required for review retry',409);
+  const firstAckReview=previous.failureCode==='DELETE_EVERYWHERE_ACK_UNVERIFIED'&&
+   previous.failureStatus===409&&retryCount===0;
+  // The first Render attempt can fail on Firebase IAM before any manual
+  // review counter has been written. After a verified runtime credential
+  // repair, permit exactly one same-operation retry at count 0. A subsequent
+  // permission-denied review is allowed only with a different bound key and
+  // only while count is 1; never accept a third attempt or a new operation.
+  const repairedCredentialReview=previous.failureCode==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'&&
+   previous.failureStatus===503&&(
+    retryCount===0&&!previous.reviewCredentialFingerprint||
+    retryCount===1&&(!previous.reviewCredentialFingerprint||
+      previous.reviewCredentialFingerprint!==credentialFingerprint));
+  demand(firstAckReview||repairedCredentialReview,
+   'Only the original ACK retry or one retry after a changed Firebase credential is allowed',409);
+  demand(await digest(JSON.stringify([school,request.action,
+   [request.collection,request.id,request.operationId]]))===id&&
+   await digest(canonical(request))===row.fingerprint,
+   'Original immutable delete receipt fingerprint mismatch',409);
+  const at=Date.now(),response={...previous,reviewRetryCount:retryCount+1,reviewRetryAt:at,reviewCredentialFingerprint:credentialFingerprint};
+  storage.sql.exec("UPDATE edge_ops SET state='retry',due=?,claim='',claim_until=0,response=? WHERE id=? AND state='needsAttention'",
+   at,JSON.stringify(response),id);
+  const reopened=get(id);
+  demand(reopened.state==='retry'&&reopened.payload===row.payload&&
+   reopened.fingerprint===row.fingerprint&&
+   JSON.parse(reopened.response||'{}').reviewRetryCount===retryCount+1&&
+   JSON.parse(reopened.response||'{}').reviewCredentialFingerprint===credentialFingerprint,
+   'Original delete review retry was not durably committed',409);
+  await wake(at+250);
+  return receipt(reopened);
+ }
  if(action==='pending'){
   demand(b.limit===1||lane==='records'&&b.limit===2);
   if(lane==='records')return schedule(storage,Number(b.limit),Date.now()).ids.map(get);
@@ -108,7 +232,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   demand(await digest(JSON.stringify([school,request.action,identity]))===id,'Operation identity mismatch');
   const fingerprint=await digest(canonical(request));const old=get(id);
   if(old){demand(old.fingerprint===fingerprint,'Sync operation ID conflict',409);if(['pending','retry','processing'].includes(old.state))await wake(Math.max(Date.now()+250,old.due));return receipt(old);}
-  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state!='completed'").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
+  const count=storage.sql.exec<{n:number}>("SELECT count(*) AS n FROM edge_ops WHERE state NOT IN ('completed','superseded')").toArray()[0].n;demand(count<512,'School delivery backlog full; local work retained',503);
   const at=Date.now();storage.sql.exec("INSERT INTO edge_ops(id,fingerprint,payload,state,due,resources,created) VALUES(?,?,?,'pending',?,?,?)",id,fingerprint,JSON.stringify(request),at,resources(request),at);await wake(at+250);return receipt(get(id));
  }
  if(action==='putSmall'){
@@ -145,6 +269,73 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  demand(operationPattern.test(id),'Invalid receipt ID');const row=get(id);demand(row,'Delivery receipt unavailable',404);
  if(action==='status'){if(lane.startsWith('file-'))await seal(id);const current=get(id);return {...receipt(current),...(lane.startsWith('file-')?{manifest:JSON.parse(current.payload)}:{})};}
+ if(action==='bundleProof'){
+  // The existing file Durable Object is the only authority for its bytes.
+  // This signed internal proof never claims a Google Drive ACK.
+  demand(lane==='file-'+id,'File proof requires the original file owner',400);
+  await seal(id);
+  const current=get(id),manifest=JSON.parse(current.payload) as Json;
+  demand(['pending','retry','processing','completed'].includes(current.state),'Staged file is not durable',412);
+  const size=Number(manifest.sizeBytes);
+  // PDF proof can also certify a <=150 KiB TEST marksheet. ID/photo limits
+  // remain independently enforced by the verified-media bundle preflight.
+  const mediaMax=manifest.mime==='application/pdf'?150*1024:
+    ['image/jpeg','image/png','image/webp'].includes(String(manifest.mime))?40*1024:0;
+  demand(Number.isSafeInteger(size)&&size>0&&size<=mediaMax&&manifest.received===size&&
+    typeof manifest.sha256==='string'&&operationPattern.test(manifest.sha256)&&
+    typeof manifest.uploadKey==='string'&&
+    await digest(JSON.stringify([school,manifest.uploadKey]))===id,'Staged file manifest incomplete',412);
+  // Drive identity is independently signed, scoped and durable even after
+  // the 24h verified-only byte purge. Archive-only proof may survive a purge;
+  // cloud staging proof MUST NOT survive without its original bytes.
+  const result=current.response?((JSON.parse(current.response) as Json).result as Json):null;
+  const driveVerified=current.state==='completed'&&current.verified_at>0&&
+    result?.success===true&&result.schoolId===school&&
+    result.uploadResumableVersion===1&&result.uploadKey===manifest.uploadKey&&
+    result.sha256===manifest.sha256&&result.sizeBytes===size&&
+    result.committed===true&&result.offset===size&&
+    typeof result.fileId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId);
+  const chunks=storage.sql.exec<{offset:number;size:number;body:ArrayBuffer}>(
+    'SELECT offset,size,body FROM edge_chunks ORDER BY offset').toArray();
+  const purged=chunks.length===1&&chunks[0].offset===0&&
+    chunks[0].size===size&&chunks[0].body.byteLength===0&&
+    current.purge_due===0&&current.verified_at>0;
+  if(purged){
+   demand(b.requireDrive===true&&driveVerified,
+     'Temporary Cloudflare bytes expired; signed Drive proof required',412);
+   return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+     sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:false,
+     driveVerified:true,fileId:result!.fileId};
+  }
+  demand(chunks.length===1&&chunks[0].offset===0&&chunks[0].size===size&&
+    chunks[0].body.byteLength===size,'Staged file bytes unavailable',412);
+  const bytes=new Uint8Array(chunks[0].body);
+  const actual=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))]
+    .map(x=>x.toString(16).padStart(2,'0')).join('');
+  demand(actual===manifest.sha256,'Staged file SHA-256 mismatch',409);
+  if(manifest.mime==='application/pdf'){
+    demand(bytes.length>=16&&[0x25,0x50,0x44,0x46,0x2d].every((v,i)=>bytes[i]===v)&&
+      Buffer.from(bytes.subarray(Math.max(0,bytes.length-2048))).toString('latin1').includes('%%EOF'),
+      'Staged ID PDF is incomplete',412);
+  }else if(manifest.mime==='image/jpeg'){
+    demand(size>=6&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff&&
+      bytes[size-2]===0xff&&bytes[size-1]===0xd9,'Staged JPEG is incomplete',412);
+  }else if(manifest.mime==='image/png'){
+    demand(size>=20&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v)&&
+      [73,69,78,68,174,66,96,130].every((v,i)=>bytes[size-8+i]===v),
+      'Staged PNG is incomplete',412);
+  }else if(manifest.mime==='image/webp'){
+    demand(size>=20&&Buffer.from(bytes.subarray(0,4)).toString('ascii')==='RIFF'&&
+      Buffer.from(bytes.subarray(8,12)).toString('ascii')==='WEBP'&&
+      new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(4,true)+8===size,
+      'Staged WebP is incomplete',412);
+  }else demand(false,'Unsupported atomic bundle media type',412);
+  // No "completed" label alone can stand in for a verified Drive receipt.
+  if(b.requireDrive===true)demand(driveVerified,'Google Drive verified media receipt required',412);
+  return {version:1,schoolId:school,id,uploadKey:manifest.uploadKey,
+    sha256:manifest.sha256,sizeBytes:size,mime:manifest.mime,staged:true,
+    driveVerified, ...(driveVerified?{fileId:result!.fileId}: {})};
+ }
  if(action==='projection'){
   demand(lane==='records','Record projection unavailable',400);
   const saved=row.response?JSON.parse(row.response):{};
@@ -186,8 +377,33 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   if(values.state==='completed'||values.result){
    const result=values.result as Json;demand(result&&typeof result==='object'&&result.success===true&&result.schoolId===school,'Verified Drive result required');
    const original=JSON.parse(row.payload) as Json;
-   if(lane.startsWith('file-'))demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
-   else if(original.action==='managed_records_batch'){
+   if(lane.startsWith('file-')){
+    demand(result.uploadResumableVersion===1&&result.uploadKey===original.uploadKey&&result.sha256===original.sha256&&result.sizeBytes===original.sizeBytes&&result.committed===true&&result.offset===original.sizeBytes&&/^[A-Za-z0-9_-]{1,200}$/.test(String(result.fileId||'')),'Unverified Drive file receipt');
+    if(original.document){
+    const document=original.document as Json,ack=(result.documentRecord||{}) as Json;
+    demand(document.version===1&&document.schoolId===school&&
+     ack.id===document.id&&ack.operationId===document.operationId&&
+     ack.fileId===result.fileId&&ack.contentHash===original.sha256&&
+     typeof ack.recordRevision==='string'&&!!ack.recordRevision&&
+     !/^(live-|cf-)/.test(ack.recordRevision),
+     'Document metadata requires exact verified Drive record receipt');
+    }
+    if(original.record){
+     const record=original.record as Json,ack=(result.mediaRecord||{}) as Json;
+     demand(record.version===1&&record.schoolId===school&&
+       record.mediaPrefix==='photo'&&
+       ['students_directory','teachers_directory'].includes(String(record.collection))&&
+       record.operation==='write'&&
+       typeof record.sourceHash==='string'&&operationPattern.test(record.sourceHash)&&
+       ack.collection===record.collection&&ack.id===record.id&&
+       ack.operationId===record.operationId&&
+       ack.fileId===result.fileId&&ack.sourceHash===record.sourceHash&&
+       ack.fileSha256===original.sha256&&
+       typeof ack.recordRevision==='string'&&!!ack.recordRevision&&
+       !/^(live-|cf-)/.test(ack.recordRevision),
+       'Original portrait and canonical record require same-owner Google proof');
+    }
+   }else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
    }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
@@ -204,16 +420,25 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    }),'Verified canonical source metadata required');
   }
   storage.transactionSync(()=>{
-   const stored=values.payloadPurged===true?{...values,partial:{}}:values;
-   // An immutable Drive proof is required before the 24h retention timer
-   // starts. Retry/needsAttention never acquires an expiry deadline.
+   const previousResponse=row.response?JSON.parse(row.response) as Json:{};
+   // A one-time owner-reviewed Delete retry is a durable safety fence. Later
+   // delivery failures must not erase that counter and enable another retry.
+   const reviewMetadata=Number.isSafeInteger(previousResponse.reviewRetryCount)&&
+    Number(previousResponse.reviewRetryCount)>=0
+     ?{reviewRetryCount:Number(previousResponse.reviewRetryCount),
+       ...(Number.isSafeInteger(previousResponse.reviewRetryAt)?{reviewRetryAt:Number(previousResponse.reviewRetryAt)}:{}),
+       ...(typeof previousResponse.reviewCredentialFingerprint==='string'&&/^[a-f0-9]{64}$/.test(previousResponse.reviewCredentialFingerprint)?{reviewCredentialFingerprint:previousResponse.reviewCredentialFingerprint}:{})}:{};
+   const nextValues={...values,...reviewMetadata} as Json;
+   const stored=nextValues.payloadPurged===true?{...nextValues,partial:{}}:nextValues;
+   // Acceptance starts each operation's age. Verified Drive proof is still
+   // mandatory; retry/needsAttention never acquires a deletion deadline.
    const verified=values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-'));
-   const verifiedAt=verified?Date.now():0,expiry=verified?verifiedAt+verifiedPayloadTtlMs:0;
+   const verifiedAt=verified?Date.now():0,expiry=verified&&Number.isSafeInteger(row.created)&&row.created>0&&row.created<=verifiedAt?Math.max(row.created+verifiedPayloadTtlMs,verifiedAt):0;
    storage.sql.exec("UPDATE edge_ops SET state=?,due=?,claim='',claim_until=0,response=?,verified_at=?,purge_due=? WHERE id=?",String(values.state),Number(values.nextAttemptAt),JSON.stringify(stored),verifiedAt,expiry,id);
    // Original byte/request payload remains until the existing alarm expires.
   });
   if(values.state==='retry')await wake(Number(values.nextAttemptAt));
-  if(values.state==='completed'&&(values.payloadPurged===true||lane.startsWith('file-')))await wake(Date.now()+verifiedPayloadTtlMs);
+  if(values.state==='completed'){const due=get(id).purge_due;if(due>0)await wake(Math.max(Date.now()+1000,due));}
   return true;
  }
  throw Object.assign(Error('Unknown delivery command'),{status:400});

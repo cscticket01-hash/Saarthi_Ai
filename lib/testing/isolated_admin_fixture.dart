@@ -40,3 +40,22 @@ Future<Map<String, dynamic>> authenticateIsolatedAdminFixture(
     return session;
   } finally { cloud.close(); }
 }
+
+/// Retry one explicitly retained TEST write. The caller must reuse the exact
+/// payload and operation ID or upload key on both invocations.
+Future<T> retryRetainedIsolatedWrite<T>(Future<T> Function() write,
+    {void Function()? onRetry, Future<void> Function(Duration)? wait}) async {
+  try {
+    return await write();
+  } on CentralCloudException catch (error) {
+    final limit = error.diagnosticCode == 'EDGE_DELIVERY_PENDING' ? 15000 :
+        error.diagnosticCode == 'SCRIPT_TIMEOUT' ? 60000 : 0;
+    if (error.status != 503 || limit == 0 || error.retryAfterMs > limit) {
+      rethrow;
+    }
+    onRetry?.call();
+    final delay = Duration(milliseconds: error.retryAfterMs.clamp(2000, limit).toInt());
+    if (wait != null) { await wait(delay); } else { await Future<void>.delayed(delay); }
+    return write();
+  }
+}

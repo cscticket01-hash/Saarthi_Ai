@@ -81,6 +81,19 @@ async function run() {
     (r.data.latestWindowsReport === null || r.data.latestWindowsReport.source === 'latest_windows_client_report'));
   r = await request(endpoint, {action: 'managed/summary', schoolId}, token);
   check('Measured own-school Drive usage with explicit partial status', r, r.status === 200 && r.data.success === true && r.data.schoolId === schoolId && Number.isSafeInteger(r.data.driveBytes) && r.data.driveBytes >= 0 && typeof r.data.partial === 'boolean' && Number.isSafeInteger(r.data.measuredAt) && r.data.measuredAt > 0);
+  r = await request(endpoint, {action: 'managed/live/rollout-status', schoolId}, token);
+  check('Read-only TEST atomic rollout diagnosis', r, r.status === 200 &&
+    r.data.success === true && r.data.schoolId === schoolId && r.data.liveProtocol === 1 &&
+    Array.isArray(r.data.blockers) && typeof r.data.collections === 'object');
+  report.atomicPrerequisites = {
+    configured: r.data.configured === true,
+    workerVerified: r.data.workerVerified === true,
+    scriptVerified: r.data.scriptVerified === true,
+    collections: Object.fromEntries(['students_directory', 'teachers_directory', 'documents']
+      .map(name => [name, ['legacy', 'preparing', 'active', 'rolling_back'].includes(r.data.collections?.[name])
+        ? r.data.collections[name] : 'unverified'])),
+    blockers: r.data.blockers.filter(value => typeof value === 'string' && /^[A-Z_]{1,70}$/.test(value)),
+  };
   report.status = 'PASS';
   report.remaining = 'No mutations, attendance ACK, migration or application UI acceptance performed by this harness.';
 }

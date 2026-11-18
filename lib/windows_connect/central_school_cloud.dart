@@ -389,6 +389,7 @@ class CentralSchoolCloud {
         'LIVE_PROTOCOL_REQUIRED': 'This school requires the current sync app. Saved changes are retained.',
         'SCRIPT_MIGRATION_CONFLICT': 'School migration needs review. Both versions are retained.',
         'SCRIPT_IDENTITY_MISMATCH': 'School storage identity verification failed. Pending changes are retained.',
+        'SCRIPT_SIGNED_RESPONSE_UNVERIFIED': 'The school Apps Script returned no authenticated school identity. Verify the existing school /exec deployment and its school-bound credentials; pending changes are retained.',
       };
       final diagnosticCode = uri.toString() == endpoint &&
               syncFailures.containsKey(errorBody['code'])
@@ -483,9 +484,28 @@ class CentralSchoolCloud {
       edge_crypto.sha256.convert(base64Decode(encoded)).toString()]))).toString();
   }
 
+  /// Match the broker's immutable single-record queue ticket. A 64-char
+  /// opaque token by itself is not proof that the staged operation is ours.
+  static String expectedRecordStageTicket(Map<String,dynamic> body) {
+    final school=body['schoolId'],collection=body['collection'],
+        id=body['id'],operationId=body['operationId'];
+    if(school is! String||!validSchoolId(school)||
+        collection is! String||collection.isEmpty||
+        id is! String||id.isEmpty||
+        operationId is! String||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(operationId))
+      throw StateError('Original school-scoped operation identity required.');
+    return edge_crypto.sha256.convert(utf8.encode(
+      jsonEncode([school,'managed_records',[collection,id,operationId]]))).toString();
+  }
+
   Future<Map<String, dynamic>> api(
     Map<String, dynamic> body, {
     String? token,
+    // Opt-in *transport* boundary for a future two-phase queue owner.
+    // The existing version-safe record/file callers MUST keep the default:
+    // a staged receipt is not a canonical revision or a Drive file ID.
+    bool returnAfterDurableCloudflareHandoff = false,
   }) async {
     final receiptProfile = edgeDeliveryProfile?.call();
     if (expectedSchoolId != null &&
@@ -496,9 +516,15 @@ class CentralSchoolCloud {
         'Developer must configure the central school cloud service. Schools do not need Firebase configuration.',
       );
     final action=body['action'];
+    final documentStage = action=='managed/document/stage/resumable' &&
+        body['document'] is Map && body['uploadKey'] is String;
+    final mediaRecordStage = action=='managed/record/media/stage/resumable' &&
+        body['record'] is Map && body['uploadKey'] is String;
+    final fileSidecarStage = documentStage || mediaRecordStage;
     final staged = action=='managed/records' && body['operation']!='read' && body['syncProtocol']==2
         || action=='managed/records/batch'
-        || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String;
+        || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String
+        || fileSidecarStage;
     final origin = expectedSchoolId != null ? await saved() : null;
     Object? ordered(Object? value) {
       if (value is Map) {
@@ -508,10 +534,23 @@ class CentralSchoolCloud {
       if (value is List) return value.map(ordered).toList();
       return value;
     }
-    final source = staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
+    final source = fileSidecarStage && onEdgeDelivery != null
+        // The identity remains stable across every chunk and after a retry.
+        ? edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+            body['schoolId'], body['uploadKey'],
+            ((documentStage ? body['document'] : body['record']) as Map)['operationId'],
+            body['sha256'],
+          ]))).toString()
+        : staged && action != 'managed/file/upload/resumable' && onEdgeDelivery != null
         ? edge_crypto.sha256.convert(utf8.encode(
             jsonEncode(ordered(migrationJsonValue(body))))).toString()
         : null;
+    if (returnAfterDurableCloudflareHandoff &&
+        (!staged || source == null || onEdgeDelivery == null)) {
+      throw StateError(
+        'Durable Cloudflare handoff requires an installed school-scoped receipt journal.',
+      );
+    }
     Future<void> observe(Map<String, dynamic> proof) async {
       final observer = onEdgeDelivery;
       if (source == null || observer == null ||
@@ -520,8 +559,22 @@ class CentralSchoolCloud {
       await observer({
         'source': source, 'schoolId': body['schoolId'], 'action': action,
         'profileId': receiptProfile,
-        if (body['collection'] is String) 'collection': body['collection'],
-        if (body['id'] is String) 'id': body['id'],
+        if (documentStage) ...{
+          'collection': 'documents',
+          'id': (body['document'] as Map)['id'],
+          'originalOperationId': (body['document'] as Map)['operationId'],
+          'operation': 'write',
+        },
+        if (mediaRecordStage) ...{
+          'collection': (body['record'] as Map)['collection'],
+          'id': (body['record'] as Map)['id'],
+          'originalOperationId': (body['record'] as Map)['operationId'],
+          'operation': 'write',
+        },
+        if (!fileSidecarStage && body['collection'] is String) 'collection': body['collection'],
+        if (!fileSidecarStage && body['id'] is String) 'id': body['id'],
+        if (!fileSidecarStage && body['operationId'] is String) 'originalOperationId': body['operationId'],
+        if (!fileSidecarStage && (body['operation'] == 'write' || body['operation'] == 'delete')) 'operation': body['operation'],
         'proof': {
           for (final key in ['success', 'schoolId', 'cloudflareAccepted',
             'edgeDeliveryVersion', 'driveState', 'delivery', 'committed', 'fileId'])
@@ -554,12 +607,35 @@ class CentralSchoolCloud {
                acceptedTicket['id'] != ticket['id']))) {
         throw StateError('Cloudflare delivery identity changed; local work retained.');
       }
+      if (returnAfterDurableCloudflareHandoff) {
+        if (fileSidecarStage) {
+          final expected = edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+            body['schoolId'], body['uploadKey'],
+          ]))).toString();
+          if (ticket['lane'] != 'file-$expected' || ticket['id'] != expected)
+            throw StateError('Cloudflare document ticket is not bound to its file.');
+        } else if (action!='managed/records' ||
+                   ticket['lane']!='records' ||
+                   ticket['id']!=expectedRecordStageTicket(body)) {
+          throw StateError('Cloudflare stage ticket is not bound to the original operation.');
+        }
+      }
       acceptedTicket ??= ticket;
       check();
       if(origin!=null){final current=await saved();if(current['schoolId']!=origin['schoolId']||current['uid']!=origin['uid'])throw StateError('School changed during delivery.');}
       if (!receiptRetained) {
         await observe(result);
         receiptRetained = true;
+      }
+      // A future two-phase client owner can stop foreground network waiting
+      // here only after the exact stage ticket was persisted. This result
+      // must never be passed to acknowledgeOutbox or a fileId consumer.
+      // Existing callers keep polling for their original canonical Drive
+      // revision because this opt-in is deliberately disabled by default.
+      if (returnAfterDurableCloudflareHandoff &&
+          result['cloudflareAccepted'] == true &&
+          result['driveState'] == 'pending') {
+        return {...result, 'cloudflareHandoffVersion': 1};
       }
       final retry = edgeDeliveryRetry(result['deliveryStatus'], DateTime.now());
       if (retry != null) {
@@ -573,6 +649,31 @@ class CentralSchoolCloud {
       // Long-poll the authenticated owner; never resend a new business operation.
       result=await send('POST',Uri.parse(endpoint),token:token,body:{'action':'managed/cloudflare/operation',
         'schoolId':body['schoolId'],'lane':ticket['lane'],'id':ticket['id'],'waitMillis':20000});
+    }
+    if (returnAfterDurableCloudflareHandoff && fileSidecarStage &&
+        result['success'] == true &&
+        result['schoolId'] == body['schoolId'] &&
+        result['cloudflareAccepted'] == true &&
+        result['driveState'] == 'verified') {
+      // A replay may already have finished at Google. It still has an
+      // immutable R2/DO owner and must first persist its authenticated
+      // ticket; no second original business operation may be submitted.
+      final proof = documentStage
+          ? result['documentRecord'] : result['mediaRecord'];
+      if (proof is! Map || proof['fileId'] != result['fileId'] ||
+          proof['recordRevision'] is! String ||
+          (proof['recordRevision'] as String).isEmpty) {
+        throw StateError('Provider file completion has no matching record proof.');
+      }
+      final expected = edge_crypto.sha256.convert(utf8.encode(jsonEncode([
+        body['schoolId'],body['uploadKey'],
+      ]))).toString();
+      final verified = <String,dynamic>{
+        ...result,'edgeDeliveryVersion':1,
+        'delivery':{'id':expected,'lane':'file-$expected'},
+      };
+      await observe(verified);
+      return {...verified,'cloudflareHandoffVersion':1};
     }
     if (acceptedTicket != null &&
         (result['schoolId'] != body['schoolId'] ||

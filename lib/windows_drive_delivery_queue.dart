@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'cloudflare_record_handoff.dart';
 import 'live_sync_protocol.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
@@ -7,6 +9,7 @@ import 'windows_local_firestore.dart';
 /// Drive completion never changes the canonical live revision or clears work.
 class WindowsDriveDeliveryQueue {
   static const collection = '_windows_drive_deliveries';
+  static final changed = ValueNotifier<int>(0);
   static bool _busy = false;
   static Future<void> _edgeWriteTail = Future<void>.value();
   static void _scope(String school, String profile) {
@@ -68,6 +71,10 @@ class WindowsDriveDeliveryQueue {
         'id': id,
         'recordRevision': ack['recordRevision'],
         'liveProtocol': 1,
+        // This only follows a validated, durably committed Cloudflare live
+        // receipt; it is not evidence of Google Drive completion.
+        'cloudflareAccepted': true,
+        'operation': deleting ? 'delete' : 'write',
         'state': verified ? 'completed' : 'pending',
         'acceptedAt': DateTime.now().millisecondsSinceEpoch,
         'completedAt': verified ? DateTime.now().millisecondsSinceEpoch : 0,
@@ -77,6 +84,9 @@ class WindowsDriveDeliveryQueue {
       }),
     );
     _scope(school, profile);
+    // Update the latest ACK notice immediately; periodic Drive status reads
+    // must never be required to dismiss the app's outgoing sync spinner.
+    changed.value++;
   }
 
   /// Track the existing staging lane independently of the native live lane.
@@ -104,7 +114,10 @@ class WindowsDriveDeliveryQueue {
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(source) || proof is! Map ||
         proof['success'] != true || proof['schoolId'] != school ||
         proof['cloudflareAccepted'] != true || proof['edgeDeliveryVersion'] != 1 ||
-        !const ['managed/records', 'managed/records/batch', 'managed/file/upload'].contains(notice['action'])) {
+        !const ['managed/records', 'managed/records/batch', 'managed/file/upload', 'managed/document/stage/resumable', 'managed/record/media/stage/resumable'].contains(notice['action']) ||
+        (notice['originalOperationId'] != null &&
+          (notice['originalOperationId'] is! String ||
+           !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(notice['originalOperationId'])))) {
       throw StateError('Unverified Cloudflare staging receipt.');
     }
     final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
@@ -129,6 +142,9 @@ class WindowsDriveDeliveryQueue {
     if (old != null) {
       if (old['schoolId'] != school || old['edgeDeliveryVersion'] != 1 ||
           old['action'] != notice['action'] ||
+          (old['originalOperationId']!=null &&
+           notice['originalOperationId']!=null &&
+           old['originalOperationId']!=notice['originalOperationId']) ||
           ticket is Map && old['ticketId'] != null && (old['ticketId'] != ticket['id'] || old['lane'] != ticket['lane'])) {
         throw StateError('Cloudflare staging receipt identity changed.');
       }
@@ -139,6 +155,12 @@ class WindowsDriveDeliveryQueue {
       () => ref.set({
         'schoolId': school, 'operationId': operationId, 'edgeDeliveryVersion': 1,
         'action': notice['action'], 'cloudflareAccepted': true,
+        if(notice['originalOperationId'] is String)
+          'originalOperationId':notice['originalOperationId'],
+        if(notice['originalOperationId'] is! String &&
+           old?['originalOperationId'] is String)
+          'originalOperationId':old!['originalOperationId'],
+        if (notice['operation'] == 'write' || notice['operation'] == 'delete') 'operation': notice['operation'],
         'collection': notice['collection'] is String ? notice['collection'] : 'school_files',
         'id': notice['id'] is String ? notice['id'] : source.substring(0, 8),
         if (ticket is Map) 'ticketId': ticket['id'],
@@ -148,9 +170,13 @@ class WindowsDriveDeliveryQueue {
         'state': review ? 'needsAttention' : completed ? 'completed' : 'pending',
         'acceptedAt': old?['acceptedAt'] ?? now,
         'completedAt': completed && !review ? now : 0,
+        if (completed && !review && proof['driveDurationMillis'] is int &&
+            proof['driveDurationMillis'] >= 0)
+          'driveDurationMillis': proof['driveDurationMillis'],
       }),
     );
     _scope(school, profile);
+    changed.value++;
   }
 
   /// Bind the separate Drive proof to the exact accepted cloud operation.
@@ -280,6 +306,217 @@ class WindowsDriveDeliveryQueue {
         _scope(school, profile);
         if (quota) break;
       }
+      // Read-only status on the original, school-bound Cloudflare ticket.
+      // Never re-submit a mutation or clear the original business outbox.
+      final edgeDue = rows.where((row) {
+        final v = row.data();
+        return v['schoolId'] == school && v['edgeDeliveryVersion'] == 1 &&
+            v['state'] == 'pending' &&
+            (v['nextPollAt'] as num? ?? 0) <= now().millisecondsSinceEpoch;
+      }).toList()..sort((a,b) =>
+          (a.data()['nextPollAt'] as num? ?? 0)
+              .compareTo(b.data()['nextPollAt'] as num? ?? 0));
+      for (final row in edgeDue.take(3)) {
+        if (canAdmit?.call() == false) break;
+        _scope(school, profile);
+        final item = row.data(), id = item['ticketId'], lane = item['lane'];
+        if (id is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(id) ||
+            lane is! String ||
+            !(lane == 'records' || lane == 'file-$id')) continue;
+        Map<String,dynamic> values;
+        var quota = false;
+        try {
+          final proof = await call('managed/cloudflare/operation', {
+            'lane': lane, 'id': id,
+          });
+          _scope(school, profile);
+          if (proof['success'] != true || proof['schoolId'] != school ||
+              proof['cloudflareAccepted'] != true ||
+              !const ['pending', 'verified'].contains(proof['driveState'])) {
+            throw StateError('Unverified school Drive delivery progress.');
+          }
+          final ticket = proof['delivery'];
+          if (proof['driveState'] == 'pending' &&
+              (ticket is! Map || ticket['id'] != id || ticket['lane'] != lane)) {
+            throw StateError('Drive delivery ticket changed.');
+          }
+          values = {'nextPollAt': now().millisecondsSinceEpoch + 5000};
+          final progress = proof['driveProgress'];
+          if (lane == 'file-$id' && proof['driveState'] == 'pending' &&
+              progress is Map && progress['version'] == 1 &&
+              progress['acknowledgedBytes'] is int &&
+              progress['totalBytes'] is int &&
+              progress['totalBytes'] > 0 &&
+              progress['acknowledgedBytes'] >= 0 &&
+              progress['acknowledgedBytes'] < progress['totalBytes']) {
+            final old = item['driveProgress'];
+            if (old is! Map || old['totalBytes'] == progress['totalBytes'] &&
+                (old['acknowledgedBytes'] as num? ?? 0) <=
+                    progress['acknowledgedBytes']) {
+              values['driveProgress'] = Map<String,dynamic>.from(progress);
+            }
+          }
+          if (proof['driveState'] == 'verified') {
+            // The original staged mutation stays in durable local CAS outbox
+            // until this exact broker-owned ticket proves its final revision.
+            if (lane=='records'&&item['originalOperationId'] is String) {
+              final originals=(await db.collection('_windows_firebase_outbox').get()).docs
+                  .where((row)=>row.data()['operationId']==item['originalOperationId'] &&
+                      row.data()['schoolId']==school).toList();
+              _scope(school, profile);
+              if(originals.length==1) {
+                final original=originals.single.data();
+                // Journal persistence and original CAS marking are distinct
+                // durable writes. If the broker finishes unusually fast,
+                // retry the final receipt rather than lose that race or
+                // declare the local original completed.
+                if(original['syncState']!='cloudAccepted' &&
+                    original['cloudTicketId']==null &&
+                    original['operationId']==item['originalOperationId'] &&
+                    original['schoolId']==school)
+                  throw StateError('Original Cloudflare handoff CAS is not yet committed.');
+                if(original['syncState']=='cloudAccepted') {
+                  if(!verifiedStagedRecordFinal(original,item,proof,school))
+                    throw StateError('Canonical staged record revision unverified; original retained.');
+                  await db.acknowledgeOutbox(originals.single.reference,original,
+                      revision:proof['recordRevision']);
+                  _scope(school, profile);
+                }
+              }
+            }
+            if (lane == 'file-$id' &&
+                (proof['committed'] != true ||
+                 proof['fileId'] is! String ||
+                 (proof['fileId'] as String).isEmpty)) {
+              throw StateError('Drive file completion unverified.');
+            }
+            if (lane == 'file-$id' &&
+                item['action'] == 'managed/record/media/stage/resumable') {
+              final media=proof['mediaRecord'];
+              if (media is! Map ||
+                  media['collection'] != item['collection'] ||
+                  media['id'] != item['id'] ||
+                  media['operationId'] != item['originalOperationId'] ||
+                  media['fileId'] != proof['fileId'] ||
+                  media['fileSha256'] != proof['sha256'] ||
+                  media['recordRevision'] is! String ||
+                  (media['recordRevision'] as String).isEmpty) {
+                throw StateError('Original photo record has no verified Google proof.');
+              }
+              final matches=(await db.collection('_windows_firebase_outbox').get())
+                  .docs.where((entry)=>
+                    entry.data()['operationId']==item['originalOperationId'] &&
+                    entry.data()['collection']==item['collection'] &&
+                    entry.data()['documentId']==item['id'] &&
+                    entry.data()['schoolId']==school).toList();
+              _scope(school, profile);
+              if(matches.length>1) {
+                throw StateError('Multiple original photo record owners detected.');
+              }
+              if(matches.length==1) {
+                final original=matches.single.data();
+                if(original['syncState']!='cloudAccepted' &&
+                    original['cloudTicketId']==null) {
+                  throw StateError('Original portrait Cloudflare CAS not yet committed.');
+                }
+                if(!verifiedStagedPhotoRecordFinal(original,item,proof,school)) {
+                  throw StateError('Photo record Drive and original CAS proof mismatch.');
+                }
+                await db.acknowledgeOutbox(matches.single.reference,original,
+                  revision:media['recordRevision'] as String);
+                _scope(school, profile);
+              }
+            }
+            if (lane == 'file-$id' &&
+                item['action'] == 'managed/document/stage/resumable') {
+              final document = proof['documentRecord'];
+              final docId = item['id'], opId = item['originalOperationId'];
+              if (docId is! String || docId.isEmpty ||
+                  opId is! String ||
+                  document is! Map ||
+                  document['id'] != docId ||
+                  document['operationId'] != opId ||
+                  document['fileId'] != proof['fileId'] ||
+                  document['recordRevision'] is! String ||
+                  (document['recordRevision'] as String).isEmpty ||
+                  document['contentHash'] is! String ||
+                  !RegExp(r'^[a-f0-9]{64}$')
+                      .hasMatch(document['contentHash'] as String)) {
+                throw StateError('Document metadata requires exact Google record proof.');
+              }
+              final ref = db.collection('_windows_document_outbox').doc(docId);
+              final snapshot = await ref.get();
+              _scope(school, profile);
+              final original = snapshot.data();
+              if (original != null && original['schoolId'] == school &&
+                  original['documentRevision'] == opId) {
+                if (original['syncState'] != 'cloudAccepted' ||
+                    original['cloudTicketId'] != id ||
+                    original['cloudTicketLane'] != lane ||
+                    original['contentHash'] != document['contentHash'] ||
+                    original['cloudContentHash'] != document['contentHash']) {
+                  throw StateError('Original document handoff has not yet committed.');
+                }
+                final local = db.collection('_local_student_documents').doc(docId);
+                final localSnapshot = await local.get();
+                _scope(school, profile);
+                final localRow = localSnapshot.data();
+                if (localRow?['schoolId'] != school ||
+                    localRow?['documentRevision'] != opId ||
+                    localRow?['contentHash'] != document['contentHash']) {
+                  throw StateError('Document local generation changed; retain exact original.');
+                }
+                await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+                  () async {
+                    _scope(school, profile);
+                    final batch = db.batch();
+                    // Exact local generation compare-and-swap inside the
+                    // SQLite writer. A concurrent replacement must survive.
+                    batch.requireUnchanged(ref, original);
+                    batch.requireUnchanged(local, localRow);
+                    batch.set(local, {
+                      'syncState': 'Synced',
+                      'cloudFileUrl': proof['fileUrl'],
+                      'cloudRevision': opId,
+                      'cloudRecordRevision': document['recordRevision'],
+                      'cloudUploadedAt': localRow?['uploadedAt'],
+                    }, const SetOptions(merge: true));
+                    batch.delete(ref);
+                    await batch.commit();
+                  },
+                );
+                _scope(school, profile);
+              }
+            }
+            values = {
+              'state': 'completed',
+              'completedAt': now().millisecondsSinceEpoch,
+              'nextPollAt': 0,
+              if (proof['driveDurationMillis'] is int &&
+                  proof['driveDurationMillis'] >= 0)
+                'driveDurationMillis': proof['driveDurationMillis'],
+              'driveProgress': null,
+            };
+          }
+        } catch (error) {
+          _scope(school, profile);
+          final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
+          quota = error is CentralCloudException && error.status == 429;
+          final backoff = (5000 * (1 << attempts.clamp(0, 8).toInt()))
+              .clamp(5000, 3600000).toInt();
+          final floor = error is CentralCloudException ? error.retryAfterMs : 0;
+          values = {
+            'attempts': attempts,
+            'nextPollAt': now().millisecondsSinceEpoch +
+                (floor > backoff ? floor : backoff),
+          };
+        }
+        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+          () => row.reference.set(values, const SetOptions(merge:true)),
+        );
+        _scope(school, profile);
+        if (quota) break;
+      }
     } finally {
       _busy = false;
     }
@@ -324,6 +561,7 @@ class WindowsDriveDeliveryQueue {
       }
       result.add({
         'id': row['operationId'],
+        'cloudflareAccepted': true,
         'collection': row['collection'],
         'recordId': row['id'],
         'state': row['state'] == 'verified'
@@ -359,12 +597,17 @@ class WindowsDriveDeliveryQueue {
         .map(
           (row) => {
             'id': row['operationId'],
-            if (row['edgeDeliveryVersion'] == 1) 'cloudflareAccepted': true,
+            if (row['edgeDeliveryVersion'] == 1 || row['cloudflareAccepted'] == true)
+              'cloudflareAccepted': true,
             'state': row['state'],
             'acceptedAt': row['acceptedAt'],
             'completedAt': row['completedAt'],
             'collection': row['collection'],
             'recordId': row['id'],
+            if (row['operation'] == 'write' || row['operation'] == 'delete') 'operation': row['operation'],
+            if (row['driveProgress'] is Map) 'driveProgress': row['driveProgress'],
+            if (row['driveDurationMillis'] is int)
+              'driveDurationMillis': row['driveDurationMillis'],
           },
         )
         .toList();

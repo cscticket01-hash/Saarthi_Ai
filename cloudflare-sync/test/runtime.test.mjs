@@ -38,6 +38,60 @@ test('attendance has durable idempotent receipts across partitions and exact cla
  assert.equal((await rpc('get',{id},lane)).value.state,'retry');
 });
 const sha=s=>createHash('sha256').update(s).digest('hex');
+test('one school-admin review retry reopens only the exact original Delete Everywhere receipt',async()=>{
+ const request={action:'managed_records',collection:'students_directory',id:'TEST_DELETE_ORIGINAL_ONLY',
+  operation:'delete',operationId:'delete-original-operation-0001',syncProtocol:2,
+  expectedRecordRevision:'drive-original-revision',deleteEverywhereVersion:1,
+  deletedStudentGeneration:'p-'+'a'.repeat(32),edgeDeliveryVersion:1};
+ const id=sha(JSON.stringify([school,request.action,
+  [request.collection,request.id,request.operationId]]));
+ const staged=await rpc('enqueue',{id,request},'records');
+ assert.equal(staged.status,200);assert.equal(staged.value.state,'pending');
+ assert.equal(await rpc('claim',{id,claim:'review-claim',expires:Date.now()+10000},'records').then(r=>r.value),true);
+ await rpc('finish',{id,claim:'review-claim',values:{
+  state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  failureStatus:409,failureCode:'DELETE_EVERYWHERE_ACK_UNVERIFIED'
+ }},'records');
+ const args={id,operationId:request.operationId,recordId:request.id,
+  expectedRecordRevision:request.expectedRecordRevision,
+  deletedStudentGeneration:request.deletedStudentGeneration,
+  credentialFingerprint:'c'.repeat(64)};
+ const reopened=await rpc('retryDeleteReview',args,'records');
+ assert.equal(reopened.status,200);assert.equal(reopened.value.state,'retry');
+ assert.equal(reopened.value.response.reviewRetryCount,1);
+ const projection=await rpc('projection',{id},'records');
+ assert.deepEqual(projection.value.request,request,'original payload and operation identity remain unchanged');
+ assert.equal((await rpc('stats',{},'records')).value.needsAttention,0);
+ assert.equal(await rpc('claim',{id,claim:'review-claim-2',expires:Date.now()+10000},'records').then(r=>r.value),true);
+ await rpc('finish',{id,claim:'review-claim-2',values:{
+  state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  failureStatus:503,failureCode:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'
+ }},'records');
+ const afterFailure=await rpc('status',{id},'records');
+ assert.equal(afterFailure.value.response.reviewRetryCount,1,
+  'later failure must preserve the durable retry counter');
+ assert.equal(afterFailure.value.response.reviewCredentialFingerprint,'c'.repeat(64),
+  'later failure must preserve the credential fingerprint');
+ const sameCredential=await rpc('retryDeleteReview',args,'records');
+ assert.equal(sameCredential.status,409,'same failed Firebase credential cannot be retried again');
+ const repaired=await rpc('retryDeleteReview',{...args,credentialFingerprint:'d'.repeat(64)},'records');
+ assert.equal(repaired.status,200,'a changed verified credential may consume the one remaining retry');
+ assert.equal(repaired.value.response.reviewRetryCount,2);
+ assert.equal(repaired.value.response.reviewCredentialFingerprint,'d'.repeat(64));
+ assert.equal(await rpc('claim',{id,claim:'review-claim-3',expires:Date.now()+10000},'records').then(r=>r.value),true);
+ await rpc('finish',{id,claim:'review-claim-3',values:{
+  state:'needsAttention',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  failureStatus:503,failureCode:'DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED'
+ }},'records');
+ const afterSecondFailure=await rpc('status',{id},'records');
+ assert.equal(afterSecondFailure.value.response.reviewRetryCount,2);
+ const third=await rpc('retryDeleteReview',{...args,credentialFingerprint:'e'.repeat(64)},'records');
+ assert.equal(third.status,409,'no third retry is allowed');
+ const forged=await rpc('retryDeleteReview',{...args,operationId:'different-operation-0001'},'records');
+ assert.equal(forged.status,409,'a different operation ID cannot borrow the retry');
+ const foreign=await rpc('retryDeleteReview',args,'records',other);
+ assert.notEqual(foreign.status,200,'another school cannot reopen this receipt');
+});
 test('direct mobile grants enforce school, session, QR, geofence and expiry before accepting encrypted attendance',async()=>{
  const p={schoolId:school,sessionHash:sha('session'),expiresAt:Date.now()+60000,role:'student',personId:'stable',documentId:'student-a',qrHash:sha('student/student-a/qr-secret'),day:new Date(Date.now()+19800000).toISOString().slice(0,10),open:true,latitude:26,longitude:92,radiusMeters:100};
  const value=Buffer.from(JSON.stringify(p)).toString('base64url'),grant=value+'.'+createHmac('sha256',key).update(value).digest('hex');

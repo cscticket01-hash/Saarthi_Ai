@@ -414,9 +414,12 @@ class _ConflictReviewState extends State<_ConflictReview> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'No version is selected automatically. Financial records need an explicit operator decision. Originals remain retained.',
+                    'Choose the copy you want to keep, then enter a reason. Originals remain retained.',
                   ),
                   const SizedBox(height: 12),
+                  ExpansionTile(
+                    title: const Text('Technical comparison (optional)'),
+                    children: [
                   const Text('Local pending version'),
                   SelectableText(
                     _conflictPreview(
@@ -443,6 +446,8 @@ class _ConflictReviewState extends State<_ConflictReview> {
                       ),
                     SelectableText(_conflictPreview(remote)),
                   ],
+                    ],
+                  ),
                   if (document)
                     const Text(
                       'Local choice queues a new revision-checked upload. Cloud choice verifies and retains cloud bytes locally. Both originals and the review history are retained.',
@@ -486,8 +491,12 @@ class _ConflictReviewState extends State<_ConflictReview> {
                     TextField(
                       controller: reason,
                       maxLength: 1000,
-                      decoration: const InputDecoration(
-                        labelText: 'Reason for your decision',
+                      decoration: InputDecoration(
+                        labelText: 'Reason for your decision (required)',
+                        helperText: document
+                            ? 'Explain which PDF is correct and why.'
+                            : 'Explain why you selected this version.',
+                        helperMaxLines: 2,
                       ),
                       onChanged: (_) => setState(() {}),
                     ),
@@ -496,6 +505,19 @@ class _ConflictReviewState extends State<_ConflictReview> {
               ),
             ),
           ),
+          if (remote != null && !busy && comparison != 'identical')
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                choice == null
+                    ? 'Select Use local version or Use cloud version to continue.'
+                    : reason.text.trim().isEmpty
+                    ? 'Enter a reason to enable the confirmation button.'
+                    : document && choice == 'cloud'
+                    ? 'Ready to keep the verified cloud PDF on this PC.'
+                    : 'Ready to queue the reviewed version.',
+              ),
+            ),
         ],
       ),
     ),
@@ -526,7 +548,9 @@ class _ConflictReviewState extends State<_ConflictReview> {
                   reason.text.trim().isEmpty
               ? null
               : commit,
-          child: const Text('Review and queue'),
+          child: Text(document && choice == 'cloud'
+              ? 'Keep verified cloud copy'
+              : 'Review and queue'),
         ),
     ],
   );

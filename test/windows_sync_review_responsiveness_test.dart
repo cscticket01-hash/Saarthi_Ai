@@ -56,4 +56,38 @@ void main() {
     expect(item['syncState'],'conflict'); expect(tester.takeException(),isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('long conflict details do not hide required choice and reason', (tester) async {
+    final longItem = <String, dynamic>{...item, 'data': {
+      'schoolId': school, 'amount': 100,
+      'description': List.filled(9000, 'x').join(),
+    }};
+    await open(tester, (_, __) async => longItem, (_) async => {
+      'schoolId': school, 'syncProtocol': 2, 'records': {
+        'review': {'schoolId': school, 'amount': 200, '_syncRevision': 'synthetic'},
+      },
+    });
+    await tester.pumpAndSettle();
+    expect(find.byType(SelectableText), findsNothing);
+    expect(find.text('Use cloud version').hitTestable(), findsOneWidget);
+    FilledButton submit() => tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Review and queue'));
+    expect(submit().onPressed, isNull);
+    await tester.tap(find.text('Use cloud version'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter a reason to enable the confirmation button.'), findsOneWidget);
+    expect(submit().onPressed, isNull);
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.pump();
+    expect(submit().onPressed, isNull);
+    await tester.enterText(find.byType(TextField), 'Reviewed both retained copies');
+    await tester.pump();
+    expect(submit().onPressed, isNotNull);
+    await tester.tap(find.text('Verify cloud version'));
+    await tester.pumpAndSettle();
+    expect(submit().onPressed, isNull);
+    expect(find.text('Select Use local version or Use cloud version to continue.'), findsOneWidget);
+    expect(item['syncState'], 'conflict');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
 }

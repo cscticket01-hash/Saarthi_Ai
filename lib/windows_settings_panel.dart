@@ -988,9 +988,14 @@ class WindowsSyncStatusCard extends StatelessWidget {
     return ValueListenableBuilder<SchoolCloudState>(valueListenable:engine.state,builder:(context,state,_){ WindowsAppearance.watch(context); return
       ValueListenableBuilder<Map<String,dynamic>>(valueListenable:engine.details,builder:(context,details,_) {WindowsAppearance.watch(context);
         final pending=(details['pending'] as num? ?? 0).toInt(),attention=(details['needsAttention'] as num? ?? 0).toInt();
+        // The backend may still be reconciling incoming changes after the
+        // exact last outgoing Cloudflare ACK. A drained durable upload queue
+        // is Idle even if the read-only engine cycle hasn't returned.
+        final deviceIdle=details['displayState']=='idle'&&pending==0&&attention==0;
         final label=engine.isPaused?'Paused':state==SchoolCloudState.offline?'Offline':
           state==SchoolCloudState.authRequired?'Sign-in required':state==SchoolCloudState.driveDisconnected?'Drive disconnected':
-          state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
+          state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing&&deviceIdle?'Idle':
+          state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
           pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
         final success = state == SchoolCloudState.synced && pending == 0 && attention == 0 &&
           !engine.isPaused && engine.lastError == null && engine.lastSuccessfulSync != null;

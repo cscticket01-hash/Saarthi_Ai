@@ -46,7 +46,7 @@ jobs:
         node --check platform.js
         node --check domain.js
         npm test
-        node --test ../.github/scripts/test_runtime_identity.test.cjs
+        node --test ../.github/scripts/*.test.cjs
     - name: Benchmark isolated durable attendance queue
       run: node .github/scripts/attendance_queue_load.cjs build/review-metrics/attendance-queue-load.json
     - uses: actions/upload-artifact@v4
@@ -82,6 +82,10 @@ jobs:
         cache: true
     - run: flutter create --platforms=web --project-name saarthi_ai .
     - run: flutter pub get
+    - name: Verify no-photo ID preview and preserved PDF generation
+      env:
+        APPDATA: ${{ runner.temp }}/id-preview-synthetic
+      run: flutter test test/windows_id_card_preview_test.dart
     - name: Format platform source for review
       run: dart format lib/main.dart lib/main_android.dart lib/main_windows.dart lib/developer_portal.dart lib/school_document_renderer.dart
         lib/windows_platform_client.dart lib/windows_license_gate.dart lib/windows_school_operations.dart lib/windows_document_templates.dart
@@ -136,8 +140,8 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/id-publication-tests
       run: flutter test --concurrency=1 test/windows_document_review_owner_test.dart test/windows_sync_comparison_test.dart
-    - name: Verify central school cloud and paths
-      run: flutter test test/central_school_cloud_test.dart
+    - name: Verify central school cloud and two-phase handoff
+      run: flutter test --concurrency=1 test/central_school_cloud_test.dart test/cloudflare_record_handoff_test.dart
     - name: Verify school connection automation
       run: |
         python tool/build_school_setup_bundle.py --check
@@ -151,9 +155,13 @@ jobs:
     - name: Build isolated full Windows theme preview
       run: python3 .github/scripts/build_windows_theme_preview.py
     - name: Prepare local-only Windows preview browser checks
+      timeout-minutes: 10
       run: |
-        npm install --no-save playwright@1.58.2
-        npx playwright install --with-deps chromium
+        # GitHub Ubuntu runners already include Chromium's shared libraries.
+        # Avoid a new unbounded apt mirror update at every preview build.
+        npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.58.2
+        npx playwright install chromium
+        node -e "require('playwright').chromium.launch({headless:true}).then(b=>b.close())"
     - name: Verify real Windows pages in isolated browser preview
       run: node .github/scripts/test_windows_theme_preview.cjs
     - uses: actions/upload-artifact@v4
@@ -261,7 +269,7 @@ jobs:
       env:
         APPDATA: ${{ runner.temp }}/windows-appearance-review
         LOCALAPPDATA: ${{ runner.temp }}/windows-appearance-review
-      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
+      run: flutter test --concurrency=1 test/windows_appearance_test.dart test/windows_fee_settings_design_test.dart test/windows_admin_settings_design_test.dart test/windows_device_management_test.dart test/windows_settings_design_test.dart test/windows_verified_update_test.dart test/windows_sync_revision_test.dart test/windows_sync_review_responsiveness_test.dart test/live_sync_receipt_test.dart test/cloudflare_save_notice_test.dart test/windows_sync_modern_ui_test.dart --dart-define=APP_VERSION=2.1.144 --dart-define=SAARTHI_WINDOWS_SQLITE=true
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -459,6 +467,36 @@ jobs:
     - run: flutter pub add mobile_scanner:7.3.0
     - name: Align resolved Android plugin SDKs
       run: python .github/scripts/configure_android_plugins.py
+    - name: Install required Android NDK with bounded retries
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=28.2.13676358
+        sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        sdkmanager_bin="$(command -v sdkmanager || true)"
+        if [ -z "$sdkmanager_bin" ]; then
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+        fi
+        if [ ! -x "$sdkmanager_bin" ]; then
+          echo "::error::Android SDK cmdline-tools sdkmanager executable unavailable"
+          exit 1
+        fi
+        for attempt in 1 2 3; do
+          if [ -f "$sdk_root/ndk/$version/source.properties" ]; then exit 0; fi
+          if "$sdkmanager_bin" --install "ndk;$version" &&
+             [ -f "$sdk_root/ndk/$version/source.properties" ]; then
+            exit 0
+          fi
+          # This is ONLY the ephemeral CI runner's incomplete Android NDK,
+          # never app data, schools, uploads, credentials or user backups.
+          if [ -d "$sdk_root/ndk/$version" ] &&
+             [ ! -f "$sdk_root/ndk/$version/source.properties" ]; then
+            rm -rf "$sdk_root/ndk/$version"
+          fi
+          sleep "$((attempt * 5))"
+        done
+        echo "::error::Required NDK installation failed after bounded retries"
+        exit 1
     - name: Analyze universal mobile app
       run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/main_android.dart lib/mobile/school_session.dart lib/mobile/settings_screen.dart lib/mobile/school_notifications.dart lib/mobile/school_messaging.dart lib/platform/github_updates.dart
     - name: Verify shared Windows QR and Android login compatibility
@@ -496,8 +534,8 @@ jobs:
     - fix/final-school-sync-fees-exams-20261008
   pull_request:
     branches:
-    - windows/easy-connect-draft
     - main
+    - feature/smart-sync-3
     - feature/smart-sync-3-finalization
   workflow_dispatch:
     inputs:

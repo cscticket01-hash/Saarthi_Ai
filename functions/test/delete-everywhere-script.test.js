@@ -51,9 +51,71 @@ test('archive inventory omits ordinary media but retains every supported archive
  const marked=s.roots[A].createFile('Exact.json','{}','application/json');marked.setDescription('VIDYA_RECORD_JSON:'+A+':hash');
  const folder=s.roots[A].createFolder('records_students_directory');
  const record=folder.createFile('legacy.json','{}','application/json');
- const ids=Array.from(s.context.VS_eraseArchiveInventory());
+ const plan={};let attempts=0;
+ while(!s.context.VS_eraseArchiveInventory(plan,()=>{})){
+  assert(++attempts<100,'Archive iterator must make bounded forward progress');
+ }
+ const ids=plan.archiveIds;
  for(const f of [legacy,audit,marked,record])assert(ids.includes(f.id));
  assert.equal(ids.length,4);
+});
+test('unrelated immutable record-json archives do not consume the five actual-redactions budget',()=>{
+ const s=storage({lifecycle:true});rest(s);
+ const root=s.roots[A],targetId='delete-target-archive-00001';
+ const saved=write(s,'school_notices',targetId,{title:'Sensitive notice'});
+ assert.equal(saved.success,true);
+ const original={
+  schemaVersion:1,backupKind:'sheet_record_revision',schoolId:A,
+  collection:'school_notices',id:targetId,recordRevision:saved.recordRevision,
+  data:{schoolId:A,_syncRevision:saved.recordRevision,title:'Private'}
+ };
+ function put(item){
+  const hash=s.context.VS_layoutHash(item);
+  const file=root.createFile(s.context.VS_layoutHash(item.id)+'_'+hash+'.json',
+    JSON.stringify(item),'application/json');
+  file.setDescription('VIDYA_RECORD_JSON:'+A+':school_notices:'+hash);
+  return file;
+ }
+ const originalArchive=put(original),others=[];
+ for(let i=0;i<125;i++){
+  const item={...original,id:'other-archive-'+i,recordRevision:'other-revision-'+i,
+   data:{schoolId:A,_syncRevision:'other-revision-'+i,title:'Unrelated'}};
+  others.push(put(item));
+ }
+ const req=deletion(targetId,saved.recordRevision,'school_notices');
+ let ack,tries=0;
+ do{
+  ack=s.call(req);tries++;
+  if(ack.success)break;
+  assert.equal(ack.code,'SCRIPT_DELETE_EVERYWHERE_PENDING',JSON.stringify(ack));
+  assert(tries<12,'Unrelated archives must not spend one redaction slot each');
+ }while(true);
+ assert.equal(ack.driveDeletionComplete,true);
+ assert(tries<12,'Only actual archive rewrites consume the five-redaction budget');
+ assert(!s.all.has(originalArchive.id),'Original private revision must be permanently erased');
+ assert(others.every(file=>s.all.has(file.id)),'Unrelated archive originals must be preserved');
+});
+
+test('large school root resumes 2,500 ordinary files and 300 folders without deleting unrelated media',()=>{
+ const s=storage({lifecycle:true});rest(s);
+ const unrelated=[];
+ for(let n=0;n<2500;n++)unrelated.push(s.roots[A].createFile('portrait-'+n,'image','image/png').id);
+ for(let n=0;n<300;n++)s.roots[A].createFolder('Extra Images '+n);
+ const writeAck=write(s,'school_notices','large-root-notice',{title:'Delete exact notice'});
+ assert.equal(writeAck.success,true);
+ const request=deletion('large-root-notice',writeAck.recordRevision,'school_notices');
+ let answer=null,attempts=0;
+ do{
+  answer=s.call(request);
+  if(answer.success)break;
+  assert.equal(answer.code,'SCRIPT_DELETE_EVERYWHERE_PENDING',JSON.stringify(answer));
+  assert(++attempts<90,'Progress must resume; no unbounded full-root restart');
+ }while(true);
+ assert.equal(answer.driveDeletionComplete,true);
+ assert.equal(answer.deleteEverywhereVersion,1);
+ assert(attempts>1,'The inventory should be bounded across requests');
+ for(const id of unrelated)assert(s.all.has(id),'Ordinary school media must survive unrelated notice deletion');
+ assert.equal(read(s,'school_notices').records['large-root-notice']._syncDeleted,true);
 });
 test('archive cursor persists once per batch and remains resumable on failure',()=>{
  const s=storage({lifecycle:true});rest(s);const files=[];
@@ -72,4 +134,37 @@ test('old unfiltered deletion plans skip ordinary media without consuming archiv
  const plan={archiveIds:ids,archiveCursor:0,files:[]};let saves=0;
  assert.equal(s.context.VS_eraseExactRecordArchives([],plan,()=>saves++),true);assert.equal(plan.archiveCursor,70);assert.equal(saves,1);
  assert(ids.every(id=>s.all.has(id)));
+});
+
+
+test('text-only notice delete skips unrelated school collections and retains verified tombstone',()=>{
+ const s=storage({lifecycle:true}),a=write(s,'school_notices','notice-only',{title:'Holiday',description:'Holiday tomorrow'});
+ assert(a.success);rest(s);
+ const before=s.context.VS_managedSheet,inspected=[];
+ s.context.VS_managedSheet=collection=>{inspected.push(collection);return before(collection);};
+ const request=deletion('notice-only',a.recordRevision,'school_notices');
+ const r=s.call(request);
+ assert.equal(r.success,true,JSON.stringify(r));
+ assert.equal(r.driveDeletionComplete,true);
+ assert(inspected.length>0);
+ assert(inspected.every(collection=>collection==='school_notices'),JSON.stringify(inspected));
+ const after=read(s,'school_notices').records['notice-only'];
+ assert.equal(after._syncDeleted,true);
+ assert.equal(after.title,undefined);
+ assert.equal(s.call(request).recordRevision,r.recordRevision);
+});
+
+test('notice with owned file still checks other collections and preserves shared Drive reference',()=>{
+ const s=storage({lifecycle:true}),photo=s.roots[A].createFile('Notice image','bytes','image/png'),calls=rest(s);
+ const a=write(s,'school_notices','notice-file',{title:'With image',photoFileId:photo.id});
+ assert(a.success);
+ assert(write(s,'school_config','shared-image',{signatureUrl:'https://drive.google.com/file/d/'+photo.id+'/view'}).success);
+ const before=s.context.VS_managedSheet,inspected=[];
+ s.context.VS_managedSheet=collection=>{inspected.push(collection);return before(collection);};
+ const r=s.call(deletion('notice-file',a.recordRevision,'school_notices'));
+ assert.equal(r.success,true,JSON.stringify(r));
+ assert(inspected.includes('school_config'),'shared reference collection was not scanned');
+ assert(s.all.has(photo.id),'shared file must never be erased');
+ assert.equal(calls.length,0);
+ assert.deepEqual(r.retainedSharedFileIds,[photo.id]);
 });

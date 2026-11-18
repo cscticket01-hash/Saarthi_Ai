@@ -697,8 +697,15 @@ void main(){
   expect(find.text('Open Sync & Backup Control Center'),findsOneWidget);
   await tester.runAsync(()async{await item.reference.set({'syncState':'pending'},const SetOptions(merge:true));
   await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,send:(a,b,c,d)async{},sendVersioned:(item)async=>'acknowledged-revision');
-  await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);engine.state.value=SchoolCloudState.synced;
-  await tester.pump();expect(find.text('Pending: 0'),findsOneWidget);expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
+  await engine.refreshDetails();});engine.lastSuccessfulSync=DateTime(2026,10,6,10);
+  // Background read-only reconciliation must never keep the dashboard
+  // spinning after the original durable outgoing queue is empty.
+  await tester.pump();
+  expect(find.text('Pending: 0'),findsOneWidget);
+  expect(find.textContaining('Sync Status • Idle'),findsOneWidget);
+  expect(find.textContaining('Syncing 0 items'),findsNothing);
+  engine.state.value=SchoolCloudState.synced;
+  await tester.pump();expect(find.textContaining('Sync Status • Synced'),findsOneWidget);
   expect(find.textContaining('2026-10-06'),findsOneWidget);
   await tester.pumpWidget(const SizedBox());engine.lastSuccessfulSync=null;engine.state.value=SchoolCloudState.localReady;
  });
@@ -960,7 +967,7 @@ void main(){
    expect(find.text('Cloud verification failed'),findsOneWidget);
    final error=find.textContaining('Pending version changed');
    expect(error,findsOneWidget);
-   expect(tester.getRect(error).top,lessThan(tester.getRect(find.textContaining('Local pending version')).top));
+   expect(tester.getRect(error).top,lessThan(tester.getRect(find.text('Technical comparison (optional)')).top));
    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,'Verify cloud version')).onPressed,isNotNull);
    expect(find.text('Use local version'),findsNothing);
    expect(tester.takeException(),isNull);
@@ -1000,6 +1007,8 @@ void main(){
     expect(find.text('Review sync conflict'),findsOneWidget);
     expect(find.text('Cloud verification: not performed'),findsOneWidget);
     expect(find.text('Close'),findsOneWidget);
+    await tester.tap(find.text('Technical comparison (optional)'));
+    await tester.pumpAndSettle();
     final previews = tester.widgetList<SelectableText>(find.byType(SelectableText)).map((w)=>w.data ?? '').join();
     expect(previews, isNot(contains('never-show-this-secret')));
     expect(item['data']['authorizationToken'], 'never-show-this-secret');

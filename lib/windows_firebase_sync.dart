@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'windows_drive_delivery_queue.dart';
 import 'windows_record_change_policy.dart';
 import 'live_sync_protocol.dart';
@@ -368,6 +369,32 @@ class WindowsFirebaseRemote {
       throw StateError(
         'School Script field-patch support is required for this saved request.',
       );
+    // One-photo immutable operation: Cloudflare owns bytes AND the eventual
+    // provider record. The same original local outbox stays until Google proof.
+    if (batchReply==null && edgeDeliverySupported &&
+        photoRecordStageSupported) {
+      final staged=await stageManagedOriginalPhotoRecord(item,school,
+        request:(part)=>ManagedSchoolSession.callForSchool(
+          school,'managed/record/media/stage/resumable',part,
+          returnAfterDurableCloudflareHandoff:true),
+      );
+      if(staged!=null) {
+        final delivery=staged['delivery'];
+        if(delivery is! Map || delivery['id'] is! String ||
+           delivery['lane']!='file-${delivery['id']}') {
+          throw StateError('Original portrait file owner is unverified.');
+        }
+        throw CloudflareRecordHandoff(
+          school:school,collection:collection,id:id,
+          operationId:item['operationId'].toString(),
+          ticketId:delivery['id'] as String,
+          lane:delivery['lane'] as String,
+          mediaSourceHash:staged['sourceHash'] as String,
+          mediaFileSha256:staged['fileSha256'] as String,
+        );
+      }
+    }
+    final stageWatch = Stopwatch()..start();
     final data = item['operation'] == 'delete'
         ? null
         : item['wireData'] is Map
@@ -401,13 +428,22 @@ class WindowsFirebaseRemote {
       if(utf8.encode(jsonEncode(candidate)).length<=250000)
         requestBody['cachedBaseline']=candidate['cachedBaseline'];
     }
+    // No test school or hardcoded school IDs: every genuine school receives
+    // the same two-phase protocol, but ONLY after its authenticated broker
+    // advertises the durable edge-delivery capability. File-dependent rows
+    // remain with the original version-safe owner.
+    final cloudHandoff=batchReply==null&&eligibleForRecordHandoff(
+      item,school,edgeDeliverySupported:edgeDeliverySupported);
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
             school,
             'managed/records',
             requestBody,
+            returnAfterDurableCloudflareHandoff:cloudHandoff,
           );
+    final preparationMicros = stageWatch.elapsedMicroseconds;
+    stageWatch.reset();
     Map<String, dynamic> result;
     try {
       result = await sendPrepared();
@@ -419,12 +455,39 @@ class WindowsFirebaseRemote {
       if (restored != 1) rethrow;
       result = await sendPrepared();
     }
+    final requestMicros = stageWatch.elapsedMicroseconds;
+    stageWatch.reset();
+    if(result['cloudflareHandoffVersion']==1) {
+      final delivery=result['delivery'];
+      if(!cloudHandoff||result['success']!=true||
+          result['schoolId']!=school||
+          result['cloudflareAccepted']!=true||
+          result['driveState']!='pending'||
+          result['edgeDeliveryVersion']!=1||
+          delivery is! Map||delivery['lane']!='records'||
+          delivery['id'] is! String||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(delivery['id'])) {
+        throw StateError('Unverified Cloudflare handoff; original retained.');
+      }
+      throw CloudflareRecordHandoff(
+        school:school,collection:collection,id:id,
+        operationId:item['operationId'].toString(),
+        ticketId:delivery['id']);
+    }
     final liveCommit = verifyLiveRecordReceipt(result, school: school,
       collection: collection, id: id, operationId: item['operationId'].toString(),
       deleting: item['operation'] == 'delete');
+    // The dedicated legacy notice lane commits a tombstone and its durable
+    // delivery job atomically. The device may go Idle while the Worker retries
+    // Drive deletion. Never conflate this edge ACK with Drive/Firebase success.
+    final noticeEdgeCommit = verifyLegacyCloudflareNoticeReceipt(
+      result, school: school, collection: collection, id: id,
+      operationId: item['operationId'].toString(),
+      deleting: item['operation'] == 'delete',
+    );
     if (liveCommit) await WindowsDriveDeliveryQueue.retain(school, collection, id,
         item['operationId'].toString(), result, deleting: item['operation'] == 'delete');
-    if (item['operation'] == 'delete' && !liveCommit &&
+    if (item['operation'] == 'delete' && !liveCommit && !noticeEdgeCommit &&
         (result['deleteEverywhereVersion'] != 1 ||
          result['driveDeletionComplete'] != true ||
          result['firebaseDeletionComplete'] != true)) {
@@ -451,7 +514,7 @@ class WindowsFirebaseRemote {
           result['recordRevision'],
         );
     }
-    if (!liveCommit && result['record'] is Map)
+    if (!liveCommit && !noticeEdgeCommit && result['record'] is Map)
       await cacheVerifiedSheetRecord(
         school,
         collection,
@@ -468,11 +531,26 @@ class WindowsFirebaseRemote {
         '_syncOperationId': item['operationId'],
       };
     }
-    return result;
+    // Local-only phase evidence. Do not mutate/relabel the provider receipt,
+    // persist these fields in canonical records, or count batch consumption as
+    // another network request. Successful verification remains mandatory above.
+    stageWatch.stop();
+    return {...result, 'clientSyncTiming': {
+      'version': 1,
+      'source': batchReply == null ? 'network' : 'batchReceipt',
+      'preparationMicros': preparationMicros,
+      'requestMicros': batchReply == null ? requestMicros : 0,
+      'receiptProcessingMicros': stageWatch.elapsedMicroseconds,
+    }};
   }
 
   static bool recordWriteBatchSupported = false;
   static bool edgeDeliverySupported = false;
+  static bool photoRecordStageSupported = false;
+  // Bound only to the current authenticated school's checked backend and
+  // Script capability, reset with the session. Never infer from school ID.
+  static bool documentStageSupported = false;
+  static bool documentReplacementStageSupported = false;
   static Future<Map<String, Object>> prepareManagedBatch(
     String school, {
     required bool Function() canAdmit,
@@ -495,7 +573,8 @@ class WindowsFirebaseRemote {
             'students_directory',
             'teachers_directory',
           }.contains(r.data()['collection']) &&
-          {'pending', 'retry'}.contains(r.data()['syncState']),
+          {'pending', 'retry'}.contains(r.data()['syncState']) &&
+          r.data()['atomicBundleId']==null,
     ))
       return {};
     final healthRef = db.collection('_windows_sync_status').doc('managed-batch-window');
@@ -544,6 +623,9 @@ class WindowsFirebaseRemote {
         throw StateError('School changed before batch preparation.');
       final item = row.data();
       if (item['schoolId'] != school ||
+          item['atomicBundleId']!=null ||
+          eligibleForRecordHandoff(item,school,edgeDeliverySupported:
+            edgeDeliverySupported) ||
           !{'pending', 'retry'}.contains(item['syncState']) ||
           item['operation'] != 'set' ||
           {

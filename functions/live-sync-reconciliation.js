@@ -61,7 +61,25 @@ function edgeProofMatches(proof,binding){
    ? record._syncDeleted===true&&eraseFinished(record)
    : record._syncDeleted!==true));
 }
-function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,now=Date.now}){
+function noticeProofMatches(proof,binding){
+ if(binding.lane!=='legacy'||binding.collection!=='school_notices'||
+    proof?.schoolId!==binding.schoolId||proof.lane!=='notices')return false;
+ const job=proof.job;
+ if(job?.id!==createHash('sha256').update(JSON.stringify([binding.schoolId,binding.operationId])).digest('hex')||
+    job.kind!=='notice'||job.state!=='completed'||typeof job.payload!=='string'||typeof job.response!=='string')return false;
+ let payload,response;try{payload=JSON.parse(job.payload);response=JSON.parse(job.response);}catch{return false;}
+ const request=payload?.request,ack=payload?.ack;
+ return canonical(bindOperation(binding.schoolId,'legacy',request))===canonical(binding)&&
+  payload.fingerprint===createHash('sha256').update(JSON.stringify(request)).digest('hex')&&
+  ack?.success===true&&ack.schoolId===binding.schoolId&&ack.syncProtocol===2&&
+  typeof ack.recordRevision==='string'&&ack.recordRevision.startsWith('cf-')&&
+  ack.record?.schoolId===binding.schoolId&&ack.record.id===binding.id&&
+  ack.record._syncOperationId===binding.operationId&&ack.record._syncRevision===ack.recordRevision&&
+  (binding.operation==='delete'?ack.record._syncDeleted===true:ack.record._syncDeleted!==true)&&
+  response?.state==='completed'&&typeof response.driveRevision==='string'&&
+  response.driveRevision.length>0&&!/^(live-|cf-)/.test(response.driveRevision);
+}
+function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,readNoticeReceipt,now=Date.now}){
  async function reconcile(school,{limit=25}={}){
   if(!SCHOOL.test(school)||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Object.assign(Error('Invalid admission reconciliation scope'),{status:400,code:'LIVE_RECONCILIATION_SCOPE_INVALID'});
   const ref=db.doc('school_live_migrations/'+school),snapshot=(await ref.get()).data()||{};
@@ -73,6 +91,8 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
    if(!validBinding(binding,school,lane,marker.collection)){retain('unbound');continue;}
    let verified=false;
    try{
+    // An idle notice proof must not be reused for a distinct marker with a
+    // still-active attempt, even when both bind the same immutable operation.
     const proofKey=canonical([binding,marker.activeAttempts===0]);
     // Several lost responses for one immutable operation need one verified
     // lookup. The cache lasts only this bounded reconciliation invocation.
@@ -81,12 +101,26 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
      if(lane==='legacy'){
       let readError=null;
       if(typeof readDrive==='function'){
-       try{if(driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;}catch(error){readError=error;}
+       try{
+        if(driveProofMatches(await readDrive(school,{action:'managed_records',operation:'read',collection:binding.collection,id:binding.id,syncProtocol:2}),binding))return true;
+       }catch(error){readError=error;}
       }
+      // A verified old edge job may retain a signed original Google receipt
+      // even after a newer Sheet revision superseded the same record ID.
+      // Require a fully settled marker, exactly-bound operation and original
+      // canonical Google row. Never clear from staging success alone.
       if(marker.activeAttempts===0&&typeof readEdgeReceipt==='function'){
-       try{if(edgeProofMatches(await readEdgeReceipt(school,binding),binding))return true;}catch(error){readError??=error;}
+       try{
+        if(edgeProofMatches(await readEdgeReceipt(school,binding),binding))return true;
+       }catch(error){readError??=error;}
       }
       if(readError)throw readError;
+      // Notice patches are expanded before owner delivery, so their original
+      // request hash can differ from the signed final row. The retained edge
+      // job binds the ORIGINAL request and its verified signed completion.
+      // Superseded rows alone remain insufficient. Purged/missing jobs fail.
+      if(marker.activeAttempts===0&&binding.collection==='school_notices'&&typeof readNoticeReceipt==='function')
+       return noticeProofMatches(await readNoticeReceipt(school,binding.operationId),binding);
      }
      return false;
     })());
@@ -106,4 +140,4 @@ function createLiveReconciliation({db,readLiveReceipt,readDrive,readEdgeReceipt,
  }
  return {reconcile};
 }
-module.exports={bindOperation,legacyRequestHash,edgeProofMatches,createLiveReconciliation};
+module.exports={bindOperation,legacyRequestHash,edgeProofMatches,createLiveReconciliation,noticeProofMatches};

@@ -434,7 +434,7 @@ void main() {
     });
   }
 
-  test('Cloudflare notices retain their dedicated lane while other batch work proceeds', () async {
+  test('Cloudflare first real school records bypass the legacy Drive batch owner', () async {
     WindowsFirebaseRemote.recordWriteBatchSupported = true;
     WindowsFirebaseRemote.edgeDeliverySupported = true;
     await db.collection('school_notices').doc('dedicated').set({'title': 'Keep queued'});
@@ -455,11 +455,18 @@ void main() {
           }]};
       },
     );
-    expect(submitted, true);
+    // The Cloudflare-first owner must not silently consume single-record
+    // tickets in a legacy Google-Drive-completion batch.
+    expect(submitted, false);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,hasLength(3));
     final notices = (await db.collection('_windows_firebase_outbox').get()).docs
       .where((row) => row.data()['collection'] == 'school_notices');
     expect(notices, hasLength(1));
     expect(notices.single.data()['syncState'], 'pending');
+    final expenses=(await db.collection('_windows_firebase_outbox').get()).docs
+      .where((row)=>row.data()['collection']=='school_expenses');
+    expect(expenses,hasLength(2));
+    expect(expenses.every((row)=>row.data()['syncState']=='pending'),true);
   });
 
   test('invalid batch receipt contracts pressure while preserving original queued operations', () async {

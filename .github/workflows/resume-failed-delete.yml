@@ -1,0 +1,51 @@
+name: Complete only the exact failed TEST delete from verified evidence
+on:
+  push:
+    branches: [test/resume-failed-delete-20261111]
+    paths:
+      - .github/workflows/resume-failed-delete.yml
+      - .github/scripts/resume_failed_delete_artifact.cjs
+      - .github/scripts/resume_failed_delete_artifact.test.cjs
+permissions:
+  contents: read
+  actions: read
+jobs:
+  resume:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    concurrency:
+      group: sync3-verified-test-school-mutations
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify unchanged deployed business tree and fail-closed fixture guards
+        run: |
+          git diff --exit-code 731bca40858285e9dc06450f9a6b9a41b6e461cc HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
+          node --test .github/scripts/resume_failed_delete_artifact.test.cjs .github/scripts/safe_test_read_retry.test.cjs .github/scripts/native_person_receipt.test.cjs .github/scripts/delete_plan_progress.test.cjs
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: '13849243695'
+          run-id: '42999713169'
+          repository: cscticket01-hash/Saarthi_Ai
+          github-token: ${{ github.token }}
+          path: evidence
+          merge-multiple: true
+      - name: Validate private identities in memory and resume only the original mutation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VS_TEST_CONNECT_CONFIRM: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/resume_failed_delete_artifact.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-delete-completion-flags
+          path: build/cloud-prerequisites/original-delete-completion.json
+          retention-days: 14

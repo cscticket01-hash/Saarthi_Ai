@@ -1,0 +1,36 @@
+name: PR236 exact-source real TEST Firestore provider readback
+on:
+  push:
+    branches: [fix/delete-everywhere-ack-firebase-20261106]
+    paths:
+      - 'functions/delete-everywhere.js'
+      - '.github/scripts/pr236_real_firestore_provider.cjs'
+      - '.github/workflows/pr236-real-firestore.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pr236-isolated-test-firestore-provider
+  cancel-in-progress: false
+jobs:
+  exact-source-real-firestore:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate exact PR code and test harness
+        run: |
+          node --check functions/delete-everywhere.js
+          node --check .github/scripts/pr236_real_firestore_provider.cjs
+          node --test functions/test/delete-everywhere-firebase.test.js functions/test/edge-delivery-diagnostics.test.js
+      - name: Install existing Firebase Admin SDK
+        run: npm --prefix functions install --ignore-scripts --no-audit --no-fund
+      - name: Verify actual TEST Firestore transactions, negative readback, replay, and generation guard
+        env:
+          SCHOOL_SERVICE_ACCOUNT_JSON: ${{ secrets.SCHOOL_SERVICE_ACCOUNT_JSON }}
+          VS_LIVE_FIRESTORE_ACCEPTANCE: isolated-test-synthetic-only
+        run: node .github/scripts/pr236_real_firestore_provider.cjs

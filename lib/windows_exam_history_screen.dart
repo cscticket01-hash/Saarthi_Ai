@@ -3,6 +3,9 @@ import 'windows_appearance.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_exam_history_records.dart';
 import 'windows_local_firestore.dart';
+import 'windows_document_templates.dart';
+import 'school_media_budgets.dart';
+import 'package:crypto/crypto.dart' as crypto;
 
 /// Read-only history: never replays pending saves or creates cloud operations.
 class WindowsExamHistoryScreen extends StatefulWidget {
@@ -174,6 +177,45 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
     );
   }
 
+  Future<void> _showOriginalMarksheet(Map<String,dynamic> result) async {
+    if(!_sameSchool)return;
+    try {
+      final school=_school,db=FirebaseFirestore.instance;
+      final student=result['studentId'],exam=result['examId'];
+      final documentId=result['marksheetDocumentId'];
+      if(student is! String||exam is! String||documentId is! String||
+         !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(documentId))
+        throw StateError('Saved marksheet identity unavailable.');
+      final row=(await db.collection('_local_student_documents')
+        .doc(documentId).get()).data()??
+        (await db.collection('documents').doc(documentId).get()).data();
+      if(!_sameSchool)return;
+      if(row==null||row['schoolId']!=school||
+         row['documentKind']!='marksheet'||
+         row['examResultId']!='${exam}_$student'||
+         row['studentId']!=student||
+         row['ownerRole']!='student'||
+         row['personId']!=result['personId']||
+         row['contentHash'] is! String||
+         !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash']))
+        throw StateError('This result has no verified matching marksheet.');
+      final bytes=await WindowsBackendBridge.documentBytes(row);
+      if(!_sameSchool)return;
+      SchoolMediaBudgets.verifyGeneratedPdf('marksheet',bytes);
+      if(crypto.sha256.convert(bytes).toString()!=row['contentHash'])
+        throw StateError('Original marksheet PDF checksum differs.');
+      if(mounted)await WindowsDocumentTemplates.preview(context,bytes,
+        title:'Original Marksheet • ${result['studentName']??student}');
+    } catch(error) {
+      if(!mounted||!_sameSchool)return;
+      await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+        title:const Text('Marksheet unavailable'),
+        content:Text('$error'),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),
+          child:const Text('OK'))]));
+    }
+  }
+
   Widget _examCard(Map<String, dynamic> exam) {
     final results = windowsExamHistoryResults(
       _results,
@@ -202,12 +244,17 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
             ListTile(
               title: Text(row['studentName']?.toString() ?? 'Student'),
               subtitle: Text(
-                'Roll ${row['rollNo'] ?? '—'} • ${row['result'] ?? 'Result pending'}',
-              ),
-              trailing: Text(
+                'Roll ${row['rollNo'] ?? '—'} • ${row['result'] ?? 'Result pending'}\n'
                 '${row['totalMarks'] ?? row['total'] ?? '—'} marks • '
                 '${num.tryParse(row['percentage']?.toString() ?? '')?.toStringAsFixed(1) ?? '—'}%',
               ),
+              trailing: row['marksheetDocumentId'] is String
+                ? IconButton(
+                    tooltip:'Open original marksheet',
+                    icon:const Icon(Icons.picture_as_pdf_outlined),
+                    onPressed:()=>_showOriginalMarksheet(row),
+                  )
+                : null,
             ),
         ],
       ),

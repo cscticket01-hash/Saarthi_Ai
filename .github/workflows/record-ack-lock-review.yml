@@ -1,0 +1,26 @@
+name: Verify canonical record ACK lock correction
+on:
+  push:
+    branches: [work/checkpoint-completion-20261104]
+    paths: ['.github/workflows/record-ack-lock-review.yml']
+  pull_request:
+    paths: ['school-backend/managed/SaarthiManagedAdapter.gs', 'school-backend/managed/SaarthiManagedAll.gs', 'functions/test/managed-record-ack-lock.test.js']
+permissions:
+  contents: read
+jobs:
+  canonical-ack-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the same isolated backend test dependencies
+        working-directory: functions
+        run: npm install --ignore-scripts --no-package-lock
+      - name: Verify full backend regressions including lock and canonical bundle
+        working-directory: functions
+        run: npm test
+      - name: Verify synthetic timing cleanup guard
+        run: node --test .github/scripts/real_person_photo_edge_speed.test.cjs

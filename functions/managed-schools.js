@@ -22,7 +22,7 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
@@ -138,6 +138,43 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
  const queue=createAttendanceQueue({store:legacyAttendanceStore,now,deliver:deliverAttendance,retryAtForSchool:school=>googlePressure.retryAt(googleQuotaScopes[school]||school,'SCRIPT_QUOTA_EXCEEDED')});
  const edgeEnabled=school=>cloudflareSync?.enabled(school)===true;
  const liveSync=require('./live-sync').createLiveSync({edge:cloudflareSync,schools:liveSyncSchools,now});
+ async function publishedBundleBytes(schoolId,bundleId,kind,id){
+   const pointer=await liveSync.command(schoolId,{
+     command:'bundleMedia',bundleId,kind,id});
+   if(pointer?.bundleProtocol!==1||pointer.schoolId!==schoolId||
+      pointer.bundleId!==bundleId||pointer.id!==id||
+      pointer.kind!==kind||!/^[a-f0-9]{64}$/.test(pointer.sha256||'')||
+      !Number.isSafeInteger(pointer.sizeBytes)||pointer.sizeBytes<1||
+      pointer.sizeBytes>(kind==='photo'?40*1024:kind==='receipt'?30*1024:kind==='marksheet'?150*1024:85*1024))
+      fail(502,'Unverified published atomic media identity');
+   const fileLane='file-'+id;
+   const proof=await cloudflareSync.rpc(schoolId,fileLane,{
+      command:'bundleProof',id,requireDrive:false});
+   if(proof?.version!==1||proof.schoolId!==schoolId||
+      proof.staged!==true||proof.id!==id||
+      proof.sha256!==pointer.sha256||
+      proof.sizeBytes!==pointer.sizeBytes||
+      proof.mime!==pointer.mime)
+      fail(502,'Published media proof changed');
+   const part=await cloudflareSync.rpc(schoolId,fileLane,{
+     command:'readPart',id,offset:0});
+   if(part?.offset!==0||part.sizeBytes!==pointer.sizeBytes||
+      part.sha256!==pointer.sha256||typeof part.base64!=='string'||
+      part.base64.length>210000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(part.base64))
+      fail(502,'Atomic media bytes unavailable');
+   const bytes=Buffer.from(part.base64,'base64');
+   if(bytes.length!==pointer.sizeBytes||
+      bytes.toString('base64')!==part.base64||
+      hash(bytes)!==pointer.sha256)
+      fail(502,'Atomic media bytes failed SHA-256 readback');
+   return {success:true,schoolId,bundleProtocol:1,
+     bundleId,id,kind,mime:pointer.mime,sizeBytes:bytes.length,
+     sha256:pointer.sha256,base64:part.base64,
+     ownerRole:pointer.ownerRole,personId:pointer.personId,
+     archiveReady:pointer.archiveReady===true,
+     ...(pointer.fileId?{fileId:pointer.fileId}:{})};
+ }
  const liveMigration=require('./live-sync-migration').createLiveMigration({db,now});
  const liveGateway=require('./live-sync-gateway').createLiveGateway({liveSync,migration:liveMigration});
  const allEdge=school=>cloudflareAllDataEnabled===true&&edgeEnabled(school);
@@ -249,6 +286,23 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
    syncEvidenceWrites.set(schoolId,{at:now(),signature});
   }catch(_){}
  }
+ async function cascadeDeleteHints(school,request,ack){
+  // Google deleted original and linked records in multiple Sheet collections.
+  // Waking only the parent causes other Windows PCs, Android and website
+  // readers to retain stale document/fee/attendance views until a slow poll.
+  // Publish only the proven affected collections, AFTER Drive and Firebase
+  // finish. A failing hint cannot reverse a permanent provider ACK.
+  if(request?.action!=='managed_records'||request.operation!=='delete'||
+     ack?.deleteEverywhereVersion!==1||ack.driveDeletionComplete!==true||
+     ack.firebaseDeletionComplete!==true||!Array.isArray(ack.deletionTargets))
+    return;
+  const children=new Set();
+  for(const target of ack.deletionTargets){
+   if(target?.collection!==request.collection&&COLLECTIONS.has(target?.collection))
+    children.add(target.collection);
+  }
+  if(children.size)await changeHint(school,[...children],request.id);
+ }
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
   if(body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1){
@@ -269,10 +323,17 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
    }
    if(state==='rolling_back')fail(503,'Verified rollback is pending; saved changes are retained','LIVE_ROLLBACK_PENDING');
   }
+  // Pure shape rejection cannot leave an uncertain provider-write admission.
+  if(liveSync.enabled(m.schoolId)&&personLifecycle.handled(body))personLifecycle.validate(m.schoolId,body);
   return liveSync.enabled(m.schoolId)?liveMigration.legacy(m.schoolId,body,()=>signedLegacy(m,body)):signedLegacy(m,body);
  }
  async function reconcileAdmission(m,limit=1){
-  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),readEdgeReceipt:(school,binding)=>cloudflareSync.rpc(school,'records',{command:'status',id:hash(JSON.stringify([school,'managed_records',[binding.collection,binding.id,binding.operationId]]))})}).reconcile(m.schoolId,{limit});
+  return require('./live-sync-reconciliation').createLiveReconciliation({db,now,readLiveReceipt:(school,operationId)=>liveSync.command(school,{command:'operationReceipt',operationId}),readDrive:(school,body)=>signedRequest({...m,schoolId:school},body),
+   readEdgeReceipt:(school,binding)=>cloudflareSync.rpc(school,'records',{
+    command:'status',id:hash(JSON.stringify([school,'managed_records',
+     [binding.collection,binding.id,binding.operationId]])),
+   }),
+   readNoticeReceipt:async(school,operationId)=>({schoolId:school,lane:'notices',job:await cloudflareSync.rpc(school,'notices',{command:'get',id:hash(JSON.stringify([school,operationId]))})})}).reconcile(m.schoolId,{limit});
  }
  async function signedLegacy(m,body){
   const directNotice=body.collection==='school_notices'&&liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices');
@@ -321,7 +382,11 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
     await saveSyncEvidence(m.schoolId,{outcome:ack?'durable_ack':'verified_response',stage:body.action,protocol:result.syncProtocol===2?2:1});
    }
    if(body.action==='managed_records'&&body.operation!=='read'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision){invalidate(m.schoolId);if(ticket){await deliveryBudget(syncDelivery.committed(ticket,result.recordRevision)).catch(()=>{});}else await changeHint(m.schoolId,body.collection,body.id);}
-   if(!ticket&&body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
+   if(body.action==='managed_records'&&body.operation==='delete'&&result.syncProtocol===2&&
+      result.deleteEverywhereVersion===1&&result.driveDeletionComplete===true&&result.firebaseDeletionComplete===true)
+     await cascadeDeleteHints(m.schoolId,body,result);
+   else if(!ticket&&body.action==='managed_records'&&body.collection==='students_directory'&&body.operation==='delete'&&result.syncProtocol===2&&typeof result.recordRevision==='string'&&result.recordRevision)
+     await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'&&c!=='students_directory'));
    if(body.action==='managed_recycle'&&body.operation==='restore')await changeHint(m.schoolId,[...COLLECTIONS].filter(c=>c!=='backups'));
    return result;
   }catch(error){
@@ -357,8 +422,16 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
  }
  if(!googleQuotaScopes||Array.isArray(googleQuotaScopes)||typeof googleQuotaScopes!=='object'||Object.entries(googleQuotaScopes).some(([school,owner])=>!SCHOOL.test(school)||typeof owner!=='string'||!/^[a-f0-9]{64}$/.test(owner)))throw Error('Invalid trusted Google quota scopes');
  const googlePressure=createProviderPressure({now,journal:providerPressureJournal,isQuotaError:error=>error?.code==='SCRIPT_QUOTA_EXCEEDED'});
+ // Called only after authenticating the failed same-school Script response.
+ // Notice write CAS/operation conflicts occur before its canonical row write;
+ // delete/cascade and other collection failures remain uncertain.
+ function rejectSignedRecord(school,body,code,message){
+  try{fail(409,message,code);}catch(error){
+   throw require('./live-sync-rejection').markNoticeRejection(error,school,body);
+  }
+ }
  async function signedRequest(m,body){return googlePressure.run(googleQuotaScopes[m.schoolId]||m.schoolId,'SCRIPT_QUOTA_EXCEEDED',()=>signedRequestRaw(m,body));}
- async function signedRequestRaw(m,body){const started=performance.now();const s=await cachedRead(storageStates,m.schoolId,()=>db.doc('school_storage_private/'+m.schoolId).get());if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first','SCHOOL_STORAGE_NOT_CONNECTED');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);const scriptStarted=performance.now(),scriptSignal=AbortSignal.timeout(90000);let response=await fetchScript(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:scriptSignal});const redirects=new Set([301,302,303,307,308]),seen=new Set();let hops=0;while(redirects.has(response.status)){if(hops++>=5)fail(502,'School script redirect limit exceeded','SCRIPT_REDIRECT_LIMIT');let target;try{const location=response.headers.get('location');if(!location)throw Error();target=new URL(location,url);}catch{fail(502,'School script redirect rejected','SCRIPT_REDIRECT_REJECTED');}if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password||target.port)fail(502,'School script redirect rejected','SCRIPT_REDIRECT_REJECTED');if(seen.has(target.href))fail(502,'School script redirect limit exceeded','SCRIPT_REDIRECT_LIMIT');seen.add(target.href);url=target.href;response=await fetchScript(url,{method:'GET',redirect:'manual',signal:scriptSignal},'redirect');}if(response.status===429)throw quotaError('SCRIPT_QUOTA_EXCEEDED',retryAfterMillis(response.headers?.get('retry-after'),now())||60000);if(!response.ok)fail(502,'School script request failed','SCRIPT_HTTP_ERROR');const raw=await readScript(response);if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON','SCRIPT_INVALID_RESPONSE');}if(!out||typeof out!=='object'||Array.isArray(out))fail(502,'School script returned an invalid signed response; pending changes are retained','SCRIPT_INVALID_RESPONSE');if(!Object.hasOwn(out,'schoolId'))fail(502,'School script did not return an authenticated school identity; pending changes are retained','SCRIPT_SIGNED_RESPONSE_UNVERIFIED');if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed','SCRIPT_IDENTITY_MISMATCH');if(out.success!==true){if(!out.code&&typeof out.message==='string'){if(/quota|too many times|limit exceeded/i.test(out.message))out.code='SCRIPT_QUOTA_EXCEEDED';else if(/lock|timed out|timeout/i.test(out.message))out.code='SCRIPT_TIMEOUT';}if(out.code==='SCRIPT_QUOTA_EXCEEDED')fail(429,'Google school storage quota is temporarily exceeded; pending changes are retained','SCRIPT_QUOTA_EXCEEDED');if(out.code==='SCRIPT_TIMEOUT')fail(504,'School storage is busy; retry Sync. Existing data and pending changes are retained','SCRIPT_TIMEOUT');if(['SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW','SCRIPT_DELETE_ARCHIVE_SCAN_REVIEW','SCRIPT_DELETE_ARCHIVE_GENERATION_REVIEW'].includes(out.code))fail(409,'School delete archive requires verified owner review; original data and operation are retained',out.code);if(['SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING'].includes(out.code))fail(503,'Verified local Sheet recovery required before editing',out.code);if(out.code==='SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED')fail(409,'External Sheet edit requires review',out.code);if(['SCRIPT_RECOVERY_MISMATCH','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_SYNC_STATE_IDENTITY','SCRIPT_SYNC_STATE_UNAVAILABLE'].includes(out.code))fail(409,'School record recovery needs review',out.code);if(['SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_INVALID_SYNC_OPERATION'].includes(out.code))fail(422,'School record validation failed; original retained',out.code);if(out.code==='SCRIPT_DOCUMENT_REVISION_CONFLICT'||out.message==='Newer cloud document retained; resolve version conflict')fail(409,'Document version conflict; both copies retained','SCRIPT_DOCUMENT_REVISION_CONFLICT');if(out.message==='Student class/section/roll conflict')fail(409,'Student class/section/roll conflict','STUDENT_SLOT_CONFLICT');if(out.message==='Record revision conflict')fail(409,'Record revision conflict','RECORD_REVISION_CONFLICT');if(out.message==='Sync operation ID conflict')fail(409,'Sync operation ID conflict','OPERATION_ID_CONFLICT');if(body.action==='managed_mobile'&&out.message==='Student attendance is outside the school schedule')fail(400,out.message,'ATTENDANCE_SCHEDULE_CLOSED');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School session expired','School login required','School identity mismatch','This QR does not belong to the active school','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);const codes={'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING','Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT','Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB','School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED','Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED'};fail(502,'School script identity or operation failed',codes[out.message]||(['SCRIPT_ROOT_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_REVIEW_REQUIRED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED','SCRIPT_FOREIGN_RECORD_REJECTED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_DOCUMENT_REVISION_REQUIRED','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB','SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'].includes(out.code)?out.code:'SCRIPT_OPERATION_FAILED'));}const verified={...out,syncTiming:{brokerPreparationMillis:Math.round(scriptStarted-started),scriptRoundTripMillis:Math.round(performance.now()-scriptStarted)}};return body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1?await deleteEverywhere.finish(m.schoolId,body,verified):verified;}
+ async function signedRequestRaw(m,body){const started=performance.now();const s=await cachedRead(storageStates,m.schoolId,()=>db.doc('school_storage_private/'+m.schoolId).get());if(!s.exists||s.data().ready!==true)fail(409,'Developer must connect this school Apps Script first','SCHOOL_STORAGE_NOT_CONNECTED');const c=s.data(),payload=JSON.stringify(body),timestamp=now(),nonce=randomBytes(24).toString('hex'),signature=createHmac('sha256',unprotect(c.secret,encryptionKey)).update(m.schoolId+'\n'+timestamp+'\n'+nonce+'\n'+payload).digest('hex');let url=scriptUrl(c.url);const scriptStarted=performance.now(),scriptSignal=AbortSignal.timeout(90000);let response=await fetchScript(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({schoolId:m.schoolId,timestamp,nonce,payload,signature}),signal:scriptSignal});const redirects=new Set([301,302,303,307,308]),seen=new Set();let hops=0;while(redirects.has(response.status)){if(hops++>=5)fail(502,'School script redirect limit exceeded','SCRIPT_REDIRECT_LIMIT');let target;try{const location=response.headers.get('location');if(!location)throw Error();target=new URL(location,url);}catch{fail(502,'School script redirect rejected','SCRIPT_REDIRECT_REJECTED');}if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password||target.port)fail(502,'School script redirect rejected','SCRIPT_REDIRECT_REJECTED');if(seen.has(target.href))fail(502,'School script redirect limit exceeded','SCRIPT_REDIRECT_LIMIT');seen.add(target.href);url=target.href;response=await fetchScript(url,{method:'GET',redirect:'manual',signal:scriptSignal},'redirect');}if(response.status===429)throw quotaError('SCRIPT_QUOTA_EXCEEDED',retryAfterMillis(response.headers?.get('retry-after'),now())||60000);if(!response.ok)fail(502,'School script request failed','SCRIPT_HTTP_ERROR');const raw=await readScript(response);if(raw.length>30*1024*1024)fail(502,'School script response is too large');let out;try{out=JSON.parse(raw);}catch{fail(502,'School script returned invalid JSON','SCRIPT_INVALID_RESPONSE');}if(!out||typeof out!=='object'||Array.isArray(out))fail(502,'School script returned an invalid signed response; pending changes are retained','SCRIPT_INVALID_RESPONSE');if(!Object.hasOwn(out,'schoolId'))fail(502,'School script did not return an authenticated school identity; pending changes are retained','SCRIPT_SIGNED_RESPONSE_UNVERIFIED');if(out.schoolId!==m.schoolId)fail(502,'School script identity or operation failed','SCRIPT_IDENTITY_MISMATCH');if(out.success!==true){if(!out.code&&typeof out.message==='string'){if(/quota|too many times|limit exceeded/i.test(out.message))out.code='SCRIPT_QUOTA_EXCEEDED';else if(/lock|timed out|timeout/i.test(out.message))out.code='SCRIPT_TIMEOUT';}if(out.code==='SCRIPT_QUOTA_EXCEEDED')fail(429,'Google school storage quota is temporarily exceeded; pending changes are retained','SCRIPT_QUOTA_EXCEEDED');if(out.code==='SCRIPT_TIMEOUT')fail(504,'School storage is busy; retry Sync. Existing data and pending changes are retained','SCRIPT_TIMEOUT');if(['SCRIPT_DELETE_ARCHIVE_PLAN_REVIEW','SCRIPT_DELETE_ARCHIVE_SCAN_REVIEW','SCRIPT_DELETE_ARCHIVE_GENERATION_REVIEW'].includes(out.code))fail(409,'School delete archive requires verified owner review; original data and operation are retained',out.code);if(['SCRIPT_SHEET_RECOVERY_REQUIRED','SCRIPT_STUDENT_PARENT_PENDING','SCRIPT_DELETE_EVERYWHERE_PENDING'].includes(out.code))fail(503,'Verified local Sheet recovery required before editing',out.code);if(out.code==='SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED')fail(409,'External Sheet edit requires review',out.code);if(['SCRIPT_RECOVERY_MISMATCH','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_SYNC_STATE_IDENTITY','SCRIPT_SYNC_STATE_UNAVAILABLE'].includes(out.code))fail(409,'School record recovery needs review',out.code);if(['SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_INVALID_SYNC_OPERATION'].includes(out.code))fail(422,'School record validation failed; original retained',out.code);if(out.code==='SCRIPT_DOCUMENT_REVISION_CONFLICT'||out.message==='Newer cloud document retained; resolve version conflict')fail(409,'Document version conflict; both copies retained','SCRIPT_DOCUMENT_REVISION_CONFLICT');if(out.message==='Student class/section/roll conflict')fail(409,'Student class/section/roll conflict','STUDENT_SLOT_CONFLICT');if(out.message==='Record revision conflict')rejectSignedRecord(m.schoolId,body,'RECORD_REVISION_CONFLICT','Record revision conflict');if(out.message==='Sync operation ID conflict')rejectSignedRecord(m.schoolId,body,'OPERATION_ID_CONFLICT','Sync operation ID conflict');if(body.action==='managed_mobile'&&out.message==='Student attendance is outside the school schedule')fail(400,out.message,'ATTENDANCE_SCHEDULE_CLOSED');const safe=['This QR is invalid or has not synced to this school. Ask the school to sync or regenerate the ID card.','Ask your school to regenerate this ID card.','Class, roll number or date of birth is incorrect','School session expired. Scan your ID again.','School session expired','School login required','School identity mismatch','This QR does not belong to the active school','School record or ID card was changed; scan again'];if(body.action==='managed_mobile'&&safe.includes(out.message))fail(403,out.message);const codes={'School data organization in progress; retry Sync. Pending data retained':'SCRIPT_MIGRATION_PENDING','Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT','Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB','School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED','Managed storage not prepared':'SCRIPT_STORAGE_NOT_PREPARED'};fail(502,'School script identity or operation failed',codes[out.message]||(['SCRIPT_ROOT_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_WORKBOOK_REVIEW_REQUIRED','SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED','SCRIPT_FOREIGN_RECORD_REJECTED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_DOCUMENT_REVISION_REQUIRED','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_MIGRATION_CONFLICT','SCRIPT_MISSING_MIGRATED_TAB','SCRIPT_RECORD_VERIFY_FAILED','SCRIPT_STORAGE_NOT_PREPARED','SCRIPT_MIGRATION_PENDING','SCRIPT_PERMISSION_DENIED','SCRIPT_QUOTA_EXCEEDED','SCRIPT_TIMEOUT','SCRIPT_TYPE_ERROR','SCRIPT_PARSE_ERROR'].includes(out.code)?out.code:'SCRIPT_OPERATION_FAILED'));}const verified={...out,syncTiming:{brokerPreparationMillis:Math.round(scriptStarted-started),scriptRoundTripMillis:Math.round(performance.now()-scriptStarted)}};return body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1?await deleteEverywhere.finish(m.schoolId,body,verified):verified;}
  async function scriptRequest(url,body){
   let response=await fetchImpl(url,{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
   if([301,302,303].includes(response.status)){const target=new URL(response.headers.get('location'));if(target.protocol!=='https:'||target.hostname!=='script.googleusercontent.com'||target.username||target.password)fail(502,'Unexpected script redirect');response=await fetchImpl(target.href,{redirect:'error',signal:AbortSignal.timeout(30000)});}
@@ -374,7 +447,11 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   if(!state.school||!e.active||e.blocked||state.school.deletedAt)fail(403,'School is inactive');
   if(e.status!=='trial'){if(!state.licence||state.licence.revoked||state.licence.schoolId!==b.schoolId)fail(403,'School licence inactive');e.expiresAt=Number(state.licence.expiresAt?.toMillis?.()??state.licence.expiresAt);}
   const owner={schoolId:b.schoolId,entitlement:e};if(!lease(owner).allowed||e.status!=='trial'&&!e.activated)fail(403,'School licence inactive');
-  return {success:true,schoolId:b.schoolId,...await liveSync.drain(b.schoolId,body=>signedRequest(owner,body))};
+  return {success:true,schoolId:b.schoolId,...await liveSync.drain(
+   b.schoolId,body=>signedRequest(owner,body),
+   // Internal signed GS read, never a public arbitrary-file capability.
+   fileId=>signedRequest(owner,{action:'managed_file',fileId})
+  )};
  }
  if(action==='managed/cloudflare/drain'){
   if(!edgeEnabled(b.schoolId)||!cloudflareSync.verify(b,req.headers||{})||! /^(?:attendance-[a-f0-9]{2}|notices|records|file-[a-f0-9]{64})$/.test(b.lane||''))fail(403,'Cloudflare delivery authorization required');
@@ -396,6 +473,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
      }
     }
     if(body.action==='managed_records'&&typeof ack.recordRevision==='string') {
+     await cascadeDeleteHints(m.schoolId,body,ack);
      const data=body.data||{};const owner=['students_directory','teachers_directory'].includes(body.collection)?{personId:data.mobileStableId||body.id,role:body.collection==='students_directory'?'student':'teacher'}:data.personId?{personId:data.personId,role:data.ownerRole||'student'}:undefined;
      void notifyChanged(m.schoolId,body.operationId,false,owner).catch(()=>{});
     }
@@ -613,9 +691,141 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   if(!lease(m).allowed||e.status!=='trial'&&e.activated!==true)fail(403,'Unable to connect: school trial or licence has ended');
   // Windows presence is monitoring only. Signed school storage and current licence
   // authorize mobile access independently of the management PC's availability.
-  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
+  if(!b.request||typeof b.request!=='object'||JSON.stringify(b.request).length>(b.request.action==='mobile_dashboard'?220000:16000)||!['mobile_login','mobile_refresh','mobile_logout','mobile_heartbeat','mobile_dashboard','mobile_notice','mobile_attendance_list','mobile_mark_attendance','mobile_attendance_status','mobile_asset','mobile_document','mobile_atomic_idcard','mobile_atomic_portrait','mobile_atomic_document','mobile_complaint','mobile_complaints'].includes(b.request.action))fail(400,'Invalid mobile operation');
   if(b.request.action==='mobile_login'&&b.request.cardIssueId&&!cardReaderEnforced)fail(503,'Issued card readers are not enabled','CARD_READER_DISABLED');
   const cardContext=b.request.action==='mobile_login'?null:await readCard(b.schoolId,b.request);
+  if(['mobile_atomic_idcard','mobile_atomic_portrait'].includes(b.request.action)){
+   // Both published school media receivers use the identical signed mobile
+   // session and original Durable Object owner; no second photo uploader.
+   const portraitRequest=b.request.action==='mobile_atomic_portrait';
+   if(!atomicBundleTestSchools.includes(b.schoolId)||!liveSync.enabled(b.schoolId))
+     fail(412,'Atomic mobile card is not enabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const session=await signed(m,{action:'managed_mobile',
+     request:{action:'mobile_session_verify',sessionToken:b.request.sessionToken},
+     lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+   if(session?.success!==true||session.schoolId!==b.schoolId||
+      !['student','teacher'].includes(session.role)||
+      typeof session.personId!=='string'||session.personId.length<1)
+     fail(403,'School card session did not verify');
+   const bundle=await liveSync.command(b.schoolId,{command:'ownerBundle',
+     role:session.role,personId:session.personId});
+   if(portraitRequest){
+     const pointer=bundle?.portrait;
+     if(bundle?.found!==true||bundle.noPhoto===true||pointer==null)
+       return {success:true,schoolId:b.schoolId,projectId:b.schoolId,
+         mobileAtomicPortrait:true,available:false,...cardContext};
+     if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+        typeof bundle.bundleId!=='string'||
+        !/^[A-Za-z0-9_-]{16,100}$/.test(bundle.bundleId)||
+        typeof pointer.id!=='string'||!/^[a-f0-9]{64}$/.test(pointer.id)||
+        typeof pointer.sha256!=='string'||!/^[a-f0-9]{64}$/.test(pointer.sha256)||
+        !['image/jpeg','image/png','image/webp'].includes(pointer.mime)||
+        !Number.isSafeInteger(pointer.sizeBytes)||
+        pointer.sizeBytes<1||pointer.sizeBytes>40*1024)
+       fail(502,'Published school portrait pointer invalid');
+     let file;
+     try{
+       file=await publishedBundleBytes(b.schoolId,bundle.bundleId,'photo',pointer.id);
+     }catch(error){
+       // Original Cloudflare bytes expire after the verified retention window.
+       // Drive is a fallback ONLY after the same school Durable Object proves
+       // this original bundle's full immutable media archive is complete.
+       // A revoked/foreign/current-version denial can never be bypassed.
+       if([400,401,403,409,412].includes(error?.status))throw error;
+       const archive=await liveSync.command(b.schoolId,{
+         command:'bundleArchive',bundleId:bundle.bundleId});
+       if(archive?.bundleProtocol!==1||archive.schoolId!==b.schoolId||
+          archive.bundleId!==bundle.bundleId||archive.archiveReady!==true||
+          !Array.isArray(archive.files))
+         fail(503,'Verified archived portrait unavailable');
+       const photos=archive.files.filter(f=>f.kind==='photo');
+       const saved=photos.length===1?photos[0]:null;
+       if(!saved||saved.id!==pointer.id||saved.sha256!==pointer.sha256||
+          saved.mime!==pointer.mime||saved.sizeBytes!==pointer.sizeBytes||
+          typeof saved.fileId!=='string'||
+          !/^[A-Za-z0-9_-]{1,200}$/.test(saved.fileId))
+         fail(502,'Archived portrait identity differs from live bundle');
+       const reply=await signed(m,{action:'managed_file',fileId:saved.fileId});
+       const encoded=reply?.base64;
+       if(reply?.success!==true||reply.schoolId!==b.schoolId||
+          reply.mime!==pointer.mime||typeof encoded!=='string'||
+          encoded.length!==Math.ceil(pointer.sizeBytes/3)*4||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+         fail(502,'Signed school Drive portrait readback missing');
+       const bytes=Buffer.from(encoded,'base64');
+       if(bytes.length!==pointer.sizeBytes||
+          bytes.toString('base64')!==encoded||hash(bytes)!==pointer.sha256)
+         fail(502,'Archived portrait bytes differ from published SHA');
+       const current=await liveSync.command(b.schoolId,{
+         command:'ownerBundle',role:session.role,personId:session.personId});
+       if(current?.found!==true||current.schoolId!==b.schoolId||
+          current.bundleId!==bundle.bundleId||current.noPhoto===true||
+          current.portrait?.id!==pointer.id||
+          current.portrait?.sha256!==pointer.sha256)
+         fail(409,'Published portrait changed during verified archive read');
+       file={success:true,schoolId:b.schoolId,bundleProtocol:1,
+         bundleId:bundle.bundleId,kind:'photo',id:pointer.id,
+         mime:pointer.mime,sizeBytes:bytes.length,sha256:pointer.sha256,
+         base64:encoded,ownerRole:session.role,personId:session.personId,
+         fileId:saved.fileId,archiveReady:true};
+     }
+     if(file.ownerRole!==session.role||file.personId!==session.personId||
+        file.sha256!==pointer.sha256||file.mime!==pointer.mime||
+        file.sizeBytes!==pointer.sizeBytes)
+       fail(403,'Another person portrait is not accessible');
+     return {...file,projectId:b.schoolId,mobileAtomicPortrait:true,
+       available:true,portraitRevision:'atomic-'+bundle.bundleId,
+       contentHash:file.sha256,...cardContext};
+   }
+   if(bundle?.found!==true)return {success:true,schoolId:b.schoolId,
+     projectId:b.schoolId,mobileAtomicIdCard:true,available:false,...cardContext};
+   if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+      bundle.mime!=='application/pdf'||!/^[a-f0-9]{64}$/.test(bundle.sha256||''))
+     fail(502,'Published atomic card identity invalid');
+   const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,'idCard',bundle.id);
+   if(file.ownerRole!==session.role||file.personId!==session.personId||
+      file.sha256!==bundle.sha256)
+     fail(403,'Another person ID card is not accessible');
+   return {...file,projectId:b.schoolId,mobileAtomicIdCard:true,available:true,
+     documentRevision:'atomic-'+bundle.bundleId,contentHash:file.sha256,
+     noPhoto:bundle.noPhoto===true,...cardContext};
+  }
+  if(b.request.action==='mobile_atomic_document'){
+   // TEST-only mobile document viewer; exact original document and signed
+   // student generation. No arbitrary school document ID can cross tenants.
+   if(!atomicBundleTestSchools.includes(b.schoolId)||!liveSync.enabled(b.schoolId))
+     fail(412,'Atomic school documents are not enabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const kind=b.request.kind,documentId=b.request.documentId;
+   if(!['receipt','marksheet'].includes(kind)||
+      typeof documentId!=='string'||documentId.length<1||
+      documentId.length>200||documentId.includes('/')||
+      ['.','..','__proto__','constructor','prototype'].includes(documentId))
+     fail(400,'Invalid student financial document request');
+   const session=await signed(m,{action:'managed_mobile',
+     request:{action:'mobile_session_verify',sessionToken:b.request.sessionToken},
+     lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+   if(session?.success!==true||session.schoolId!==b.schoolId||
+      session.role!=='student'||typeof session.personId!=='string'||
+      session.personId.length<1)
+     fail(403,'Student session does not own requested financial document');
+   const role=kind==='receipt'?'feeReceipt':'marksheet';
+   const bundle=await liveSync.command(b.schoolId,{command:'ownerFinancialBundle',
+     role,personId:session.personId,documentId});
+   if(bundle?.found!==true)
+     return {success:true,schoolId:b.schoolId,projectId:b.schoolId,
+       mobileAtomicDocument:true,available:false,...cardContext};
+   if(bundle.schoolId!==b.schoolId||bundle.bundleProtocol!==1||
+      bundle.documentId!==documentId||bundle.kind!==kind||
+      bundle.mime!=='application/pdf'||!/^[a-f0-9]{64}$/.test(bundle.sha256||''))
+     fail(502,'Authenticated financial document pointer invalid');
+   const file=await publishedBundleBytes(b.schoolId,bundle.bundleId,kind,bundle.id);
+   if(file.ownerRole!==role||file.personId!==session.personId||
+      file.sha256!==bundle.sha256||file.id!==bundle.id)
+     fail(403,'Another student financial document is not accessible');
+   return {...file,projectId:b.schoolId,mobileAtomicDocument:true,
+     available:true,documentId,documentRevision:'atomic-'+bundle.bundleId,
+     contentHash:file.sha256,...cardContext};
+  }
   if(['mobile_complaint','mobile_complaints'].includes(b.request.action)){
    const result=await require('./mobile-complaints').createMobileComplaints({db,now,fail,verify:async details=>signed(m,{action:'managed_mobile',request:{...b.request,action:details?'mobile_dashboard':'mobile_session_verify',afterSignal:true},lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}})})(b.schoolId,b.request);
    return {...result,...cardContext,policyExpiresAt:Math.min(e.expiresAt,now()+72*3600000)};
@@ -670,6 +880,40 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
     else {result.noticesDelta=true;result.noticeIds=rows.map(r=>r.id);}
    }
   }
+  if(b.request.action==='mobile_dashboard'&&
+     atomicBundleTestSchools.includes(b.schoolId)&&liveSync.enabled(b.schoolId)){
+   // TEST-only discovery. The signed school storage session, not client
+   // supplied person IDs, decides which ID Card the Android app can see.
+   const session=await signed(m,{action:'managed_mobile',
+     request:{action:'mobile_session_verify',sessionToken:b.request.sessionToken},
+     lease:{schoolId:m.schoolId,expiresAt:lease(m).expiresAt}});
+   if(session?.success===true&&session.schoolId===b.schoolId&&
+      ['student','teacher'].includes(session.role)&&
+      typeof session.personId==='string'){
+     // A verified negative owner lookup must revoke an old PDF/photo cache
+     // pointer. Do not silently retain a deleted or photo-free generation.
+     result.atomicBundleDiscoveryVersion=1;
+     const bundle=await liveSync.command(b.schoolId,{command:'ownerBundle',
+       role:session.role,personId:session.personId});
+     if(bundle?.found===true&&bundle.schoolId===b.schoolId&&
+        bundle.bundleProtocol===1&&bundle.mime==='application/pdf'&&
+        /^[a-f0-9]{64}$/.test(bundle.sha256||'')){
+       result.atomicIdCardBundle={bundleId:bundle.bundleId,
+         id:bundle.id,sha256:bundle.sha256,
+         noPhoto:bundle.noPhoto===true};
+       if(bundle.portrait&&bundle.noPhoto!==true&&
+          typeof bundle.portrait.id==='string'&&
+          /^[a-f0-9]{64}$/.test(bundle.portrait.id)&&
+          typeof bundle.portrait.sha256==='string'&&
+          /^[a-f0-9]{64}$/.test(bundle.portrait.sha256))
+         result.atomicPortraitBundle={
+           bundleId:bundle.bundleId,id:bundle.portrait.id,
+           sha256:bundle.portrait.sha256,mime:bundle.portrait.mime,
+           sizeBytes:bundle.portrait.sizeBytes,
+         };
+     }
+   }
+  }
   if(b.request.action==='mobile_mark_attendance')await changeHint(m.schoolId,'attendance_records');
   if(['mobile_logout','mobile_mark_attendance','mobile_complaint'].includes(b.request.action))invalidate(m.schoolId);
   const verifiedCard=b.request.action==='mobile_login'?await cardReader.verifyLogin({schoolId:b.schoolId,role:b.request.role,personId:b.request.personId,linkToken:b.request.linkToken,deviceId:b.request.deviceId,cardIssueId:b.request.cardIssueId},result):cardContext;
@@ -722,15 +966,227 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='settle-test-student-slot-review'){
+   if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[a-f0-9]{64}$/.test(b.id||'')||!/^[a-f0-9]{64}$/.test(b.successorId||'')||
+      !/^TEST2-DEMO-\d{6}$/.test(b.recordId||''))
+    fail(400,'Exact synthetic student slot receipts required');
+   const source=await signedRequest(m,{action:'managed_records',operation:'read',
+     collection:'students_directory',id:b.recordId,syncProtocol:2});
+   const current=source.records?.[b.recordId];
+   if(source.syncProtocol!==2||source.pointRead!==true||current?.schoolId!==m.schoolId||
+      current.syntheticTest!==true||current._syncDeleted===true||
+      !/^p-[a-f0-9]{32,64}$/.test(current.mobileStableId||'')||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(current._syncOperationId||'')||
+      typeof current._syncRevision!=='string'||!current._syncRevision)
+    fail(409,'Signed current synthetic student proof required','STUDENT_SLOT_SUCCESSOR_UNVERIFIED');
+   const result=await cloudflareSync.rpc(m.schoolId,'records',{command:'settleTestStudentSlotReview',
+     id:b.id,successorId:b.successorId,recordId:b.recordId,generation:current.mobileStableId,
+     operationId:current._syncOperationId,revision:current._syncRevision});
+   if(result?.schoolId!==m.schoolId||result.id!==b.id||result.successorId!==b.successorId||
+      result.state!=='superseded')fail(503,'Student slot review settlement unverified');
+   return {success:true,...result};
+  }
+  if(operation==='bundle-media'){
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+     fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !['idCard','photo','receipt','marksheet'].includes(b.kind)||
+      !/^[a-f0-9]{64}$/.test(b.id||''))
+     fail(400,'Invalid published atomic media lookup');
+   return publishedBundleBytes(m.schoolId,b.bundleId,b.kind,b.id);
+  }
+  if(operation==='bundle-receipt'){
+   // Recover a lost publish ACK using the exact original wire operations.
+   // Matching an opaque bundle ID alone is never authorization or proof.
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+     fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      JSON.stringify(b).length>256000)
+     fail(400,'Invalid immutable atomic receipt lookup');
+   const result=await liveSync.command(m.schoolId,{
+     command:'bundleReceipt',bundleId:b.bundleId,
+     operations:b.operations.map(item=>({...item,data:clean(item.data)})),
+     media:b.media,mediaManifestHash:b.mediaManifestHash});
+   if(result?.found===false)return {success:true,schoolId:m.schoolId,
+     bundleProtocol:1,found:false};
+   if(result?.found!==true||result.schoolId!==m.schoolId||
+      result.bundleProtocol!==1||result.receipt?.bundleId!==b.bundleId||
+      !Array.isArray(result.backups)||result.backups.length!==b.operations.length)
+     fail(502,'Atomic bundle receipt cannot be verified');
+   return {success:true,schoolId:m.schoolId,...result};
+  }
+  if(operation==='bundle-stage'){
+   // TEST-only outbound Windows file lane. The original school Durable Object
+   // retains the bytes and independently schedules Drive; no second uploader.
+   // A Cloudflare stage receipt is never a Google Drive ACK.
+   if(!atomicBundleTestSchools.includes(m.schoolId)||!edgeEnabled(m.schoolId))
+     fail(412,'Atomic media pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   const kind=b.kind,mime=b.mime;
+   const pdfLimits={idCard:85*1024,receipt:30*1024,marksheet:150*1024};
+   const limit=kind==='photo'?40*1024:pdfLimits[kind];
+   if(!['idCard','photo','receipt','marksheet'].includes(kind)||
+      !(kind==='photo'?['image/jpeg','image/png','image/webp'].includes(mime):
+        mime==='application/pdf')||
+      typeof b.uploadKey!=='string'||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey)||
+      typeof b.name!=='string'||b.name.length<1||b.name.length>200||
+      /[/\\]/.test(b.name)||typeof b.base64!=='string'||
+      b.base64.length<1||b.base64.length>210000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      typeof b.sha256!=='string'||!/^[a-f0-9]{64}$/.test(b.sha256)||
+      !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+      b.sizeBytes>limit)
+     fail(400,'Invalid isolated atomic file stage');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(bytes.length!==b.sizeBytes||bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.sha256)fail(409,'Atomic file bytes differ from manifest');
+   if(kind!=='photo'){
+    // Receipt and marksheet PDFs follow the same immutable Cloudflare file
+    // owner but use their own existing print size limits. Publishing these
+    // kinds in an atomic business transaction is deliberately gated later.
+    if(!b.name.toLowerCase().endsWith('.pdf')||bytes.length<16||
+       bytes.subarray(0,5).toString('ascii')!=='%PDF-'||
+       !bytes.subarray(Math.max(0,bytes.length-2048))
+         .toString('latin1').includes('%%EOF'))
+      fail(400,'Invalid TEST school PDF container');
+   }
+   if(kind==='photo'){
+    // Isolated TEST photo admission: reject wrong MIME, truncated containers
+    // and filenames that lie about the encoded format before any Drive job.
+    // A signature is only a preflight; the original file DO and client still
+    // require immutable SHA-256 and a decodable image.
+    const suffix=b.name.toLowerCase();
+    const jpeg=mime==='image/jpeg'&&/\.(jpg|jpeg)$/.test(suffix)&&
+      bytes.length>=32&&bytes[0]===0xff&&bytes[1]===0xd8&&
+      bytes[2]===0xff&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9;
+    const png=mime==='image/png'&&suffix.endsWith('.png')&&bytes.length>=57&&
+      bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&
+      bytes.toString('ascii',12,16)==='IHDR'&&
+      bytes.readUInt32BE(8)===13&&bytes.readUInt32BE(16)>0&&
+      bytes.readUInt32BE(20)>0&&
+      bytes.readUInt32BE(16)*bytes.readUInt32BE(20)<=20000000&&
+      bytes.readUInt32BE(bytes.length-12)===0&&
+      bytes.toString('ascii',bytes.length-8,bytes.length-4)==='IEND';
+    const webp=mime==='image/webp'&&suffix.endsWith('.webp')&&bytes.length>=20&&
+      bytes.toString('ascii',0,4)==='RIFF'&&
+      bytes.toString('ascii',8,12)==='WEBP'&&
+      ['VP8 ','VP8L','VP8X'].includes(bytes.toString('ascii',12,16))&&
+      bytes.readUInt32LE(4)+8===bytes.length;
+    if(!jpeg&&!png&&!webp)
+      fail(400,'Invalid TEST atomic photo container or MIME');
+   }
+   const provider=await cachedRead(uploadCapabilities,m.schoolId,
+      ()=>signedRequest(m,{action:'managed_health'}),300000);
+   if(provider?.success!==true||provider.storageReady!==true||
+      provider.schoolId!==m.schoolId||provider.uploadResumableVersion!==1)
+     fail(503,'Verified school Drive uploader required','EDGE_UPLOAD_PROVIDER_UNVERIFIED');
+   const upload=await edgeDelivery.wholeFile(m.schoolId,{
+      uploadKey:b.uploadKey,name:b.name,mime,base64:b.base64});
+   if(upload?.success!==true||upload.schoolId!==m.schoolId||
+      upload.cloudflareAccepted!==true)
+     fail(502,'Atomic Cloudflare staging acknowledgement missing');
+   const id=hash(JSON.stringify([m.schoolId,b.uploadKey]));
+   const proof=await cloudflareSync.rpc(m.schoolId,'file-'+id,{
+      command:'bundleProof',id,requireDrive:false});
+   if(proof?.version!==1||proof.schoolId!==m.schoolId||proof.id!==id||
+      proof.uploadKey!==b.uploadKey||proof.sha256!==b.sha256||
+      proof.sizeBytes!==b.sizeBytes||proof.mime!==mime||
+      proof.staged!==true)
+     fail(502,'Atomic file Durable Object proof unavailable');
+   return {success:true,schoolId:m.schoolId,bundleProtocol:1,
+      mediaReady:true,cloudflareAccepted:true,driveVerified:proof.driveVerified===true,
+      media:{kind,id,uploadKey:b.uploadKey,sha256:b.sha256,
+        sizeBytes:b.sizeBytes,mime},
+      ...(proof.driveVerified===true?{fileId:proof.fileId}:{})};
+  }
+  if(operation==='bundle-preflight'){
+   // Existing authenticated school broker, not a new storage or sync owner.
+   // Read-only preparation does NOT mean the person/card bundle committed.
+   if(!/^[A-Za-z0-9_-]{16,100}$/.test(String(b.bundleId||''))||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      (b.requireDrive!==undefined&&typeof b.requireDrive!=='boolean'))
+     fail(400,'Invalid atomic media preflight request');
+   const proof=await liveSync.command(m.schoolId,{command:'bundlePrepare',
+     bundleId:b.bundleId,media:b.media,requireDrive:b.requireDrive===true});
+   if(proof?.schoolId!==m.schoolId||proof.mediaReady!==true||
+      proof.bundleProtocol!==1||!/^[a-f0-9]{64}$/.test(proof.manifestHash||'')||
+      !Array.isArray(proof.proofs)||proof.proofs.length!==b.media.length||
+      (b.requireDrive===true&&(proof.archiveReady!==true||
+       !proof.proofs.every(item=>item.driveVerified===true&&/^[A-Za-z0-9_-]{1,200}$/.test(item.fileId||'')))))
+     fail(502,'Atomic media readiness proof unavailable');
+   return {success:true,schoolId:m.schoolId,...proof};
+  }
+  if(operation==='bundle-publish'){
+   // Server-controlled feature gate, not a client-provided TEST checkbox.
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+    fail(412,'Atomic person bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   // TEST-only opt-in protocol: no legacy/partially migrated person cohort.
+   // Keep both person and document owners fenced before the atomic DO call.
+   if(b.confirmIsolatedBundleTest!==true||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(b.bundleId||'')||
+      !/^[a-f0-9]{64}$/.test(b.mediaManifestHash||'')||
+      !Array.isArray(b.media)||b.media.length<1||b.media.length>2||
+      !Array.isArray(b.operations)||![2,3].includes(b.operations.length)||
+      JSON.stringify(b).length>256000)
+    fail(400,'Invalid isolated atomic bundle publish');
+   const [first,...rest]=b.operations;
+   const last=rest[rest.length-1],type=b.media[0]?.kind;
+   const person=['students_directory','teachers_directory'].includes(first?.collection);
+   const fee=first?.collection==='fee_payments'&&b.operations.length===3&&
+     b.operations[1]?.collection==='fee_ledger'&&type==='receipt';
+   const exam=['exam_results','exam_center_results'].includes(first?.collection)&&
+     b.operations.length===2&&
+     type==='marksheet';
+   if(!last||last.collection!=='documents'||
+      !(person&&b.operations.length===2&&type==='idCard'||fee||exam))
+    fail(400,'Original school records and PDF bundle do not match');
+   // Every original member must be migration-fenced before one DO commit.
+   const collections=[...new Set(b.operations.map(op=>op.collection))];
+   for(const name of collections)if(
+       (await liveMigration.state(m.schoolId,name))!=='active')
+     fail(503,'Every atomic collection must have verified TEST baseline',
+       'LIVE_MIGRATION_NOT_ACTIVE');
+   const operations=b.operations.map(item=>({...item,data:clean(item.data)}));
+   const result=await liveMigration.live(m.schoolId,first.collection,
+     ()=>liveSync.command(m.schoolId,{command:'bundlePublish',bundleId:b.bundleId,
+       operations,media:b.media,mediaManifestHash:b.mediaManifestHash}),
+     {action:'managed_records',operation:'write',collection:first.collection,
+       id:first.id,operationId:first.operationId,expectedRecordRevision:first.expectedRevision});
+   if(result?.schoolId!==m.schoolId||result.bundleProtocol!==1||
+      result.cloudState!=='committed'||result.mediaReady!==true||
+      typeof result.archiveReady!=='boolean'||
+      !Array.isArray(result.acknowledgements)||result.acknowledgements.length!==b.operations.length)
+    fail(502,'Verified atomic bundle receipt unavailable');
+   return {success:true,schoolId:m.schoolId,...result};
+  }
   if(operation==='reconcile')return reconcileAdmission(m,25);
+  const deliveryDrained=async()=>{
+   const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
+   return stats.every(s=>s.pending===0&&s.needsAttention===0);
+  };
+  if(['prepare-person-bundle','rollback-person-bundle'].includes(operation)){
+   if(!atomicBundleTestSchools.includes(m.schoolId))
+    fail(412,'Atomic person bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
+   if(b.confirmIsolatedBundleTest!==true||Object.hasOwn(b,'collection')||Object.hasOwn(b,'collections'))
+    fail(400,'Explicit confirmation of the fixed isolated person bundle group required');
+   const collections=['students_directory','teachers_directory','documents'];
+   await reconcileAdmission(m);
+   if(operation==='rollback-person-bundle'){
+    const result=await liveMigration.rollbackGroup(m.schoolId,collections,
+      proof=>liveSync.rollback(m.schoolId,proof.collection,body=>signedRequest(m,body),proof.rollbackToken,{readCollection:true}));
+    return {success:true,...result};
+   }
+   const result=await liveMigration.prepareGroup(m.schoolId,collections,deliveryDrained,
+     collection=>liveSync.prepare(m.schoolId,collection,body=>signedRequest(m,body)));
+   return {success:true,...result};
+  }
   if(operation==='prepare'){
    if(b.confirmIsolatedMigration!==true)fail(400,'Explicit isolated migration confirmation required');
    await reconcileAdmission(m);
-   const drained=async()=>{
-    const stats=await Promise.all(['records','notices'].map(lane=>cloudflareSync.rpc(m.schoolId,lane,{command:'stats'})));
-    return stats.every(s=>s.pending===0&&s.needsAttention===0);
-   };
-   const prepared=await liveMigration.prepare(m.schoolId,b.collection,drained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)));
+   const prepared=await liveMigration.prepare(m.schoolId,b.collection,deliveryDrained,()=>liveSync.prepare(m.schoolId,b.collection,body=>signedRequest(m,body)));
    if(b.collection==='school_notices')await cloudflareSync.rpc(m.schoolId,'notices',{command:'retireNoticeCache'});
    return {success:true,...prepared};
   }
@@ -739,13 +1195,19 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
    await reconcileAdmission(m);
    return {success:true,...await liveMigration.rollback(m.schoolId,b.collection,proof=>liveSync.rollback(m.schoolId,b.collection,body=>signedRequest(m,body),proof.rollbackToken))};
   }
-  if(operation==='grant')return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
+  if(operation==='grant'){
+   await liveMigration.assertCohortAdmission(m.schoolId);
+   return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
+  }
   const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory']);
   if(operation==='operationReceipt'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))fail(400,'Invalid live operation identity');
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
   // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
   const body={command:operation,...Object.fromEntries(['collection','id','operation','operationId','expectedRevision','data','after','at','cursor','createIntent','cachedBaseline'].filter(k=>b[k]!==undefined).map(k=>[k,['data','cachedBaseline'].includes(k)?clean(b[k]):b[k]])),...(operation==='received'?{device:hash(m.schoolId+'\n'+m.uid+'\n'+String(b.deviceId||''))}:{})};
   if(operation==='received'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.deviceId||''))fail(400,'Persistent device identity required');
+  if(['read','snapshot','changes','head'].includes(operation))
+   await liveMigration.assertCohortAdmission(m.schoolId,
+     ['read','snapshot'].includes(operation)?body.collection:undefined);
   const drive=record=>signedRequest(m,record);
   const result=operation==='read'?await liveSync.read(m.schoolId,body.collection,body.id,drive):
     operation==='commit'?await liveMigration.live(m.schoolId,body.collection,()=>liveSync.commit(m.schoolId,body,drive),body):
@@ -846,6 +1308,47 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   await deviceAccess.authorize({req,body:b,identity:fresh,entitlement:lease(fresh)});
   return {success:true,schoolId:m.schoolId,changeFeedVersion:1,...event};
  }
+ if(action==='managed/cloudflare/retry-delete'){
+  if(!edgeEnabled(m.schoolId))fail(503,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const access=lease(m);
+  if(!access.allowed||access.status!=='trial'&&!access.activated)fail(403,'School licence is inactive');
+  if(b.lane!=='records'||typeof b.id!=='string'||!/^[a-f0-9]{64}$/.test(b.id)||
+     typeof b.operationId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId)||
+     typeof b.recordId!=='string'||!/^[-A-Za-z0-9_]{1,200}$/.test(b.recordId)||
+     typeof b.expectedRecordRevision!=='string'||!b.expectedRecordRevision||
+     b.expectedRecordRevision.length>100||
+     typeof b.deletedStudentGeneration!=='string'||!/^p-[a-f0-9]{32,64}$/.test(b.deletedStudentGeneration)||
+     typeof b.credentialFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(b.credentialFingerprint))
+    fail(400,'Invalid original Delete Everywhere review identity','DELETE_REVIEW_INVALID');
+  if(firebaseCredentialFingerprint!==null&&b.credentialFingerprint!==firebaseCredentialFingerprint)
+   fail(409,'Runtime Firebase identity changed','DELETE_REVIEW_CREDENTIAL_MISMATCH');
+  if(b.diagnoseOnly===true){
+   const review=await cloudflareSync.rpc(m.schoolId,'records',{
+    command:'diagnoseDeleteReview',id:b.id,operationId:b.operationId,
+    recordId:b.recordId,expectedRecordRevision:b.expectedRecordRevision,
+    deletedStudentGeneration:b.deletedStudentGeneration,
+    credentialFingerprint:b.credentialFingerprint
+   });
+   if(!review||typeof review.state!=='string'||!Number.isInteger(review.retryCount)||
+      typeof review.immutable!=='boolean')
+    fail(503,'Delete review diagnostic not verified','DELETE_REVIEW_DIAGNOSTIC_UNVERIFIED');
+   return {success:true,schoolId:m.schoolId,reviewDiagnosis:review,diagnosticReadOnly:true};
+  }
+  // Cloudflare itself verifies the immutable stored payload, fingerprint,
+  // original operation ID, revision and failure class before reopening.
+  const reopened=await cloudflareSync.rpc(m.schoolId,'records',{
+   command:'retryDeleteReview',id:b.id,operationId:b.operationId,
+   recordId:b.recordId,expectedRecordRevision:b.expectedRecordRevision,
+   deletedStudentGeneration:b.deletedStudentGeneration,credentialFingerprint:b.credentialFingerprint
+  });
+  if(reopened?.id!==b.id||reopened.state!=='retry'||
+     ![1,2].includes(reopened.response?.reviewRetryCount)||
+     reopened.response?.reviewCredentialFingerprint!==b.credentialFingerprint)
+   fail(409,'Original Delete Everywhere receipt was not safely reopened','DELETE_REVIEW_REOPEN_FAILED');
+  const drained=await edgeDelivery.drain(m.schoolId,'records',body=>signedRequest(m,body));
+  const receipt=await edgeDelivery.status(m.schoolId,'records',b.id,body=>signedRequest(m,body));
+  return {success:true,schoolId:m.schoolId,retried:true,processed:drained.processed,...receipt};
+ }
  if(action==='managed/cloudflare/operation'){
   if(!edgeEnabled(m.schoolId))fail(503,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
   const until=Date.now()+Math.min(20000,Math.max(0,Number(b.waitMillis)||0));
@@ -860,7 +1363,7 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
@@ -1094,6 +1597,185 @@ function createManagedSchools({liveSyncSchools=[],edgeRecordParallelism=1,cloudf
   const result=await signed(m,{action:'managed_binary_download',fileId:b.fileId,expectedSha256:b.expectedSha256,expectedVersion:b.expectedVersion});
   if(result.binaryDownloadVersion!==1||result.fileId!==b.fileId||result.sha256!==b.expectedSha256||result.version!==b.expectedVersion||typeof result.base64!=='string'||result.base64.length>28*1024*1024||!Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<1||result.sizeBytes>20*1024*1024)fail(502,'Unverified binary download','BINARY_DOWNLOAD_UNVERIFIED');
   const bytes=Buffer.from(result.base64,'base64');if(bytes.length!==result.sizeBytes||createHash('sha256').update(bytes).digest('hex')!==b.expectedSha256)fail(502,'Binary content verification failed','BINARY_DOWNLOAD_UNVERIFIED');return result;
+ }
+ if(action==='managed/record/media/stage/resumable'){
+  // Original school person record + ONE original portrait share an immutable
+  // R2-backed Cloudflare file receipt. Other media and atomic bundles retain
+  // their original version-safe owners until explicitly migrated.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare media record delivery is disabled','PHOTO_RECORD_STAGE_UNAVAILABLE');
+  const r=b.record,d=r?.data;
+  if(r?.version!==1||r.schoolId!==m.schoolId||
+     !['students_directory','teachers_directory'].includes(r.collection)||
+     r.operation!=='write'||r.mediaPrefix!=='photo'||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(r.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(r.operationId||'')||
+     typeof r.expectedRecordRevision!=='string'||r.expectedRecordRevision.length>100||
+     !/^[a-f0-9]{64}$/.test(r.sourceHash||'')||
+     !d||typeof d!=='object'||Array.isArray(d)||
+     d.schoolId!==m.schoolId||d.photoSourceHash!==r.sourceHash||
+     Object.hasOwn(d,'photoUrl')||Object.hasOwn(d,'photoFileId')||
+     Object.keys(d).some(k=>/base64|localpath|password|private_key|secret/i.test(k))||
+     JSON.stringify(r).length>190000)
+   fail(400,'Invalid original person/photo stage');
+  if(!['begin','part'].includes(b.operation)||
+     !/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+     b.uploadKey!==hash(JSON.stringify([m.schoolId,r.collection,r.id,r.operationId,b.sha256]))||
+     !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+     b.sizeBytes>20*1024*1024||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||''))
+   fail(400,'Invalid portrait chunk stage');
+  if(b.operation==='part'){
+   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||
+      typeof b.base64!=='string'||!b.base64||b.base64.length>700000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      !/^[a-f0-9]{64}$/.test(b.chunkSha256||''))
+    fail(400,'Invalid portrait chunk');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(!bytes.length||bytes.length>512*1024||
+      b.offset+bytes.length>b.sizeBytes||
+      bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.chunkSha256)
+    fail(400,'Invalid portrait chunk SHA-256');
+  }else{
+   // Never wait on slow Google Apps Script just to accept durable bytes.
+   // School linkage is checked by the broker; later Drive retries own itself.
+   const configured=await cachedRead(storageStates,m.schoolId,
+     ()=>db.doc('school_storage_private/'+m.schoolId).get());
+   if(!configured.exists||configured.data().ready!==true)
+    fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
+  }
+  const out=await edgeDelivery.file(m.schoolId,{
+    action:'managed_upload_resumable',operation:b.operation,
+    uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,
+    name:b.name,mime:b.mime,record:clean(r),
+    ...(b.operation==='part'?{
+      offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256}:{})});
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.cloudflareAccepted===true&&out.edgeDeliveryVersion===1&&
+     out.delivery?.lane==='file-'+out.delivery.id)return out;
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.uploadResumableVersion===1&&out.uploadKey===b.uploadKey&&
+     out.sha256===b.sha256&&out.sizeBytes===b.sizeBytes&&
+     out.cloudflareAccepted===true&&out.driveState==='receiving')return out;
+  fail(502,'Original portrait stage ACK unverified','PHOTO_RECORD_STAGE_UNVERIFIED');
+ }
+ if(action==='managed/document/stage/resumable'){
+  // Every chunk carries the identical, immutable document sidecar. No client
+  // receives a Drive fileId until the broker has published its metadata.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare document delivery is not enabled','DOCUMENT_STAGE_UNAVAILABLE');
+  const d=b.document,meta=d?.data;
+  if(d?.version!==1||d.schoolId!==m.schoolId||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(d.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(d.operationId||'')||
+     typeof d.expectedRecordRevision!=='string'||d.expectedRecordRevision.length>100||
+     (d.expectedRevision!==undefined&&
+      (typeof d.expectedRevision!=='string'||d.expectedRevision.length>100||
+       d.expectedRevision.length>0&&!d.expectedRecordRevision))||
+     (d.expectedUploadedAt!==undefined&&
+      (!Number.isFinite(d.expectedUploadedAt)||d.expectedUploadedAt<0))||
+     !meta||typeof meta!=='object'||Array.isArray(meta)||
+     meta.schoolId!==m.schoolId||meta.documentId!==d.id||
+     meta.documentRevision!==d.operationId||
+     typeof meta.studentId!=='string'||!meta.studentId||
+     !/^[a-f0-9]{64}$/.test(meta.contentHash||'')||
+     Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
+      ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
+     JSON.stringify(d).length>24000)
+   fail(400,'Invalid immutable document staging request');
+  if(!['begin','part'].includes(b.operation)||
+     !/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     b.uploadKey!==hash(d.id+':'+d.operationId)||
+     !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+     b.sha256!==meta.contentHash||
+     !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||
+     b.sizeBytes>20*1024*1024||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||''))
+   fail(400,'Invalid document chunk manifest');
+  if(b.operation==='part'){
+   if(!Number.isSafeInteger(b.offset)||b.offset<0||b.offset>=b.sizeBytes||
+      typeof b.base64!=='string'||!b.base64||b.base64.length>700000||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64)||
+      !/^[a-f0-9]{64}$/.test(b.chunkSha256||''))
+    fail(400,'Invalid document chunk');
+   const bytes=Buffer.from(b.base64,'base64');
+   if(!bytes.length||bytes.length>512*1024||
+      b.offset+bytes.length>b.sizeBytes||
+      bytes.toString('base64')!==b.base64||
+      hash(bytes)!==b.chunkSha256)
+    fail(400,'Invalid document chunk SHA-256');
+  }else{
+   // Verified on school setup; do not wait on Google Script availability
+   // while saving durable bytes at Cloudflare. Broker retries Drive later.
+   const configured=await cachedRead(storageStates,m.schoolId,
+     ()=>db.doc('school_storage_private/'+m.schoolId).get());
+   if(!configured.exists||configured.data().ready!==true)
+    fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
+  }
+  const out=await edgeDelivery.file(m.schoolId,{
+   action:'managed_upload_resumable',operation:b.operation,
+   uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,
+   name:b.name,mime:b.mime,document:clean(d),
+   ...(b.operation==='part'?{offset:b.offset,base64:b.base64,chunkSha256:b.chunkSha256}:{})});
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.cloudflareAccepted===true&&out.edgeDeliveryVersion===1&&
+     out.delivery?.lane==='file-'+out.delivery.id)return out;
+  if(out?.success===true&&out.schoolId===m.schoolId&&
+     out.uploadResumableVersion===1&&out.uploadKey===b.uploadKey&&
+     out.sha256===b.sha256&&out.sizeBytes===b.sizeBytes&&
+     out.cloudflareAccepted===true&&out.driveState==='receiving')return out;
+  fail(502,'Document staged upload receipt unverified','DOCUMENT_STAGE_UNVERIFIED');
+ }
+ if(action==='managed/document/stage'){
+  // New independent document owner is explicitly opt-in. Legacy clients keep
+  // their version-safe Drive-dependent flow until the app journal is upgraded.
+  if(!allEdge(m.schoolId)||!edgeDelivery)
+   fail(503,'Cloudflare document delivery is not enabled','DOCUMENT_STAGE_UNAVAILABLE');
+  const d=b.document,meta=d?.data;
+  if(d?.version!==1||d.schoolId!==m.schoolId||
+     !/^[A-Za-z0-9_-]{1,200}$/.test(d.id||'')||
+     !/^[A-Za-z0-9_-]{16,100}$/.test(d.operationId||'')||
+     typeof d.expectedRecordRevision!=='string'||d.expectedRecordRevision.length>100||
+     !meta||typeof meta!=='object'||Array.isArray(meta)||
+     meta.schoolId!==m.schoolId||meta.documentId!==d.id||
+     meta.documentRevision!==d.operationId||
+     typeof meta.studentId!=='string'||!meta.studentId||
+     !/^[a-f0-9]{64}$/.test(meta.contentHash||'')||
+     Object.keys(meta).some(k=>/base64|localpath|password|private_key|secret/i.test(k)||
+      ['fileId','fileUrl','_syncRevision','_syncOperationId'].includes(k))||
+     JSON.stringify(d).length>24000)
+   fail(400,'Invalid immutable document staging request');
+  if(!/^[a-f0-9]{64}$/.test(b.uploadKey||'')||
+     b.uploadKey!==hash(d.id+':'+d.operationId)||
+     typeof b.name!=='string'||!b.name||b.name.length>200||
+     !/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||
+     typeof b.base64!=='string'||b.base64.length>28*1024*1024||
+     !/^[A-Za-z0-9+/]*={0,2}$/.test(b.base64))
+   fail(400,'Invalid document file staging request');
+  const bytes=Buffer.from(b.base64,'base64');
+  if(!bytes.length||bytes.length>20*1024*1024||
+     bytes.toString('base64')!==b.base64||
+     hash(bytes)!==meta.contentHash)
+   fail(400,'Document content SHA-256 mismatch');
+  // No client may obtain a Cloudflare ACK for an unconfigured Drive owner.
+  // Only durable per-school linkage is required for Cloudflare staging.
+  // Provider health is a later server background dependency, not an ACK gate.
+  const configured=await cachedRead(storageStates,m.schoolId,
+    ()=>db.doc('school_storage_private/'+m.schoolId).get());
+  if(!configured.exists||configured.data().ready!==true)
+   fail(409,'Connect this school Drive before uploading','SCHOOL_STORAGE_NOT_CONNECTED');
+  const result=await edgeDelivery.wholeFile(m.schoolId,{
+   uploadKey:b.uploadKey,name:b.name,mime:b.mime,base64:b.base64,
+   document:clean(d)});
+  if(result?.success!==true||result.schoolId!==m.schoolId||
+     result.cloudflareAccepted!==true||
+     !['pending','verified'].includes(result.driveState))
+   fail(502,'Durable Cloudflare document staging ACK missing','DOCUMENT_STAGE_UNVERIFIED');
+  return result;
  }
  if(action==='managed/file/upload/resumable'){
   if(!['begin','status','part'].includes(b.operation)||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||!/^[a-f0-9]{64}$/.test(b.sha256||'')||!Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>20*1024*1024||typeof b.name!=='string'||!b.name||b.name.length>200||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||b.mime.startsWith('application/vnd.google-apps.'))fail(400,'Invalid resumable school upload');

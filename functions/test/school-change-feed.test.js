@@ -40,6 +40,54 @@ test('bounded waiters reject overload and bad cursors without leaking subscripti
  await assert.rejects(feed.wait(A,'forged'),e=>e.status===400);
  await assert.rejects(feed.wait('other'),/school/);
 });
+test('verified student cascade wakes five independent PCs for all linked deleted collections',async()=>{
+ const cloud=sharedCloud(),base=fixture();
+ const nativeDoc=base.db.doc;
+ const db={...base.db,
+  doc:p=>p.startsWith('school_sync_hints/')?cloud.db.doc(p):nativeDoc(p),
+  runTransaction:fn=>cloud.db.runTransaction(tx=>fn({
+   get:async ref=>ref.path.startsWith('schools/')?{exists:false}:tx.get(ref),
+   set:(ref,value,options)=>tx.set(ref,value,options),
+   delete:ref=>base.docs.delete(ref.path),
+  }))
+ };
+ const targets=[
+  {collection:'students_directory',id:'pupil',generation:'p-old',sourceRevision:'rev-0',revision:'drive-verified'},
+  {collection:'documents',id:'doc-1',generation:'p-old',sourceRevision:'doc-old',revision:'doc-deleted'},
+  {collection:'fee_payments',id:'payment-1',generation:'p-old',sourceRevision:'pay-old',revision:'pay-deleted'},
+ ];
+ const fetchImpl=async(url,opt)=>{
+  const outer=JSON.parse(opt.body),body=JSON.parse(outer.payload);
+  const ack=body.action==='managed_health'
+   ?{success:true,schoolId:A,storageReady:true,deleteEverywhereVersion:1}
+   :{success:true,schoolId:A,syncProtocol:2,recordRevision:'drive-verified',
+     deleteEverywhereVersion:1,driveDeletionComplete:true,deletionTargets:targets,
+     record:{id:'pupil',schoolId:A,_syncDeleted:true,_syncRevision:'drive-verified',
+       _syncOperationId:'cascade-operation-0000001',
+       _syncErasePlan:{complete:true,targets}}};
+  return {ok:true,status:200,text:async()=>JSON.stringify(ack)};
+ };
+ // Build the broker after injecting the shared multi-instance Firestore feed:
+ // changing a fixture's db references after construction would leave its
+ // internal delivery owner on the old isolated DB.
+ const handle=createManagedSchools({auth:base.auth,db,projectId:'central',
+  encryptionKey:key,now:()=>time,fetchImpl,scheduleHint:cb=>setImmediate(cb)});
+ const call=body=>handle({method:'POST',headers:{authorization:'Bearer A'},body:{schoolId:A,...body}});
+ const feeds=Array.from({length:5},()=>createSchoolChangeFeed({
+  db:cloud.db,collections:['students_directory','documents','fee_payments'],waitMillis:10
+ }));
+ const before=await Promise.all(feeds.map(feed=>feed.wait(A)));
+ const ack=await call({action:'managed/records',collection:'students_directory',
+  operation:'delete',id:'pupil',syncProtocol:2,deleteEverywhereVersion:1,
+  operationId:'cascade-operation-0000001',expectedRecordRevision:'rev-0'});
+ assert.equal(ack.driveDeletionComplete,true);
+ assert.equal(ack.firebaseDeletionComplete,true);
+ const after=await Promise.all(feeds.map((feed,i)=>feed.wait(A,before[i].cursor)));
+ for(const event of after)assert.deepEqual(new Set(event.collections),
+   new Set(['students_directory','documents','fee_payments']));
+ assert.equal((await feeds[0].wait(B)).cursor,'empty:0');
+});
+
 test('multi-collection hint uses one transaction; failed hint publication retains a durable recovery intent',async()=>{
  const cloud=sharedCloud();let writes=0;
  const original=cloud.db.runTransaction;

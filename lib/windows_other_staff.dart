@@ -137,7 +137,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
         ...person,
         'contact': person['mobile'] ?? '',
         'rollNo': person['employeeId'] ?? '',
-      });
+      }, previewOnly: true);
       OtherStaffDirectory.requireSchool(profile);
       if (mounted && bytes != null)
         await WindowsDocumentTemplates.preview(

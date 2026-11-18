@@ -13,13 +13,19 @@ Future<Map<String, dynamic>> uploadManagedChunks({
   required String mime,
   required Uint8List bytes,
   required Future<Map<String, dynamic>> Function(Map<String, dynamic>) request,
+  String action = 'managed/file/upload/resumable',
+  Map<String, dynamic>? document,
+  Map<String, dynamic>? record,
+  bool acceptDurableCloudflareHandoff = false,
 }) async {
   if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024) {
     throw StateError('School file must be between 1 byte and 20 MB.');
   }
   final digest = sha256.convert(bytes).toString();
   final metadata = <String, dynamic>{
-    'action': 'managed/file/upload/resumable', 'schoolId': schoolId,
+    'action': action, 'schoolId': schoolId,
+    if (document != null) 'document': document,
+    if (record != null) 'record': record,
     'uploadKey': uploadKey, 'name': name, 'mime': mime,
     'sha256': digest, 'sizeBytes': bytes.length,
   };
@@ -35,16 +41,44 @@ Future<Map<String, dynamic>> uploadManagedChunks({
     }
     return out;
   }
-  var result = verify(await request({...metadata, 'operation': 'begin'}));
+  // A durable, exactly bound file ticket ends only the outgoing device upload.
+  // The independent broker remains responsible for the real Drive fileId.
+  Map<String, dynamic>? cloudAccepted(Map<String, dynamic> out) {
+    if (!acceptDurableCloudflareHandoff ||
+        out['cloudflareHandoffVersion'] != 1 ||
+        out['success'] != true ||
+        out['schoolId'] != schoolId ||
+        out['cloudflareAccepted'] != true ||
+        !(out['driveState'] == 'pending' ||
+          out['driveState'] == 'verified' && out['committed'] == true &&
+          out['fileId'] is String &&
+          (out['fileId'] as String).isNotEmpty)) return null;
+    final ticket = out['delivery'];
+    final expected = sha256.convert(utf8.encode(
+      jsonEncode([schoolId, uploadKey]),
+    )).toString();
+    if (ticket is! Map || ticket['id'] != expected ||
+        ticket['lane'] != 'file-$expected') {
+      throw StateError('Document Cloudflare ticket identity did not verify.');
+    }
+    return out;
+  }
+  final first = await request({...metadata, 'operation': 'begin'});
+  final alreadyAccepted = cloudAccepted(first);
+  if (alreadyAccepted != null) return alreadyAccepted;
+  var result = verify(first);
   // 20 MiB / 512 KiB plus a bounded allowance for provider partial progress.
   for (var step = 0; step < 160 && result['committed'] != true; step++) {
     final offset = result['offset'] as int;
     final end = (offset + 512 * 1024).clamp(0, bytes.length).toInt();
     final chunk = Uint8List.sublistView(bytes, offset, end);
-    final next = verify(await request({...metadata, 'operation': 'part',
+    final reply = await request({...metadata, 'operation': 'part',
       'offset': offset, 'base64': base64Encode(chunk),
       'chunkSha256': sha256.convert(chunk).toString(),
-    }));
+    });
+    final completedCloudflare = cloudAccepted(reply);
+    if (completedCloudflare != null) return completedCloudflare;
+    final next = verify(reply);
     if (next['committed'] != true && next['offset'] <= offset) {
       throw TimeoutException('School upload has not advanced; retain the same upload key.');
     }

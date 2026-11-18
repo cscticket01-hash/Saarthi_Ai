@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'windows_platform_client.dart';
 import 'windows_shared_repair_knowledge.dart';
 import 'windows_repair_memory.dart';
@@ -24,11 +25,39 @@ bool pendingRecordBackoffDue(
   DateTime now, {
   bool explicitRetry = false,
 }) {
-  final deadline = item['retryAtMillis'];
-  return explicitRetry ||
-      item['syncState'] != 'retry' ||
-      deadline is! int ||
-      deadline <= now.millisecondsSinceEpoch;
+  // A failed transport may be retained as needsAttention. Its stored
+  // provider deadline still applies after process restart/reconnect.
+  // Sync Now may probe a non-quota record, but never bypass a quota minimum.
+  if(!{'retry','needsAttention'}.contains(item['syncState']))return true;
+  final deadline=item['retryAtMillis'];
+  if(deadline is! int||deadline<=now.millisecondsSinceEpoch)return true;
+  return explicitRetry&&item['failureCategory']!='quota';
+}
+
+/// An unclassified failed notice delete can be retried only after an
+/// authenticated point read proves either its unchanged original CAS baseline
+/// or the tombstone for this exact immutable operation. This is NOT an ACK.
+bool verifiedUnknownNoticeDeleteReadback(
+  Map item, Object? remote, String school,
+) {
+  if (item['schoolId'] != school ||
+      item['collection'] != 'school_notices' ||
+      item['operation'] != 'delete' ||
+      item['syncState'] != 'needsAttention' ||
+      item['failureCategory'] != 'unknown' ||
+      item['baseCloudRevision'] is! String ||
+      (item['baseCloudRevision'] as String).isEmpty ||
+      item['operationId'] is! String ||
+      remote is! Map ||
+      remote['schoolId'] != school ||
+      remote['_syncRevision'] is! String ||
+      (remote['_syncRevision'] as String).isEmpty) {
+    return false;
+  }
+  return remote['_syncRevision'] == item['baseCloudRevision'] &&
+          remote['_syncDeleted'] != true ||
+      remote['_syncDeleted'] == true &&
+          remote['_syncOperationId'] == item['operationId'];
 }
 
 /// Publish the durable queue for one immutable local school profile.
@@ -72,10 +101,21 @@ class WindowsPendingSchoolSync {
       final item = row.data(),
           state = item['syncState'],
           category = item['failureCategory'];
+      // Only the exact atomic bundle owner can repair this reserved operation.
+      if(item['atomicBundleId']!=null)continue;
+      // Existing unknown notices must not be stuck forever. Probe only the
+      // original same-school DELETE; no automatic replay without readback.
+      final unknownNoticeDelete = state == 'needsAttention' &&
+          category == 'unknown' &&
+          item['collection'] == 'school_notices' &&
+          item['operation'] == 'delete' &&
+          item['baseCloudRevision'] is String &&
+          (item['baseCloudRevision'] as String).isNotEmpty;
       if (item['schoolId'] != school ||
           !{'conflict', 'needsAttention'}.contains(state) ||
           state != 'conflict' &&
-              !{'networkPath', 'timeout', 'server'}.contains(category) ||
+              !{'networkPath', 'timeout', 'server'}.contains(category) &&
+              !unknownNoticeDelete ||
           !{'set', 'update', 'delete'}.contains(item['operation']) ||
           item['collection'] == 'documents' ||
           item['operationId'] is! String ||
@@ -93,6 +133,10 @@ class WindowsPendingSchoolSync {
               prior['operationId'] != item['operationId'])) {
         throw StateError('Repair journal identity unverified.');
       }
+      // One authenticated recovery attempt per immutable unknown deletion.
+      // The journal survives restarts and manual Sync Now requests.
+      if (unknownNoticeDelete &&
+          prior?['unknownNoticeDeleteReplayV1'] == true) continue;
       final learned = learnedAction?.call(item['collection'] as String, category?.toString() ?? 'conflict');
       // One learned replay per immutable operation; server CAS/idempotency remain
       // authoritative. Quota/auth/configuration/conflict never use this shortcut.
@@ -234,6 +278,56 @@ class WindowsPendingSchoolSync {
           (response['records'] as Map).keys.any((k) => k != item['documentId']))
         throw StateError('Repair readback unverified; original retained.');
       final remote = response['records'][item['documentId']];
+      if (unknownNoticeDelete) {
+        var outcome = 'review_required';
+        final current = (await row.reference.get()).data();
+        scope();
+        final currentSignature = current == null ? null : syncPayloadHash({
+          'schoolId': school, 'collection': current['collection'],
+          'documentId': current['documentId'],
+          'operationId': current['operationId'],
+          'operation': current['operation'],
+          'baseCloudRevision': current['baseCloudRevision'],
+          'data': current['data'],
+        });
+        if (verifiedUnknownNoticeDeleteReadback(item, remote, school) &&
+            current != null && currentSignature == inputSignature &&
+            current['syncState'] == 'needsAttention' &&
+            current['failureCategory'] == 'unknown') {
+          // The original operation ID and CAS revision are unchanged. The
+          // server must still return the real verified deletion receipt.
+          final admitted = await db.recordOutboxFailure(
+            row.reference, current,
+            state: 'retry', failureCategory: 'server',
+            retryCount: 0,
+            retryAtMillis: clock().millisecondsSinceEpoch,
+            error: 'Authenticated notice deletion readback verified; original operation retained for authoritative retry.',
+          );
+          scope();
+          if (admitted) {
+            await journal.set({'unknownNoticeDeleteReplayV1': true},
+                const SetOptions(merge: true));
+            scope();
+            outcome = 'retry_admitted';
+            repaired++;
+          }
+        }
+        await journal.set({
+          'outcome': outcome,
+          'verifiedReadbackAt': clock().millisecondsSinceEpoch,
+        }, const SetOptions(merge: true));
+        scope();
+        onActivity?.call({
+          'schoolId': school, 'queueCollection': '_windows_firebase_outbox',
+          'queueId': row.id, 'operationId': item['operationId'],
+          'collection': item['collection'],
+          'documentId': item['documentId'],
+          'failureCategory': 'unknown',
+          'stage': 'repairDiagnosed', 'outcome': outcome,
+          'at': clock().millisecondsSinceEpoch,
+        });
+        continue;
+      }
       if (remote != null) {
         if (remote is! Map ||
             remote['schoolId'] != school ||
@@ -405,6 +499,20 @@ class WindowsPendingSchoolSync {
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
       if (canAdmit?.call() == false) break;
       var item = queued.data();
+      // Cloudflare owns this immutable original. The device never submits a
+      // second mutation merely to poll Google Drive; the receipt journal can
+      // settle it when the authenticated provider proof eventually arrives.
+      if(item['syncState']=='cloudAccepted')continue;
+      // This exact original operation belongs to the isolated atomic
+      // Person/Card recovery owner. Never issue a second independent upload.
+      if(item['atomicBundleId']!=null) {
+        if(item['atomicBundleId'] is! String ||
+            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['atomicBundleId']) ||
+            !{'reserved','committed'}.contains(item['atomicState']) ||
+            item['schoolId']!=db.activeProfileIdentity['schoolSyncId'])
+          throw StateError('Atomic outbox reservation requires school review.');
+        continue;
+      }
       if (sendVersioned != null &&
           item['schoolId'] != null &&
           item['schoolId'] != db.activeProfileIdentity['schoolSyncId']) {
@@ -415,7 +523,10 @@ class WindowsPendingSchoolSync {
       }
       if (onlyOperationId != null && item['operationId'] != onlyOperationId)
         continue;
-      if (respectBackoff &&
+      // A manual Sync Now can bypass a local transport backoff, but cannot
+      // override a provider quota minimum. Keep the immutable pending request
+      // until the saved deadline even when the caller disables normal backoff.
+      if ((respectBackoff || item['failureCategory'] == 'quota') &&
           !pendingRecordBackoffDue(
             item,
             DateTime.now(),
@@ -586,6 +697,22 @@ class WindowsPendingSchoolSync {
           report('waitingForResponse', queued.id, item);
           await response;
         }
+      } on CloudflareRecordHandoff catch (accepted) {
+        unchanged();
+        if(item['schoolId']!=accepted.school||
+            item['collection']!=accepted.collection||
+            item['documentId']!=accepted.id||
+            item['operationId']!=accepted.operationId) {
+          throw StateError('Cloudflare handoff changed original operation identity.');
+        }
+        final saved=await db.recordOutboxCloudHandoff(
+          queued.reference,item,ticketId:accepted.ticketId,
+          lane:accepted.lane,
+          mediaSourceHash:accepted.mediaSourceHash,
+          mediaFileSha256:accepted.mediaFileSha256);
+        unchanged();
+        if(saved)report('cloudflareAccepted',queued.id,item);
+        continue; // No canonical revision / no outbox deletion.
       } catch (caught, stack) {
         unchanged();
         final e = caught is FileSystemException && caught is! PendingDocumentFileFailure &&

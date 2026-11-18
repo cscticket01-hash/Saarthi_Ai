@@ -102,8 +102,29 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
   }
   return {kind,generation,retiredGeneration:retiring?oldGeneration:null,parentWasDeleted:parent?._syncDeleted===true,children};
  }
- async function execute(school,body){
+ function deleteReceipt(school,body,record,ack){
+  const canonical=ack?.record,targets=ack?.deletionTargets;
+  if(ack?.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||
+     ack.deleteEverywhereVersion!==1||ack.driveDeletionComplete!==true||ack.firebaseDeletionComplete!==true||
+     !record||record._syncDeleted!==true||record._syncOperationId!==body.operationId||
+     ack.recordRevision!==record._syncRevision||!canonical||canonical.schoolId!==school||
+     canonical.id!==undefined&&canonical.id!==body.id||canonical._syncDeleted!==true||
+     canonical._syncRevision!==record._syncRevision||canonical._syncOperationId!==body.operationId||
+     canonical._syncDeletedOwner!==record._syncDeletedOwner||canonical._syncErasePlan?.complete!==true||
+     !Array.isArray(targets)||targets.length<1||targets.length>5000||
+     JSON.stringify(canonical._syncErasePlan.targets)!==JSON.stringify(targets)||
+     !targets.some(target=>target.collection===body.collection&&target.id===body.id&&target.revision===record._syncRevision))
+   fail(503,'PERSON_DELETE_RECEIPT_UNVERIFIED');
+  return ack;
+ }
+ function validate(school,body){
   if(!/^vs-[a-f0-9]{32}$/.test(school)||!handled(body)||!validId(body.id)||body.syncProtocol!==2||!/^[A-Za-z0-9_-]{16,100}$/.test(body.operationId||'')||typeof body.expectedRecordRevision!=='string')fail(400,'PERSON_OPERATION_INVALID');
+  if(body.collection==='students_directory'&&body.operation==='write'&&body.data?.schoolId===school&&
+     !body.data._syncFieldPatch&&!/^p-[a-f0-9]{32,64}$/.test(body.data.mobileStableId||''))
+   fail(400,'PERSON_GENERATION_INVALID');
+ }
+ async function execute(school,body){
+  validate(school,body);
   const ownerId=hash([school,body.collection,body.id]),operationKey=hash([school,body.operationId]);
   const ownerRef=db.doc('school_person_lifecycle_owners/'+ownerId),operationRef=db.doc('school_person_lifecycle_operations/'+operationKey);
   const fingerprint=hash(body);
@@ -122,14 +143,21 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
    });
   }
   if(operation.schoolId!==school||operation.collection!==body.collection||operation.id!==body.id)fail(403,'PERSON_OPERATION_IDENTITY_MISMATCH');
+  const everywhere=body.operation==='delete'&&body.deleteEverywhereVersion===1;
   if(operation.state==='verified'){
-   const record=await read(school,body.collection,body.id);
-   return {success:true,schoolId:school,syncProtocol:2,personLifecycleVersion:1,operationId:body.operationId,recordRevision:operation.recordRevision,record:record?._syncRevision===operation.recordRevision?record:null,reconcileRequired:record?._syncRevision!==operation.recordRevision};
+   let record=await read(school,body.collection,body.id),receipt;
+   // Recover the original signed completion proof, never infer Firebase/Drive
+   // deletion from a lifecycle journal or replay an old delete over a new head.
+   if(everywhere&&record?._syncRevision===operation.recordRevision){
+    const ack=await rpc(school,body);record=await read(school,body.collection,body.id);
+    receipt=deleteReceipt(school,body,record,ack);
+   }
+   return {...receipt,success:true,schoolId:school,syncProtocol:2,personLifecycleVersion:1,operationId:body.operationId,recordRevision:operation.recordRevision,record:record?._syncRevision===operation.recordRevision?record:null,reconcileRequired:record?._syncRevision!==operation.recordRevision};
   }
   let record=await read(school,body.collection,body.id);
   const already=record?._syncOperationId===body.operationId||body.operation==='delete'&&operation.parentWasDeleted&&record?._syncDeleted&&record._syncRevision===body.expectedRecordRevision;
   let ack;
-  if(!already)ack=await rpc(school,body);
+  if(!already||everywhere)ack=await rpc(school,body);
   record=await read(school,body.collection,body.id);
   if(!record||ack&&(ack.success!==true||ack.schoolId!==school||ack.syncProtocol!==2||ack.recordRevision!==record._syncRevision)||!already&&record._syncOperationId!==body.operationId)fail(503,'PERSON_ACK_UNVERIFIED');
   if(body.operation==='delete'){
@@ -140,13 +168,14 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
    const proof=await read(school,child.collection,child.id);
    if(!proof||proof._syncDeleted!==true||proof._syncDeletedOwner!==operation.retiredGeneration)fail(503,'PERSON_CASCADE_UNVERIFIED');
   }
+  const receipt=everywhere?deleteReceipt(school,body,record,ack):null;
   await db.runTransaction(async tx=>{
    const current=(await tx.get(operationRef)).data(),owner=(await tx.get(ownerRef)).data();
    if(current?.fingerprint!==fingerprint||owner?.operationId!==body.operationId)fail(409,'PERSON_LIFECYCLE_STATE_CHANGED');
    tx.set(operationRef,{...current,state:'verified',recordRevision:record._syncRevision,verifiedAt:now()});
    tx.set(ownerRef,{schoolId:school,collection:body.collection,id:body.id,state:'verified',generation:operation.generation,retiredGeneration:operation.retiredGeneration});
   });
-  return {success:true,schoolId:school,syncProtocol:2,personLifecycleVersion:1,operationId:body.operationId,recordRevision:record._syncRevision,record};
+  return {...receipt,success:true,schoolId:school,syncProtocol:2,personLifecycleVersion:1,operationId:body.operationId,recordRevision:record._syncRevision,record};
  }
  async function assertDependency(school,parentId,generation){
   if(!validId(parentId)||typeof generation!=='string'||!generation)fail(400,'PERSON_DEPENDENCY_INVALID');
@@ -155,6 +184,6 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
   const parent=await read(school,'students_directory',parentId);
   if(!parent||parent._syncDeleted||parent.mobileStableId!==generation)fail(409,'PERSON_GENERATION_RETIRED');
  }
- return {handled,execute,assertDependency};
+ return {handled,validate,execute,assertDependency};
 }
 module.exports={createLivePersonLifecycle,studentOwns,STUDENT_CHILDREN};

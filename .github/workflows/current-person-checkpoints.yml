@@ -1,0 +1,45 @@
+name: Current exact-source TEST photo and student checkpoints
+on:
+  push:
+    branches: [work/checkpoint-completion-20261104]
+    paths: ['.github/workflows/current-person-checkpoints.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sync3-verified-test-school-mutations
+  cancel-in-progress: false
+jobs:
+  current-isolated-person-checkpoints:
+    if: github.repository == 'cscticket01-hash/Saarthi_Ai' && github.ref == 'refs/heads/work/checkpoint-completion-20261104'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      VS_EXPECTED_TEST_RUNTIME: 10132bf32a3b81a3ba084a3c0b77cad9955a67cd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require unchanged deployed runtime and safe diagnostic syntax
+        run: |
+          git diff --exit-code "$VS_EXPECTED_TEST_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend
+          node --check .github/scripts/real_person_photo_edge_speed.cjs
+          node --test .github/scripts/real_person_photo_edge_speed.test.cjs
+      - name: Measure isolated synthetic photo and person lifecycle
+        env:
+          VS_PERSON_PHOTO_TEST: vs-db8afb01a3be46a983c8284714d06e5d
+          VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
+          VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
+        run: node .github/scripts/real_person_photo_edge_speed.cjs
+      - name: Retain sanitized stage timings and exact fixture outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-person-checkpoints
+          path: build/cloud-prerequisites/real-person-photo-edge-speed.json
+          if-no-files-found: warn
+          retention-days: 7

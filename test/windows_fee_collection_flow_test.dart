@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../lib/windows_backend_bridge.dart';
+import '../lib/windows_atomic_financial_coordinator.dart';
 import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_fee_receipt_preview.dart';
 import '../lib/windows_person_avatar.dart';
@@ -135,6 +136,17 @@ void main() {
       queued.where((d) => d.data()['collection'] == 'fee_ledger'),
       hasLength(1),
     );
+    // The new TEST owner must see the ORIGINAL queues from the existing
+    // Collect Payment Save, never a newly invented finance queue.
+    final originalPay=queued.singleWhere(
+      (d)=>d.data()['collection']=='fee_payments').data();
+    final originalLedger=queued.singleWhere(
+      (d)=>d.data()['collection']=='fee_ledger').data();
+    final originalPdf=(await db.collection('_windows_document_outbox')
+      .doc('FEE-one').get()).data()!;
+    expect(WindowsAtomicFinancialCoordinator.matchesFee(
+      school,originalPay,originalLedger,originalPdf),isTrue,
+      reason:'Existing offline fee Save must admit one original atomic triple');
     expect((await db.collection('fee_payments').doc('one').get()).data()!.containsKey('pdfBase64'), false);
     expect(await WindowsFeeReceiptPreview.bytes(p), pdf);
     await save(p);

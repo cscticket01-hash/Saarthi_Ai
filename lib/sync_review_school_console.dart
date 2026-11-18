@@ -5,6 +5,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_connect/central_school_cloud.dart';
+import 'live_sync_protocol.dart';
+import 'web_atomic_bundle_review.dart';
+
+/// Accept only TEST-only notice IDs from CI runs (and bounded rerun attempts).
+/// Legacy single-number offline drafts remain valid.
+bool isValidSyntheticReviewNoticeId(String id) =>
+    RegExp(r'^synthetic-web-notice-[1-9][0-9]{0,19}(?:-[1-9][0-9]{0,9})?$')
+        .hasMatch(id);
 
 /// An isolated review UI using the existing authenticated school protocol.
 /// Only synthetic notices in the registered TEST school may be created here.
@@ -25,6 +33,8 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
       noticeId = TextEditingController(),
       title = TextEditingController();
   final records = <String, Map<String, dynamic>>{};
+  List<WebAtomicPersonCard> verifiedBundles = const [];
+  int reviewedLiveCursor = 0;
   String revision = '', status = 'TEST school login required', diagnostic = '';
   String? operationId;
   Map<String, dynamic>? pendingPayload;
@@ -54,8 +64,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
         final payload = Map<String, dynamic>.from(draft['payload'] as Map);
         if (draft['schoolId'] != school ||
             draft['endpoint'] != endpoint ||
-            !RegExp(r'^synthetic-web-notice-[0-9]+$')
-                .hasMatch(draft['id'] as String) ||
+            !isValidSyntheticReviewNoticeId(draft['id'] as String) ||
             !RegExp(r'^web-review-[a-f0-9]{48}$')
                 .hasMatch(draft['operationId'] as String) ||
             payload['schoolId'] != school ||
@@ -144,6 +153,27 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
     if (mounted) setState(() => status = 'Cloud records verified');
   }
 
+  Future<void> inspectAtomicBundles() async {
+    if(!logged)throw StateError('Isolated TEST login required.');
+    final pages=<LiveSyncPage>[];
+    var cursor=0;
+    var complete=false;
+    for(var n=0;n<50;n++){
+      final reply=await ManagedSchoolSession.callForSchool(school,
+        'managed/live/changes',{'liveProtocol':1,'after':cursor});
+      final page=LiveSyncPage.parse(reply,school,cursor);
+      pages.add(page);
+      cursor=page.cursor;
+      if(!page.more){complete=true;break;}
+    }
+    if(!complete)throw StateError('TEST event review exceeded safe limit.');
+    final groups=verifyWebAtomicBundles(school,pages);
+    if(mounted)setState((){
+      verifiedBundles=groups;reviewedLiveCursor=cursor;
+      status='TEST Web verified ${groups.length} complete Person/Card bundles';
+    });
+  }
+
   Future<void> login() async {
     final session = await authenticateIsolatedAdminFixture(email.text, password.text,
         endpoint: endpoint);
@@ -158,7 +188,7 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
 
   Future<void> publish() async {
     if (!logged ||
-        !RegExp(r'^synthetic-web-notice-[0-9]+$').hasMatch(noticeId.text) ||
+        !isValidSyntheticReviewNoticeId(noticeId.text) ||
         !title.text.startsWith('Synthetic website exchange ') ||
         title.text.length > 200)
       throw StateError('Synthetic TEST notice required');
@@ -232,6 +262,13 @@ class _SyncReviewSchoolConsoleState extends State<SyncReviewSchoolConsole> {
                           OutlinedButton(
                               onPressed: busy ? null : () => run(refresh),
                               child: const Text('Refresh cloud records')),
+                          OutlinedButton(
+                              onPressed:busy?null:()=>run(inspectAtomicBundles),
+                              child:const Text('Inspect TEST Atomic Bundles')),
+                          if(reviewedLiveCursor>0)
+                            Text('Verified live cursor: $reviewedLiveCursor'),
+                          for(final bundle in verifiedBundles)
+                            Text('${bundle.role} ${bundle.personId} | ID ${bundle.documentId} | Bundle ${bundle.bundleId}'),
                           for (final row in records.entries)
                             Text('${row.key} | ${row.value['title']}'),
                         ],

@@ -62,8 +62,14 @@ void main(){
     final restored=VerifiedSyncTiming()..restore(clock.snapshot(school),school);
     expect(restored.lastMicros,2400000);
     expect((VerifiedSyncTiming()..restore(clock.snapshot(school),'foreign')).lastMicros,isNull);
-    expect(projectWindowsSyncState([],nowMillis:0,incomingPending:1),'pending');
+    expect(projectWindowsSyncState([],nowMillis:0,incomingPending:1),'idle');
     expect(projectWindowsSyncState([],nowMillis:0,incomingPending:0),'idle');
+    // Background reconciliation/Drive polling cannot keep device sync busy
+    // once all locally durable, verified ACKs have removed the queue entries.
+    expect(projectWindowsSyncState([],nowMillis:0,syncing:true),'idle');
+    expect(projectWindowsSyncState([],nowMillis:0,syncing:true,incomingPending:1),'idle');
+    expect(projectWindowsSyncState([{'syncState':'pending'}],nowMillis:0,syncing:true),'syncing');
+    expect(projectWindowsSyncState([],nowMillis:0,syncing:true,reviewRequired:true),'needsAttention');
   });
   test('stalled self repair is own-school, delayed, bounded and never clears evidence',(){
     const foreign='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -113,7 +119,19 @@ void main(){
       binaryStatus:{'schoolId':'foreign','inventory':'MEASURED','pending':9});
     expect(onlyCheck['total'],1);
     expect(windowsSyncFlowPendingText(0,onlyCheck),'Cloud check queued');
-    expect(projectWindowsSyncState([],nowMillis:0,incomingPending:onlyCheck['total']!),'pending');
+    expect(projectWindowsSyncState([],nowMillis:0,incomingPending:onlyCheck['total']!),'idle');
+    expect(projectWindowsDevicePhase(
+      durableState:'idle',uploadPending:0,syncing:true,
+      transferActive:false,paused:false,stalled:false),'idle');
+    expect(projectWindowsDevicePhase(
+      durableState:'pending',uploadPending:1,syncing:true,
+      transferActive:false,paused:false,stalled:false),'preparing');
+    expect(projectWindowsDevicePhase(
+      durableState:'pending',uploadPending:1,syncing:true,
+      transferActive:true,paused:false,stalled:false),'syncing');
+    expect(projectWindowsDevicePhase(
+      durableState:'needsAttention',uploadPending:1,syncing:true,
+      transferActive:false,paused:false,stalled:false),'needsAttention');
     expect(windowsIncomingPendingBreakdown(schoolId:school,
       downloads:[],remoteChangeQueued:false)['total'],0);
     expect(windowsSyncFlowPendingText(0,{}),'0 pending');
@@ -153,10 +171,10 @@ void main(){
         data:MediaQueryData(textScaler:TextScaler.linear(1.5)),child:WindowsSyncFlow(
           phase:'idle',label:'Idle',local:'D:\\ 10 GB / 100 GB',cloud:'No verified ACK yet',drive:'Unknown',pending:0,lastMicros:2400000))))));
       await tester.pumpAndSettle();
-      expect(find.text('Local Storage'),findsOneWidget);expect(find.text('2.40 sec'),findsOneWidget);
+      expect(find.text('Local Storage'),findsOneWidget);expect(find.text('Last sync: 2.40 sec'),findsOneWidget);
       expect(find.text('Open Folder'),findsNothing);
       ui.WindowsUiLanguage.change('bn');await tester.pumpAndSettle();
-      expect(find.text('স্থানীয় স্টোরেজ'),findsOneWidget);expect(find.text('2.40 সেকেন্ড'),findsOneWidget);
+      expect(find.text('স্থানীয় স্টোরেজ'),findsOneWidget);expect(find.text('শেষ সিঙ্ক: 2.40 সেকেন্ড'),findsOneWidget);
       expect(tester.takeException(),isNull);await tester.pumpWidget(const SizedBox());
     });
   }

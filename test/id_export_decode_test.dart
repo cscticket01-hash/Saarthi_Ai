@@ -9,7 +9,12 @@ void main(){
   final files=directory.listSync().whereType<File>().where((f)=>f.path.endsWith('.png')).toList();
   expect(files.length,greaterThanOrEqualTo(13));
   for(final file in files){
-    final raw=IdCardEngine.decodeFinalRaster(file.readAsBytesSync());
+    late final String raw;
+    try {
+      raw = IdCardEngine.decodeFinalRaster(file.readAsBytesSync());
+    } catch (error) {
+      throw StateError('${file.path}: final 300-DPI ID raster QR decode failed: $error');
+    }
     final credential=QrAuthenticationEngine.decode(raw,expectedSchool:'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
     expect(credential.managed,true,reason:file.path);
     expect(credential.personId,isNotEmpty,reason:file.path);

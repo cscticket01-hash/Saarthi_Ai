@@ -43,7 +43,7 @@ test('real installed modular Admin SDK initializes staging with a disposable tes
  const {generateKeyPairSync}=require('node:crypto');
  const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
  // SDK initialization test must never start a cloud-connected queue worker.
- const env={SAARTHI_ATTENDANCE_QUEUE_ENABLED:'false',SAARTHI_GOOGLE_DESKTOP_CLIENT_ID:'test.apps.googleusercontent.com',SAARTHI_FIREBASE_ADMIN_JSON:JSON.stringify({project_id:'saarthi-ai-df12b',client_email:'test-only@saarthi-ai-df12b.iam.gserviceaccount.com',private_key:privateKey})};
+ const env={SAARTHI_ATTENDANCE_QUEUE_ENABLED:'false',SAARTHI_GOOGLE_DESKTOP_CLIENT_ID:'test.apps.googleusercontent.com',SAARTHI_FIREBASE_ADMIN_JSON:JSON.stringify({type:'service_account',project_id:'saarthi-ai-df12b',client_email:'test-only@saarthi-ai-df12b.iam.gserviceaccount.com',private_key:privateKey})};
  assert.throws(()=>fromEnvironment({...env,SAARTHI_FIREBASE_ADMIN_JSON:'{"project_id":"foreign-project"}'}),/Invalid central/);
  assert.equal(typeof fromEnvironment(env),'function');
  const {getApp,deleteApp}=require('firebase-admin/app');
@@ -65,10 +65,17 @@ test('Central request traces expose only allowlisted actions, status and generat
  });
 });
 
-test('isolated health exposes only a valid public deployed commit; production and malformed values stay hidden',async()=>{
- for(const [testSchoolId,runtimeCommit,expected] of [['vs-'+ 'a'.repeat(32),'b'.repeat(40),'b'.repeat(40)],[null,'b'.repeat(40),undefined],['vs-'+ 'a'.repeat(32),'private unexpected data',undefined]]) {
-  await withServer(createHandler({handle:async()=>({}),health:async()=>{},testSchoolId,runtimeCommit}),async base=>{
-   const r=await fetch(base+'/school-cloud/healthz');assert.equal(r.status,200);assert.equal((await r.json()).runtimeCommit,expected);
+test('isolated health exposes only valid deployed commit and hashed Firebase identity; production and malformed values stay hidden',async()=>{
+ for(const [testSchoolId,runtimeCommit,adminCredentialFingerprint,expectedRuntime,expectedFingerprint] of [
+  ['vs-'+ 'a'.repeat(32),'b'.repeat(40),'c'.repeat(64),'b'.repeat(40),'c'.repeat(64)],
+  [null,'b'.repeat(40),'c'.repeat(64),undefined,undefined],
+  ['vs-'+ 'a'.repeat(32),'private unexpected data','private',undefined,undefined],
+  ['vs-'+ 'a'.repeat(32),'b'.repeat(40),'malformed','b'.repeat(40),undefined]
+ ]) {
+  await withServer(createHandler({handle:async()=>({}),health:async()=>{},testSchoolId,runtimeCommit,adminCredentialFingerprint}),async base=>{
+   const r=await fetch(base+'/school-cloud/healthz');assert.equal(r.status,200);
+   const body=await r.json();assert.equal(body.runtimeCommit,expectedRuntime);
+   assert.equal(body.adminCredentialFingerprint,expectedFingerprint);
   });
  }
 });

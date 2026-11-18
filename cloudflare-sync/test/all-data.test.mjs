@@ -197,16 +197,86 @@ test('person/document/financial jobs and mixed batches are conservative ordering
 test('explicit parallel canary admits at most two independent records and emits bounded timing evidence',async()=>{
  const school=tenant('5'),parallel=createCloudflareDelivery({edge,recordParallelism:2});
  for(let i=0;i<3;i++)await parallel.record(school,{...write('school_expenses','parallel-'+i,'operation-parallel-'+i+'-0000'),data:{schoolId:school}});
- let active=0,peak=0;const receipts=[];
- const result=await parallel.drain(school,'records',async request=>{
-  active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,20));active--;receipts.push(request);
-  return {success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-'+request.id,record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
- });
- assert.equal(result.processed,2);assert.equal(peak,2);assert.equal(receipts.length,2);
+ // Both records must actually enter their delivery callbacks before either
+ // leaves. A fixed 20-ms sleep can falsely report serial execution when the
+ // hosted runner takes longer than 20 ms to complete the second signed claim.
+ let active=0,peak=0,entered=0;const receipts=[];
+ let releasePair;
+ const pairEntered=new Promise(resolve=>{releasePair=resolve;});
+ const claimDeadline=setTimeout(releasePair,3000);
+ try {
+  const result=await parallel.drain(school,'records',async request=>{
+   active++;peak=Math.max(peak,active);
+   if(++entered===2)releasePair();
+   await pairEntered;
+   active--;receipts.push(request);
+   return {success:true,schoolId:school,syncProtocol:2,recordRevision:'drive-'+request.id,record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
+  });
+  assert.equal(result.processed,2,'Both records must have independent verified Drive receipts');
+  assert.equal(peak,2,'Both claims must be admitted concurrently within 3 seconds');
+  assert.equal(receipts.length,2);
+ } finally {
+  clearTimeout(claimDeadline);
+ }
  const id=hash(JSON.stringify([school,'managed_records',[receipts[0].collection,receipts[0].id,receipts[0].operationId]]));
  const final=await parallel.status(school,'records',id);
  assert.equal(final.driveState,'verified');assert.equal(final.deliveryTiming.version,1);
  assert.ok(final.deliveryTiming.deliveryMillis>=0);assert.ok(final.deliveryTiming.queueWaitMillis>=0);
  assert.deepEqual(Object.keys(final.deliveryTiming).sort(),['deliveryMillis','observedAt','queueWaitMillis','version']);
  assert.equal((await rpc(school,'records',{command:'stats'})).value.pending,1);
+});
+
+test('signed TEST readback settles only the exact superseded student roll conflict',async()=>{
+ const school='vs-'+hash('student-slot-supersession').slice(0,32),id='TEST2-DEMO-000061',generation='p-'+'7'.repeat(32);
+ const original={...write('students_directory',id,'original-slot-operation-0001'),
+  data:{schoolId:school,syntheticTest:true,mobileStableId:generation,name:'Synthetic pupil',rollNo:'1'}};
+ const next={...original,operationId:'accepted-slot-operation-0001',data:{...original.data,rollNo:'2'}};
+ const failed=await delivery.record(school,original);
+ const finish=async(id,values)=>{
+  const claim='test-claim-'+id;
+  assert.equal(await edge.rpc(school,'records',{command:'claim',id,claim,expires:Date.now()+120000}),true);
+  assert.equal(await edge.rpc(school,'records',{command:'finish',id,claim,
+   values:{...values,nextAttemptAt:Number.MAX_SAFE_INTEGER}}),true);
+ };
+ await finish(failed.delivery.id,{state:'needsAttention',failureCode:'STUDENT_SLOT_CONFLICT',failureStatus:409});
+ const successor=await delivery.record(school,next);
+ const record={...next.data,_syncOperationId:next.operationId,_syncRevision:'drive-revision'};
+ await finish(successor.delivery.id,{state:'completed',
+  result:{success:true,schoolId:school,syncProtocol:2,recordRevision:record._syncRevision,record}});
+ const body={command:'settleTestStudentSlotReview',id:failed.delivery.id,successorId:successor.delivery.id,
+  recordId:id,generation,operationId:next.operationId,revision:record._syncRevision};
+ assert.equal((await rpc(school,'records',{...body,revision:'wrong'})).status,409);
+ assert.equal((await edge.rpc(school,'records',{command:'stats'})).needsAttention,1);
+ for(let attempt=0;attempt<2;attempt++){
+  const result=await edge.rpc(school,'records',body);
+  assert.equal(result.state,'superseded');
+  assert.equal(result.successorId,successor.delivery.id);
+ }
+ assert.equal((await edge.rpc(school,'records',{command:'stats'})).needsAttention,0);
+ assert.equal((await delivery.status(school,'records',successor.delivery.id)).driveState,'verified');
+ await assert.rejects(delivery.record(school,original),e=>e.code==='STUDENT_SLOT_CONFLICT');
+});
+
+// Exercise the real Worker error envelope, not a mocked schoolId response.
+test('authenticated notice precondition rejections settle only their exact new admission',async()=>{
+ const {createLiveMigration}=require('../../functions/live-sync-migration.js');
+ await edge.rpc(A,'notices',{command:'seed',records:{},revision:'legacy'});
+ const original=write('school_notices','scope-contract-notice');
+ await edge.rpc(A,'notices',{command:'write',request:original});
+ const f=fixture(),gate=createLiveMigration({db:f.db});
+ const historical={collection:'school_notices',activeAttempts:0,startedAt:1};
+ f.docs.set('school_live_migrations/'+A,{inflight:{historical}});
+ for(const request of [
+  {...original,operationId:'stale-scope-operation-001'},
+  {...original,data:{...original.data,name:'changed replay'}},
+ ]){
+  await assert.rejects(gate.legacy(A,request,()=>edge.rpc(A,'notices',{command:'write',request})),e=>e.status===409);
+  assert.deepEqual(f.docs.get('school_live_migrations/'+A).inflight,{historical});
+ }
+ // A delete conflict remains uncertain; only notice writes have this attestation.
+ const deletion={...original,operation:'delete',operationId:'delete-scope-operation-001'};
+ await assert.rejects(gate.legacy(A,deletion,()=>edge.rpc(A,'notices',{command:'write',request:deletion})),e=>e.status===409);
+ assert.equal(Object.keys(f.docs.get('school_live_migrations/'+A).inflight).length,2);
+ const reply=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',body:JSON.stringify({schoolId:A,lane:'notices',command:'write',request:original})});
+ assert.equal(reply.status,401);assert.equal((await reply.json()).schoolId,undefined);
 });

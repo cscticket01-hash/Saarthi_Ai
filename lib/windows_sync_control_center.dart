@@ -1,3 +1,5 @@
+import 'windows_drive_delivery_queue.dart';
+import 'cloudflare_save_notice.dart';
 import 'windows_sync_flow.dart';
 import 'windows_sync_evidence.dart';
 import 'windows_ui_localization.dart';
@@ -761,7 +763,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     return CloudflareTransferStatus(
       messages: messages.toList(),
       showTransfers: ownSchool,
-      panelBuilder: (messages) => Padding(
+      panelBuilder: (messages, progress) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: _panelBox(
         Column(
@@ -826,25 +828,24 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final recordDownloads = (inbound['recordDownloads'] as num? ?? 0).toInt();
     final remoteChecks = (inbound['remoteChecks'] as num? ?? 0).toInt();
     final mediaFiles = (inbound['mediaFiles'] as num? ?? 0).toInt();
-    final hasUploads = uploadCount > 0 || incomingCount > 0;
+    final hasUploads = uploadCount > 0;
     final stalled = _syncStalledFor(details);
-    final checkingOnly = engine.isSyncing && !engine.isPaused && !hasUploads;
-    final checking = !engine.isPaused && (checkingOnly || engine.isCheckingCloud);
-    final syncing = engine.isSyncing && !engine.isPaused && !engine.isCheckingCloud && hasUploads && ManagedSchoolSession.activeTransfers.value>0;
-    final phase = engine.isPaused ? 'paused' : checking ? 'checking' :
-        stalled ? 'stalled' :
-        engine.isSyncing && !engine.isPaused && !syncing ? 'preparing' :
-        details['displayState']?.toString() ??
-        (syncing
-            ? 'syncing'
-            : engine.isPaused
-            ? 'paused'
-            : (details['needsAttention'] is num &&
-                  details['needsAttention'] > 0)
-            ? 'needsAttention'
-            : (details['pending'] is num && details['pending'] > 0)
-            ? 'pending'
-            : 'idle');
+    // A remote change hint / inbound download is NEVER a device upload.
+    // Only the exact original operation's durable queue settlement can
+    // reduce uploadCount, so an unverified document stays pending.
+    final deviceIdle = details['displayState'] == 'idle' && !hasUploads;
+    final checking = !engine.isPaused && !deviceIdle &&
+        !hasUploads && engine.isCheckingCloud;
+    final transferActive = engine.isSyncing && !engine.isPaused &&
+        hasUploads && ManagedSchoolSession.activeTransfers.value > 0;
+    final phase = projectWindowsDevicePhase(
+      durableState: details['displayState']?.toString(),
+      uploadPending: uploadCount,
+      syncing: engine.isSyncing,
+      transferActive: transferActive,
+      paused: engine.isPaused,
+      stalled: stalled,
+    );
     final phaseLabels = {
       'checking': 'Checking cloud',
       'preparing': 'Preparing changed data',
@@ -857,10 +858,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'idle': 'Idle',
       'paused': 'Paused',
     };
-    final phaseLabel = busy ? 'Checking' : phase == 'pending' && uploadCount == 0 && incomingCount > 0
-        ? (remoteChecks > 0 && recordDownloads == 0 && mediaFiles == 0
-            ? 'Cloud check queued' : 'Incoming work')
-        : (phaseLabels[phase] ?? 'Unknown');
+    final phaseLabel = phaseLabels[phase] ?? 'Unknown';
     final phaseColor = phase == 'needsAttention' || phase == 'stalled'
         ? const Color(0xFFFFC153)
         : _cyan;
@@ -905,13 +903,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
                     cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
                     drive:driveLabel,
-                    pending:uploadCount + incomingCount,
-                    pendingText:inbound.isNotEmpty
-                        ? windowsSyncFlowPendingText(uploadCount,inbound)
-                        : null,
+                    pending:uploadCount,
+                    pendingText:uploadCount > 0
+                        ? '$uploadCount uploads'
+                        : '0 pending',
                     lastMicros:details['lastVerifiedTransferMicros'] as int?,
-                    active:engine.isPaused?const {}:WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
-                      .where((lane)=>lane=='local'||!checking&&hasUploads).toSet(),
+                    active:engine.isPaused || deviceIdle
+                      ? const {}
+                      : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
+                        .where((lane)=>lane=='local'||hasUploads).toSet(),
                   ),
                   if (incomingCount > 0) Padding(
                     padding: const EdgeInsets.only(top: 10),
@@ -1252,6 +1252,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ? null
                     : () =>
                           (engine.isSyncing || syncCommandRunning) &&
+                              ((engine.details.value['pending'] as num? ?? 0) > 0) &&
                               !engine.isPaused
                           ? _run(
                               () => (widget.pauseRequest ?? engine.pauseSync)(
@@ -1260,12 +1261,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             )
                           : _startManualSync(),
                 icon: Icon(
-                  (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                  (engine.isSyncing || syncCommandRunning) &&
+                          ((engine.details.value['pending'] as num? ?? 0) > 0) &&
+                          !engine.isPaused
                       ? Icons.pause
                       : Icons.sync,
                 ),
                 label: Text(
-                  (engine.isSyncing || syncCommandRunning) && !engine.isPaused
+                  (engine.isSyncing || syncCommandRunning) &&
+                          ((engine.details.value['pending'] as num? ?? 0) > 0) &&
+                          !engine.isPaused
                       ? 'Pause Sync'
                       : 'Sync Now',
                 ),
@@ -1462,6 +1467,20 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                                                     }),
                                               child: const Text('Review'),
                                             )
+                                          : item['_queueCollection']=='_windows_document_outbox' &&
+                                              item['syncState']=='needsAttention' &&
+                                              item['failureCategory']=='configuration' &&
+                                              item['failureCode']=='SCRIPT_SIGNED_RESPONSE_UNVERIFIED' &&
+                                              item['deleted']!=true
+                                          ? TextButton(
+                                              onPressed: active || engine.isPaused ? null : () => _run(() async {
+                                                await engine.retryRecoverableOperation(
+                                                  queueCollection:'_windows_document_outbox',
+                                                  queueId:item['id'] as String,
+                                                  expectedOperationId:item['documentRevision'] as String,
+                                                  expectedSchoolId:item['schoolId'] as String);
+                                              }),
+                                              child:const Text('Verify storage & retry'))
                                           : item['_queueCollection'] == '_windows_firebase_outbox' &&
                                               item['syncState'] == 'needsAttention' &&
                                               (item['failureCategory'] == null || item['failureCategory'] == '')
@@ -1890,7 +1909,7 @@ class CloudflareTransferStatus extends StatefulWidget {
     this.showTransfers = true, this.panelBuilder});
   final List<String> messages;
   final bool showTransfers;
-  final Widget Function(List<String>)? panelBuilder;
+  final Widget Function(List<String>, Map<String, dynamic>?)? panelBuilder;
   @override State<CloudflareTransferStatus> createState() => _CloudflareTransferStatusState();
 }
 class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
@@ -1898,8 +1917,22 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
   Map<String, dynamic>? _status;
   String? _profile;
   bool _busy = false;
-  @override void initState() { super.initState(); if (widget.showTransfers && ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
-  @override void dispose() { _timer?.cancel(); super.dispose(); }
+  @override void initState() { super.initState(); WindowsDriveDeliveryQueue.changed.addListener(_localReceiptChanged); if (widget.showTransfers && ManagedSchoolSession.enabled) { _refresh(); _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh()); } }
+  @override void dispose() { WindowsDriveDeliveryQueue.changed.removeListener(_localReceiptChanged); _timer?.cancel(); super.dispose(); }
+  Future<void> _localReceiptChanged() async {
+    if (!widget.showTransfers) return;
+    final db = FirebaseFirestore.instance, origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (school is! String) return;
+    try {
+      final rows = await WindowsDriveDeliveryQueue.history(school);
+      if (!mounted || db.activeProfileId != origin) return;
+      final prior = _profile == origin ? _status : null;
+      setState(() { _profile = origin; _status = {
+        ...(prior ?? {'enabled':false}), 'driveSaveHistory':rows, 'driveHistoryLocal':true,
+      }; });
+    } catch (_) { /* Display notifications never acknowledge or remove work. */ }
+  }
   Future<void> _refresh() async {
     if (_busy || !widget.showTransfers) return;
     _busy = true;
@@ -1918,16 +1951,58 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     final message = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
       ? cloudTransferMessage(_status) : null;
     if (widget.panelBuilder != null) {
-      final messages = <String>{...widget.messages, if (message != null) message,
-        if (widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId) ...driveSaveMessages(_status)}.toList();
-      return messages.isEmpty ? const SizedBox.shrink() : widget.panelBuilder!(messages);
+      final transferMessages = widget.showTransfers &&
+          _profile == FirebaseFirestore.instance.activeProfileId
+          ? driveSaveMessages(_status) : const <String>[];
+      // Ordinary Cloudflare -> Drive delivery is backend work, not a PC sync
+      // failure. Show one independent status line, never 25 persistent orange
+      // "success"/"pending" alerts.
+      final backgroundPending = message ==
+              'Cloudflare background backup · Google Drive transfer pending.' ||
+          transferMessages.any((text) => text.contains('Drive save pending'));
+      final messages = <String>{
+        ...widget.messages,
+        if (message != null &&
+            message != 'Cloudflare background backup · Google Drive transfer pending.')
+          message,
+        ...transferMessages.where((text) => text.startsWith('Drive save needs review')),
+      }.toList();
+      final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+          ? measuredDriveProgress(_status) : null;
+      final acceptedHistory = widget.showTransfers &&
+          _profile == FirebaseFirestore.instance.activeProfileId &&
+          ((_status?['driveSaveHistory'] as List? ?? const []).any(
+            (r) => r is Map && r['cloudflareAccepted'] == true));
+      // Completed receipts belong to durable history, not the error panel.
+      // The last Cloudflare ACK gets its own five-second, self-expiring notice.
+      if (messages.isEmpty && !acceptedHistory && !backgroundPending)
+        return const SizedBox.shrink();
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (messages.isNotEmpty) widget.panelBuilder!(messages, progress),
+              if (backgroundPending)
+                const Padding(
+                  padding: EdgeInsets.only(top:8),
+                  child: Text('Google Drive backup pending · Cloudflare delivery is separate from device sync',
+                    key: ValueKey('cloudflare-background-drive-pending')),
+                ),
+              if (acceptedHistory) CloudflareSaveNotice(key: ValueKey(_profile), rows:
+                widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+                  ? [for (final row in (_status?['driveSaveHistory'] as List? ?? const []))
+                      if (row is Map) Map<String,dynamic>.from(row)]
+                  : const []),
+            ]);
     }
     final history = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
         ? driveSaveMessages(_status) : const <String>[];
     final lines = [if (message != null) message, ...history];
-    if (lines.isEmpty) return const SizedBox.shrink();
-    return Padding(padding: const EdgeInsets.only(top: 10), child: Text(lines.join('\n'),
-      style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
-        color: WindowsAppearance.foreground(Colors.orangeAccent))));
+    final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
+        ? measuredDriveProgress(_status) : null;
+    if (lines.isEmpty && progress == null) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 10),
+      child: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        if (lines.isNotEmpty) Text(lines.join('\n'),
+          style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
+            color: WindowsAppearance.foreground(Colors.orangeAccent))),
+      ]));
   }
 }

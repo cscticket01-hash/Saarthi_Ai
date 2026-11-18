@@ -104,13 +104,17 @@ void main() {
       'incomingBreakdown':{'recordDownloads':0,'remoteChecks':1,
                            'mediaFiles':0,'total':1},
       'needsAttention':0,
-      'displayState':'pending',
+      'displayState':'idle',
       'liveQueue':<Map<String,dynamic>>[],
       'items':<Map<String,dynamic>>[],
     };
     await tester.pumpWidget(MaterialApp(home:page()));
     await tester.pumpAndSettle();
-    expect(find.text('Cloud check queued'),findsWidgets);
+    expect(find.text('Idle'),findsOneWidget);
+    expect(find.text('Preparing changed data'),findsNothing);
+    expect(find.text('Syncing'),findsNothing);
+    expect(find.text('0 pending'),findsOneWidget);
+    expect(find.text('Pause Sync'),findsNothing);
     expect(find.text('No pending upload operations. Incoming cloud work is listed below.'),findsOneWidget);
     expect(find.text('Cloud change signal queued for verified reconciliation (not an upload).'),findsOneWidget);
     expect(find.text('No pending operations in this school.'),findsNothing);

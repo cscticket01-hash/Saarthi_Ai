@@ -1,0 +1,34 @@
+name: Credential-free retained TEST recovery guards
+on:
+  push:
+    branches: [fix/bounded-test-recovery-20261111]
+    paths:
+      - .github/scripts/**
+      - lib/testing/isolated_admin_fixture.dart
+      - .github/tests/isolated_admin_fixture_test.dart
+      - .github/workflows/retained-recovery-guards.yml
+permissions:
+  contents: read
+jobs:
+  read-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test .github/scripts/*.test.cjs
+      - run: node --check .github/scripts/delete_everywhere_live_acceptance.cjs
+      - run: node --check .github/scripts/resume_retained_delete_acceptance.cjs
+      - run: node --check .github/scripts/resume_failed_delete_artifact.cjs
+      - run: node --check .github/scripts/test_atomic_person_live.cjs
+  retained-fixture-guards:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test .github/tests/isolated_admin_fixture_test.dart
