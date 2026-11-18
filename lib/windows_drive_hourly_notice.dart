@@ -31,8 +31,13 @@ class _WindowsDriveHourlyNoticeState extends State<WindowsDriveHourlyNotice> {
 
   void _accept() {
     final s = widget.summary;
-    if (s == null || s['scope'] != 'liveRecordBackups' ||
-        s['liveProtocol'] != 1 || s['verifiedCount'] is! int ||
+    if (s == null) return;
+    final r2 = s['scope'] == 'r2VerifiedDeliveries' &&
+        s['version'] == 1 &&
+        s['coverage'] == 'r2-staged-only' && s['partial'] == true;
+    final live = s['scope'] == 'liveRecordBackups' &&
+        s['liveProtocol'] == 1;
+    if ((!r2 && !live) || s['verifiedCount'] is! int ||
         s['hourStart'] is! int || s['hourEnd'] is! int) return;
     final count = s['verifiedCount'] as int;
     final start = s['hourStart'] as int, end = s['hourEnd'] as int;
@@ -44,7 +49,9 @@ class _WindowsDriveHourlyNoticeState extends State<WindowsDriveHourlyNotice> {
         _shownHour == start) return;
     _shownHour = start;
     _hide?.cancel();
-    _message = 'Google Drive verified · $count live records in the last hour';
+    _message = r2
+        ? 'Google Drive verified · $count R2-staged transfers last hour (legacy backups excluded)'
+        : 'Google Drive verified · $count live records in the last hour';
     _hide = Timer(const Duration(seconds: 5), () {
       if (mounted) setState(() => _message = null);
     });
