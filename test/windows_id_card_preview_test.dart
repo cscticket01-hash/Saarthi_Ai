@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
+import '../lib/id_card_live_preview.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../lib/windows_document_templates.dart';
 import '../lib/windows_local_firestore.dart';
@@ -27,6 +29,19 @@ void main() {
           isEmpty);
     });
   }
+  testWidgets('Flutter ID preview loads without generating a PDF or enqueuing a document', (tester) async {
+    final widget = await WindowsDocumentTemplates.liveIdCardPreview(
+      'studentId',
+      {'schoolId': school, 'name': 'Synthetic TEST', 'class': 'Class 1', 'rollNo': '1'},
+      qr: 'synthetic-school-qr',
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: SizedBox(width: 500, child: widget),
+    )));
+    expect(find.byType(IdCardLivePreview), findsOneWidget);
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+  });
+
   test('preview rejects a foreign school before looking for its photo', () async {
     await expectLater(WindowsDocumentTemplates.selected('studentId',
         {'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
