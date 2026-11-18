@@ -12,7 +12,7 @@ test('production R2 cannot stage another school even with staging globally enabl
  assert.equal(r2StagingForSchool({...env,R2_STAGING_SCHOOLS:'*',R2_STAGING_ALL_SCHOOLS_ENABLED:'true'},other),true);
 });
 test('invalid or foreign school selectors always fail closed',()=>{
- for(const scope of ['vs-bad','*,'+school,school+',BAD',school+',vs-bad']) {
+ for(const scope of ['vs-bad','*,'+school,school+',BAD',school+',vs-bad',school+',',','+school,school+',,'+other,school+', ']) {
   assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true',R2_STAGING_SCHOOLS:scope},school),false,scope);
  }
  assert.equal(r2StagingForSchool({R2_STAGING_ENABLED:'true',R2_STAGING_SCHOOLS:school},'wrong'),false);
