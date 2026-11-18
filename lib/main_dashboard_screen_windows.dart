@@ -45,6 +45,7 @@ import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
 import 'windows_document_templates.dart';
+import 'windows_record_only_id_preview.dart';
 import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
@@ -5204,13 +5205,13 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
-    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString(), previewOnly: true);
-    if (mounted && bytes != null) {
-      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
-        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-        onDownload: _downloadIdCard, onPrint: _printIdCard);
-    }
+    if (!mounted) return;
+    // The visible ID is built directly from the current school/person record.
+    // The selected printable template is rendered only upon Download PDF.
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Student ID card • Front & back',
+      data: data,
+      onDownload: _downloadIdCard);
   } catch (e) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('ID card preview unavailable: $e')));
@@ -14497,28 +14498,41 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final qrData = await _windowsBuildPersonQrPayload(
       type: 'teacher',
       collection: 'teachers_directory',
       documentId: docId,
       person: data,
     );
-    final bytes = await WindowsDocumentTemplates.selected('teacherId',
-        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData,
-        previewOnly: true);
-    if (bytes != null && mounted) {
-      await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back',
-          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-          onPrint: () async {
-            try { await WindowsBrowserPrint.open(bytes); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
-          },
-          onDownload: () async {
-            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
-          });
-    }
+    final schoolProfile = await _loadSchoolProfileCache();
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Teacher ID card • Front & back',
+      data: {
+        ...data,
+        'teacherId': data['teacherId'] ?? docId,
+        'qrData': qrData,
+        'schoolName': _schoolName(schoolProfile),
+      },
+      onDownload: () async {
+        try {
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed before teacher PDF export.');
+          }
+          final bytes = await WindowsDocumentTemplates.selected('teacherId',
+            {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+          if (bytes == null) throw StateError('Unable to render teacher PDF.');
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed during teacher PDF export.');
+          }
+          await WindowsSavePdf.save(bytes, 'teacher-id.pdf');
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('PDF save failed: $e')));
+        }
+      },
+    );
   }
 
   @override
