@@ -1365,6 +1365,24 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ if(action==='managed/cloudflare/verified-hour'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const value=await cloudflareSync.rpc(m.schoolId,'delivery',{command:'verifiedHourSummary'});
+  const currentHour=Math.floor(now()/3600000)*3600000;
+  if(value?.schoolId!==m.schoolId||value.version!==1||
+     value.scope!=='r2VerifiedDeliveries'||
+     value.coverage!=='r2-staged-only'||value.partial!==true||
+     value.hourEnd!==currentHour||value.hourStart!==currentHour-3600000||
+     !Number.isSafeInteger(value.verifiedCount)||value.verifiedCount<0||
+     !value.breakdown||typeof value.breakdown!=='object'||
+     Array.isArray(value.breakdown)||
+     Object.entries(value.breakdown).some(([kind,count])=>
+       !['live','records','files','notices','attendance'].includes(kind)||
+       !Number.isSafeInteger(count)||count<0)||
+     Object.values(value.breakdown).reduce((a,n)=>a+n,0)!==value.verifiedCount)
+    fail(502,'Drive hourly summary proof did not verify','DRIVE_HOUR_SUMMARY_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,...value};
+ }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
