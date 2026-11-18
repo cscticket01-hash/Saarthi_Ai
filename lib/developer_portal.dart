@@ -110,9 +110,14 @@ class _DeveloperLogin extends StatefulWidget {
 }
 
 class _DeveloperLoginState extends State<_DeveloperLogin> {
-  final _email = TextEditingController(), _password = TextEditingController();
-  bool _busy = false, _show = false;
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  bool _showPassword = false;
+  bool _remember = false;
   String? _error;
+  String? _information;
+
   @override
   void dispose() {
     _email.dispose();
@@ -125,20 +130,59 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
     setState(() {
       _busy = true;
       _error = null;
+      _information = null;
     });
     try {
-      await FirebaseAuth.instance.setPersistence(Persistence.SESSION);
+      // Session-only remains the safe default. Persistence changes only when
+      // the user explicitly chooses the visible Remember me checkbox.
+      await FirebaseAuth.instance.setPersistence(
+        _remember ? Persistence.LOCAL : Persistence.SESSION,
+      );
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _email.text.trim(),
         password: _password.text,
       );
     } on FirebaseAuthException catch (e) {
-      if (mounted)
-        setState(
-          () => _error = e.code == 'invalid-credential'
-              ? 'Check your ID and password.'
-              : 'Sign-in unavailable. Please try again.',
-        );
+      if (mounted) {
+        setState(() => _error = e.code == 'invalid-credential'
+            ? 'Check your email and password.'
+            : 'Login unavailable. Please try again.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Login unavailable. Please try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    final email = _email.text.trim();
+    if (!email.contains('@') || email.endsWith('@')) {
+      setState(() {
+        _error = 'Enter your email address first.';
+        _information = null;
+      });
+      return;
+    }
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _information = null;
+    });
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        setState(() => _information =
+            'If this account can reset its password, check your email.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() =>
+            _error = 'Password reset is unavailable. Try again later.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -146,80 +190,150 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
 
   @override
   Widget build(BuildContext context) => DeveloperLoginShell(
-    form: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const AppDownloadButtons(),
-        const SizedBox(height: 24),
-        const Align(
-          alignment: Alignment.centerLeft,
-          child: Icon(Icons.hub_rounded, size: 44, color: _mint),
-        ),
-        const SizedBox(height: 28),
-        const Text(
-          'Vidya Saarthi',
-          style: TextStyle(
-            fontSize: 31,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -1,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Developer control centre',
-          style: TextStyle(color: Colors.white54, fontSize: 17),
-        ),
-        const SizedBox(height: 36),
-        TextField(
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(
-            labelText: 'Developer ID / Email',
-            prefixIcon: Icon(Icons.person_outline),
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _password,
-          obscureText: !_show,
-          onSubmitted: (_) {
-            if (!_busy) _login();
-          },
-          decoration: InputDecoration(
-            labelText: 'Password',
-            prefixIcon: const Icon(Icons.lock_outline),
-            suffixIcon: IconButton(
-              tooltip: _show ? 'Hide password' : 'Show password',
-              onPressed: () => setState(() => _show = !_show),
-              icon: Icon(_show ? Icons.visibility_off : Icons.visibility),
+        form: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Welcome to',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF233B6A),
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-        ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              _error!,
-              style: const TextStyle(color: Colors.redAccent),
+            const SizedBox(height: 3),
+            const Text(
+              'Saarthi AI School App',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1268F3),
+                fontSize: 27,
+                fontWeight: FontWeight.w900,
+              ),
             ),
-          ),
-        const SizedBox(height: 24),
-        FilledButton(
-          onPressed: _busy ? null : _login,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Text(_busy ? 'Signing in…' : 'Open control centre'),
-          ),
+            const SizedBox(height: 9),
+            const Text(
+              'Your Smart School Management Partner',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF647593), fontSize: 13),
+            ),
+            const SizedBox(height: 32),
+            TextField(
+              key: const ValueKey('developer-login-email'),
+              controller: _email,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              decoration: const InputDecoration(
+                hintText: 'Email Address',
+                prefixIcon: Icon(Icons.email_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const ValueKey('developer-login-password'),
+              controller: _password,
+              obscureText: !_showPassword,
+              autofillHints: const [AutofillHints.password],
+              onSubmitted: (_) {
+                if (!_busy) _login();
+              },
+              decoration: InputDecoration(
+                hintText: 'Password',
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  tooltip: _showPassword ? 'Hide password' : 'Show password',
+                  onPressed: () =>
+                      setState(() => _showPassword = !_showPassword),
+                  icon: Icon(_showPassword
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 5,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: _remember,
+                      onChanged: _busy
+                          ? null
+                          : (value) =>
+                              setState(() => _remember = value ?? false),
+                    ),
+                    const Text(
+                      'Remember me',
+                      style: TextStyle(color: Color(0xFF34466A)),
+                    ),
+                  ],
+                ),
+                TextButton(
+                  onPressed: _busy ? null : _resetPassword,
+                  child: const Text('Forgot password?'),
+                ),
+              ],
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Color(0xFFB12440)),
+                ),
+              ),
+            if (_information != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _information!,
+                  style: const TextStyle(color: Color(0xFF176D55)),
+                ),
+              ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              key: const ValueKey('developer-login-submit'),
+              onPressed: _busy ? null : _login,
+              icon: Icon(_busy
+                  ? Icons.hourglass_top_rounded
+                  : Icons.arrow_forward_rounded),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                child: Text(_busy ? 'Logging in…' : 'Login'),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1268F3),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFF7898C9),
+                textStyle: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                elevation: 8,
+                shadowColor: const Color(0x883E9EFA),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Authorized developer accounts only',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF647593),
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 24),
-        const Text(
-          'Licensing, school activity and app support in one place.',
-          style: TextStyle(color: Colors.white38, fontSize: 12),
-        ),
-      ],
-    ),
-  );
+      );
 }
 
 class _DeveloperDashboard extends StatefulWidget {

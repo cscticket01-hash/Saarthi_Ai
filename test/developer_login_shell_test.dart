@@ -40,4 +40,29 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+  testWidgets('landing shows only Windows and Android download cards',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DeveloperLoginShell(
+          form: Text('Login only'),
+        ),
+      ),
+    );
+
+    expect(find.text('Get Saarthi AI Apps'), findsOneWidget);
+    expect(find.text('Windows App'), findsOneWidget);
+    expect(find.text('Android App'), findsOneWidget);
+    expect(find.text('Web Version'), findsNothing);
+    expect(find.text('Sign up'), findsNothing);
+    expect(find.text('97% Done'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
