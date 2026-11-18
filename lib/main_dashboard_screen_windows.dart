@@ -5155,8 +5155,6 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   final studentId =
       'VS-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
 
-  final docId = '${_directoryClass}_Roll_$roll';
-
   final existingStudentDoc = await FirebaseFirestore.instance
       .collection('students_directory')
       .doc(docId)
