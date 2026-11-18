@@ -17,7 +17,8 @@ void main() {
   testWidgets('shows only authenticated, completed-hour Drive records for five seconds', (tester) async {
     final evidence = summary(count: 20);
     await tester.pumpWidget(MaterialApp(home: Scaffold(
-      body: WindowsDriveHourlyNotice(summary: evidence))));
+      body: WindowsDriveHourlyNotice(summary: evidence,
+        nowMillis: () => (evidence['hourEnd'] as int) + 1000))));
     expect(find.textContaining('20 live records'), findsOneWidget);
     expect(find.byKey(const ValueKey('hourly-verified-drive')), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
@@ -29,10 +30,12 @@ void main() {
 
   testWidgets('never displays pending counts or unverified summary scopes', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(
-      body: WindowsDriveHourlyNotice(summary: summary(count: 0)))));
+      body: WindowsDriveHourlyNotice(summary: summary(count: 0),
+        nowMillis: () => ((DateTime.now().millisecondsSinceEpoch ~/ 3600000) * 3600000) + 1000))));
     expect(find.byKey(const ValueKey('hourly-verified-drive')), findsNothing);
     await tester.pumpWidget(MaterialApp(home: Scaffold(
-      body: WindowsDriveHourlyNotice(summary: summary(count: 9, scope: 'history25')))));
+      body: WindowsDriveHourlyNotice(summary: summary(count: 9, scope: 'history25'),
+        nowMillis: () => ((DateTime.now().millisecondsSinceEpoch ~/ 3600000) * 3600000) + 1000))));
     expect(find.byKey(const ValueKey('hourly-verified-drive')), findsNothing);
   });
 }
