@@ -93,15 +93,38 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final history = await WindowsDriveDeliveryQueue.history(school);
     if (FirebaseFirestore.instance.activeProfileId != profile) return status;
     final combined = {for (final row in history) row['id']: row};
+    Map<String, dynamic>? verifiedHourSummary;
     if (_liveRuntime != null && !isPaused && !_resetPaused) {
       try {
         final response = await ManagedSchoolSession.callForSchool(school, 'managed/live/backupHistory', {'liveProtocol':1});
         if (FirebaseFirestore.instance.activeProfileId != profile) return status;
         for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) combined[row['id']] = row;
       } catch (_) { /* The durable local receipt list survives a provider outage. */ }
+      try {
+        // A previous-hour count comes from the signed, school-local Durable
+        // Object's verified Drive journal, not the truncated UI history.
+        final report = await ManagedSchoolSession.callForSchool(
+          school, 'managed/live/verifiedHourSummary', {'liveProtocol': 1});
+        if (FirebaseFirestore.instance.activeProfileId != profile ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+          return status;
+        }
+        if (report['success'] == true && report['schoolId'] == school &&
+            report['liveProtocol'] == 1 && report['scope'] == 'liveRecordBackups' &&
+            report['hourStart'] is int && report['hourEnd'] is int &&
+            report['verifiedCount'] is int &&
+            (report['verifiedCount'] as int) >= 0) {
+          verifiedHourSummary = Map<String, dynamic>.from(report);
+        }
+      } catch (_) {
+        // Older Workers are compatible: no hourly summary is shown until
+        // that school has real verified Cloudflare/Drive evidence.
+      }
     }
     final rows = combined.values.toList()..sort((a,b)=>(b['acceptedAt'] as num? ?? 0).compareTo(a['acceptedAt'] as num? ?? 0));
-    return {...status, 'driveSaveHistory': rows.take(25).toList(), 'driveHistoryLocal': true};
+    return {...status, 'driveSaveHistory': rows.take(25).toList(),
+      'driveHistoryLocal': true,
+      if (verifiedHourSummary != null) 'driveHourSummary': verifiedHourSummary};
   }
   Future<Map<String, dynamic>?> refreshTransferStatus() async {
     final origin = FirebaseFirestore.instance.activeProfileId;
