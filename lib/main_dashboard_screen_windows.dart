@@ -5118,6 +5118,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
     }
   } catch (e) {
     debugPrint('ID card data fetch error: $e');
+    rethrow; // Never continue to QR issuance with incomplete/stale data.
   }
 
   String fullAddress = [
