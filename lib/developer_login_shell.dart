@@ -174,7 +174,7 @@ class _DeveloperLoginShellState extends State<DeveloperLoginShell>
                                               child: _loginCard(),
                                             ),
                                             const SizedBox(height: 42),
-                                            const ConstrainedBox(
+                                            ConstrainedBox(
                                               constraints: BoxConstraints(
                                                 maxWidth: 550,
                                               ),
