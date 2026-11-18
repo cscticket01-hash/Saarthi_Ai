@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 /// Presentation only. Never estimates a school-wide total from a 25-row
 /// history, local ACKs, elapsed time, or an unverified transfer.
 class WindowsDriveHourlyNotice extends StatefulWidget {
-  const WindowsDriveHourlyNotice({super.key, required this.summary});
+  const WindowsDriveHourlyNotice({super.key, required this.summary, this.nowMillis});
   final Map<String, dynamic>? summary;
+  final int Function()? nowMillis;
 
   @override
   State<WindowsDriveHourlyNotice> createState() => _WindowsDriveHourlyNoticeState();
@@ -35,7 +36,7 @@ class _WindowsDriveHourlyNoticeState extends State<WindowsDriveHourlyNotice> {
         s['hourStart'] is! int || s['hourEnd'] is! int) return;
     final count = s['verifiedCount'] as int;
     final start = s['hourStart'] as int, end = s['hourEnd'] as int;
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = widget.nowMillis?.call() ?? DateTime.now().millisecondsSinceEpoch;
     if (count <= 0 || count > 1000000 ||
         end - start != const Duration(hours: 1).inMilliseconds ||
         start % const Duration(hours: 1).inMilliseconds != 0 ||
