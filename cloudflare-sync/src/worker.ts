@@ -46,10 +46,10 @@ export class SyncLane extends DurableObject<Env>{
   if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
   return result;
  }
- async r2VerifiedHourSummary(school:string){
+ async r2VerifiedHourSummary(school:string,at=Date.now()){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
   this.setMeta('r2BudgetActor','v1');
-  return r2VerifiedHourSummary(this.ctx.storage,school);
+  return r2VerifiedHourSummary(this.ctx.storage,school,at);
  }
  async r2CapacityStatus(){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
