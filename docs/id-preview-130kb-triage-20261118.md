@@ -40,3 +40,14 @@ Desired *future* flow:
 - The new facade doesn't authorize records by itself; authenticated record resolution must be performed by the caller, with a canonical ID and active-school guard.
 - Replace automatic PDF publication only after Cloudflare and school-specific Drive backup accept a versioned *card-data* record and verify source media. Preserve legacy PDF readers.
 - No real 130.8 KB PDF source provided, no hosted or physical tests run, and no merge/deploy authorized.
+
+## 2026-11-18 implementation update — Windows dashboard
+
+- Located the real button in `lib/main_dashboard_screen_windows.dart` (`_showIdCardPreview`).
+- Root cause verified from code: Search Record normalizes legacy roll numbers and can find `Class 1_Roll_01`, but `_getIdCardStudentData` formerly recomputed a different guessed doc ID from textbox state before requesting the QR; `SchoolPersonIdentity.ensure` then threw the exact screenshot's missing-record exception.
+- `WindowsIdCardRecordLookup.find` now resolves the verified real student document ID with school/deletion checks, normalized-roll fallback and ambiguous-record protection. Dashboard uses that verified ID for the original document and QR binding.
+- `_showIdCardPreview` now shows `WindowsDocumentTemplates.liveIdCardPreview` in a Flutter dialog; **no PDF file is generated on View**. Explicit Download/Print still invoke existing size-limited PDF generation.
+- The facade resolves portrait, logo, school seal, signature and existing card template assets. Tests added for lookup and PDF-free preview. CI and physical Windows acceptance are not yet green/proven.
+- **Cloudflare card source -> Google Drive source-data migration remains NOT IMPLEMENTED**; the current automatic generated-PDF publication lane is unchanged deliberately to avoid breaking Android, retries, school delivery and legacy data.
+
+This draft is a targeted code fix, not a production/live release.
