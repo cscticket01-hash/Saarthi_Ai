@@ -306,7 +306,11 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
   if(body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1){
-   const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
+   // Reuse the same five-minute verified school-script capability cache as file
+   // uploads; a new remote health round-trip must not recur every 30 seconds
+   // while deleting multiple records. Final deletion still requires owner proof.
+   const capability=await cachedRead(uploadCapabilities,m.schoolId,
+     ()=>signedRequest(m,{action:'managed_health'}),300000);
    if(capability.deleteEverywhereVersion!==1)fail(412,'Update the school Script before deleting all cloud copies','DELETE_EVERYWHERE_UPGRADE_REQUIRED');
   }
 
