@@ -14,7 +14,7 @@ class WindowsThemePreset {
   final String id, name;
   final Color seed, accent, darkSurface, darkBackground;
   final bool light;
-  // The glass preset is painted interactively in the website Theme picker.
+  // Stable ID preserves already-published school themes when the visual\n  // treatment evolves from Midnight Glass to Liquid Glass.
   // Screenshot/animation fallbacks use existing verified dark-blue resources,
   // so every existing page keeps rendering without missing binary assets.
   String get image => 'assets/theme_preset_${id == 'midnight-glass' ? 'electric-blue' : id}.webp';
@@ -24,11 +24,11 @@ class WindowsThemePreset {
 const windowsThemePresets = <WindowsThemePreset>[
   WindowsThemePreset(
     'midnight-glass',
-    'Midnight Glass',
-    Color(0xFF39ABF0),
-    Color(0xFF48E5B5),
-    Color(0xFF131A25),
-    Color(0xFF06090F),
+    'Liquid Glass',
+    Color(0xFF8DDBEB),
+    Color(0xFFB1C7FF),
+    Color(0xFF21384A),
+    Color(0xFF06121F),
     light: false,
   ),
   WindowsThemePreset(
