@@ -4,12 +4,20 @@ on:
     paths:
       - 'functions/backup-audit-evidence.cjs'
       - 'functions/test/backup-audit-evidence.test.cjs'
+      - 'functions/managed-schools.js'
+      - 'cloudflare-sync/src/r2-stage.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
       - '.github/workflows/full-backup-owner-audit.yml'
   push:
     branches: [audit/full-backup-hourly-proof-20261119]
     paths:
       - 'functions/backup-audit-evidence.cjs'
       - 'functions/test/backup-audit-evidence.test.cjs'
+      - 'functions/managed-schools.js'
+      - 'cloudflare-sync/src/r2-stage.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
       - '.github/workflows/full-backup-owner-audit.yml'
 permissions:
   contents: read
@@ -20,5 +28,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: node --test functions/test/backup-audit-evidence.test.cjs
+          node-version: '24'
+      - name: Verify server file syntax
+        run: node --check functions/managed-schools.js
+      - name: Verify independent school owner proof gates
+        run: node --test functions/test/backup-audit-evidence.test.cjs
+  test-cloudflare-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix cloudflare-sync --ignore-scripts
+      - run: npm run check --prefix cloudflare-sync
+      - run: npm run build --prefix cloudflare-sync
+      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs
