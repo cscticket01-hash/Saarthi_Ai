@@ -1365,6 +1365,23 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ // School-authenticated read-only original R2 stage inventory; NOT a Drive proof.
+ if(action==='managed/cloudflare/backup-audit-page'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const after=b.after??'',limit=b.limit??100;
+  if(typeof after!=='string'||after.length>350||
+     !Number.isSafeInteger(limit)||limit<1||limit>100)
+    fail(400,'Invalid R2 audit pagination');
+  const report=await cloudflareSync.rpc(m.schoolId,'delivery',
+    {command:'r2OriginalAuditPage',after,limit});
+  if(report?.schoolId!==m.schoolId||report.version!==1||
+     report.scope!=='r2ImmutableOriginalStages'||
+     report.coverage!=='r2-staged-only'||report.partial!==true||
+     !Array.isArray(report.entries)||report.entries.length>limit||
+     (report.nextCursor!==null&&typeof report.nextCursor!=='string'))
+    fail(502,'R2 audit inventory did not verify','R2_AUDIT_UNVERIFIED');
+  return {success:true,...report};
+ }
  if(action==='managed/cloudflare/verified-hour'){
   if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
   const value=await cloudflareSync.rpc(m.schoolId,'delivery',{command:'verifiedHourSummary'});
