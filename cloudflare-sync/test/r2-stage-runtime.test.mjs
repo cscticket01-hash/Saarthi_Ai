@@ -313,7 +313,7 @@ test('legacy record audit recovers only broker-stamped original verified event t
 });
 
 
-test('two unrelated new persons admit together; same-person edits and delete cascades remain ordered',async t=>{
+test('distinct person Cloudflare ACKs are immediate while person Drive/CAS order stays safe',async t=>{
  const {rpc}=await harness(t);
  const make=(collection,id,operationId,operation='write',expectedRecordRevision='')=>{
   const request={action:'managed_records',collection,id,operationId,
@@ -328,8 +328,8 @@ test('two unrelated new persons admit together; same-person edits and delete cas
  assert.equal((await rpc('enqueue',b)).http,200);
  const initial=await rpc('pending',{limit:2});
  assert.equal(initial.http,200);
- assert.deepEqual(initial.value.map(row=>row.id),[a.id,b.id],
-  'unrelated person creates must not await the prior original Drive backup');
+ assert.deepEqual(initial.value.map(row=>row.id),[a.id],
+  'both Cloudflare saves are accepted but dependent person Drive operations remain FIFO');
  const same=make('students_directory','new-student-one','person-edit-operation-one-20261119');
  const deletion=make('students_directory','old-student-three',
   'person-delete-operation-20261119','delete','signed-previous-revision');
@@ -337,15 +337,15 @@ test('two unrelated new persons admit together; same-person edits and delete cas
  for(const job of [same,deletion,afterDelete])
   assert.equal((await rpc('enqueue',job)).http,200);
  const selected=await rpc('pending',{limit:2});
- assert.deepEqual(selected.value.map(row=>row.id),[a.id,b.id],
-  'same student cannot overtake an outstanding create');
+ assert.deepEqual(selected.value.map(row=>row.id),[a.id],
+  'another person, same-student edit and delete cascade stay behind the first owner');
  const claim='synthetic-independent-owner-claim';
  assert.equal((await rpc('claim',{id:a.id,claim,expires:Date.now()+60000})).value,true);
  assert.equal((await rpc('finish',{id:a.id,claim,
    values:{state:'retry',nextAttemptAt:Date.now()+60000}})).value,true);
  const later=await rpc('pending',{limit:2});
- assert.ok(later.value.some(row=>row.id===b.id),
-  'new teacher proceeds when another person is waiting on Drive');
+ assert.equal(later.value.length,0,
+  'later person Drive delivery must not overtake an unverified earlier person');
  assert.ok(!later.value.some(row=>row.id===same.id),
   'same-student mutation never overtakes the unfinished original');
  assert.ok(!later.value.some(row=>row.id===afterDelete.id),
