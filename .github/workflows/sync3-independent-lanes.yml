@@ -9,6 +9,7 @@ on:
       - 'cloudflare-sync/src/spool.ts'
       - 'cloudflare-sync/src/worker.ts'
       - 'functions/delete-everywhere.js'
+      - 'staging-school-cloud/server.cjs'
       - '.github/workflows/sync3-independent-lanes.yml'
   push:
     branches: [fix/sync3-independent-lanes-delete-speed-20261119]
@@ -28,3 +29,14 @@ jobs:
         run: flutter test test/windows_sync_parallel_admission_test.dart
       - name: Analyze Windows engine queue changes
         run: flutter analyze --no-fatal-infos lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_parallel_admission.dart
+
+  broker-and-delete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --check staging-school-cloud/server.cjs
+      - run: node --check functions/delete-everywhere.js
+      - run: node --test functions/test/edge-record-scheduling.test.js functions/test/delete-everywhere-firebase.test.js
