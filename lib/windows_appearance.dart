@@ -168,8 +168,11 @@ class WindowsAppearance {
 
   static Color background(Color source) {
     if (source.a == 0) return source;
-    if (presetId == 'midnight-glass' && mode.value != ThemeMode.light) {
-      // Legacy native panels reveal the local backdrop only for Liquid Glass.
+    if (presetId == 'midnight-glass' &&
+        mode.value != ThemeMode.light &&
+        source.r < .45 && source.g < .48 && source.b < .58) {
+      // Only dark neutral panel paints reveal the backdrop. Warning/success
+      // backgrounds and bright readable surfaces keep their original colours.
       return const Color(0xB0203A50).withValues(alpha: source.a * .68);
     }
     final high = [source.r, source.g, source.b].reduce((a, b) => a > b ? a : b);
