@@ -112,6 +112,12 @@ void main() {
       call:(action,body) async=>{...proof,'firebaseDeletionComplete':false});
     expect((await ref.get()).data()?['syncState'],'cloudAccepted',
       reason:'Never clear Delete Everywhere while Firebase readback is missing');
+    // Advance only the synthetic journal poll deadline. Production retries
+    // retain their original exponential backoff and immutable ticket.
+    final retainedJournal=(await db.collection(WindowsDriveDeliveryQueue.collection)
+      .get()).docs.single.reference;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+      retainedJournal.set({'nextPollAt':0},const SetOptions(merge:true)));
     await WindowsDriveDeliveryQueue.poll(school,
       call:(action,body) async=>proof);
     expect((await ref.get()).data(),isNull,
