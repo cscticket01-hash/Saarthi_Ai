@@ -170,7 +170,8 @@ class WindowsAppearance {
     if (source.a == 0) return source;
     if (presetId == 'midnight-glass' &&
         mode.value != ThemeMode.light &&
-        source.r < .45 && source.g < .48 && source.b < .58) {
+        source.r < .45 && source.g < .48 && source.b < .58 &&
+        source.b >= source.r * .85 && source.b >= source.g * .65) {
       // Only dark neutral panel paints reveal the backdrop. Warning/success
       // backgrounds and bright readable surfaces keep their original colours.
       return const Color(0xB0203A50).withValues(alpha: source.a * .68);
