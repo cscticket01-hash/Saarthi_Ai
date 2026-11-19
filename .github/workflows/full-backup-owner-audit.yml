@@ -7,10 +7,13 @@ on:
       - 'functions/managed-schools.js'
       - 'cloudflare-sync/src/r2-stage.ts'
       - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/src/spool.ts'
+      - 'cloudflare-sync/src/live-records.ts'
+      - 'cloudflare-sync/test/runtime.test.mjs'
       - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
       - '.github/workflows/full-backup-owner-audit.yml'
   push:
-    branches: [audit/full-backup-hourly-proof-20261119]
+    branches: [audit/full-backup-hourly-proof-20261119, audit/legacy-owner-journal-pages-20261119]
     paths:
       - 'functions/backup-audit-evidence.cjs'
       - 'functions/test/backup-audit-evidence.test.cjs'
@@ -45,4 +48,4 @@ jobs:
       - run: npm run types --prefix cloudflare-sync
       - run: npm run check --prefix cloudflare-sync
       - run: npm run build --prefix cloudflare-sync
-      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs
+      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs cloudflare-sync/test/runtime.test.mjs
