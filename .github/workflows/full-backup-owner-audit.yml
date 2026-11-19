@@ -37,7 +37,7 @@ jobs:
       - name: Verify server file syntax
         run: node --check functions/managed-schools.js
       - name: Verify independent school owner proof gates
-        run: node --test functions/test/backup-audit-evidence.test.cjs
+        run: node --test functions/test/backup-audit-evidence.test.cjs functions/test/backup-drive-file-proof.test.cjs
   test-cloudflare-audit:
     runs-on: ubuntu-latest
     steps:
