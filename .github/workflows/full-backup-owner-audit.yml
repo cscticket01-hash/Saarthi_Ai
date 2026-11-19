@@ -41,6 +41,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --prefix cloudflare-sync --ignore-scripts
+      - run: cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
+      - run: npm run types --prefix cloudflare-sync
       - run: npm run check --prefix cloudflare-sync
       - run: npm run build --prefix cloudflare-sync
       - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs
