@@ -25,7 +25,7 @@ void main() {
    ];
    expect(oldestIndependentNotice(rows,schoolId:school,nowMillis:100),isNull);
    expect(oldestIndependentNotice([
-     notice('foreign','original-notice-operation-00003',1,schoolId:'vs-'+'b'*32),
+     notice('foreign','original-notice-operation-00003',1,schoolId:'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
      notice('local','original-notice-operation-00004',2)
    ],schoolId:school,nowMillis:100)?['queueId'],'local');
  });
