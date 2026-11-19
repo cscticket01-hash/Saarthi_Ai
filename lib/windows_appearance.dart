@@ -168,6 +168,10 @@ class WindowsAppearance {
 
   static Color background(Color source) {
     if (source.a == 0) return source;
+    if (presetId == 'midnight-glass' && mode.value != ThemeMode.light) {
+      // Legacy native panels reveal the local backdrop only for Liquid Glass.
+      return const Color(0xB0203A50).withValues(alpha: source.a * .68);
+    }
     final high = [source.r, source.g, source.b].reduce((a, b) => a > b ? a : b);
     final low = [source.r, source.g, source.b].reduce((a, b) => a < b ? a : b);
     if (high - low < .42 && high <= .46) return resolve(source);
@@ -212,16 +216,16 @@ class WindowsAppearance {
       dividerColor: scheme.outlineVariant,
       cardTheme: CardThemeData(
         color: dark && presetId == 'midnight-glass'
-            ? const Color(0xD51D293A)
+            ? const Color(0xA0294358)
             : scheme.surface,
         surfaceTintColor: Colors.transparent,
         shadowColor: dark && presetId == 'midnight-glass'
-            ? const Color(0x850A58B8) : Colors.transparent,
+            ? const Color(0x35060D19) : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
           side: BorderSide(
             color: presetId == 'midnight-glass'
-                ? const Color(0xFF5686AC).withValues(alpha: .7)
+                ? const Color(0xFFA5D7EF).withValues(alpha: .44)
                 : preset == null
                 ? scheme.outlineVariant
                 : accent.withValues(alpha: .35),
@@ -230,7 +234,7 @@ class WindowsAppearance {
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: dark && presetId == 'midnight-glass'
-            ? const Color(0xFF172334) : scheme.surface,
+            ? const Color(0xF0223B50) : scheme.surface,
         surfaceTintColor: Colors.transparent,
       ),
       snackBarTheme: SnackBarThemeData(
@@ -293,13 +297,17 @@ class WindowsAppearance {
         ),
       ),
       scaffoldBackgroundColor: dark
-          ? preset?.darkBackground ?? const Color(0xFF0B141A)
+          ? presetId == 'midnight-glass'
+              ? Colors.transparent
+              : preset?.darkBackground ?? const Color(0xFF0B141A)
           : presetId == 'mint-light'
           ? const Color(0xFFECFAF7)
           : const Color(0xFFF3F5F7),
       appBarTheme: AppBarTheme(
         backgroundColor: dark
-            ? preset?.darkBackground ?? const Color(0xFF1F2C34)
+            ? presetId == 'midnight-glass'
+                ? const Color(0xA0213F55)
+                : preset?.darkBackground ?? const Color(0xFF1F2C34)
             : Colors.white,
         foregroundColor: dark ? Colors.white : const Color(0xFF172229),
         elevation: 0,
@@ -307,7 +315,9 @@ class WindowsAppearance {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: dark
-            ? Color.lerp(surface, Colors.black, .22)
+            ? presetId == 'midnight-glass'
+                ? const Color(0x80284057)
+                : Color.lerp(surface, Colors.black, .22)
             : presetId == 'mint-light'
             ? const Color(0xFFF5FCFA)
             : const Color(0xFFF0F3F5),
