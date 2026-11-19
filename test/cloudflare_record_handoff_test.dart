@@ -50,6 +50,56 @@ void main() {
       edgeDeliverySupported:true),false);
   });
 
+  test('Delete Everywhere is Cloudflare-accepted immediately, but final ACK requires Drive and Firebase cleanup', () async {
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'teachers_directory','documentId':'teacher-delete',
+      'operation':'delete','operationId':'original-delete-owner-2026111901',
+      'baseCloudRevision':'real-prior-revision','syncState':'pending',
+    };
+    expect(eligibleForRecordHandoff(original,school,
+      edgeDeliverySupported:true),true);
+    expect(eligibleForRecordHandoff({...original,'baseCloudRevision':''},school,
+      edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...original,'priorDeletion':{'operation':'delete'}},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...original,'collection':'students_directory'},
+      school,edgeDeliverySupported:true),false,
+      reason:'Student delete requires a verified immutable generation');
+    expect(eligibleForRecordHandoff({...original,'collection':'students_directory',
+      'deletedStudentGeneration':'p-'+('a'*32)},school,edgeDeliverySupported:true),true);
+    final ref=db.collection('_windows_firebase_outbox').doc('original-delete');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    final before=(await ref.get()).data()!;
+    final ticket=exactTicket(original);
+    expect(await db.recordOutboxCloudHandoff(ref,before,ticketId:ticket),true);
+    final accepted=(await ref.get()).data()!;
+    expect(accepted['syncState'],'cloudAccepted');
+    expect(accepted['cloudTicketId'],ticket);
+    expect(accepted['operationId'],original['operationId']);
+    final journal={'ticketId':ticket,'schoolId':school,'action':'managed/records',
+      'collection':original['collection'],'id':original['documentId'],
+      'originalOperationId':original['operationId']};
+    final record={'schoolId':school,'id':original['documentId'],
+      '_syncDeleted':true,'_syncRevision':'new-signed-drive-revision',
+      '_syncOperationId':original['operationId'],
+      '_syncErasePlan':{'complete':true}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'new-signed-drive-revision',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,'record':record};
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'record':{...record,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'record':{...record,'_syncOperationId':'different-delete-id'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,other),false);
+  });
+
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
     await db.collection('students_directory').doc('real-student')
       .set({'schoolId':school,'name':'Real school record'});
