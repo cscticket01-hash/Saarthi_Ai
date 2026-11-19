@@ -1382,11 +1382,17 @@ class _SchoolDocumentTemplatesScreenState
                 final i = n;
                 final chosen = _chosen();
                 final active = i == chosen;
-                final portrait =
-                    (_kind == 'studentId' || _kind == 'teacherId') &&
-                    (_kind == 'studentId'
-                      ? _choices('studentId')[i].id != 'student-svn-navy-green-v1'
-                      : i != 2);
+                // The gallery contains legacy layouts before catalog layouts.
+                // During the asynchronous catalog load, the latter can be empty.
+                final catalogIndex = i - _legacyCount(_kind);
+                final catalogChoices = _choices(_kind);
+                final catalogEntry =
+                    catalogIndex >= 0 && catalogIndex < catalogChoices.length
+                        ? catalogChoices[catalogIndex]
+                        : null;
+                final portrait = _kind == 'studentId'
+                    ? catalogEntry?.id != 'student-svn-navy-green-v1'
+                    : _kind == 'teacherId' && catalogEntry == null;
                 return Card(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -1466,12 +1472,12 @@ class _SchoolDocumentTemplatesScreenState
                         Row(
                           children: [
                             OutlinedButton(
-                              onPressed: () => _preview(i),
+                              onPressed: _loading ? null : () => _preview(i),
                               child: const Text('Preview'),
                             ),
                             const SizedBox(width: 10),
                             FilledButton(
-                              onPressed: active || _catalogError != null
+                              onPressed: _loading || active || _catalogError != null
                                   ? null
                                   : () => _select(i),
                               child: Text(
