@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'functions/backup-audit-evidence.cjs'
+      - 'functions/backup-drive-file-proof.cjs'
+      - 'functions/test/backup-drive-file-proof.test.cjs'
       - 'functions/test/backup-audit-evidence.test.cjs'
       - 'functions/managed-schools.js'
       - 'cloudflare-sync/src/r2-stage.ts'
