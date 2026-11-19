@@ -1365,6 +1365,34 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ // Paginate persisted owner receipts across current/legacy Edge, notices,
+ // attendance and live lanes. A one-lane page is NEVER all-school proof.
+ if(action==='managed/cloudflare/owner-journal-page'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery not enabled','EDGE_DELIVERY_DISABLED');
+  const lane=b.lane,after=b.after??0,limit=b.limit??50;
+  if(typeof lane!=='string'||!(/^(?:records|notices|live|attendance-[a-f0-9]{2}|file-[a-f0-9]{64})$/.test(lane))||
+     !Number.isSafeInteger(after)||after<0||
+     !Number.isSafeInteger(limit)||limit<1||limit>100)
+    fail(400,'Invalid owner-journal scope or pagination');
+  if(lane==='live'&&!liveSync.enabled(m.schoolId))
+    fail(412,'Live owner is not enabled for this school','LIVE_SYNC_DISABLED');
+  const expectedScope=lane==='live'?'liveImmutableOwnerJournal':
+    lane==='records'||lane.startsWith('file-')?
+    'edgeImmutableOwnerJournal':'legacyImmutableOwnerJournal';
+  const value=await cloudflareSync.rpc(m.schoolId,lane,
+    {command:'auditJournalPage',after,limit});
+  if(value?.schoolId!==m.schoolId||value.version!==1||
+     value.scope!==expectedScope||value.lane!==lane||
+     value.coverage!=='one-owner-journal-only'||value.partial!==true||
+     !Array.isArray(value.entries)||value.entries.length>limit||
+     !value.entries.every(row=>row&&typeof row.id==='string'&&
+       Number.isSafeInteger(row.sequence)&&row.sequence>after&&
+       typeof row.state==='string')||
+     (value.nextCursor!==null&&
+       (!Number.isSafeInteger(value.nextCursor)||value.nextCursor<=after)))
+    fail(502,'Owner-journal readback did not verify','OWNER_JOURNAL_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,...value};
+ }
  // School-authenticated read-only original R2 stage inventory; NOT a Drive proof.
  if(action==='managed/cloudflare/backup-audit-page'){
   if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
