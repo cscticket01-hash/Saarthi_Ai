@@ -71,37 +71,48 @@ function createDeleteEverywhere({db}) {
       fail('DELETE_EVERYWHERE_ACK_UNVERIFIED');
     }
   let deleted=0;
-  const refs=[];
-  // Exact deterministic paths make retries after any partial success idempotent.
-  // A transaction rechecks ownership/generation immediately before deletion;
-  // a replacement pupil using the same class/roll slot is never erased.
-  for(const target of targets){
-   const ref=db.doc('schools/'+school+'/'+target.collection+'/'+target.id);
-   refs.push(ref);
-   let removed;
-   try{removed=await db.runTransaction(async tx=>{
-    const snapshot=await tx.get(ref);if(!snapshot.exists)return false;
-    const row=snapshot.data();
-    if(row.schoolId!==undefined&&row.schoolId!==school)fail('DELETE_EVERYWHERE_FOREIGN_RECORD');
-    const generation=row.mobileStableId||row.personId||row._syncDeletedOwner;
-    if(target.generation&&generation&&generation!==target.generation)fail('DELETE_EVERYWHERE_GENERATION_CONFLICT');
-    // An explicit generation-bound delete is allowed to supersede a newer
-    // edit of that SAME person; an occupant with a different generation is
-    // never removed. Ungenerated rows require exact revision CAS.
-    const sameGeneration=target.generation&&generation===target.generation;
-    const sourceMatches=typeof target.sourceRevision==='string'&&
-      target.sourceRevision.length>0&&row._syncRevision===target.sourceRevision;
-    const tombstoneMatches=row._syncDeleted===true&&
-      typeof target.revision==='string'&&target.revision.length>0&&
-      row._syncRevision===target.revision;
-    if(!sameGeneration&&!sourceMatches&&!tombstoneMatches)
-      fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
-    if(typeof tx.delete!=='function')throw Object.assign(Error('Atomic Firebase delete is unavailable.'),{status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
-    tx.delete(ref);return true;
-   });}catch(error){
-    rethrowFirestorePermission(error,'transaction');
-   }
-   if(removed)deleted++;
+  const refs=targets.map(target=>
+    db.doc('schools/'+school+'/'+target.collection+'/'+target.id));
+  // Per-record transactions still enforce exact generation and CAS, but four
+  // independent Firestore targets can be verified/removed in parallel.
+  // A person with hundreds of fee/attendance/document children no longer
+  // pays one full network round trip for every child.
+  // Wait for ALL attempted transactions to settle before any failure return:
+  // no untracked deletion may continue after a failed owner receipt.
+  const parallelLimit=4;
+  for(let offset=0;offset<targets.length;offset+=parallelLimit){
+   const results=await Promise.allSettled(
+    targets.slice(offset,offset+parallelLimit).map(async(target,index)=>{
+     const ref=refs[offset+index];
+     try{return await db.runTransaction(async tx=>{
+      const snapshot=await tx.get(ref);if(!snapshot.exists)return false;
+      const row=snapshot.data();
+      if(row.schoolId!==undefined&&row.schoolId!==school)
+       fail('DELETE_EVERYWHERE_FOREIGN_RECORD');
+      const generation=row.mobileStableId||row.personId||row._syncDeletedOwner;
+      if(target.generation&&generation&&generation!==target.generation)
+       fail('DELETE_EVERYWHERE_GENERATION_CONFLICT');
+      const sameGeneration=target.generation&&generation===target.generation;
+      const sourceMatches=typeof target.sourceRevision==='string'&&
+       target.sourceRevision.length>0&&row._syncRevision===target.sourceRevision;
+      const tombstoneMatches=row._syncDeleted===true&&
+       typeof target.revision==='string'&&target.revision.length>0&&
+       row._syncRevision===target.revision;
+      if(!sameGeneration&&!sourceMatches&&!tombstoneMatches)
+       fail('DELETE_EVERYWHERE_GENERATION_UNPROVEN');
+      if(typeof tx.delete!=='function')
+       throw Object.assign(Error('Atomic Firebase delete is unavailable.'),
+        {status:503,code:'DELETE_EVERYWHERE_FIREBASE_UNAVAILABLE'});
+      tx.delete(ref);return true;
+     });}catch(error){
+      rethrowFirestorePermission(error,'transaction');
+     }
+    })
+   );
+   const rejected=results.find(result=>result.status==='rejected');
+   if(rejected)throw rejected.reason;
+   deleted+=results.filter(result=>result.status==='fulfilled'&&
+    result.value===true).length;
   }
   // Firestore transaction commits alone are not a final Delete Everywhere
   // readback. Re-read every exact school-scoped target, including absent rows,
