@@ -13,7 +13,10 @@ import '../lib/india_locations.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final db = FirebaseFirestore.instance;
-  setUp(() async {
+  testWidgets('Add Student restricts contact input and rejects invalid save without writes', (tester) async {
+    // The address-only widget case below has no DB dependency. Opening an
+    // app profile in setUp for that case raced another Windows CI process
+    // holding local_database_v1.json. Only this storage test needs a profile.
     const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     FlutterSecureStorage.setMockInitialValues({
       CentralSchoolCloud.key: jsonEncode({
@@ -26,9 +29,6 @@ void main() {
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     await db.switchProfile('student-contact-${DateTime.now().microsecondsSinceEpoch}',
       identity: {'schoolId': school, 'schoolSyncId': school});
-  });
-
-  testWidgets('Add Student restricts contact input and rejects invalid save without writes', (tester) async {
     tester.view.physicalSize = const Size(1400, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);

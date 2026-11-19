@@ -230,14 +230,18 @@ class WindowsExamService {
     if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
       throw StateError('School identity changed. Delete cancelled.');
     }
-    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
-    await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
+    // All three local views are changed in ONE atomic durable transaction.
+    // Only exams and the legacy school_settings mirror require real cloud
+    // delete receipts; the local cache remains internal. Do not discard a
+    // genuine mirror tombstone or call Drive from the device.
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    batch.delete(db.collection('exams').doc(examId));
+    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
+    batch.delete(db.collection('school_settings').doc('exam_$examId'));
     _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('_local_exam_center_exams')
-        .doc(examId).delete();
+    await batch.commit();
     _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('school_settings')
-        .doc('exam_$examId').delete();
   }
 
   static void _requireProfile(String profile) {

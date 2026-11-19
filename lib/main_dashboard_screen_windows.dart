@@ -1515,6 +1515,13 @@ Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
 }
 
 Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
+  // Managed schools use the school's replicated local Cloudflare record. A
+  // dashboard preload is not permission to start a Drive/Apps Script read.
+  // Initial enrollment and cross-PC reconciliation have separate verified
+  // school-bound owners, so this path must not overwrite a pending edit.
+  if (await _windowsDirectoryCloudFirst()) {
+    return _loadSchoolProfileCache();
+  }
   final reference=_schoolProfileCacheRef();
   final result = await _schoolProfileBackendPost(
     const {'action': 'get_school_profile'},
