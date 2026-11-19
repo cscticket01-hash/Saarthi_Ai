@@ -125,10 +125,26 @@ export class OfflineBinaryLane extends SyncLane {
   assert.equal(files.has(file.uploadKey),false,'Google is not called before Cloudflare ACK');
   await alarm(stage.delivery.lane);
   await alarm('delivery');
-  assert.equal(files.has(file.uploadKey),true,'Original bytes were delivered after client exited');
+  // New lanes are admitted asynchronously under durable per-lane leases.
+  // Check the immutable provider bytes, not the instant alarm response.
+  async function until(check,message){
+   for(let i=0;i<250;i++){
+    if(await check())return;
+    await new Promise(resolve=>setTimeout(resolve,20));
+   }
+   throw Error(message);
+  }
+  await until(()=>files.has(file.uploadKey),
+    'Original bytes were not delivered independently after the app closed');
   assert.equal((await delivery.status(school,stage.delivery.lane,stage.delivery.id)).driveState,'pending');
+  await until(async()=>{const state=await edge.rpc(school,stage.delivery.lane,{
+   command:'status',id:stage.delivery.id});
+   return state?.state==='retry';},'Provider lost-ACK retry was not durably retained');
   await alarm(stage.delivery.lane);
   await alarm('delivery');
+  await until(async()=>{const state=await delivery.status(school,
+   stage.delivery.lane,stage.delivery.id);
+   return state.driveState==='verified';},'Original provider Drive ACK never verified');
   const complete=await delivery.status(school,stage.delivery.lane,stage.delivery.id);
   assert.equal(complete.driveState,'verified');
   assert.equal(complete.fileId,files.get(file.uploadKey).fileId);
