@@ -1365,6 +1365,29 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ // Independent, read-only signed Google Drive exact-byte proof for a
+ // completed file lane. The original Cloudflare ACK is NOT sufficient.
+ if(action==='managed/cloudflare/verify-drive-file'){
+  if(!edgeEnabled(m.schoolId))
+    fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const id=b.id;
+  if(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id))
+    fail(400,'Invalid immutable file owner identity');
+  const lane='file-'+id;
+  const owner=await cloudflareSync.rpc(m.schoolId,lane,{command:'status',id});
+  const audit=await cloudflareSync.rpc(m.schoolId,lane,
+    {command:'auditJournalPage',after:0,limit:2});
+  if(audit?.schoolId!==m.schoolId||audit.lane!==lane||
+     audit.scope!=='edgeImmutableOwnerJournal'||audit.partial!==true||
+     !Array.isArray(audit.entries)||audit.entries.length>2)
+    fail(502,'Original owner audit did not verify','OWNER_JOURNAL_UNVERIFIED');
+  const original=audit.entries.find(row=>row.id===id);
+  const verified=await require('./backup-drive-file-proof.cjs')
+    .verifyOwnerDriveFile({schoolId:m.schoolId,operationId:id,owner,
+      auditEntry:original,
+      readFile:fileId=>signed(m,{action:'managed_file',fileId})});
+  return {success:true,...verified};
+ }
  // Paginate persisted owner receipts across current/legacy Edge, notices,
  // attendance and live lanes. A one-lane page is NEVER all-school proof.
  if(action==='managed/cloudflare/owner-journal-page'){
