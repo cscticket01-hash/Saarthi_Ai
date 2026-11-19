@@ -33,3 +33,13 @@ Map<String, dynamic>? oldestIndependentNotice(
   }
   return {'queueId':id,'operationId':op};
 }
+
+/// Both independent Cloudflare admissions start immediately. A failed lane
+/// cannot make the owner exit while the other lane is still retaining its
+/// immutable local receipt.
+Future<void> runIndependentCloudAdmissions(
+  Future<void> Function() sendPeople,
+  Future<void> Function() sendNotice,
+) async {
+  await Future.wait<void>([sendPeople(),sendNotice()]);
+}
