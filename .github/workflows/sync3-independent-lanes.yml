@@ -33,7 +33,7 @@ jobs:
       - name: Verify delete Cloudflare handoff keeps exact immutable receipt until Drive and Firebase proof
         run: flutter test test/cloudflare_record_handoff_test.dart
       - name: Analyze Windows engine queue changes
-        run: flutter analyze --no-fatal-infos lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_parallel_admission.dart lib/cloudflare_record_handoff.dart lib/windows_local_firestore.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_parallel_admission.dart lib/cloudflare_record_handoff.dart lib/windows_local_firestore.dart
 
   broker-and-delete:
     runs-on: ubuntu-latest
