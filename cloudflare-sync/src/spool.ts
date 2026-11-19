@@ -28,7 +28,18 @@ const independent=new Set(['school_expenses','attendance_records','attendance_lo
 const recordIdentity=(request:Json):Json=>request.action==='managed_records_batch'?{action:request.action,operations:(request.operations as Json[]).map(recordIdentity)}:Object.fromEntries(['action','collection','id','operation','syncProtocol','operationId','expectedRecordRevision'].filter(key=>request[key]!==undefined).map(key=>[key,request[key]]));
 function resources(request:Json):string {
  const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
- if(ops.some(op=>!independent.has(String(op.collection))))return '*';
+ // A brand-new Student/Teacher create has an immutable, school-scoped row
+ // identity and no older CAS dependency. Different people can reach Drive in
+ // parallel without making a long Delete Everywhere cleanup block admission.
+ // Edits, replacement generations, delete cascades, ambiguous/batch work,
+ // documents and financial dependencies remain strict global barriers.
+ const independentPersonCreate=(op:Json)=>
+  request.action==='managed_records'&&
+  ['students_directory','teachers_directory'].includes(String(op.collection))&&
+  op.operation==='write'&&op.expectedRecordRevision===''&&
+  op.deleteEverywhereVersion===undefined&&op.priorDeletion===undefined&&
+  op.atomicBundleId===undefined;
+ if(ops.some(op=>!independent.has(String(op.collection))&&!independentPersonCreate(op)))return '*';
  return JSON.stringify([...new Set(ops.map(op=>JSON.stringify([op.collection,op.id])))].sort());
 }
 function schedule(storage:DurableObjectStorage,limit:number,at:number):{ids:string[];due:number|null}{
