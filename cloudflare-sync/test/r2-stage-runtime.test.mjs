@@ -262,3 +262,24 @@ test('hourly Drive report counts distinct R2-verified receipts across five lanes
  assert.equal(signed.value.verifiedCount,0,
    'A current-hour Drive receipt is not part of the previous closed hour');
 });
+
+test('read-only audit pages expose staged originals without claiming all-school Google Drive proof',async t=>{
+ const {rpc}=await harness(t);
+ const r=record('audit-paged');
+ assert.equal((await rpc('enqueue',r)).http,200);
+ const first=await rpc('r2OriginalAuditPage',{limit:1},'delivery');
+ assert.equal(first.http,200,JSON.stringify(first));
+ assert.equal(first.value.schoolId,school);
+ assert.equal(first.value.scope,'r2ImmutableOriginalStages');
+ assert.equal(first.value.coverage,'r2-staged-only');
+ assert.equal(first.value.partial,true,'R2 is not a full historical Drive audit');
+ assert.equal(first.value.entries.length,1);
+ assert.equal(first.value.entries[0].receiptId,r.id);
+ assert.equal(first.value.entries[0].state,'stored');
+ assert.equal(first.value.entries[0].originalAccepted,true);
+ assert.equal(first.value.entries[0].verifiedAt,null);
+ assert.equal(first.value.nextCursor,null);
+ const foreign='saarthi-v1/vs-'+'f'.repeat(32)+'/records/';
+ assert.equal((await rpc('r2OriginalAuditPage',{after:foreign,limit:1},'delivery')).http,400);
+ assert.equal((await rpc('r2OriginalAuditPage',{limit:101},'delivery')).http,400);
+});
