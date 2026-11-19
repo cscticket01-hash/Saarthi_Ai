@@ -7,6 +7,7 @@ void main() {
   Widget view({
     String owner = school,
     bool verified = true,
+    bool showStudentUid = false,
     Future<void> Function()? historical,
   }) => MaterialApp(home: Scaffold(body: SingleChildScrollView(
     child: MobileRecordIdCard(
@@ -15,12 +16,14 @@ void main() {
       personId: 'student-1',
       role: 'student',
       verified: verified,
+      showStudentUid: showStudentUid,
       person: <String,dynamic>{
         'schoolId': owner,
         'name': 'Test Student',
         'class': '6',
         'rollNo': '24',
         'parentName': 'Test Parent',
+        'studentUidTest': 'TEST-000001',
       },
       onOpenHistoricalPdf: historical,
     ),
@@ -39,6 +42,15 @@ void main() {
     await t.pump();
     expect(opened, 1);
     expect(t.takeException(), isNull);
+  });
+
+  testWidgets('student UID is gated by verified school display option', (t) async {
+    await t.pumpWidget(view());
+    expect(find.text('Student UID'), findsNothing);
+    await t.pumpWidget(view(showStudentUid: true));
+    expect(find.text('Student UID'), findsOneWidget);
+    expect(find.text('TEST-000001'), findsOneWidget);
+    expect(find.text('Father / Guardian'), findsOneWidget);
   });
 
   testWidgets('foreign-school and unverified records are never shown', (t) async {

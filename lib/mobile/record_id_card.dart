@@ -13,6 +13,7 @@ class MobileRecordIdCard extends StatelessWidget {
     required this.person,
     required this.verified,
     this.portrait,
+    this.showStudentUid = false,
     this.onOpenHistoricalPdf,
   });
 
@@ -20,6 +21,7 @@ class MobileRecordIdCard extends StatelessWidget {
   final Map<String, dynamic> person;
   final bool verified;
   final Widget? portrait;
+  final bool showStudentUid;
   final Future<void> Function()? onOpenHistoricalPdf;
 
   String _field(List<String> keys) {
@@ -86,13 +88,16 @@ class MobileRecordIdCard extends StatelessWidget {
           const SizedBox(height: 8),
           if (role == 'student') ...[
             field('Class', ['class', 'className']),
-            field('Roll', ['rollNo', 'roll']),
+            field('Roll No', ['rollNo', 'roll']),
+            if (showStudentUid &&
+                _field(['studentUid', 'studentUidTest', 'uniqueStudentId']) != '—')
+              field('Student UID', ['studentUid', 'studentUidTest', 'uniqueStudentId']),
           ] else ...[
             field('Designation', ['designation', 'role']),
             field('ID', ['teacherId', 'employeeId']),
           ],
         ] else ...[
-          field('Parent', ['parentName', 'fatherName']),
+          field('Father / Guardian', ['parentName', 'fatherName']),
           field('Date of birth', ['dateOfBirth', 'dob']),
           field('Address', ['address', 'streetAddress']),
           field('Contact', ['parentContact', 'mobile', 'contact']),

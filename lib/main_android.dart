@@ -521,6 +521,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   final _s = SchoolSession.instance;
   int _page = 0;
   bool _loading = true, _busy = false, _blocked = false;
+  bool _refreshingIdCard = false;
+  String? _idCardRefreshStatus;
   String? _error;
   Map<String, dynamic> _data = {};
   late final _history = AttendanceHistoryController(
@@ -580,11 +582,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
     _load();
     _timer = Timer.periodic(const Duration(minutes: 1), (_) => _presence());
     _noticeOpened = SchoolNotifications.opened.listen(
-      (_) => _load(afterSignal: true),
+      (_) => unawaited(_noticeSignal()),
     );
     _noticeReceived = FirebaseMessaging.onMessage.listen((m) {
       if (SchoolNotifications.belongsToSession(m.data, _s.link?.projectId))
-        _load(afterSignal: true);
+        unawaited(_noticeSignal());
     });
   }
 
@@ -631,10 +633,33 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       return;
     try {
       await _s.refreshAttendanceStatus();
+      // Lightweight edge notice check while the full dashboard is not due.
+      await _s.refreshSchoolNotices();
       await _s.refreshIfIdleDue();
     } catch (_) {
       /* Session publishes its retained-cache error state. */
     }
+  }
+
+  Future<void> _noticeSignal() async {
+    final fast = await _s.refreshSchoolNotices();
+    if (!fast && mounted) await _load(afterSignal: true);
+  }
+
+  Future<void> _refreshIdCardWithFeedback() async {
+    if (_refreshingIdCard || !mounted) return;
+    setState(() {
+      _refreshingIdCard = true;
+      _idCardRefreshStatus = null;
+    });
+    await _load(afterSignal: true);
+    if (!mounted) return;
+    setState(() {
+      _refreshingIdCard = false;
+      _idCardRefreshStatus = _error == null
+          ? 'ID card checked and updated'
+          : 'Refresh could not finish; cached card retained';
+    });
   }
 
   Future<void> _load({bool afterSignal = false}) async {
@@ -1442,6 +1467,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 role: _s.link?.role ?? '',
                 personId: _s.link?.personId ?? '',
                 person: Map<String, dynamic>.from(_s.person),
+                showStudentUid: _s.person['showStudentUid'] == true ||
+                    (_data['studentUidConfig'] is Map &&
+                     (_data['studentUidConfig'] as Map)['masterEnabled'] == true &&
+                     (_data['studentUidConfig'] as Map)['idCardEnabled'] == true),
                 verified: !_blocked && _s.lastDashboardVerifiedAt != null,
                 portrait: _data['atomicPortraitBundle'] is Map
                     ? FutureBuilder<Uint8List?>(
@@ -1464,6 +1493,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                         ? 'teacherId' : 'studentId', _s.person)
                     : null,
               ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _refreshingIdCard ? null : _refreshIdCardWithFeedback,
+              icon: _refreshingIdCard
+                  ? const SizedBox(width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh_rounded),
+              label: Text(_refreshingIdCard ? 'Refreshing ID card…' : 'Refresh ID card'),
+            ),
+            if (_idCardRefreshStatus != null)
+              Padding(padding: const EdgeInsets.only(top: 6),
+                child: Text(_idCardRefreshStatus!,
+                  style: const TextStyle(fontSize: 12, color: Colors.white70))),
           ],
         ),
       ),

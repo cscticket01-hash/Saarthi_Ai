@@ -13481,6 +13481,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white),
                         ),
@@ -13490,7 +13491,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         ),
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: fatherCtrl, decoration: input('Father Name', Icons.person_outline_rounded)),
+                      TextField(controller: fatherCtrl, inputFormatters: windowsPersonNameInputFormatters, decoration: input('Father Name', Icons.person_outline_rounded)),
                       const SizedBox(height: 10),
                       TextField(
                         controller:
@@ -13607,7 +13608,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: TextField(
+                            child: WindowsDateOfBirthField(
+                              helpText: 'Select joining date',
                               controller:
                                   joiningCtrl,
                               style:
@@ -13790,7 +13792,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           final phone =
                               phoneCtrl.text.trim();
 
-                          if (name.isEmpty ||
+                          if (!validWindowsPersonName(name) ||
+                              (fatherCtrl.text.trim().isNotEmpty && !validWindowsPersonName(fatherCtrl.text)) ||
                               subject.isEmpty) {
                             ScaffoldMessenger.of(
                               context,
@@ -15502,7 +15505,8 @@ class _AddTeacherScreenState
     final phone =
         _phoneCtrl.text.trim();
 
-    if (name.isEmpty ||
+    if (!validWindowsPersonName(name) ||
+        (_fatherCtrl.text.trim().isNotEmpty && !validWindowsPersonName(_fatherCtrl.text)) ||
         subject.isEmpty ||
         phone.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -15897,6 +15901,7 @@ class _AddTeacherScreenState
                   TextField(
                     controller:
                         _nameCtrl,
+                    inputFormatters: windowsPersonNameInputFormatters,
                     style:
                          TextStyle(fontFamily: 'Segoe UI', 
                       color:
@@ -15914,7 +15919,7 @@ class _AddTeacherScreenState
                     height: 11,
                   ),
 
-                  TextField(controller: _fatherCtrl, decoration: _field('Father Name', Icons.person_outline_rounded)),
+                  TextField(controller: _fatherCtrl, inputFormatters: windowsPersonNameInputFormatters, decoration: _field('Father Name', Icons.person_outline_rounded)),
                   const SizedBox(height: 11),
 
                   // Internal record identity is generated automatically.
@@ -16066,7 +16071,8 @@ class _AddTeacherScreenState
                       ),
                       Expanded(
                         child:
-                            TextField(
+                            WindowsDateOfBirthField(
+                          helpText: 'Select joining date',
                           controller:
                               _joiningCtrl,
                           style:
@@ -16359,7 +16365,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final countryCtrl = TextEditingController(text: 'India');
     final stateCtrl = TextEditingController();
     final districtCtrl = TextEditingController();
-    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}');
+    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day.toString().padLeft(2, '0')}/${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().year}');
     final dobCtrl = TextEditingController();
     String selectedClass = _selectedClassFilter == 'All Classes' ? 'Class 1' : _selectedClassFilter;
     String hostelFacility = 'No';
@@ -16415,9 +16421,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: nameCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
+                      TextField(controller: nameCtrl, inputFormatters: windowsPersonNameInputFormatters, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
                       const SizedBox(height: 10),
-                      TextField(controller: parentCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
+                      TextField(controller: parentCtrl, inputFormatters: windowsPersonNameInputFormatters, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
                       const SizedBox(height: 10),
                       TextField(
                         controller: contactCtrl,
@@ -16450,9 +16456,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code'))),
+                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)], style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code *'))),
                           const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date'))),
+                          Expanded(child: WindowsDateOfBirthField(controller: admissionDateCtrl, helpText: 'Select admission date', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date *'))),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -16491,12 +16497,19 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final roll = rollCtrl.text.trim();
                           final contact = contactCtrl.text.trim();
 
-                          if (name.isEmpty || !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty) {
+                          if (!validWindowsPersonName(name) || !validWindowsPersonName(parent) ||
+                              !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty ||
+                              [addressCtrl.text, countryCtrl.text, stateCtrl.text,
+                               districtCtrl.text, pinCtrl.text, admissionDateCtrl.text,
+                               dobCtrl.text].any((v) => v.trim().isEmpty) ||
+                              !validIndianPinCode(pinCtrl.text) ||
+                              parsePersonBirthDate(admissionDateCtrl.text) == null ||
+                              parsePersonBirthDate(dobCtrl.text) == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
-                                  'Name, Roll No aur Contact bharna zaroori hai!',
+                                  'Photo ke alawa sab fields required hain: names letters only, PIN 6 digits, dates DD/MM/YYYY.',
                                 ),
                               ),
                             );
@@ -17407,12 +17420,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Full Name'),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: parentCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput("Parent's Name"),
                       ),
@@ -17459,12 +17474,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       TextField(
                         controller: pinCtrl,
                         keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('PIN Code'),
                       ),
                       const SizedBox(height: 8),
-                      TextField(
+                      WindowsDateOfBirthField(
                         controller: admissionCtrl,
+                        helpText: 'Select admission date',
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Admission Date'),
                       ),
@@ -17514,6 +17531,16 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       onPressed: saving
                           ? null
                           : () async {
+                              if (!validWindowsPersonName(nameCtrl.text) ||
+                                  !validWindowsPersonName(parentCtrl.text) ||
+                                  !validIndianPinCode(pinCtrl.text) ||
+                                  parsePersonBirthDate(admissionCtrl.text) == null ||
+                                  parsePersonBirthDate(dobCtrl.text) == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                  content: Text('Names letters only, PIN 6 digits, dates DD/MM/YYYY.'),
+                                ));
+                                return;
+                              }
                               setDialogState(() => saving = true);
 
                               try {

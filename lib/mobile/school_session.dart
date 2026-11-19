@@ -1338,6 +1338,54 @@ class SchoolSession {
     }
   }
 
+  /// Refresh school-scoped notices from the signed Cloudflare edge grant.
+  /// A failed read retains verified notices; it never acknowledges Drive.
+  Future<bool>? _noticeOnlyRefresh;
+  Future<bool> refreshSchoolNotices() {
+    final running = _noticeOnlyRefresh;
+    if (running != null) return running;
+    final pending = _refreshSchoolNotices();
+    _noticeOnlyRefresh = pending;
+    pending.then((_) {
+      if (identical(_noticeOnlyRefresh, pending)) _noticeOnlyRefresh = null;
+    }, onError: (Object _, StackTrace __) {
+      if (identical(_noticeOnlyRefresh, pending)) _noticeOnlyRefresh = null;
+    });
+    return pending;
+  }
+
+  Future<bool> _refreshSchoolNotices() async {
+    if (syncPaused || !cachedAccessAllowed) return false;
+    final current = link, lane = _cloudflareLane, generation = _generation;
+    if (current == null || lane == null ||
+        !lane.validFor(current.schoolId, schoolToken)) return false;
+    try {
+      final reply = await lane.send(_client, 'mobile_notice_list', {
+        'role': current.role,
+        'personId': current.personId,
+        'linkToken': current.linkToken,
+        'sessionToken': schoolToken,
+      });
+      final data = _decodeSchoolResponse(reply.body);
+      if (generation != _generation || !identical(current, link) ||
+          reply.statusCode != 200 || data['success'] != true ||
+          data['schoolId'] != current.schoolId || data['notices'] is! List) {
+        return false;
+      }
+      final notices = data['notices'] as List;
+      if (notices.length > 100 || notices.any((row) => row is! Map)) {
+        return false;
+      }
+      dashboard = {...dashboard, 'notices': notices};
+      await _persist();
+      if (generation != _generation || !identical(current, link)) return false;
+      connectionChanges.value++;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _adoptSharedSnapshot() async {
     if (_sharedSessionStore != null) {
       final observed = await _sharedSessionStore!.readSnapshot();

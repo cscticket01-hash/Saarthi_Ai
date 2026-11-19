@@ -49,7 +49,7 @@ class OtherStaffDirectory {
       requireSchool(profile);
       final name = person['name']?.toString().trim() ?? '',
           employee = person['employeeId']?.toString().trim() ?? '';
-      if (name.isEmpty ||
+      if (!validWindowsPersonName(name) ||
           name.length > 120 ||
           employee.isEmpty ||
           employee.length > 60 ||
@@ -213,6 +213,7 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                   children: [
                     TextField(
                       controller: name,
+                      inputFormatters: windowsPersonNameInputFormatters,
                       decoration: const InputDecoration(labelText: 'Name'),
                     ),
                     TextField(
@@ -242,11 +243,11 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                       decoration: const InputDecoration(labelText: 'Mobile'),
                     ),
                     WindowsDateOfBirthField(controller: birth, enabled: !saving),
-                    TextField(
+                    WindowsDateOfBirthField(
                       controller: joining,
-                      decoration: const InputDecoration(
-                        labelText: 'Joining date / details',
-                      ),
+                      helpText: 'Select joining date',
+                      enabled: !saving,
+                      decoration: const InputDecoration(labelText: 'Joining Date (DD/MM/YYYY)'),
                     ),
                     TextField(controller: address, decoration: const InputDecoration(labelText: 'Address')),
                     const SizedBox(height: 10),

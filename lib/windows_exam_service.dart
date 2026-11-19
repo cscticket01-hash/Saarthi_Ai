@@ -211,14 +211,19 @@ class WindowsExamService {
     }
     // Signed remote results must also be empty; offline deletes fail closed.
     final idToken = await CentralSchoolCloud.firebaseToken();
-    for (final collection in const ['exam_center_results', 'exam_results']) {
-      _requireProfile(profile);
-      final remote = await WindowsFirebaseRemote.readCollection(
-        projectId: platformProjectId, idToken: idToken, collection: collection,
-      );
-      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
-        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
-      }
+    // Independent signed read checks run concurrently; failed checks still
+    // block deletion. Do not trade verification for a faster UI spinner.
+    final remoteResults = await Future.wait([
+      for (final collection in const ['exam_center_results', 'exam_results'])
+        WindowsFirebaseRemote.readCollection(
+          projectId: platformProjectId, idToken: idToken,
+          collection: collection,
+        ),
+    ]);
+    _requireProfile(profile);
+    if (remoteResults.any((remote) => remote.values.any(
+        (row) => row['examId']?.toString() == examId))) {
+      throw StateError('Cloud marks exist; deleting this exam is not allowed.');
     }
     _requireProfile(profile);
     final current = await CentralSchoolCloud.saved();
