@@ -616,7 +616,7 @@ export class SyncLane extends DurableObject<Env>{
     headers:{'Content-Type':'application/json',
      'Authorization':'Bearer cloudflare-delivery',
      'X-Vidya-Time':time,
-     'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\\n'+raw)},
+     'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+String.fromCharCode(10)+raw)},
     body:raw,signal:AbortSignal.timeout(110000)});
    status=response.status;
    delay=brokerRetryDelay(status,response.headers.get('retry-after'),Date.now());
