@@ -1,0 +1,24 @@
+name: Full backup owner proof audit (fail closed)
+on:
+  pull_request:
+    paths:
+      - 'functions/backup-audit-evidence.cjs'
+      - 'functions/test/backup-audit-evidence.test.cjs'
+      - '.github/workflows/full-backup-owner-audit.yml'
+  push:
+    branches: [audit/full-backup-hourly-proof-20261119]
+    paths:
+      - 'functions/backup-audit-evidence.cjs'
+      - 'functions/test/backup-audit-evidence.test.cjs'
+      - '.github/workflows/full-backup-owner-audit.yml'
+permissions:
+  contents: read
+jobs:
+  test-proof-fences:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test functions/test/backup-audit-evidence.test.cjs
