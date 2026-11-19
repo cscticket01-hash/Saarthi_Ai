@@ -38,6 +38,45 @@ void main() {
      ..['priorDeletion']={'operation':'delete'};
    expect(oldestIndependentNotice([dependent],schoolId:school,nowMillis:100),isNull);
  });
+ test('bounded fast-lane admits an independent expense during slow Drive work', () {
+   final rows = [
+     {'queueId':'person','collection':'students_directory',
+      'documentId':'person-1','schoolId':school,'syncState':'pending',
+      'operationId':'person-operation-0000000001','operation':'set',
+      'queuedAtMillis':1},
+     {'queueId':'expense','collection':'school_expenses',
+      'documentId':'expense-a','schoolId':school,'syncState':'pending',
+      'operationId':'expense-operation-0000001','operation':'set',
+      'queuedAtMillis':2},
+   ];
+   expect(oldestIndependentRecord(rows, schoolId: school, nowMillis: 100),
+     {'queueId':'expense','operationId':'expense-operation-0000001'});
+ });
+ test('independent lane never overtakes same-record retry, quota or delete', () {
+   Map<String,dynamic> expense(String queue, String op, int time,
+       {String state='pending',String operation='set'}) => {
+     'queueId':queue,'collection':'school_expenses',
+     'documentId':'expense-a','schoolId':school,
+     'operationId':op,'operation':operation,
+     'syncState':state,'queuedAtMillis':time,
+   };
+   final blocked = [
+     expense('original','expense-operation-0000001',1,state:'needsAttention'),
+     expense('newer','expense-operation-0000002',2),
+   ];
+   expect(oldestIndependentRecord(blocked,schoolId:school,nowMillis:100),isNull);
+   final waiting = expense('quota','expense-operation-0000003',1)
+     ..['retryAtMillis']=1000;
+   expect(oldestIndependentRecord([waiting],schoolId:school,nowMillis:100),isNull);
+   expect(oldestIndependentRecord([
+     expense('deleted','expense-operation-0000004',1,operation:'delete')
+   ],schoolId:school,nowMillis:100),isNull);
+   expect(oldestIndependentRecord([
+     {...expense('other','expense-operation-0000005',1), 'schoolId':
+       'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}
+   ],schoolId:school,nowMillis:100),isNull);
+ });
+
  test('person and notice calls start together and remain joined until both settle',() async {
    final person=Completer<void>(),notice=Completer<void>();
    final calls=<String>[];

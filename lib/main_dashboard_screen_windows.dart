@@ -101,6 +101,45 @@ Future<String> _windowsDirectoryMutationUrl() async {
   return _windowsGoogleScriptUrl();
 }
 
+
+/*
+ * Managed schools persist to the existing local durable outbox first.
+ * Cloudflare ACK and later Drive delivery are separate verified stages.
+ * Unmanaged schools keep their legacy Script path until migration.
+ */
+Future<bool> _windowsDirectoryCloudFirst() async {
+  final managed = await CentralSchoolCloud.saved();
+  if (managed['managed'] != true) return false;
+  final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+  if (school == null || school.toString().isEmpty ||
+      school != managed['schoolId']) {
+    throw StateError('School identity changed. Reopen the directory.');
+  }
+  return true;
+}
+
+/// This response means local staging only, never Cloudflare or Drive ACK.
+/// The caller MUST still commit the corresponding tracked local mutation.
+Future<Map<String, dynamic>?> _windowsStageTeacherIfManaged(
+    Map<String, dynamic> body) async {
+  if (!await _windowsDirectoryCloudFirst()) return null;
+  final action = body['action']?.toString() ?? '';
+  if (!{'add_teacher', 'edit_teacher', 'delete_teacher',
+        'update_teacher_schedule'}.contains(action)) {
+    throw StateError('Unsupported managed teacher mutation.');
+  }
+  final explicitId = body['teacherId']?.toString().trim() ?? '';
+  final rawPhone = (body['phone'] ?? body['oldPhone'] ?? '').toString();
+  final phone = rawPhone.replaceAll(RegExp(r'\D'), '');
+  final identity = explicitId.isNotEmpty ? explicitId
+      : phone.isNotEmpty ? 'PHONE-$phone' : '';
+  return {
+    'success': true,
+    'cloudSyncPending': true,
+    if (identity.isNotEmpty) 'teacherId': identity,
+  };
+}
+
 String _windowsLanguage() => WindowsUiLanguage.current;
 void _setWindowsLanguage(String value) => WindowsUiLanguage.change(value);
 String windowsTr(String key) => WindowsUiLanguage.translate(const {
@@ -12695,6 +12734,8 @@ class _TeachersDirectoryScreenState
     Map<String, dynamic> body,
   ) async {
     if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
+    final staged = await _windowsStageTeacherIfManaged(body);
+    if (staged != null) return staged;
     final scriptUrl = await _getTeacherScriptUrl();
 
     final response = await WindowsBackendBridge.post(
@@ -14006,6 +14047,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
 
                             final updateData =
                                 <String, dynamic>{
+                              if (result['cloudSyncPending'] == true && selectedPhotoBytes != null)
+                                'photoUrl': WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!),
                               'name': name,
                               'fatherName': fatherCtrl.text.trim(),
                               'designation':
@@ -15397,6 +15440,8 @@ class _AddTeacherScreenState
     Map<String, dynamic> body,
   ) async {
     if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
+    final staged = await _windowsStageTeacherIfManaged(body);
+    if (staged != null) return staged;
     final scriptUrl =
         await _getTeacherScriptUrl();
 
@@ -15543,6 +15588,7 @@ class _AddTeacherScreenState
     });
 
     String createdTeacherId = '';
+    bool legacyTeacherCreated = false;
 
     try {
       // Firestore duplicate check.
@@ -15645,6 +15691,7 @@ class _AddTeacherScreenState
               'Teacher Google Sheet save failed',
         );
       }
+      legacyTeacherCreated = result['cloudSyncPending'] != true;
 
       createdTeacherId =
           result['teacherId']
@@ -15652,11 +15699,9 @@ class _AddTeacherScreenState
                   .trim() ??
               '';
 
-      final photoUrl =
-          result['photoUrl']
-                  ?.toString()
-                  .trim() ??
-              '';
+      final photoUrl = result['cloudSyncPending'] == true && _photoBytes != null
+          ? WindowsSchoolImageCache.dataUrl(_photoBytes!)
+          : (result['photoUrl']?.toString().trim() ?? '');
 
       if (createdTeacherId.isEmpty) {
         throw Exception(
@@ -15675,6 +15720,7 @@ class _AddTeacherScreenState
               .doc('Teacher_$normalizedPhone');
 
       await ref.set({
+        'mobileStableId': SchoolPersonIdentity.newGeneration(),
         'teacherId':
             createdTeacherId,
         'name': name,
@@ -15745,7 +15791,7 @@ class _AddTeacherScreenState
       // Google me save ho gaya,
       // lekin Firestore fail hua:
       // Google record/photo rollback.
-      if (createdTeacherId.isNotEmpty) {
+      if (legacyTeacherCreated && createdTeacherId.isNotEmpty) {
         try {
           await _callTeacherApi({
             'action':
@@ -16497,6 +16543,16 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final roll = rollCtrl.text.trim();
                           final contact = contactCtrl.text.trim();
 
+                          if (!RegExp(r'^[0-9]{10}$').hasMatch(contact)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                                content: Text('Contact number mein exactly 10 digits daalein.'),
+                              ),
+                            );
+                            return;
+                          }
+
                           if (!validWindowsPersonName(name) || !validWindowsPersonName(parent) ||
                               !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty ||
                               [addressCtrl.text, countryCtrl.text, stateCtrl.text,
@@ -16511,16 +16567,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 content: Text(
                                   'Photo ke alawa sab fields required hain: names letters only, PIN 6 digits, dates DD/MM/YYYY.',
                                 ),
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (!RegExp(r'^[0-9]{10}$').hasMatch(contact)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
-                                content: Text('Contact number mein exactly 10 digits daalein.'),
                               ),
                             );
                             return;
@@ -16583,7 +16629,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               return;
                             }
 
-                            final scriptUrl =
+                            final managedLocalFirst = await _windowsDirectoryCloudFirst();
+                            final scriptUrl = managedLocalFirst ? '' :
                                 await _windowsGoogleScriptUrl(required: false);
 
                             if (scriptUrl.isNotEmpty) {
@@ -17167,6 +17214,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         }
       }
 
+      if (!await _windowsDirectoryCloudFirst()) {
       final scriptUrl = await _windowsDirectoryMutationUrl();
 
       Future<Map<String, dynamic>> deleteFromGoogle() async {
@@ -17210,6 +17258,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
       if (!googleFullyDeleted) {
         throw Exception('Student duplicate cleanup limit exceed hua.');
+      }
+
       }
 
       // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
@@ -17544,7 +17594,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                               setDialogState(() => saving = true);
 
                               try {
-                                final scriptUrl =
+                                final managedLocalFirst = await _windowsDirectoryCloudFirst();
+                                final scriptUrl = managedLocalFirst ? '' :
                                     await _windowsDirectoryMutationUrl();
 
                                 final studentClass =
@@ -17552,6 +17603,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 final rollNo =
                                     data['rollNo']?.toString() ?? '';
 
+                                final result = <String, dynamic>{'success': true, 'cloudSyncPending': true};
+                                if (!managedLocalFirst) {
                                 final response = await WindowsBackendBridge.post(
                                   Uri.parse(scriptUrl),
                                   headers: {
@@ -17591,11 +17644,13 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   throw Exception('Google update response invalid hai.');
                                 }
 
-                                final result = Map<String, dynamic>.from(decoded);
+                                result.addAll(Map<String, dynamic>.from(decoded));
                                 if (result['success'] != true) {
                                   throw Exception(
                                     result['message'] ?? 'Google update failed',
                                   );
+                                }
+
                                 }
 
                                 final returnedPhotoUrl =
@@ -17618,6 +17673,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
 
                                 if (returnedPhotoUrl.isNotEmpty) {
                                   updateData['photoUrl'] = returnedPhotoUrl;
+                                }
+                                if (managedLocalFirst && selectedPhotoBytes != null) {
+                                  updateData['photoUrl'] = WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
                                 }
 
                                 if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');

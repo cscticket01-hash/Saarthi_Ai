@@ -3259,9 +3259,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
-  // Admit a newly saved notification even if the owning Sync cycle is still
-  // reconciling a person/delete. This is the SAME immutable local outbox
-  // receipt and never a Google Drive ACK or a new retry ID.
+  // Admit an independent Cloudflare notification or approved record while
+  // the owning Sync cycle reconciles another person/delete or Google Drive.
+  // The SAME immutable local outbox receipt is kept until the verified ACK.
+  // Dependent people, fee/receipt, exam and document writes never overtake.
   Future<void> _admitLateNoticeWhileSyncing() async {
     if (_lateNoticeAdmissionBusy || _normalOutboxInFlight > 0 ||
         !_syncing || !automaticScheduleExpected ||
@@ -3281,12 +3282,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             ? queued.millisecondsSinceEpoch
             : queued is num ? queued.toInt() : 0});
       }
-      final notice=oldestIndependentNotice(rows,schoolId:school,
-        nowMillis:DateTime.now().millisecondsSinceEpoch);
-      if(notice==null)return;
+      final nowMillis = DateTime.now().millisecondsSinceEpoch;
+      final independent = oldestIndependentNotice(
+            rows, schoolId: school, nowMillis: nowMillis) ??
+          oldestIndependentRecord(
+            rows, schoolId: school, nowMillis: nowMillis);
+      if (independent == null) return;
       await _pushManagedOutbox(
-        onlyQueueId:notice['queueId'] as String,
-        onlyOperationId:notice['operationId'] as String,
+        onlyQueueId: independent['queueId'] as String,
+        onlyOperationId: independent['operationId'] as String,
         canAdmit:()=>_syncing && !_syncBlocked &&
           !isPaused && profile==db.activeProfileId &&
           school==_activeSchoolSyncId);

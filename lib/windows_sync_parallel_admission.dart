@@ -34,6 +34,53 @@ Map<String, dynamic>? oldestIndependentNotice(
   return {'queueId':id,'operationId':op};
 }
 
+/// Only these record types already have independent per-identity delivery
+/// resources in the Cloudflare owner. Never fast-forward people, exam,
+/// fee/receipt, document, settings or delete dependencies around their owner.
+Map<String, dynamic>? oldestIndependentRecord(
+  List<Map<String, dynamic>> rows, {
+  required String schoolId,
+  required int nowMillis,
+}) {
+  const collections = {
+    'attendance_records', 'attendance_logs',
+    'teacher_attendance', 'school_expenses',
+  };
+  final eligible = rows.where((row) =>
+      row['schoolId'] == schoolId &&
+      collections.contains(row['collection']) &&
+      row['syncState'] != 'cloudAccepted').toList()
+    ..sort((a, b) {
+      int time(Map<String, dynamic> row) =>
+          row['queuedAtMillis'] is num && (row['queuedAtMillis'] as num) >= 0
+              ? (row['queuedAtMillis'] as num).toInt() : 0;
+      final order = time(a).compareTo(time(b));
+      return order != 0 ? order : (a['queueId'] ?? '').toString()
+          .compareTo((b['queueId'] ?? '').toString());
+    });
+  final seen = <String>{};
+  for (final row in eligible) {
+    final doc = row['documentId'];
+    final collection = row['collection'];
+    if (doc is! String || doc.isEmpty ||
+        !seen.add('$collection:$doc')) continue;
+    // An earlier retry, in-flight mutation or operator review is a FIFO
+    // barrier for subsequent writes to this exact document.
+    if (!{'pending', 'retry'}.contains(row['syncState']) ||
+        row['operation'] != 'set' ||
+        row['atomicBundleId'] != null ||
+        row['priorDeletion'] != null ||
+        row['retryAtMillis'] is num &&
+          (row['retryAtMillis'] as num) > nowMillis) continue;
+    final id = row['queueId'], operation = row['operationId'];
+    if (id is! String || id.isEmpty ||
+        operation is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(operation)) continue;
+    return {'queueId': id, 'operationId': operation};
+  }
+  return null;
+}
+
 /// Both independent Cloudflare admissions start immediately. A failed lane
 /// cannot make the owner exit while the other lane is still retaining its
 /// immutable local receipt.

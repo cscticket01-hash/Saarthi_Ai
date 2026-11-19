@@ -63,6 +63,13 @@ void main() {
       expect(records!.docs, isEmpty);
     }
     expect(find.text('Contact number mein exactly 10 digits daalein.'), findsWidgets);
+    await tester.enterText(contact, '9876543210');
+    await tester.tap(find.text('Save Student'));
+    await tester.pump();
+    expect(find.textContaining('Photo ke alawa sab fields required hain:'), findsWidgets);
+    final uncommitted = await tester.runAsync(
+      () => db.collection('students_directory').get());
+    expect(uncommitted!.docs, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
