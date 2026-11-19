@@ -98,6 +98,24 @@ void main() {
     expect(verifiedStagedRecordFinal(accepted,journal,{
       ...proof,'record':{...record,'_syncOperationId':'different-delete-id'}},school),false);
     expect(verifiedStagedRecordFinal(accepted,journal,proof,other),false);
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/records','collection':'teachers_directory',
+      'id':'teacher-delete','operation':'delete',
+      'originalOperationId':original['operationId'],
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    await WindowsDriveDeliveryQueue.poll(school,
+      call:(action,body) async=>{...proof,'firebaseDeletionComplete':false});
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted',
+      reason:'Never clear Delete Everywhere while Firebase readback is missing');
+    await WindowsDriveDeliveryQueue.poll(school,
+      call:(action,body) async=>proof);
+    expect((await ref.get()).data(),isNull,
+      reason:'Only exact Drive+Firebase signed completion retires original delete');
   });
 
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
