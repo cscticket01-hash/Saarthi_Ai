@@ -23,6 +23,7 @@ import 'windows_pdf_generation_policy.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'school_cloud_engine.dart';
 import 'windows_pending_school_sync.dart';
+import 'windows_sync_parallel_admission.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 
@@ -3251,8 +3252,47 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Future<void> _pushManagedOutbox({
     String? onlyQueueId,
     String? onlyOperationId,
+    bool excludeNotices = false,
     bool Function()? canAdmit,
   }) async {
+    // Two independent Cloudflare admissions can be in flight at once:
+    // a new school notice and a Student/Teacher record. Their original
+    // local outbox entries remain durable until the matching Cloudflare ACK.
+    // The same-notice lane stays FIFO, even if a person delete is slow.
+    if (onlyQueueId == null && !excludeNotices &&
+        WindowsFirebaseRemote.edgeDeliverySupported &&
+        !isPaused && (canAdmit?.call() ?? true)) {
+      final db=FirebaseFirestore.instance;
+      final profile=db.activeProfileId;
+      final snapshot=await db.collection('_windows_firebase_outbox').get();
+      if (db.activeProfileId != profile ||
+          db.activeProfileIdentity['schoolSyncId'] != _activeSchoolSyncId)
+        throw StateError('School changed before parallel lane admission.');
+      final rows=<Map<String,dynamic>>[];
+      for (final row in snapshot.docs) {
+        final data=row.data();
+        final queued=data['queuedAt'];
+        rows.add({...data,'queueId':row.id,
+          'queuedAtMillis': queued is Timestamp
+            ? queued.millisecondsSinceEpoch
+            : queued is num ? queued.toInt() : 0});
+      }
+      final notice=oldestIndependentNotice(rows,
+        schoolId:_activeSchoolSyncId,
+        nowMillis:DateTime.now().millisecondsSinceEpoch);
+      if (notice != null) {
+        // Never fire-and-forget local CAS writes; both attempts must settle
+        // before the owning Sync cycle finishes or changes school profile.
+        await runIndependentCloudAdmissions(
+          () => _pushManagedOutbox(excludeNotices:true,canAdmit:canAdmit),
+          () => _pushManagedOutbox(
+            onlyQueueId:notice['queueId'] as String,
+            onlyOperationId:notice['operationId'] as String,
+            canAdmit:canAdmit),
+        );
+        return;
+      }
+    }
     if (onlyOperationId == null) {
       await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
         canAdmit: () => !isPaused && (canAdmit?.call() ?? true));
@@ -3270,6 +3310,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       profileId: _activeProfileId,
       onlyQueueId: onlyQueueId,
       onlyOperationId: onlyOperationId,
+      excludeCollection: excludeNotices ? 'school_notices' : null,
       respectBackoff: onlyOperationId == null,
       diagnoseUnclassified: _manualSync,
       onActivity: _recordActivity,

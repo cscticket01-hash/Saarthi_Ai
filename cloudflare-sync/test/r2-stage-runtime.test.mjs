@@ -311,3 +311,43 @@ test('legacy record audit recovers only broker-stamped original verified event t
   'stored signed broker completion timestamp is used, not later audit time');
  assert.equal(after.value.partial,true);
 });
+
+
+test('distinct person Cloudflare ACKs are immediate while person Drive/CAS order stays safe',async t=>{
+ const {rpc}=await harness(t);
+ const make=(collection,id,operationId,operation='write',expectedRecordRevision='')=>{
+  const request={action:'managed_records',collection,id,operationId,
+   operation,syncProtocol:2,expectedRecordRevision,
+   ...(operation==='write'?{data:{schoolId:school,title:id}}:{})};
+  return {request,id:digest(JSON.stringify([school,request.action,
+   [request.collection,request.id,request.operationId]]))};
+ };
+ const a=make('students_directory','new-student-one','person-create-operation-one-20261119');
+ const b=make('teachers_directory','new-teacher-two','person-create-operation-two-20261119');
+ assert.equal((await rpc('enqueue',a)).http,200);
+ assert.equal((await rpc('enqueue',b)).http,200);
+ const initial=await rpc('pending',{limit:2});
+ assert.equal(initial.http,200);
+ assert.deepEqual(initial.value.map(row=>row.id),[a.id],
+  'both Cloudflare saves are accepted but dependent person Drive operations remain FIFO');
+ const same=make('students_directory','new-student-one','person-edit-operation-one-20261119');
+ const deletion=make('students_directory','old-student-three',
+  'person-delete-operation-20261119','delete','signed-previous-revision');
+ const afterDelete=make('students_directory','new-student-four','person-create-operation-four-20261119');
+ for(const job of [same,deletion,afterDelete])
+  assert.equal((await rpc('enqueue',job)).http,200);
+ const selected=await rpc('pending',{limit:2});
+ assert.deepEqual(selected.value.map(row=>row.id),[a.id],
+  'another person, same-student edit and delete cascade stay behind the first owner');
+ const claim='synthetic-independent-owner-claim';
+ assert.equal((await rpc('claim',{id:a.id,claim,expires:Date.now()+60000})).value,true);
+ assert.equal((await rpc('finish',{id:a.id,claim,
+   values:{state:'retry',nextAttemptAt:Date.now()+60000}})).value,true);
+ const later=await rpc('pending',{limit:2});
+ assert.equal(later.value.length,0,
+  'later person Drive delivery must not overtake an unverified earlier person');
+ assert.ok(!later.value.some(row=>row.id===same.id),
+  'same-student mutation never overtakes the unfinished original');
+ assert.ok(!later.value.some(row=>row.id===afterDelete.id),
+  'new person after a Delete Everywhere-type barrier must not overtake it');
+});

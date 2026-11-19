@@ -412,6 +412,7 @@ class WindowsPendingSchoolSync {
     bool Function()? canAdmit,
     String? onlyQueueId,
     String? onlyOperationId,
+    String? excludeCollection,
     bool respectBackoff = false,
     bool diagnoseUnclassified = false,
     void Function(Map<String, dynamic>)? onActivity,
@@ -497,6 +498,10 @@ class WindowsPendingSchoolSync {
       unchanged();
       queued.reference.requireOriginProfile();
       if (onlyQueueId != null && queued.id != onlyQueueId) continue;
+      // A school notice uses its own Cloudflare lane while unrelated person
+      // records are admitted; never send a second notice concurrently.
+      if (excludeCollection != null &&
+          queued.data()['collection'] == excludeCollection) continue;
       if (canAdmit?.call() == false) break;
       var item = queued.data();
       // Cloudflare owns this immutable original. The device never submits a

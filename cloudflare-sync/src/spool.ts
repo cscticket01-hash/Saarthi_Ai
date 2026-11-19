@@ -28,6 +28,9 @@ const independent=new Set(['school_expenses','attendance_records','attendance_lo
 const recordIdentity=(request:Json):Json=>request.action==='managed_records_batch'?{action:request.action,operations:(request.operations as Json[]).map(recordIdentity)}:Object.fromEntries(['action','collection','id','operation','syncProtocol','operationId','expectedRecordRevision'].filter(key=>request[key]!==undefined).map(key=>[key,request[key]]));
 function resources(request:Json):string {
  const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
+ // Student/teacher lifecycle and Delete Everywhere are intentionally global
+ // dependencies. Both still receive immediate independent Cloudflare ACKs;
+ // only their Google Drive backing transactions remain strictly ordered.
  if(ops.some(op=>!independent.has(String(op.collection))))return '*';
  return JSON.stringify([...new Set(ops.map(op=>JSON.stringify([op.collection,op.id])))].sort());
 }

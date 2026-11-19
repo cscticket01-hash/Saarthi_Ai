@@ -183,3 +183,44 @@ test('Firebase readback permission denial remains private and blocks final ACK',
    e.status===503 && e.code==='DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED' &&
    !String(e.message).includes('Private Firestore credential'));
 });
+
+
+test('many unrelated signed child targets delete with bounded four-wide CAS and full readback',async()=>{
+ const list=[targets()[0],...Array.from({length:11},(_,i)=>({
+  collection:'fee_payments',id:'fee-parallel-'+i,
+  sourceRevision:'old-fee-revision',revision:'deleted-fee-revision',
+  generation:'p-old'
+ }))];
+ const entries=list.map((target,i)=>['schools/'+A+'/'+target.collection+'/'+target.id,
+  i===0?source():fee()]);
+ const f=fixture(entries);
+ const serial=f.db.runTransaction;
+ let active=0,maxConcurrent=0;
+ f.db.runTransaction=async task=>{
+  active++;maxConcurrent=Math.max(maxConcurrent,active);
+  try{
+   await new Promise(resolve=>setTimeout(resolve,6));
+   return await serial(task);
+  }finally{active--;}
+ };
+ const output=await f.cleanup.finish(A,request,ack(list));
+ assert.equal(output.firebaseDeletedRecords,12);
+ assert.equal(output.firebaseDeletionComplete,true);
+ assert.equal(maxConcurrent,4,'limit bounded to four independent CAS transactions');
+ assert.equal(active,0);
+ assert.equal(f.reads.length,list.length,'every exact signed target was read back');
+ assert.equal(f.data.size,0);
+});
+test('parallel deletion never returns while a launched transaction is unfinished after failure',async()=>{
+ const f=fixture([[root,source()],[child,{...fee(),personId:'p-new'}]]);
+ const serial=f.db.runTransaction;let inFlight=0;
+ f.db.runTransaction=async task=>{
+  inFlight++;
+  try{await new Promise(resolve=>setTimeout(resolve,5));return await serial(task);}
+  finally{inFlight--;}
+ };
+ await assert.rejects(f.cleanup.finish(A,request,ack()),
+  e=>e.code==='DELETE_EVERYWHERE_GENERATION_CONFLICT');
+ assert.equal(inFlight,0,'no deletion can continue in background after a rejected proof');
+ assert.equal(f.data.has(child),true,'wrong-generation child must remain');
+});
