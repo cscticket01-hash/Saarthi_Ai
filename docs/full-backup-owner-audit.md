@@ -22,3 +22,5 @@ Before actual production certification, authenticated server adapters must:
 Existing PR #343 R2-only hourly summary remains **partial** until these
 provider-backed adapters and production proof are deployed. Unit tests are
 synthetic invariant tests; they do not prove real production completeness.
+
+Read-only authenticated owner journal pages now cover Edge records/files, legacy notices/attendance and live backups (one lane at a time). The signed `managed/cloudflare/verify-drive-file` path independently reads exact stored file bytes from the connected school Apps Script and matches the immutable original size/hash/file ID. **This is a per-file proof only**: complete production coverage still requires identifying every existing historical lane, resolving missing original receipts, and collecting each school's independently signed provider evidence. Historical timestamps are never inferred from readback time.

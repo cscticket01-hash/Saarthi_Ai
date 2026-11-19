@@ -10,7 +10,7 @@ import {liveSocketGrant,LiveSocketGrant} from './live-socket';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
 type Json=Record<string,unknown>;
-type Job={id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
+type Job={seq:number;id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
 export class SyncLane extends DurableObject<Env>{
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{
   initSpool(ctx.storage);
@@ -398,6 +398,36 @@ export class SyncLane extends DurableObject<Env>{
   if(action==='verifiedHourSummary'){
    demand(lane==='delivery','Verified hourly report requires school delivery lane',403);
    return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1').r2VerifiedHourSummary(school);
+  }
+  // School-owned legacy notice and attendance receipts. No payload or
+  // school PII is returned. Unknown historical verification times stay null.
+  if(action==='auditJournalPage'){
+   demand((lane==='notices'||lane.startsWith('attendance-'))&&
+     Number.isSafeInteger(b.after??0)&&Number(b.after??0)>=0&&
+     Number.isSafeInteger(b.limit??50)&&Number(b.limit??50)>=1&&
+     Number(b.limit??50)<=100,'Invalid school owner-journal page',400);
+   const after=Number(b.after??0),limit=Number(b.limit??50);
+   const rows=this.ctx.storage.sql.exec<Job>(
+     'SELECT * FROM jobs WHERE seq>? ORDER BY seq LIMIT ?',after,limit+1).toArray();
+   const page=rows.slice(0,limit);
+   return {version:1,schoolId:school,scope:'legacyImmutableOwnerJournal',
+    source:lane==='notices'?'legacy-notices':'legacy-attendance',lane,
+    coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>{
+      let response:Json={};try{response=row.response?JSON.parse(row.response) as Json:{}}catch{}
+      const revision=String(response.driveRevision||'');
+      const ownerReceiptPresent=row.state==='completed'&&
+        (lane==='notices'?
+          revision.length>0&&!/^(cf-|live-)/.test(revision):
+          (response.attendanceOwnerReceipt as Json|undefined)?.driveVerified===true);
+      const completed=Number(response.completedAt??0);
+      return {sequence:row.seq,id:row.id,state:row.state,
+        acceptedAt:row.created>0?row.created:null,
+        driveOwnerReceiptPresent:ownerReceiptPresent,
+        verifiedAt:ownerReceiptPresent&&Number.isSafeInteger(completed)&&
+          completed>0?completed:null};
+    }),
+    nextCursor:rows.length>limit?page[page.length-1].seq:null};
   }
   if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
