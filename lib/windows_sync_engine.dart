@@ -3283,13 +3283,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (notice != null) {
         // Never fire-and-forget local CAS writes; both attempts must settle
         // before the owning Sync cycle finishes or changes school profile.
-        await Future.wait<void>([
-          _pushManagedOutbox(excludeNotices:true,canAdmit:canAdmit),
-          _pushManagedOutbox(
+        await runIndependentCloudAdmissions(
+          () => _pushManagedOutbox(excludeNotices:true,canAdmit:canAdmit),
+          () => _pushManagedOutbox(
             onlyQueueId:notice['queueId'] as String,
             onlyOperationId:notice['operationId'] as String,
             canAdmit:canAdmit),
-        ]);
+        );
         return;
       }
     }
