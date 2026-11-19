@@ -389,9 +389,11 @@ export class SyncLane extends DurableObject<Env>{
   }
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
   if(action==='r2OriginalAuditPage'){
-   demand(lane==='delivery','Only school delivery owner can enumerate original stages',403);
+   demand(lane==='delivery'&&(b.after===undefined||typeof b.after==='string')&&
+     (b.limit===undefined||Number.isSafeInteger(b.limit)),
+     'Only school delivery owner can enumerate original stages',403);
    return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1')
-     .r2OriginalAuditPage(school,b.after??'',Number(b.limit??100));
+     .r2OriginalAuditPage(school,(b.after??'') as string,Number(b.limit??100));
   }
   if(action==='verifiedHourSummary'){
    demand(lane==='delivery','Verified hourly report requires school delivery lane',403);
