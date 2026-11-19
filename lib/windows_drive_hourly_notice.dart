@@ -47,10 +47,25 @@ class _WindowsDriveHourlyNoticeState extends State<WindowsDriveHourlyNotice> {
         start % const Duration(hours: 1).inMilliseconds != 0 ||
         end > now + 5000 || now - end > const Duration(minutes: 5).inMilliseconds ||
         _shownHour == start) return;
+    // Only the server's signed, distinct original receipts may appear here.
+    // A stale/partial history page, missing lane, or malformed breakdown must
+    // never be promoted into a fabricated all-school Google Drive total.
+    const kinds = <String>['records', 'live', 'files', 'attendance', 'notices'];
+    final rawBreakdown = s['breakdown'];
+    if (r2 && (rawBreakdown is! Map ||
+        rawBreakdown.keys.any((key) => key is! String || !kinds.contains(key)) ||
+        rawBreakdown.values.any((value) => value is! int || value < 0) ||
+        rawBreakdown.values.fold<int>(0, (sum, value) => sum + (value as int)) != count)) {
+      return;
+    }
+    final breakdown = r2 ? rawBreakdown as Map : const {};
+    final detail = r2
+        ? kinds.map((kind) => '$kind ${breakdown[kind] ?? 0}').join(', ')
+        : '';
     _shownHour = start;
     _hide?.cancel();
     _message = r2
-        ? 'Google Drive verified · $count R2-staged transfers last hour (legacy backups excluded)'
+        ? 'Google Drive verified · $count R2-staged transfers last hour · $detail (legacy backups excluded)'
         : 'Google Drive verified · $count live records in the last hour';
     _hide = Timer(const Duration(seconds: 5), () {
       if (mounted) setState(() => _message = null);

@@ -53,6 +53,11 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body:
       WindowsDriveHourlyNotice(summary: report, nowMillis: () => end + 1000))));
     expect(find.textContaining('4 R2-staged transfers'), findsOneWidget);
+    expect(find.textContaining('records 1'), findsOneWidget);
+    expect(find.textContaining('files 2'), findsOneWidget);
+    expect(find.textContaining('attendance 1'), findsOneWidget);
+    expect(find.textContaining('live 0'), findsOneWidget);
+    expect(find.textContaining('notices 0'), findsOneWidget);
     expect(find.textContaining('legacy backups excluded'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
     expect(find.byKey(const ValueKey('hourly-verified-drive')), findsNothing);
@@ -68,6 +73,51 @@ void main() {
         'verifiedCount': 10,
       }, nowMillis: () => end + 1000))));
     expect(find.byKey(const ValueKey('hourly-verified-drive')), findsNothing);
+  });
+
+  testWidgets('all five R2 lanes must match the signed distinct total', (tester) async {
+    final end = (DateTime.now().millisecondsSinceEpoch ~/ 3600000) * 3600000;
+    final valid = {
+      'version': 1,
+      'scope': 'r2VerifiedDeliveries',
+      'coverage': 'r2-staged-only',
+      'partial': true,
+      'hourStart': end - 3600000,
+      'hourEnd': end,
+      'verifiedCount': 5,
+      'breakdown': {'records': 1, 'live': 1, 'files': 1,
+                    'attendance': 1, 'notices': 1},
+    };
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body:
+      WindowsDriveHourlyNotice(summary: valid, nowMillis: () => end + 1000))));
+    expect(find.textContaining('5 R2-staged transfers'), findsOneWidget);
+    for (final kind in ['records', 'live', 'files', 'attendance', 'notices']) {
+      expect(find.textContaining('$kind 1'), findsOneWidget);
+    }
+    expect(find.textContaining('legacy backups excluded'), findsOneWidget);
+  });
+
+  testWidgets('rejects inflated, unknown, or incomplete R2 breakdowns', (tester) async {
+    final end = (DateTime.now().millisecondsSinceEpoch ~/ 3600000) * 3600000;
+    final base = <String, dynamic>{
+      'version': 1, 'scope': 'r2VerifiedDeliveries',
+      'coverage': 'r2-staged-only', 'partial': true,
+      'hourStart': end - 3600000, 'hourEnd': end,
+      'verifiedCount': 2,
+    };
+    for (final breakdown in [
+      {'records': 1},                        // Inflated total
+      {'records': 1, 'unknown': 1},          // Unsupported lane
+      {'records': 1, 'files': -1},           // Invalid verification
+      {'files': '2'},                       // Not an integer
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body:
+        WindowsDriveHourlyNotice(
+          summary: {...base, 'breakdown': breakdown},
+          nowMillis: () => end + 1000))));
+      expect(find.byKey(const ValueKey('hourly-verified-drive')), findsNothing);
+    }
   });
 
 }
