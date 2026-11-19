@@ -10,7 +10,7 @@ import {liveSocketGrant,LiveSocketGrant} from './live-socket';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
 type Json=Record<string,unknown>;
-type Job={id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
+type Job={seq:number;id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
 export class SyncLane extends DurableObject<Env>{
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{
   initSpool(ctx.storage);
