@@ -116,13 +116,48 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
+  testWidgets('Cancel resets the button before browser abort event arrives',
+      (tester) async {
+    final sessions = <_FakeInstallerTransfer>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: AppDownloadButtons(
+          createTransfer: () {
+            final session = _FakeInstallerTransfer()
+              ..deferAbortAcknowledgement = true;
+            sessions.add(session);
+            return session;
+          },
+        ),
+      ),
+    ));
+    final windows = find.byKey(const ValueKey('Windows App-action'));
+    await tester.tap(windows);
+    await tester.pump();
+    expect(find.text('Cancel'), findsOneWidget);
+    await tester.tap(windows);
+    await tester.pump();
+    expect(sessions[0].cancelled, true);
+    expect(find.text('Cancel'), findsNothing);
+    expect(find.text('Download'), findsNWidgets(2));
+    sessions[0].progress(4096, 8192);
+    sessions[0].completed();
+    sessions[0].onCancelled();
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text('Installer received. Check the browser save prompt.'),
+        findsNothing);
+  });
+
 }
 
 class _FakeInstallerTransfer implements WebsiteInstallerTransfer {
   bool cancelled = false;
+  bool deferAbortAcknowledgement = false;
   String? url;
   late void Function(int, int?) progress;
   late void Function() onCancelled;
+  late void Function() completed;
 
   @override
   void start({
@@ -136,11 +171,12 @@ class _FakeInstallerTransfer implements WebsiteInstallerTransfer {
     this.url = url;
     progress = onProgress;
     this.onCancelled = onCancelled;
+    completed = onTransferred;
   }
 
   @override
   void cancel() {
     cancelled = true;
-    onCancelled();
+    if (!deferAbortAcknowledgement) onCancelled();
   }
 }
