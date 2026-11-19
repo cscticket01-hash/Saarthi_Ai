@@ -149,7 +149,7 @@ void main() {
       'assets/theme_preview_electric-blue_dashboard.webp');
     await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')),'44');
     await tester.pumpAndSettle();
-    expect(find.text('Midnight Glass • sample app screens'),findsOneWidget);
+    expect(find.text('Liquid Glass • sample app screens'),findsOneWidget);
     expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
     expect(calls.length,1);
     await tester.tap(find.byKey(const ValueKey('theme-save')));

@@ -690,8 +690,8 @@ class _ColourPad extends CustomPainter {
 }
 
 
-/// Midnight Glass preview must show the SAME verified Windows app screens
-/// used by other presets. This is a screenshot with a subtle glass treatment,
+/// Liquid Glass preview keeps the SAME verified Windows app screens
+/// used by other presets. A translucent treatment overlays each screenshot,
 /// not an invented dashboard with empty placeholder panels. Dedicated
 /// Glass captures can replace the shared screenshot source later.
 class _MidnightGlassPreview extends StatelessWidget {
@@ -714,7 +714,7 @@ class _MidnightGlassPreview extends StatelessWidget {
           screenshot,
           key: const ValueKey('theme-preview-image'),
           fit: BoxFit.contain,
-          semanticLabel: '$page — verified Windows screen with Midnight Glass tint',
+          semanticLabel: '$page — verified Windows screen with Liquid Glass tint',
         ),
       ),
       IgnorePointer(
@@ -729,10 +729,10 @@ class _MidnightGlassPreview extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                Colors.white.withValues(alpha: .12),
-                tint.withValues(alpha: .045),
-                Colors.transparent,
-                const Color(0xFF06090F).withValues(alpha: .055),
+                Colors.white.withValues(alpha: .19),
+                tint.withValues(alpha: .055),
+                const Color(0xFFB1C7FF).withValues(alpha: .025),
+                const Color(0xFF06121F).withValues(alpha: .12),
               ],
             ),
           ),
@@ -748,24 +748,24 @@ class _MidnightGlassTile extends StatelessWidget {
   const _MidnightGlassTile();
   @override
   Widget build(BuildContext context) => Semantics(
-    label: 'Midnight Glass theme: charcoal, translucent navy, azure and mint',
+    label: 'Liquid Glass theme: frosted navy, luminous blue and soft violet',
     child: DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF112849), Color(0xFF090C14), Color(0xFF211528)],
+          colors: [Color(0xFF1E4664), Color(0xFF081725), Color(0xFF342A53)],
         ),
       ),
       child: Stack(children: [
         Positioned(top: -18, left: 12,
           child: Container(width: 85, height: 70,
             decoration: BoxDecoration(shape: BoxShape.circle,
-              color: const Color(0xFF147BD1).withValues(alpha: .33)))),
+              color: const Color(0xFF58ADEA).withValues(alpha: .43)))),
         Positioned(bottom: -22, right: -16,
           child: Container(width: 95, height: 92,
             decoration: BoxDecoration(shape: BoxShape.circle,
-              color: const Color(0xFF8C2CC2).withValues(alpha: .31)))),
+              color: const Color(0xFFA28BEA).withValues(alpha: .40)))),
         Center(child: Container(
           width: 102, height: 56,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -774,13 +774,13 @@ class _MidnightGlassTile extends StatelessWidget {
             border: Border.all(color: const Color(0xFF9BD4FF).withValues(alpha: .53)),
             gradient: LinearGradient(colors: [
               Colors.white.withValues(alpha: .20),
-              const Color(0xFF4AB2FF).withValues(alpha: .07),
+              const Color(0xFF9BC8FF).withValues(alpha: .10),
             ]),
           ),
           child: const Column(mainAxisAlignment: MainAxisAlignment.center,children: [
-            Icon(Icons.blur_on_rounded,color: Color(0xFF97D7FF),size:18),
+            Icon(Icons.blur_on_rounded,color: Color(0xFFC9F1FF),size:18),
             SizedBox(height:2),
-            Text('GLASS',style:TextStyle(color:Colors.white,fontSize:10,fontWeight:FontWeight.w800)),
+            Text('LIQUID GLASS',style:TextStyle(color:Colors.white,fontSize:9,fontWeight:FontWeight.w800)),
           ]),
         )),
       ]),
