@@ -1,6 +1,6 @@
 import {brokerRetryDelay} from './broker-retry.mjs';
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
-import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus,r2VerifiedHourSummary} from './r2-stage';
+import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus,r2VerifiedHourSummary,r2OriginalAuditPage} from './r2-stage';
 import {r2StagingForSchool} from './r2-scoped-admission.mjs';
 import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
@@ -50,6 +50,11 @@ export class SyncLane extends DurableObject<Env>{
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
   this.setMeta('r2BudgetActor','v1');
   return r2VerifiedHourSummary(this.ctx.storage,school,at);
+ }
+ async r2OriginalAuditPage(school:string,after='',limit=100){
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
+  return r2OriginalAuditPage(this.ctx.storage,school,after,limit);
  }
  async r2CapacityStatus(){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
@@ -383,6 +388,13 @@ export class SyncLane extends DurableObject<Env>{
    return {retired:true};
   }
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
+  if(action==='r2OriginalAuditPage'){
+   demand(lane==='delivery'&&(b.after===undefined||typeof b.after==='string')&&
+     (b.limit===undefined||Number.isSafeInteger(b.limit)),
+     'Only school delivery owner can enumerate original stages',403);
+   return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1')
+     .r2OriginalAuditPage(school,(b.after??'') as string,Number(b.limit??100));
+  }
   if(action==='verifiedHourSummary'){
    demand(lane==='delivery','Verified hourly report requires school delivery lane',403);
    return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1').r2VerifiedHourSummary(school);

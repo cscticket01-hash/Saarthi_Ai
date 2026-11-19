@@ -36,6 +36,28 @@ export function r2VerifiedHourSummary(storage:DurableObjectStorage,school:string
   verifiedCount,breakdown,coverage:'r2-staged-only',partial:true};
 }
 
+// Read-only pagination of immutable R2 original staging receipts. This never
+// certifies Drive delivery or completeness of non-R2 and legacy journals.
+export function r2OriginalAuditPage(storage:DurableObjectStorage,school:string,after='',limit=100){
+ demand(schoolPattern.test(school)&&Number.isSafeInteger(limit)&&limit>=1&&limit<=100&&
+   typeof after==='string'&&after.length<=350&&
+   (after===''||after.startsWith('saarthi-v1/'+school+'/')),
+   'Invalid school R2 audit page',400);
+ init(storage);
+ const rows=storage.sql.exec<StageRow>(
+  'SELECT * FROM r2_staged WHERE school=? AND key>? ORDER BY key LIMIT ?',
+  school,after,limit+1).toArray();
+ const page=rows.slice(0,limit);
+ return {version:1,schoolId:school,scope:'r2ImmutableOriginalStages',
+   coverage:'r2-staged-only',partial:true,
+   entries:page.map(row=>({key:row.key,lane:row.lane,
+     receiptId:row.receipt_id,segmentBytes:row.bytes,
+     segmentSha256:row.sha256,state:row.state,
+     originalAccepted:row.accepted_final===1,
+     acceptedAt:row.accepted_at,verifiedAt:row.verified_at||null})),
+   nextCursor:rows.length>limit?page[page.length-1].key:null};
+}
+
 export function r2BudgetStatus(storage:DurableObjectStorage){
  init(storage);const u=usage(storage);
  const states=storage.sql.exec<{state:string;bytes:number;objects:number}>("SELECT state,sum(bytes) AS bytes,count(*) AS objects FROM r2_staged GROUP BY state").toArray();
