@@ -49,7 +49,7 @@ void main() {
    run.then((_)=>finished=true);
    notice.complete();
    await Future<void>.delayed(Duration.zero);
-   expect(finished,isFalse,'slow person must not be abandoned in background');
+   expect(finished,isFalse,reason:'slow person must not be abandoned in background');
    person.complete();
    await run;
    expect(finished,isTrue);
