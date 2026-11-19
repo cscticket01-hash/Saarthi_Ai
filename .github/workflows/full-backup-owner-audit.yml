@@ -15,7 +15,6 @@ on:
       - 'cloudflare-sync/src/live-records.ts'
       - 'cloudflare-sync/test/runtime.test.mjs'
       - 'cloudflare-sync/test/parallel-delivery-lanes.test.mjs'
-      - 'cloudflare-sync/test/parallel-delivery-lanes.test.mjs'
       - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
       - '.github/workflows/full-backup-owner-audit.yml'
   push:
@@ -56,4 +55,4 @@ jobs:
       - run: npm run types --prefix cloudflare-sync
       - run: npm run check --prefix cloudflare-sync
       - run: npm run build --prefix cloudflare-sync
-      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs cloudflare-sync/test/runtime.test.mjs cloudflare-sync/test/parallel-delivery-lanes.test.mjs cloudflare-sync/test/parallel-delivery-lanes.test.mjs cloudflare-sync/test/broker-retry.test.mjs
+      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs cloudflare-sync/test/runtime.test.mjs cloudflare-sync/test/parallel-delivery-lanes.test.mjs cloudflare-sync/test/broker-retry.test.mjs

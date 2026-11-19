@@ -23453,7 +23453,55 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
-    final origin = FirebaseFirestore.instance.activeProfileId;
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final managed = await CentralSchoolCloud.saved();
+    if (managed['managed'] == true) {
+      final school = managed['schoolId'];
+      if (school is! String || school.isEmpty ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          db.activeProfileIdentity['blocked'] == true ||
+          !await db.localPersistenceEnabled()) {
+        throw StateError('Verified school local storage required for QR attendance.');
+      }
+      final action = body['action'];
+      if (action != 'mark_student_attendance' &&
+          action != 'mark_teacher_attendance') {
+        throw StateError('Unsupported managed attendance operation.');
+      }
+      final personId = action == 'mark_teacher_attendance'
+          ? body['teacherId']?.toString() : body['studentId']?.toString();
+      if (personId == null || personId.isEmpty || personId.contains('/') ||
+          personId.length > 200 || body['schoolId'] != school) {
+        throw StateError('Attendance belongs to another school or person.');
+      }
+      final now = DateTime.now();
+      final day = now.toIso8601String().split('T').first;
+      final id = '${personId}_${day}_${body['mode'] ?? 'IN'}';
+      final collection = action == 'mark_teacher_attendance'
+          ? 'teacher_attendance' : 'attendance_records';
+      final active = await CentralSchoolCloud.saved();
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          active['uid'] != managed['uid'] || active['schoolId'] != school) {
+        throw StateError('School changed before attendance Save.');
+      }
+      // Local tracked write creates the original immutable Sync 3 outbox.
+      // Do not issue a Google Script call or claim Cloudflare/Drive ACK here.
+      await db.collection(collection).doc(id).set({
+        ...body, 'attendanceId': id, 'schoolId': school,
+        'date': day, 'timestamp': now.millisecondsSinceEpoch,
+      });
+      if (db.activeProfileId != origin) {
+        throw StateError('School changed during attendance Save.');
+      }
+      WindowsSyncEngine.instance.scheduleSoon();
+      return {
+        'success': true, 'attendanceId': id,
+        'cloudSyncPending': true,
+        'message': 'Attendance saved locally · Cloudflare pending',
+      };
+    }
     final scriptUrl = await _windowsGoogleScriptUrl();
     if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
     final response = await WindowsBackendBridge.post(
