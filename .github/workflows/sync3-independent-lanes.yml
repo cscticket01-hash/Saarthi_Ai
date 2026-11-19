@@ -1,0 +1,30 @@
+name: Sync Engine 3 independent queue admission
+on:
+  pull_request:
+    paths:
+      - 'lib/windows_sync_engine.dart'
+      - 'lib/windows_pending_school_sync.dart'
+      - 'lib/windows_sync_parallel_admission.dart'
+      - 'test/windows_sync_parallel_admission_test.dart'
+      - 'cloudflare-sync/src/spool.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'functions/delete-everywhere.js'
+      - '.github/workflows/sync3-independent-lanes.yml'
+  push:
+    branches: [fix/sync3-independent-lanes-delete-speed-20261119]
+permissions:
+  contents: read
+jobs:
+  windows-and-notices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: School, FIFO, quota and dependency-safe parallel notice selection
+        run: flutter test test/windows_sync_parallel_admission_test.dart
+      - name: Analyze Windows engine queue changes
+        run: flutter analyze --no-fatal-infos lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_parallel_admission.dart
