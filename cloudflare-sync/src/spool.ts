@@ -85,12 +85,33 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
     entries:page.map(row=>{
       let response:Json={};try{response=row.response?JSON.parse(row.response) as Json:{}}catch{}
       const result=response.result as Json|undefined;
-      const ownerReceiptPresent=row.state==='completed'&&result?.success===true&&
-        result.schoolId===school;
+      const isFile=lane.startsWith('file-');
+      const ownerReceiptPresent=row.state==='completed'&&
+        result?.success===true&&result.schoolId===school&&
+        (isFile?result.committed===true&&
+           typeof result.fileId==='string'&&result.fileId.length>0:
+         result.syncProtocol===2&&
+           (result.recordWriteBatchVersion===1?
+             Array.isArray(result.acknowledgements)&&
+             (result.acknowledgements as Json[]).length>0&&
+             (result.acknowledgements as Json[]).every(x=>x.success===true&&
+                typeof x.recordRevision==='string'&&
+                !/^(cf-|live-)/.test(x.recordRevision)):
+             typeof result.recordRevision==='string'&&
+             !/^(cf-|live-)/.test(result.recordRevision)));
+      // Legacy record jobs often retained their original request for safety,
+      // so verified_at was never set (it also drove the purge clock). The
+      // signed broker's durable finish timing is an original event timestamp,
+      // not a fabricated audit/discovery time. Never use it for R2 GC.
+      const timing=response.timing as Json|undefined;
+      const stamped=ownerReceiptPresent&&
+        Number.isSafeInteger(timing?.observedAt)&&
+        Number(timing?.observedAt)>0?Number(timing?.observedAt):null;
       return {sequence:row.seq,id:row.id,requestFingerprint:row.fingerprint,
         state:row.state,acceptedAt:row.created>0?row.created:null,
         driveOwnerReceiptPresent:ownerReceiptPresent,
-        verifiedAt:ownerReceiptPresent&&row.verified_at>0?row.verified_at:null};
+        verifiedAt:ownerReceiptPresent?
+          (row.verified_at>0?row.verified_at:stamped):null};
     }),
     nextCursor:rows.length>Number(limit)?page[page.length-1].seq:null};
  }
