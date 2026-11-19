@@ -1,4 +1,5 @@
 import 'mobile/complaint_screen.dart';
+import 'liquid_glass_theme.dart';
 import 'qr_authentication_engine.dart';
 
 import 'dart:async';
@@ -117,18 +118,9 @@ class SaarthiMobileApp extends StatelessWidget {
     title: 'Vidya Saarthi',
     scaffoldMessengerKey: _messenger,
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: Brightness.dark,
-      colorScheme: const ColorScheme.dark(
-        primary: Color(0xFF00D9A5),
-        surface: Color(0xFF172229),
-      ),
-      scaffoldBackgroundColor: const Color(0xFF0B141A),
-      inputDecorationTheme: const InputDecorationTheme(
-        filled: true,
-        border: OutlineInputBorder(),
-      ),
-    ),
+    theme: mobileLiquidGlassTheme(),
+    builder: (context, child) =>
+        LiquidGlassBackdrop(child: child ?? const SizedBox.shrink()),
     home: SchoolSession.instance.loggedIn
         ? const _SchoolDashboard()
         : const _SchoolLogin(),
@@ -703,9 +695,9 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       .catchError((Object _) {}));
   }
 
-  Widget _card(Widget child) => Card(
+  Widget _card(Widget child) => LiquidGlassPanel(
     margin: const EdgeInsets.only(bottom: 14),
-    child: Padding(padding: const EdgeInsets.all(18), child: child),
+    child: child,
   );
   Widget _heading(String title, String subtitle) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,

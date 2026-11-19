@@ -1,4 +1,5 @@
 import 'windows_appearance.dart';
+import 'liquid_glass_theme.dart';
 import 'windows_device_management.dart';
 import 'windows_student_import.dart';
 import 'windows_clean_install_entry.dart';
@@ -129,12 +130,17 @@ class VidyaSaarthiWindowsApp extends StatelessWidget {
             final content = WindowsActivityMonitor(
               child: child ?? const SizedBox.shrink(),
             );
-            return WindowsManagedSchoolGate(
+            final gated = WindowsManagedSchoolGate(
               child: content,
               legacy: WindowsLicenseGate(child: content),
               onAuthenticated: () => _schoolNavigatorKey.currentState
                   ?.pushNamedAndRemoveUntil('/', (route) => false),
             );
+            // Only the published glass preset uses the atmospheric backdrop.
+            // Authentication, App Lock and school routing stay unchanged.
+            return WindowsAppearance.presetId == 'midnight-glass'
+                ? LiquidGlassBackdrop(child: gated)
+                : gated;
           },
           routes: {
             '/admin/device-management': (_) =>

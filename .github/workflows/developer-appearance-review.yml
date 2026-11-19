@@ -8,6 +8,9 @@ on:
       - 'lib/managed_developer_panel.dart'
       - 'lib/windows_theme*'
       - 'lib/windows_appearance.dart'
+      - 'lib/liquid_glass_theme.dart'
+      - 'lib/main_android.dart'
+      - 'test/liquid_glass_theme_test.dart'
       - 'lib/main_windows.dart'
       - 'lib/windows_connect/managed_school_session.dart'
       - 'functions/windows-theme.js'
@@ -63,7 +66,7 @@ jobs:
               p.unlink()
           PYTHON
       - name: Verify compact layout, explicit Save and screenshot arrows
-        run: flutter test test/developer_windows_theme_test.dart test/windows_theme_presets_test.dart test/windows_startup_test.dart
+        run: flutter test test/developer_windows_theme_test.dart test/windows_theme_presets_test.dart test/liquid_glass_theme_test.dart test/windows_startup_test.dart
       - name: Verify preset-only settings and legacy preference migration
         run: flutter test test/windows_appearance_test.dart --name "preset appearance|Settings has no"
       - name: Verify authenticated per-PC theme unlock
