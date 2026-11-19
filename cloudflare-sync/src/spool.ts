@@ -28,6 +28,9 @@ const independent=new Set(['school_expenses','attendance_records','attendance_lo
 const recordIdentity=(request:Json):Json=>request.action==='managed_records_batch'?{action:request.action,operations:(request.operations as Json[]).map(recordIdentity)}:Object.fromEntries(['action','collection','id','operation','syncProtocol','operationId','expectedRecordRevision'].filter(key=>request[key]!==undefined).map(key=>[key,request[key]]));
 function resources(request:Json):string {
  const ops=request.action==='managed_records_batch'?request.operations as Json[]:[request];
+ // Student/teacher lifecycle and Delete Everywhere are intentionally global
+ // dependencies. Both still receive immediate independent Cloudflare ACKs;
+ // only their Google Drive backing transactions remain strictly ordered.
  if(ops.some(op=>!independent.has(String(op.collection))))return '*';
  return JSON.stringify([...new Set(ops.map(op=>JSON.stringify([op.collection,op.id])))].sort());
 }
@@ -68,6 +71,53 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
 
  }
  const receipt=(row:Row)=>({id:row.id,state:row.state,due:row.due,response:row.response?JSON.parse(row.response):null});
+ // Enumerate historical and new immutable Edge receipts without ever
+ // exposing request bodies, personal data or Drive success from a mere ACK.
+ if(action==='auditJournalPage'){
+  const after=b.after??0,limit=b.limit??50;
+  demand(Number.isSafeInteger(after)&&Number(after)>=0&&
+    Number.isSafeInteger(limit)&&Number(limit)>=1&&Number(limit)<=100,
+    'Invalid immutable owner-journal page',400);
+  const rows=storage.sql.exec<Row>(
+    'SELECT * FROM edge_ops WHERE seq>? ORDER BY seq LIMIT ?',
+    Number(after),Number(limit)+1).toArray();
+  const page=rows.slice(0,Number(limit));
+  return {version:1,schoolId:school,scope:'edgeImmutableOwnerJournal',
+    source:lane==='records'?'edge-records':'edge-files',lane,
+    coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>{
+      let response:Json={};try{response=row.response?JSON.parse(row.response) as Json:{}}catch{}
+      const result=response.result as Json|undefined;
+      const isFile=lane.startsWith('file-');
+      const ownerReceiptPresent=row.state==='completed'&&
+        result?.success===true&&result.schoolId===school&&
+        (isFile?result.committed===true&&
+           typeof result.fileId==='string'&&result.fileId.length>0:
+         result.syncProtocol===2&&
+           (result.recordWriteBatchVersion===1?
+             Array.isArray(result.acknowledgements)&&
+             (result.acknowledgements as Json[]).length>0&&
+             (result.acknowledgements as Json[]).every(x=>x.success===true&&
+                typeof x.recordRevision==='string'&&
+                !/^(cf-|live-)/.test(x.recordRevision)):
+             typeof result.recordRevision==='string'&&
+             !/^(cf-|live-)/.test(result.recordRevision)));
+      // Legacy record jobs often retained their original request for safety,
+      // so verified_at was never set (it also drove the purge clock). The
+      // signed broker's durable finish timing is an original event timestamp,
+      // not a fabricated audit/discovery time. Never use it for R2 GC.
+      const timing=response.timing as Json|undefined;
+      const stamped=ownerReceiptPresent&&
+        Number.isSafeInteger(timing?.observedAt)&&
+        Number(timing?.observedAt)>0?Number(timing?.observedAt):null;
+      return {sequence:row.seq,id:row.id,requestFingerprint:row.fingerprint,
+        state:row.state,acceptedAt:row.created>0?row.created:null,
+        driveOwnerReceiptPresent:ownerReceiptPresent,
+        verifiedAt:ownerReceiptPresent?
+          (row.verified_at>0?row.verified_at:stamped):null};
+    }),
+    nextCursor:rows.length>Number(limit)?page[page.length-1].seq:null};
+ }
  if(action==='expireVerified'){
   // This cleanup runs only from an authenticated existing school-lane alarm;
   // a stale unverified request can stay queued past 24h without data loss.

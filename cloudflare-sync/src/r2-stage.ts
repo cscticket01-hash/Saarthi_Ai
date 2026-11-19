@@ -11,11 +11,53 @@ function init(storage:DurableObjectStorage){
   storage.sql.exec("ALTER TABLE r2_staged ADD COLUMN accepted_final INTEGER NOT NULL DEFAULT 0");
  storage.sql.exec("CREATE INDEX IF NOT EXISTS r2_verified_cleanup ON r2_staged(state,purge_due)");
  storage.sql.exec("CREATE INDEX IF NOT EXISTS r2_original_receipt ON r2_staged(school,lane,receipt_id)");
+ storage.sql.exec("CREATE INDEX IF NOT EXISTS r2_school_verified_hour ON r2_staged(school,state,verified_at)");
 }
 function usage(storage:DurableObjectStorage){
  const rows=storage.sql.exec<{category:string;used:number}>("SELECT category,coalesce(sum(bytes),0) AS used FROM r2_staged WHERE state!='purged' GROUP BY category").toArray();
  return {schoolBytes:rows.find(r=>r.category==='school')?.used??0,systemBytes:rows.find(r=>r.category==='system')?.used??0};
 }
+/// School-scoped previous closed UTC hour, aggregated across every R2-staged
+/// lane. COUNT(DISTINCT lane/receipt) deduplicates multipart file chunks and
+/// repeated identical retries. This is not a count of human records and cannot
+/// certify older non-R2 operations.
+export function r2VerifiedHourSummary(storage:DurableObjectStorage,school:string,now=Date.now()){
+ demand(schoolPattern.test(school)&&Number.isSafeInteger(now)&&now>0,
+  'Invalid school summary scope',400);
+ init(storage);
+ const hourEnd=Math.floor(now/3600000)*3600000;
+ const hourStart=hourEnd-3600000;
+ const rows=storage.sql.exec<{kind:string;count:number}>(
+  "SELECT CASE WHEN lane LIKE 'file-%' THEN 'files' WHEN lane LIKE 'attendance-%' THEN 'attendance' ELSE lane END AS kind, count(DISTINCT lane || '/' || receipt_id) AS count FROM r2_staged WHERE school=? AND state='verified' AND accepted_final=1 AND verified_at>=? AND verified_at<? GROUP BY kind",
+  school,hourStart,hourEnd).toArray();
+ const breakdown=Object.fromEntries(rows.map(row=>[row.kind,row.count]));
+ const verifiedCount=rows.reduce((sum,row)=>sum+row.count,0);
+ return {version:1,schoolId:school,scope:'r2VerifiedDeliveries',hourStart,hourEnd,
+  verifiedCount,breakdown,coverage:'r2-staged-only',partial:true};
+}
+
+// Read-only pagination of immutable R2 original staging receipts. This never
+// certifies Drive delivery or completeness of non-R2 and legacy journals.
+export function r2OriginalAuditPage(storage:DurableObjectStorage,school:string,after='',limit=100){
+ demand(schoolPattern.test(school)&&Number.isSafeInteger(limit)&&limit>=1&&limit<=100&&
+   typeof after==='string'&&after.length<=350&&
+   (after===''||after.startsWith('saarthi-v1/'+school+'/')),
+   'Invalid school R2 audit page',400);
+ init(storage);
+ const rows=storage.sql.exec<StageRow>(
+  'SELECT * FROM r2_staged WHERE school=? AND key>? ORDER BY key LIMIT ?',
+  school,after,limit+1).toArray();
+ const page=rows.slice(0,limit);
+ return {version:1,schoolId:school,scope:'r2ImmutableOriginalStages',
+   coverage:'r2-staged-only',partial:true,
+   entries:page.map(row=>({key:row.key,lane:row.lane,
+     receiptId:row.receipt_id,segmentBytes:row.bytes,
+     segmentSha256:row.sha256,state:row.state,
+     originalAccepted:row.accepted_final===1,
+     acceptedAt:row.accepted_at,verifiedAt:row.verified_at||null})),
+   nextCursor:rows.length>limit?page[page.length-1].key:null};
+}
+
 export function r2BudgetStatus(storage:DurableObjectStorage){
  init(storage);const u=usage(storage);
  const states=storage.sql.exec<{state:string;bytes:number;objects:number}>("SELECT state,sum(bytes) AS bytes,count(*) AS objects FROM r2_staged GROUP BY state").toArray();

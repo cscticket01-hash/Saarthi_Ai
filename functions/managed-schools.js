@@ -306,7 +306,11 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  async function deliveryBudget(work,millis=1000){let timer;try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Notification recovery storage unavailable; retry'),{status:503,code:'SYNC_DELIVERY_BUSY',publicMessage:true})),millis);})]);}finally{clearTimeout(timer);}}
  async function signed(m,body){
   if(body.action==='managed_records'&&body.operation==='delete'&&body.deleteEverywhereVersion===1){
-   const capability=await cachedRead(uploadCapabilities,m.schoolId,()=>signedRequest(m,{action:'managed_health'}));
+   // Reuse the same five-minute verified school-script capability cache as file
+   // uploads; a new remote health round-trip must not recur every 30 seconds
+   // while deleting multiple records. Final deletion still requires owner proof.
+   const capability=await cachedRead(uploadCapabilities,m.schoolId,
+     ()=>signedRequest(m,{action:'managed_health'}),300000);
    if(capability.deleteEverywhereVersion!==1)fail(412,'Update the school Script before deleting all cloud copies','DELETE_EVERYWHERE_UPGRADE_REQUIRED');
   }
 
@@ -368,7 +372,14 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
 
   if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.operation!=='read'&&(body.syncProtocol!==2||!['write','delete'].includes(body.operation)))fail(409,'Cloudflare notice writes require versioned sync','SYNC_PROTOCOL_REQUIRED');
   if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.syncProtocol===2&&['read','write','delete'].includes(body.operation)){
-   if(body.operation!=='read'){const ack=await cloudflareSync.writeNotice(m.schoolId,body,()=>noticeBaseline(m.schoolId));invalidate(m.schoolId);await changeHint(m.schoolId,'school_notices',body.id);return ack;}
+   if(body.operation!=='read'){
+    const ack=await cloudflareSync.writeNotice(m.schoolId,body,()=>noticeBaseline(m.schoolId));
+    invalidate(m.schoolId);
+    // A durable Cloudflare receipt owns Save success. A best-effort peer
+    // notification must not hold the ACK behind a delayed push/hint.
+    void changeHint(m.schoolId,'school_notices',body.id).catch(()=>{});
+    return ack;
+   }
    const state=await cloudflareSync.notices(m.schoolId,()=>noticeBaseline(m.schoolId));const records=body.id?{...(state.records[body.id]?{[body.id]:state.records[body.id]}:{})}:state.records;return {success:true,schoolId:m.schoolId,syncProtocol:2,collectionRevision:state.revision,records:body.knownRevision===state.revision?{}:records,...(body.id?{pointRead:true}:{}),...(body.knownRevision===state.revision?{unchanged:true}:{}),cloudflareAccepted:true};
   }
   const ticket=await deliveryBudget(syncDelivery.prepare(m.schoolId,body));
@@ -1199,7 +1210,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    await liveMigration.assertCohortAdmission(m.schoolId);
    return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
   }
-  const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory']);
+  const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory','verifiedHourSummary']);
   if(operation==='operationReceipt'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))fail(400,'Invalid live operation identity');
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
   // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
@@ -1364,6 +1375,92 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+ }
+ // Independent, read-only signed Google Drive exact-byte proof for a
+ // completed file lane. The original Cloudflare ACK is NOT sufficient.
+ if(action==='managed/cloudflare/verify-drive-file'){
+  if(!edgeEnabled(m.schoolId))
+    fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const id=b.id;
+  if(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id))
+    fail(400,'Invalid immutable file owner identity');
+  const lane='file-'+id;
+  const owner=await cloudflareSync.rpc(m.schoolId,lane,{command:'status',id});
+  const audit=await cloudflareSync.rpc(m.schoolId,lane,
+    {command:'auditJournalPage',after:0,limit:2});
+  if(audit?.schoolId!==m.schoolId||audit.lane!==lane||
+     audit.scope!=='edgeImmutableOwnerJournal'||audit.partial!==true||
+     !Array.isArray(audit.entries)||audit.entries.length>2)
+    fail(502,'Original owner audit did not verify','OWNER_JOURNAL_UNVERIFIED');
+  const original=audit.entries.find(row=>row.id===id);
+  const verified=await require('./backup-drive-file-proof.cjs')
+    .verifyOwnerDriveFile({schoolId:m.schoolId,operationId:id,owner,
+      auditEntry:original,
+      readFile:fileId=>signed(m,{action:'managed_file',fileId})});
+  return {success:true,...verified};
+ }
+ // Paginate persisted owner receipts across current/legacy Edge, notices,
+ // attendance and live lanes. A one-lane page is NEVER all-school proof.
+ if(action==='managed/cloudflare/owner-journal-page'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery not enabled','EDGE_DELIVERY_DISABLED');
+  const lane=b.lane,after=b.after??0,limit=b.limit??50;
+  if(typeof lane!=='string'||!(/^(?:records|notices|live|attendance-[a-f0-9]{2}|file-[a-f0-9]{64})$/.test(lane))||
+     !Number.isSafeInteger(after)||after<0||
+     !Number.isSafeInteger(limit)||limit<1||limit>100)
+    fail(400,'Invalid owner-journal scope or pagination');
+  if(lane==='live'&&!liveSync.enabled(m.schoolId))
+    fail(412,'Live owner is not enabled for this school','LIVE_SYNC_DISABLED');
+  const expectedScope=lane==='live'?'liveImmutableOwnerJournal':
+    lane==='records'||lane.startsWith('file-')?
+    'edgeImmutableOwnerJournal':'legacyImmutableOwnerJournal';
+  const value=await cloudflareSync.rpc(m.schoolId,lane,
+    {command:'auditJournalPage',after,limit});
+  if(value?.schoolId!==m.schoolId||value.version!==1||
+     value.scope!==expectedScope||value.lane!==lane||
+     value.coverage!=='one-owner-journal-only'||value.partial!==true||
+     !Array.isArray(value.entries)||value.entries.length>limit||
+     !value.entries.every(row=>row&&typeof row.id==='string'&&
+       Number.isSafeInteger(row.sequence)&&row.sequence>after&&
+       typeof row.state==='string')||
+     (value.nextCursor!==null&&
+       (!Number.isSafeInteger(value.nextCursor)||value.nextCursor<=after)))
+    fail(502,'Owner-journal readback did not verify','OWNER_JOURNAL_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,...value};
+ }
+ // School-authenticated read-only original R2 stage inventory; NOT a Drive proof.
+ if(action==='managed/cloudflare/backup-audit-page'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const after=b.after??'',limit=b.limit??100;
+  if(typeof after!=='string'||after.length>350||
+     !Number.isSafeInteger(limit)||limit<1||limit>100)
+    fail(400,'Invalid R2 audit pagination');
+  const report=await cloudflareSync.rpc(m.schoolId,'delivery',
+    {command:'r2OriginalAuditPage',after,limit});
+  if(report?.schoolId!==m.schoolId||report.version!==1||
+     report.scope!=='r2ImmutableOriginalStages'||
+     report.coverage!=='r2-staged-only'||report.partial!==true||
+     !Array.isArray(report.entries)||report.entries.length>limit||
+     (report.nextCursor!==null&&typeof report.nextCursor!=='string'))
+    fail(502,'R2 audit inventory did not verify','R2_AUDIT_UNVERIFIED');
+  return {success:true,...report};
+ }
+ if(action==='managed/cloudflare/verified-hour'){
+  if(!edgeEnabled(m.schoolId))fail(412,'Cloudflare delivery is not enabled','EDGE_DELIVERY_DISABLED');
+  const value=await cloudflareSync.rpc(m.schoolId,'delivery',{command:'verifiedHourSummary'});
+  const currentHour=Math.floor(now()/3600000)*3600000;
+  if(value?.schoolId!==m.schoolId||value.version!==1||
+     value.scope!=='r2VerifiedDeliveries'||
+     value.coverage!=='r2-staged-only'||value.partial!==true||
+     value.hourEnd!==currentHour||value.hourStart!==currentHour-3600000||
+     !Number.isSafeInteger(value.verifiedCount)||value.verifiedCount<0||
+     !value.breakdown||typeof value.breakdown!=='object'||
+     Array.isArray(value.breakdown)||
+     Object.entries(value.breakdown).some(([kind,count])=>
+       !['live','records','files','notices','attendance'].includes(kind)||
+       !Number.isSafeInteger(count)||count<0)||
+     Object.values(value.breakdown).reduce((a,n)=>a+n,0)!==value.verifiedCount)
+    fail(502,'Drive hourly summary proof did not verify','DRIVE_HOUR_SUMMARY_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,...value};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){

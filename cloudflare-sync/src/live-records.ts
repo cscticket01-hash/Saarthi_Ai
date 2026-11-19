@@ -44,6 +44,8 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_owner ON live_backup(collection,id,seq)');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='accepted_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN accepted_at INTEGER NOT NULL DEFAULT 0');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
+ // Create only after the verified_at migration, including on older school DOs.
+ storage.sql.exec('CREATE INDEX IF NOT EXISTS live_backup_verified_hour ON live_backup(state,verified_at)');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_record_owners(collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(collection,id))");
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='request_metadata'))storage.sql.exec("ALTER TABLE live_backup ADD COLUMN request_metadata TEXT NOT NULL DEFAULT '{}'");
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_backup_dependencies(sequence INTEGER NOT NULL,predecessor INTEGER NOT NULL,PRIMARY KEY(sequence,predecessor))');
@@ -742,6 +744,43 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    sql.exec("UPDATE live_backup SET state=?,due=?,claim='',claim_until=0 WHERE seq=?",b.review===true?'review':'retry',b.review===true?Number.MAX_SAFE_INTEGER:Number(b.retryAt),job.seq);
   }return {accepted:true};
  });
+ if(command==='auditJournalPage'){
+  const after=b.after??0,limit=b.limit??50;
+  demand(Number.isSafeInteger(after)&&Number(after)>=0&&
+    Number.isSafeInteger(limit)&&Number(limit)>=1&&Number(limit)<=100,
+    'Invalid immutable live-backup journal page',400);
+  // Paginate the entire persistent owner journal, NEVER the truncated
+  // backupHistory UI view. No record content or other-school data is exposed.
+  const rows=sql.exec<{seq:number;operation_id:string;collection:string;
+    state:string;accepted_at:number;verified_at:number;drive_revision:string|null}>(
+    'SELECT seq,operation_id,collection,state,accepted_at,verified_at,drive_revision FROM live_backup WHERE seq>? ORDER BY seq LIMIT ?',
+    Number(after),Number(limit)+1).toArray();
+  const page=rows.slice(0,Number(limit));
+  return {version:1,schoolId:school,scope:'liveImmutableOwnerJournal',
+    source:'live',lane:'live',coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>({
+      sequence:row.seq,id:row.operation_id,collection:row.collection,state:row.state,
+      acceptedAt:row.accepted_at>0?row.accepted_at:null,
+      driveOwnerReceiptPresent:row.state==='verified'&&
+        typeof row.drive_revision==='string'&&row.drive_revision.length>0&&
+        !/^(cf-|live-)/.test(row.drive_revision),
+      verifiedAt:row.state==='verified'&&row.verified_at>0&&
+        typeof row.drive_revision==='string'&&row.drive_revision.length>0&&
+        !/^(cf-|live-)/.test(row.drive_revision)?row.verified_at:null
+    })),
+    nextCursor:rows.length>Number(limit)?page[page.length-1].seq:null};
+ }
+ if(command==='verifiedHourSummary'){
+  // Never infer "Drive synced" from Cloudflare acceptance, pending state,
+  // elapsed time, a truncated 25-row history, or a locally cached success.
+  const hourEnd=Math.floor(now/3600000)*3600000;
+  const hourStart=hourEnd-3600000;
+  const row=sql.exec<{count:number}>(
+   "SELECT count(*) AS count FROM live_backup WHERE state='verified' AND verified_at>=? AND verified_at<? AND drive_revision IS NOT NULL AND drive_revision!=''",
+   hourStart,hourEnd).toArray()[0];
+  return {liveProtocol:1,schoolId:school,scope:'liveRecordBackups',
+   hourStart,hourEnd,verifiedCount:row.count};
+ }
  if(command==='backupHistory'){
   const entries=sql.exec<{seq:number;collection:string;id:string;operation_id:string;state:string;accepted_at:number;verified_at:number;drive_revision:string|null;receipt:string}>('SELECT b.seq,b.collection,b.id,b.operation_id,b.state,b.accepted_at,b.verified_at,b.drive_revision,e.receipt FROM live_backup b JOIN live_events e ON e.seq=b.seq ORDER BY b.seq DESC LIMIT 25').toArray().map(row=>({operationId:row.operation_id,collection:row.collection,id:row.id,state:row.state,sequence:row.seq,acceptedAt:row.accepted_at,verifiedAt:row.verified_at,completedAt:row.state==='verified'?row.verified_at:0,recordRevision:String(JSON.parse(row.receipt).recordRevision||''),...(row.state==='verified'?{driveRevision:row.drive_revision}:{})}));
   return {liveProtocol:1,schoolId:school,entries};

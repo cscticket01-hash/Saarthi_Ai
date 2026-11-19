@@ -1,6 +1,6 @@
 import {brokerRetryDelay} from './broker-retry.mjs';
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
-import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
+import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus,r2VerifiedHourSummary,r2OriginalAuditPage} from './r2-stage';
 import {r2StagingForSchool} from './r2-scoped-admission.mjs';
 import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
@@ -10,7 +10,7 @@ import {liveSocketGrant,LiveSocketGrant} from './live-socket';
 import {DurableObject} from 'cloudflare:workers';
 import {authenticated,boundedBody,demand,digest,operationPattern,schoolPattern,signature} from './protocol';
 type Json=Record<string,unknown>;
-type Job={id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
+type Job={seq:number;id:string;kind:string;payload:string;state:string;due:number;claim:string;claim_until:number;created:number;response:string|null;revision:string|null};
 export class SyncLane extends DurableObject<Env>{
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{
   initSpool(ctx.storage);
@@ -20,6 +20,16 @@ export class SyncLane extends DurableObject<Env>{
   ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS revision_jobs ON jobs(revision)');
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS lanes (name TEXT PRIMARY KEY,due INTEGER NOT NULL,attention INTEGER NOT NULL DEFAULT 0)');
   if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='attention'))ctx.storage.sql.exec('ALTER TABLE lanes ADD COLUMN attention INTEGER NOT NULL DEFAULT 0');
+  // A new Cloudflare ACK must never be lost if it arrives during a slow
+  // Google Drive drain. An epoch fences stale alarm updates.
+  if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='epoch'))
+   ctx.storage.sql.exec('ALTER TABLE lanes ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0');
+  // An in-flight broker lease is durable: a later Save can be admitted while
+  // an older record/Delete waits on Drive, without duplicating the same lane.
+  if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='inflight_until'))
+   ctx.storage.sql.exec('ALTER TABLE lanes ADD COLUMN inflight_until INTEGER NOT NULL DEFAULT 0');
+  if(!ctx.storage.sql.exec<{name:string}>('PRAGMA table_info(lanes)').toArray().some(c=>c.name==='inflight_token'))
+   ctx.storage.sql.exec("ALTER TABLE lanes ADD COLUMN inflight_token TEXT NOT NULL DEFAULT ''");
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY,body TEXT NOT NULL)');
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS r2_verification_pending (school TEXT NOT NULL,lane TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(school,lane,id))');
  });}
@@ -45,6 +55,16 @@ export class SyncLane extends DurableObject<Env>{
   const result=await markR2Verified(this.ctx.storage,school,lane,id);
   if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
   return result;
+ }
+ async r2VerifiedHourSummary(school:string,at=Date.now()){
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
+  return r2VerifiedHourSummary(this.ctx.storage,school,at);
+ }
+ async r2OriginalAuditPage(school:string,after='',limit=100){
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
+  return r2OriginalAuditPage(this.ctx.storage,school,after,limit);
  }
  async r2CapacityStatus(){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
@@ -377,7 +397,71 @@ export class SyncLane extends DurableObject<Env>{
    this.ctx.storage.transactionSync(()=>{this.ctx.storage.sql.exec('DELETE FROM records');this.ctx.storage.sql.exec("UPDATE jobs SET payload='' WHERE state='completed'");this.setMeta('retired','drive');});
    return {retired:true};
   }
-  if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
+  if(action==='schedule'){
+   demand(lane==='delivery'&&typeof b.sourceLane==='string'&&
+    (/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));
+   const sourceLane=b.sourceLane as string;
+   this.ctx.storage.sql.exec(
+    'INSERT INTO lanes(name,due,epoch) VALUES(?,?,1) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due),epoch=lanes.epoch+1',
+    sourceLane,Date.now());
+   // Drive draining must not hold another unrelated Cloudflare-backed lane.
+   // If an older delivery is in flight, launch a DIFFERENT eligible lane in
+   // its own waitUntil task. Durable lease/epoch fencing makes this idempotent.
+   const now=Date.now(),backoff=Number(this.meta('deliveryBackoff')||0);
+   const inFlight=this.ctx.storage.sql.exec<{count:number}>(
+    'SELECT count(*) AS count FROM lanes WHERE inflight_until>?',now).toArray()[0].count;
+   if(inFlight>0&&inFlight<3&&backoff<=now){
+    const row=this.ctx.storage.sql.exec<{name:string;due:number;epoch:number}>(
+     'SELECT name,due,epoch FROM lanes WHERE name=?',sourceLane).toArray()[0];
+    if(row&&row.due<=now){
+     const claim=this.claimDeliveryLane(row.name,row.epoch);
+     if(claim)this.ctx.waitUntil(this.deliverClaimedLane(school,row,claim));
+    }
+   }
+   await this.wake(Date.now()+250);
+   return true;
+  }
+  if(action==='r2OriginalAuditPage'){
+   demand(lane==='delivery'&&(b.after===undefined||typeof b.after==='string')&&
+     (b.limit===undefined||Number.isSafeInteger(b.limit)),
+     'Only school delivery owner can enumerate original stages',403);
+   return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1')
+     .r2OriginalAuditPage(school,(b.after??'') as string,Number(b.limit??100));
+  }
+  if(action==='verifiedHourSummary'){
+   demand(lane==='delivery','Verified hourly report requires school delivery lane',403);
+   return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1').r2VerifiedHourSummary(school);
+  }
+  // School-owned legacy notice and attendance receipts. No payload or
+  // school PII is returned. Unknown historical verification times stay null.
+  if(action==='auditJournalPage'){
+   demand((lane==='notices'||lane.startsWith('attendance-'))&&
+     Number.isSafeInteger(b.after??0)&&Number(b.after??0)>=0&&
+     Number.isSafeInteger(b.limit??50)&&Number(b.limit??50)>=1&&
+     Number(b.limit??50)<=100,'Invalid school owner-journal page',400);
+   const after=Number(b.after??0),limit=Number(b.limit??50);
+   const rows=this.ctx.storage.sql.exec<Job>(
+     'SELECT * FROM jobs WHERE seq>? ORDER BY seq LIMIT ?',after,limit+1).toArray();
+   const page=rows.slice(0,limit);
+   return {version:1,schoolId:school,scope:'legacyImmutableOwnerJournal',
+    source:lane==='notices'?'legacy-notices':'legacy-attendance',lane,
+    coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>{
+      let response:Json={};try{response=row.response?JSON.parse(row.response) as Json:{}}catch{}
+      const revision=String(response.driveRevision||'');
+      const ownerReceiptPresent=row.state==='completed'&&
+        (lane==='notices'?
+          revision.length>0&&!/^(cf-|live-)/.test(revision):
+          (response.attendanceOwnerReceipt as Json|undefined)?.driveVerified===true);
+      const completed=Number(response.completedAt??0);
+      return {sequence:row.seq,id:row.id,state:row.state,
+        acceptedAt:row.created>0?row.created:null,
+        driveOwnerReceiptPresent:ownerReceiptPresent,
+        verifiedAt:ownerReceiptPresent&&Number.isSafeInteger(completed)&&
+          completed>0?completed:null};
+    }),
+    nextCursor:rows.length>limit?page[page.length-1].seq:null};
+  }
   if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
   if(action==='get'){demand(operationPattern.test(id));return this.job(id)||null;}
@@ -493,6 +577,85 @@ export class SyncLane extends DurableObject<Env>{
   if(typeof message!=='string'||message!=='head'){socket.close(1008,'Unsupported live message');return;}
   socket.send(JSON.stringify(liveCommand(this.ctx.storage,grant.schoolId,{command:'head'})));
  }
+ // A fixed school-wide maximum of three active owner lanes protects
+ // Apps Script quota. The original lane and operation IDs stay immutable.
+ private claimDeliveryLane(name:string,epoch:number):string|null{
+  const now=Date.now(),active=this.ctx.storage.sql.exec<{n:number}>(
+   'SELECT count(*) AS n FROM lanes WHERE inflight_until>?',now).toArray()[0].n;
+  if(active>=3)return null;
+  const token=crypto.randomUUID();
+  this.ctx.storage.sql.exec(
+   'UPDATE lanes SET inflight_until=?,inflight_token=? WHERE name=? AND epoch=? AND due<=? AND inflight_until<=?',
+   now+130000,token,name,epoch,now,now);
+  const found=this.ctx.storage.sql.exec<{token:string}>(
+   'SELECT inflight_token AS token FROM lanes WHERE name=?',name).toArray()[0];
+  return found?.token===token?token:null;
+ }
+ private async armNextDeliveryAlarm(){
+  const now=Date.now(),backoff=Number(this.meta('deliveryBackoff')||0);
+  const active=this.ctx.storage.sql.exec<{n:number}>(
+   'SELECT count(*) AS n FROM lanes WHERE inflight_until>?',now).toArray()[0].n;
+  const ready=this.ctx.storage.sql.exec<{due:number|null}>(
+   'SELECT min(due) AS due FROM lanes WHERE inflight_until<=? AND due < 9007199254740991',now).toArray()[0]?.due;
+  const lease=this.ctx.storage.sql.exec<{due:number|null}>(
+   'SELECT min(inflight_until) AS due FROM lanes WHERE inflight_until>?',now).toArray()[0]?.due;
+  const earliest=active>=3?lease:
+   ready===null||ready===undefined?lease:
+   lease===null||lease===undefined?ready:Math.min(ready,lease);
+  if(earliest!==null&&earliest!==undefined)
+   await this.ctx.storage.setAlarm(Math.max(now+100,backoff,earliest));
+ }
+ private async deliverClaimedLane(
+  school:string,row:{name:string;epoch:number},token:string){
+  const raw=JSON.stringify({action:'managed/cloudflare/drain',schoolId:school,lane:row.name});
+  const time=String(Date.now());
+  let delay=30_000,status=503;
+  try{
+   const response=await fetch(this.env.BROKER_URL,{
+    method:'POST',
+    headers:{'Content-Type':'application/json',
+     'Authorization':'Bearer cloudflare-delivery',
+     'X-Vidya-Time':time,
+     'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+String.fromCharCode(10)+raw)},
+    body:raw,signal:AbortSignal.timeout(110000)});
+   status=response.status;
+   delay=brokerRetryDelay(status,response.headers.get('retry-after'),Date.now());
+   await response.body?.cancel();
+  }catch{ /* Timeout cannot consume a durable original owner row. */ }
+  if(status===429)this.setMeta('deliveryBackoff',
+   String(Math.max(Number(this.meta('deliveryBackoff')||0),Date.now()+delay)));
+  try{
+   const stats=await this.env.LANES.getByName(school+'/'+row.name)
+    .command(school,row.name,{command:'stats'}) as
+    {pending:number;due:number|null;needsAttention:number};
+   demand(Number.isSafeInteger(stats.pending)&&stats.pending>=0&&
+    Number.isSafeInteger(stats.needsAttention)&&stats.needsAttention>=0,
+    'Unverified lane status',502);
+   if(stats.pending===0&&stats.needsAttention===0){
+    // Never delete a newly enqueued epoch while this older call was pending.
+    this.ctx.storage.sql.exec(
+     'DELETE FROM lanes WHERE name=? AND epoch=? AND inflight_token=?',
+     row.name,row.epoch,token);
+   }else{
+    const next=stats.pending===0?Number.MAX_SAFE_INTEGER:
+     Math.max(Date.now()+delay,stats.due??0);
+    this.ctx.storage.sql.exec(
+     'UPDATE lanes SET due=?,attention=? WHERE name=? AND epoch=? AND inflight_token=?',
+     next,stats.needsAttention,row.name,row.epoch,token);
+   }
+  }catch{
+   this.ctx.storage.sql.exec(
+    'UPDATE lanes SET due=? WHERE name=? AND epoch=? AND inflight_token=?',
+    Date.now()+Math.max(delay,30000),row.name,row.epoch,token);
+  }finally{
+   // A concurrent Save may have advanced epoch. Clear only THIS lease so the
+   // new original will still be scheduled; a stale task cannot erase its row.
+   this.ctx.storage.sql.exec(
+    "UPDATE lanes SET inflight_until=0,inflight_token='' WHERE name=? AND inflight_token=?",
+    row.name,token);
+   await this.armNextDeliveryAlarm();
+  }
+ }
  async alarm(){
   try{
    await this.flushR2Verifications();
@@ -528,18 +691,21 @@ export class SyncLane extends DurableObject<Env>{
    }
    await this.env.LANES.getByName(school+'/delivery').command(school,'delivery',{command:'schedule',sourceLane:lane});return;
   }
-  const next=this.ctx.storage.sql.exec<{name:string;due:number}>('SELECT name,due FROM lanes WHERE due < 9007199254740991 ORDER BY due,name LIMIT 1').toArray()[0];
-  const backoff=Number(this.meta('deliveryBackoff')||0);if(backoff>Date.now()){await this.ctx.storage.setAlarm(backoff);return;}
-  if(!next)return;if(next.due>Date.now()){await this.ctx.storage.setAlarm(next.due);return;}
-  const raw=JSON.stringify({action:'managed/cloudflare/drain',schoolId:school,lane:next.name}),time=String(Date.now());
-  let delay=30_000;
-  try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});delay=brokerRetryDelay(response.status,response.headers.get('retry-after'),Date.now());await response.body?.cancel();}catch{ /* Durable rows remain; retry after broker outage. */ }
-  if(delay>=30000)this.setMeta('deliveryBackoff',String(Date.now()+delay));else this.setMeta('deliveryBackoff','0');
-  const stats=await this.env.LANES.getByName(school+'/'+next.name).command(school,next.name,{command:'stats'}) as {pending:number;due:number;needsAttention:number};
-  if(stats.pending===0&&stats.needsAttention===0)this.ctx.storage.sql.exec('DELETE FROM lanes WHERE name=?',next.name);
-  else this.ctx.storage.sql.exec('UPDATE lanes SET due=?,attention=? WHERE name=?',stats.pending===0?Number.MAX_SAFE_INTEGER:Math.max(Date.now()+delay,stats.due),stats.needsAttention,next.name);
-  const due=this.ctx.storage.sql.exec<{due:number}>('SELECT min(due) AS due FROM lanes WHERE due < 9007199254740991').toArray()[0]?.due;
-  if(due!==null&&due!==undefined)await this.ctx.storage.setAlarm(Math.max(Date.now()+100,due));
+  const backoff=Number(this.meta('deliveryBackoff')||0);
+  if(backoff>Date.now()){await this.ctx.storage.setAlarm(backoff);return;}
+  const now=Date.now();
+  const dueRows=this.ctx.storage.sql.exec<{name:string;due:number;epoch:number}>(
+   'SELECT name,due,epoch FROM lanes WHERE due<=? AND inflight_until<=? ORDER BY due,name LIMIT 3',
+   now,now).toArray();
+  const active=[];
+  for(const row of dueRows){
+   const token=this.claimDeliveryLane(row.name,row.epoch);
+   if(token)active.push(this.deliverClaimedLane(school,row,token));
+  }
+  // A new Save can schedule a fresh, independent lane concurrently while
+  // these requests await Drive. Each lane has its own durable lease.
+  await Promise.all(active);
+  await this.armNextDeliveryAlarm();
   }finally{
    if(this.ctx.storage.sql.exec<{n:number}>('SELECT count(*) AS n FROM r2_verification_pending').toArray()[0].n>0)
     await this.wake(Date.now()+60_000);

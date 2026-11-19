@@ -1,0 +1,47 @@
+name: Sync Engine 3 independent queue admission
+on:
+  pull_request:
+    paths:
+      - 'lib/windows_sync_engine.dart'
+      - 'lib/cloudflare_record_handoff.dart'
+      - 'lib/windows_local_firestore.dart'
+      - 'test/cloudflare_record_handoff_test.dart'
+      - 'lib/windows_pending_school_sync.dart'
+      - 'lib/windows_sync_parallel_admission.dart'
+      - 'test/windows_sync_parallel_admission_test.dart'
+      - 'cloudflare-sync/src/spool.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'functions/delete-everywhere.js'
+      - 'staging-school-cloud/server.cjs'
+      - '.github/workflows/sync3-independent-lanes.yml'
+  push:
+    branches: [fix/sync3-independent-lanes-delete-speed-20261119, fix/independent-sync-delete-no-wait-20261119]
+permissions:
+  contents: read
+jobs:
+  windows-and-notices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: School, FIFO, quota and dependency-safe parallel notice selection
+        run: flutter test test/windows_sync_parallel_admission_test.dart
+      - name: Verify delete Cloudflare handoff keeps exact immutable receipt until Drive and Firebase proof
+        run: flutter test test/cloudflare_record_handoff_test.dart
+      - name: Analyze Windows engine queue changes
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_sync_engine.dart lib/windows_pending_school_sync.dart lib/windows_sync_parallel_admission.dart lib/cloudflare_record_handoff.dart lib/windows_local_firestore.dart
+
+  broker-and-delete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --check staging-school-cloud/server.cjs
+      - run: node --check functions/delete-everywhere.js
+      - run: node --test functions/test/edge-record-scheduling.test.js functions/test/delete-everywhere-firebase.test.js

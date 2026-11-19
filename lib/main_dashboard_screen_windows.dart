@@ -44,7 +44,9 @@ import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
+import 'windows_id_card_record_lookup.dart';
 import 'windows_document_templates.dart';
+import 'windows_record_only_id_preview.dart';
 import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
@@ -97,6 +99,45 @@ Future<String> _windowsDirectoryMutationUrl() async {
     return _windowsGoogleScriptUrl(required:false);
   }
   return _windowsGoogleScriptUrl();
+}
+
+
+/*
+ * Managed schools persist to the existing local durable outbox first.
+ * Cloudflare ACK and later Drive delivery are separate verified stages.
+ * Unmanaged schools keep their legacy Script path until migration.
+ */
+Future<bool> _windowsDirectoryCloudFirst() async {
+  final managed = await CentralSchoolCloud.saved();
+  if (managed['managed'] != true) return false;
+  final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+  if (school == null || school.toString().isEmpty ||
+      school != managed['schoolId']) {
+    throw StateError('School identity changed. Reopen the directory.');
+  }
+  return true;
+}
+
+/// This response means local staging only, never Cloudflare or Drive ACK.
+/// The caller MUST still commit the corresponding tracked local mutation.
+Future<Map<String, dynamic>?> _windowsStageTeacherIfManaged(
+    Map<String, dynamic> body) async {
+  if (!await _windowsDirectoryCloudFirst()) return null;
+  final action = body['action']?.toString() ?? '';
+  if (!{'add_teacher', 'edit_teacher', 'delete_teacher',
+        'update_teacher_schedule'}.contains(action)) {
+    throw StateError('Unsupported managed teacher mutation.');
+  }
+  final explicitId = body['teacherId']?.toString().trim() ?? '';
+  final rawPhone = (body['phone'] ?? body['oldPhone'] ?? '').toString();
+  final phone = rawPhone.replaceAll(RegExp(r'\D'), '');
+  final identity = explicitId.isNotEmpty ? explicitId
+      : phone.isNotEmpty ? 'PHONE-$phone' : '';
+  return {
+    'success': true,
+    'cloudSyncPending': true,
+    if (identity.isNotEmpty) 'teacherId': identity,
+  };
 }
 
 String _windowsLanguage() => WindowsUiLanguage.current;
@@ -1474,6 +1515,13 @@ Future<Map<String, dynamic>> _loadSchoolProfileCache() async {
 }
 
 Future<Map<String, dynamic>> _refreshSchoolProfileFromDrive() async {
+  // Managed schools use the school's replicated local Cloudflare record. A
+  // dashboard preload is not permission to start a Drive/Apps Script read.
+  // Initial enrollment and cross-PC reconciliation have separate verified
+  // school-bound owners, so this path must not overwrite a pending edit.
+  if (await _windowsDirectoryCloudFirst()) {
+    return _loadSchoolProfileCache();
+  }
   final reference=_schoolProfileCacheRef();
   final result = await _schoolProfileBackendPost(
     const {'action': 'get_school_profile'},
@@ -5057,8 +5105,16 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   bool showStudentUid = false;
   String? photoUrl = _studentPhotoUrl;
 
+  final resolved = await WindowsIdCardRecordLookup.find(
+      schoolClass: _directoryClass, roll: roll);
+  if (resolved == null) {
+    throw StateError('Student record not found. Search Record again.');
+  }
+  final docId = resolved.id;
+  if (resolved.data['name']?.toString().trim() != name) {
+    throw StateError('Student record changed. Search Record again.');
+  }
   try {
-    final docId = '${_directoryClass}_Roll_$roll';
 
     final doc = await FirebaseFirestore.instance
         .collection('students_directory')
@@ -5145,8 +5201,6 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   final studentId =
       'VS-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
 
-  final docId = '${_directoryClass}_Roll_$roll';
-
   final existingStudentDoc = await FirebaseFirestore.instance
       .collection('students_directory')
       .doc(docId)
@@ -5204,13 +5258,13 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
-    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString(), previewOnly: true);
-    if (mounted && bytes != null) {
-      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
-        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-        onDownload: _downloadIdCard, onPrint: _printIdCard);
-    }
+    if (!mounted) return;
+    // The visible ID is built directly from the current school/person record.
+    // The selected printable template is rendered only upon Download PDF.
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Student ID card • Front & back',
+      data: data,
+      onDownload: _downloadIdCard);
   } catch (e) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('ID card preview unavailable: $e')));
@@ -10911,7 +10965,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
     final paymentData = <String, dynamic>{
       'schoolId': FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-      'receiptDocumentId': 'FEE-${paymentRef.id}',
       'paidAt': Timestamp.fromDate(now),
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
@@ -10945,7 +10998,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
     };
 
-      final pdfBytes = await _buildReceiptPdf(paymentData);
       if (FirebaseFirestore.instance.activeProfileId != originProfile ||
           _activeStudentId != studentDoc.id || _selectedMonth != originMonth)
         throw StateError('School or student changed. Reopen fees before collecting.');
@@ -10961,7 +11013,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
       await WindowsBackendBridge.collectFeePayment(
         profileId: originProfile, paymentId: paymentRef.id, payment: paymentData,
-        ledgerId: ledgerRef.id, previousPaid: oldPaid, pdfBytes: pdfBytes,
+        ledgerId: ledgerRef.id, previousPaid: oldPaid,
         ledger: {
           'studentId': studentDoc.id,
           'personId': student['mobileStableId'] ?? studentDoc.id,
@@ -12689,6 +12741,8 @@ class _TeachersDirectoryScreenState
     Map<String, dynamic> body,
   ) async {
     if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
+    final staged = await _windowsStageTeacherIfManaged(body);
+    if (staged != null) return staged;
     final scriptUrl = await _getTeacherScriptUrl();
 
     final response = await WindowsBackendBridge.post(
@@ -13475,6 +13529,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white),
                         ),
@@ -13484,7 +13539,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                         ),
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: fatherCtrl, decoration: input('Father Name', Icons.person_outline_rounded)),
+                      TextField(controller: fatherCtrl, inputFormatters: windowsPersonNameInputFormatters, decoration: input('Father Name', Icons.person_outline_rounded)),
                       const SizedBox(height: 10),
                       TextField(
                         controller:
@@ -13601,7 +13656,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: TextField(
+                            child: WindowsDateOfBirthField(
+                              helpText: 'Select joining date',
                               controller:
                                   joiningCtrl,
                               style:
@@ -13784,7 +13840,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           final phone =
                               phoneCtrl.text.trim();
 
-                          if (name.isEmpty ||
+                          if (!validWindowsPersonName(name) ||
+                              (fatherCtrl.text.trim().isNotEmpty && !validWindowsPersonName(fatherCtrl.text)) ||
                               subject.isEmpty) {
                             ScaffoldMessenger.of(
                               context,
@@ -13997,6 +14054,8 @@ errorBuilder: (_, __, ___) => _teacherFallback(
 
                             final updateData =
                                 <String, dynamic>{
+                              if (result['cloudSyncPending'] == true && selectedPhotoBytes != null)
+                                'photoUrl': WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!),
                               'name': name,
                               'fatherName': fatherCtrl.text.trim(),
                               'designation':
@@ -14499,28 +14558,41 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final qrData = await _windowsBuildPersonQrPayload(
       type: 'teacher',
       collection: 'teachers_directory',
       documentId: docId,
       person: data,
     );
-    final bytes = await WindowsDocumentTemplates.selected('teacherId',
-        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData,
-        previewOnly: true);
-    if (bytes != null && mounted) {
-      await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back',
-          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-          onPrint: () async {
-            try { await WindowsBrowserPrint.open(bytes); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
-          },
-          onDownload: () async {
-            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
-          });
-    }
+    final schoolProfile = await _loadSchoolProfileCache();
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Teacher ID card • Front & back',
+      data: {
+        ...data,
+        'teacherId': data['teacherId'] ?? docId,
+        'qrData': qrData,
+        'schoolName': _schoolName(schoolProfile),
+      },
+      onDownload: () async {
+        try {
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed before teacher PDF export.');
+          }
+          final bytes = await WindowsDocumentTemplates.selected('teacherId',
+            {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+          if (bytes == null) throw StateError('Unable to render teacher PDF.');
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed during teacher PDF export.');
+          }
+          await WindowsSavePdf.save(bytes, 'teacher-id.pdf');
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('PDF save failed: $e')));
+        }
+      },
+    );
   }
 
   @override
@@ -15375,6 +15447,8 @@ class _AddTeacherScreenState
     Map<String, dynamic> body,
   ) async {
     if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
+    final staged = await _windowsStageTeacherIfManaged(body);
+    if (staged != null) return staged;
     final scriptUrl =
         await _getTeacherScriptUrl();
 
@@ -15483,7 +15557,8 @@ class _AddTeacherScreenState
     final phone =
         _phoneCtrl.text.trim();
 
-    if (name.isEmpty ||
+    if (!validWindowsPersonName(name) ||
+        (_fatherCtrl.text.trim().isNotEmpty && !validWindowsPersonName(_fatherCtrl.text)) ||
         subject.isEmpty ||
         phone.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -15520,6 +15595,7 @@ class _AddTeacherScreenState
     });
 
     String createdTeacherId = '';
+    bool legacyTeacherCreated = false;
 
     try {
       // Firestore duplicate check.
@@ -15622,6 +15698,7 @@ class _AddTeacherScreenState
               'Teacher Google Sheet save failed',
         );
       }
+      legacyTeacherCreated = result['cloudSyncPending'] != true;
 
       createdTeacherId =
           result['teacherId']
@@ -15629,11 +15706,9 @@ class _AddTeacherScreenState
                   .trim() ??
               '';
 
-      final photoUrl =
-          result['photoUrl']
-                  ?.toString()
-                  .trim() ??
-              '';
+      final photoUrl = result['cloudSyncPending'] == true && _photoBytes != null
+          ? WindowsSchoolImageCache.dataUrl(_photoBytes!)
+          : (result['photoUrl']?.toString().trim() ?? '');
 
       if (createdTeacherId.isEmpty) {
         throw Exception(
@@ -15652,6 +15727,7 @@ class _AddTeacherScreenState
               .doc('Teacher_$normalizedPhone');
 
       await ref.set({
+        'mobileStableId': SchoolPersonIdentity.newGeneration(),
         'teacherId':
             createdTeacherId,
         'name': name,
@@ -15722,7 +15798,7 @@ class _AddTeacherScreenState
       // Google me save ho gaya,
       // lekin Firestore fail hua:
       // Google record/photo rollback.
-      if (createdTeacherId.isNotEmpty) {
+      if (legacyTeacherCreated && createdTeacherId.isNotEmpty) {
         try {
           await _callTeacherApi({
             'action':
@@ -15878,6 +15954,7 @@ class _AddTeacherScreenState
                   TextField(
                     controller:
                         _nameCtrl,
+                    inputFormatters: windowsPersonNameInputFormatters,
                     style:
                          TextStyle(fontFamily: 'Segoe UI', 
                       color:
@@ -15895,7 +15972,7 @@ class _AddTeacherScreenState
                     height: 11,
                   ),
 
-                  TextField(controller: _fatherCtrl, decoration: _field('Father Name', Icons.person_outline_rounded)),
+                  TextField(controller: _fatherCtrl, inputFormatters: windowsPersonNameInputFormatters, decoration: _field('Father Name', Icons.person_outline_rounded)),
                   const SizedBox(height: 11),
 
                   // Internal record identity is generated automatically.
@@ -16047,7 +16124,8 @@ class _AddTeacherScreenState
                       ),
                       Expanded(
                         child:
-                            TextField(
+                            WindowsDateOfBirthField(
+                          helpText: 'Select joining date',
                           controller:
                               _joiningCtrl,
                           style:
@@ -16340,7 +16418,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     final countryCtrl = TextEditingController(text: 'India');
     final stateCtrl = TextEditingController();
     final districtCtrl = TextEditingController();
-    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}');
+    final admissionDateCtrl = TextEditingController(text: '${DateTime.now().day.toString().padLeft(2, '0')}/${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().year}');
     final dobCtrl = TextEditingController();
     String selectedClass = _selectedClassFilter == 'All Classes' ? 'Class 1' : _selectedClassFilter;
     String hostelFacility = 'No';
@@ -16396,9 +16474,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                      TextField(controller: nameCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
+                      TextField(controller: nameCtrl, inputFormatters: windowsPersonNameInputFormatters, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Student Full Name *')),
                       const SizedBox(height: 10),
-                      TextField(controller: parentCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
+                      TextField(controller: parentCtrl, inputFormatters: windowsPersonNameInputFormatters, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration("Parent's / Guardian Name *")),
                       const SizedBox(height: 10),
                       TextField(
                         controller: contactCtrl,
@@ -16431,9 +16509,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code'))),
+                          Expanded(child: TextField(controller: pinCtrl, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)], style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('PIN Code *'))),
                           const SizedBox(width: 10),
-                          Expanded(child: TextField(controller: admissionDateCtrl, style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date'))),
+                          Expanded(child: WindowsDateOfBirthField(controller: admissionDateCtrl, helpText: 'Select admission date', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), decoration: _inputDecoration('Admission Date *'))),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -16472,23 +16550,30 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final roll = rollCtrl.text.trim();
                           final contact = contactCtrl.text.trim();
 
-                          if (name.isEmpty || !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
-                                content: Text(
-                                  'Name, Roll No aur Contact bharna zaroori hai!',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
-
                           if (!RegExp(r'^[0-9]{10}$').hasMatch(contact)) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text('Contact number mein exactly 10 digits daalein.'),
+                              ),
+                            );
+                            return;
+                          }
+
+                          if (!validWindowsPersonName(name) || !validWindowsPersonName(parent) ||
+                              !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty ||
+                              [addressCtrl.text, countryCtrl.text, stateCtrl.text,
+                               districtCtrl.text, pinCtrl.text, admissionDateCtrl.text,
+                               dobCtrl.text].any((v) => v.trim().isEmpty) ||
+                              !validIndianPinCode(pinCtrl.text) ||
+                              parsePersonBirthDate(admissionDateCtrl.text) == null ||
+                              parsePersonBirthDate(dobCtrl.text) == null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                                content: Text(
+                                  'Photo ke alawa sab fields required hain: names letters only, PIN 6 digits, dates DD/MM/YYYY.',
+                                ),
                               ),
                             );
                             return;
@@ -16551,7 +16636,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               return;
                             }
 
-                            final scriptUrl =
+                            final managedLocalFirst = await _windowsDirectoryCloudFirst();
+                            final scriptUrl = managedLocalFirst ? '' :
                                 await _windowsGoogleScriptUrl(required: false);
 
                             if (scriptUrl.isNotEmpty) {
@@ -17135,6 +17221,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         }
       }
 
+      if (!await _windowsDirectoryCloudFirst()) {
       final scriptUrl = await _windowsDirectoryMutationUrl();
 
       Future<Map<String, dynamic>> deleteFromGoogle() async {
@@ -17178,6 +17265,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
       if (!googleFullyDeleted) {
         throw Exception('Student duplicate cleanup limit exceed hua.');
+      }
+
       }
 
       // Same student ke saare legacy aliases (Roll_1 / Roll_01 / etc.)
@@ -17388,12 +17477,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       const SizedBox(height: 14),
                       TextField(
                         controller: nameCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Full Name'),
                       ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: parentCtrl,
+                        inputFormatters: windowsPersonNameInputFormatters,
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput("Parent's Name"),
                       ),
@@ -17440,12 +17531,14 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       TextField(
                         controller: pinCtrl,
                         keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('PIN Code'),
                       ),
                       const SizedBox(height: 8),
-                      TextField(
+                      WindowsDateOfBirthField(
                         controller: admissionCtrl,
+                        helpText: 'Select admission date',
                         style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                         decoration: _dialogInput('Admission Date'),
                       ),
@@ -17495,10 +17588,21 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                       onPressed: saving
                           ? null
                           : () async {
+                              if (!validWindowsPersonName(nameCtrl.text) ||
+                                  !validWindowsPersonName(parentCtrl.text) ||
+                                  !validIndianPinCode(pinCtrl.text) ||
+                                  parsePersonBirthDate(admissionCtrl.text) == null ||
+                                  parsePersonBirthDate(dobCtrl.text) == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                  content: Text('Names letters only, PIN 6 digits, dates DD/MM/YYYY.'),
+                                ));
+                                return;
+                              }
                               setDialogState(() => saving = true);
 
                               try {
-                                final scriptUrl =
+                                final managedLocalFirst = await _windowsDirectoryCloudFirst();
+                                final scriptUrl = managedLocalFirst ? '' :
                                     await _windowsDirectoryMutationUrl();
 
                                 final studentClass =
@@ -17506,6 +17610,8 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                 final rollNo =
                                     data['rollNo']?.toString() ?? '';
 
+                                final result = <String, dynamic>{'success': true, 'cloudSyncPending': true};
+                                if (!managedLocalFirst) {
                                 final response = await WindowsBackendBridge.post(
                                   Uri.parse(scriptUrl),
                                   headers: {
@@ -17545,11 +17651,13 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                   throw Exception('Google update response invalid hai.');
                                 }
 
-                                final result = Map<String, dynamic>.from(decoded);
+                                result.addAll(Map<String, dynamic>.from(decoded));
                                 if (result['success'] != true) {
                                   throw Exception(
                                     result['message'] ?? 'Google update failed',
                                   );
+                                }
+
                                 }
 
                                 final returnedPhotoUrl =
@@ -17572,6 +17680,9 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
 
                                 if (returnedPhotoUrl.isNotEmpty) {
                                   updateData['photoUrl'] = returnedPhotoUrl;
+                                }
+                                if (managedLocalFirst && selectedPhotoBytes != null) {
+                                  updateData['photoUrl'] = WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
                                 }
 
                                 if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen the directory.');
@@ -22681,7 +22792,7 @@ class _ExamMarksEntryScreenState
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save ke baad total, %, grade, PASS/FAIL aur Report Card PDF automatic generate hoga.',
+                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save par marks hi sync honge. Report Card PDF sirf Download PDF par banega.',
                       style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10,
@@ -22739,12 +22850,9 @@ class _ExamMarksEntryScreenState
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
-                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', {...widget.exam, ...student, ...resultData});
-                        if (reportBytes == null) throw StateError('Report card could not be generated.');
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
-                          'pdfBase64': base64Encode(reportBytes),
                           ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,
@@ -23345,7 +23453,55 @@ class _WindowsAttendanceScreenState extends State<WindowsAttendanceScreen> {
   void dispose(){ _qr.dispose(); super.dispose(); }
 
   Future<Map<String,dynamic>> _call(Map<String,dynamic> body) async {
-    final origin = FirebaseFirestore.instance.activeProfileId;
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final managed = await CentralSchoolCloud.saved();
+    if (managed['managed'] == true) {
+      final school = managed['schoolId'];
+      if (school is! String || school.isEmpty ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          db.activeProfileIdentity['blocked'] == true ||
+          !await db.localPersistenceEnabled()) {
+        throw StateError('Verified school local storage required for QR attendance.');
+      }
+      final action = body['action'];
+      if (action != 'mark_student_attendance' &&
+          action != 'mark_teacher_attendance') {
+        throw StateError('Unsupported managed attendance operation.');
+      }
+      final personId = action == 'mark_teacher_attendance'
+          ? body['teacherId']?.toString() : body['studentId']?.toString();
+      if (personId == null || personId.isEmpty || personId.contains('/') ||
+          personId.length > 200 || body['schoolId'] != school) {
+        throw StateError('Attendance belongs to another school or person.');
+      }
+      final now = DateTime.now();
+      final day = now.toIso8601String().split('T').first;
+      final id = '${personId}_${day}_${body['mode'] ?? 'IN'}';
+      final collection = action == 'mark_teacher_attendance'
+          ? 'teacher_attendance' : 'attendance_records';
+      final active = await CentralSchoolCloud.saved();
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          active['uid'] != managed['uid'] || active['schoolId'] != school) {
+        throw StateError('School changed before attendance Save.');
+      }
+      // Local tracked write creates the original immutable Sync 3 outbox.
+      // Do not issue a Google Script call or claim Cloudflare/Drive ACK here.
+      await db.collection(collection).doc(id).set({
+        ...body, 'attendanceId': id, 'schoolId': school,
+        'date': day, 'timestamp': now.millisecondsSinceEpoch,
+      });
+      if (db.activeProfileId != origin) {
+        throw StateError('School changed during attendance Save.');
+      }
+      WindowsSyncEngine.instance.scheduleSoon();
+      return {
+        'success': true, 'attendanceId': id,
+        'cloudSyncPending': true,
+        'message': 'Attendance saved locally · Cloudflare pending',
+      };
+    }
     final scriptUrl = await _windowsGoogleScriptUrl();
     if(FirebaseFirestore.instance.activeProfileId!=origin) throw StateError('School changed. Reopen attendance.');
     final response = await WindowsBackendBridge.post(

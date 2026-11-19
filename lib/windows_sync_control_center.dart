@@ -1,5 +1,6 @@
 import 'windows_drive_delivery_queue.dart';
 import 'cloudflare_save_notice.dart';
+import 'windows_drive_hourly_notice.dart';
 import 'windows_sync_flow.dart';
 import 'windows_sync_evidence.dart';
 import 'windows_ui_localization.dart';
@@ -1975,7 +1976,13 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
             (r) => r is Map && r['cloudflareAccepted'] == true));
       // Completed receipts belong to durable history, not the error panel.
       // The last Cloudflare ACK gets its own five-second, self-expiring notice.
-      if (messages.isEmpty && !acceptedHistory && !backgroundPending)
+      final hourSummary = widget.showTransfers &&
+          _profile == FirebaseFirestore.instance.activeProfileId &&
+          _status?['driveHourSummary'] is Map
+          ? Map<String, dynamic>.from(_status!['driveHourSummary'] as Map)
+          : null;
+      if (messages.isEmpty && !acceptedHistory && !backgroundPending &&
+          hourSummary == null)
         return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               if (messages.isNotEmpty) widget.panelBuilder!(messages, progress),
@@ -1985,6 +1992,9 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
                   child: Text('Google Drive backup pending · Cloudflare delivery is separate from device sync',
                     key: ValueKey('cloudflare-background-drive-pending')),
                 ),
+              if (hourSummary != null)
+                WindowsDriveHourlyNotice(key: ValueKey('drive-hour-$_profile'),
+                  summary: hourSummary),
               if (acceptedHistory) CloudflareSaveNotice(key: ValueKey(_profile), rows:
                 widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
                   ? [for (final row in (_status?['driveSaveHistory'] as List? ?? const []))
@@ -1997,9 +2007,18 @@ class _CloudflareTransferStatusState extends State<CloudflareTransferStatus> {
     final lines = [if (message != null) message, ...history];
     final progress = widget.showTransfers && _profile == FirebaseFirestore.instance.activeProfileId
         ? measuredDriveProgress(_status) : null;
-    if (lines.isEmpty && progress == null) return const SizedBox.shrink();
+    final hourSummary = widget.showTransfers &&
+        _profile == FirebaseFirestore.instance.activeProfileId &&
+        _status?['driveHourSummary'] is Map
+        ? Map<String, dynamic>.from(_status!['driveHourSummary'] as Map)
+        : null;
+    if (lines.isEmpty && progress == null && hourSummary == null)
+      return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 10),
       child: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        if (hourSummary != null)
+          WindowsDriveHourlyNotice(key: ValueKey('drive-hour-$_profile'),
+            summary: hourSummary),
         if (lines.isNotEmpty) Text(lines.join('\n'),
           style: TextStyle(fontFamily: 'Segoe UI', fontSize: 14,
             color: WindowsAppearance.foreground(Colors.orangeAccent))),

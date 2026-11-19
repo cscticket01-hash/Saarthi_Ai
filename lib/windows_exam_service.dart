@@ -50,8 +50,11 @@ class WindowsExamService {
     final cloud=await CentralSchoolCloud.saved();
     _requireProfile(profile);
     Map<String,dynamic> local;
+    // Legacy atomic-PDF path remains available only to an explicit old caller.
+    // New Save requests carry marks metadata, never silently render a PDF.
     if(action=='save_exam_result' && cloud['managed']==true &&
-       AtomicBundlePilot.buildEnabled) {
+       AtomicBundlePilot.buildEnabled &&
+       (request['pdfBase64']?.toString().trim().isNotEmpty ?? false)) {
       final db=FirebaseFirestore.instance;
       final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
       final examId=request['examId']?.toString().trim()??'';
@@ -208,28 +211,37 @@ class WindowsExamService {
     }
     // Signed remote results must also be empty; offline deletes fail closed.
     final idToken = await CentralSchoolCloud.firebaseToken();
-    for (final collection in const ['exam_center_results', 'exam_results']) {
-      _requireProfile(profile);
-      final remote = await WindowsFirebaseRemote.readCollection(
-        projectId: platformProjectId, idToken: idToken, collection: collection,
-      );
-      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
-        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
-      }
+    // Independent signed read checks run concurrently; failed checks still
+    // block deletion. Do not trade verification for a faster UI spinner.
+    final remoteResults = await Future.wait([
+      for (final collection in const ['exam_center_results', 'exam_results'])
+        WindowsFirebaseRemote.readCollection(
+          projectId: platformProjectId, idToken: idToken,
+          collection: collection,
+        ),
+    ]);
+    _requireProfile(profile);
+    if (remoteResults.any((remote) => remote.values.any(
+        (row) => row['examId']?.toString() == examId))) {
+      throw StateError('Cloud marks exist; deleting this exam is not allowed.');
     }
     _requireProfile(profile);
     final current = await CentralSchoolCloud.saved();
     if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
       throw StateError('School identity changed. Delete cancelled.');
     }
-    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
-    await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
+    // All three local views are changed in ONE atomic durable transaction.
+    // Only exams and the legacy school_settings mirror require real cloud
+    // delete receipts; the local cache remains internal. Do not discard a
+    // genuine mirror tombstone or call Drive from the device.
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    batch.delete(db.collection('exams').doc(examId));
+    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
+    batch.delete(db.collection('school_settings').doc('exam_$examId'));
     _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('_local_exam_center_exams')
-        .doc(examId).delete();
+    await batch.commit();
     _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('school_settings')
-        .doc('exam_$examId').delete();
   }
 
   static void _requireProfile(String profile) {

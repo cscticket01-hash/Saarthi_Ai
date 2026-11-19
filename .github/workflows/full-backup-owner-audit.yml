@@ -1,0 +1,58 @@
+name: Full backup owner proof audit (fail closed)
+on:
+  pull_request:
+    paths:
+      - 'functions/backup-audit-evidence.cjs'
+      - 'functions/backup-drive-file-proof.cjs'
+      - 'functions/test/backup-drive-file-proof.test.cjs'
+      - 'functions/test/backup-audit-evidence.test.cjs'
+      - 'functions/managed-schools.js'
+      - 'functions/delete-everywhere.js'
+      - 'functions/test/delete-everywhere-firebase.test.js'
+      - 'cloudflare-sync/src/r2-stage.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/src/spool.ts'
+      - 'cloudflare-sync/src/live-records.ts'
+      - 'cloudflare-sync/test/runtime.test.mjs'
+      - 'cloudflare-sync/test/parallel-delivery-lanes.test.mjs'
+      - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
+      - '.github/workflows/full-backup-owner-audit.yml'
+  push:
+    branches: [audit/full-backup-hourly-proof-20261119, audit/legacy-owner-journal-pages-20261119, fix/sync3-independent-lanes-delete-speed-20261119]
+    paths:
+      - 'functions/backup-audit-evidence.cjs'
+      - 'functions/test/backup-audit-evidence.test.cjs'
+      - 'functions/managed-schools.js'
+      - 'functions/delete-everywhere.js'
+      - 'functions/test/delete-everywhere-firebase.test.js'
+      - 'cloudflare-sync/src/r2-stage.ts'
+      - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/test/r2-stage-runtime.test.mjs'
+      - '.github/workflows/full-backup-owner-audit.yml'
+permissions:
+  contents: read
+jobs:
+  test-proof-fences:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify server file syntax
+        run: node --check functions/managed-schools.js
+      - name: Verify independent school owner proof gates
+        run: node --test functions/test/backup-audit-evidence.test.cjs functions/test/backup-drive-file-proof.test.cjs
+  test-cloudflare-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix cloudflare-sync --ignore-scripts
+      - run: cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
+      - run: npm run types --prefix cloudflare-sync
+      - run: npm run check --prefix cloudflare-sync
+      - run: npm run build --prefix cloudflare-sync
+      - run: node --test cloudflare-sync/test/r2-stage-runtime.test.mjs cloudflare-sync/test/runtime.test.mjs cloudflare-sync/test/parallel-delivery-lanes.test.mjs cloudflare-sync/test/broker-retry.test.mjs

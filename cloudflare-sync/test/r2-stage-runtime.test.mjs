@@ -217,3 +217,137 @@ test('atomic bundle original intent is private R2 durable before ACK and retaine
  }
  assert.ok(await bucket.head(path),'Verified bundle remains for minimum retention');
 });
+
+
+test('hourly Drive report counts distinct R2-verified receipts across five lanes, never chunks, pending, or foreign schools', async t => {
+ const {mf,rpc}=await harness(t);
+ const namespace=await mf.getDurableObjectNamespace('LANES');
+ const actor=namespace.get(namespace.idFromName('saarthi-account-r2-staging-budget-v1'));
+ const foreign='vs-'+'b'.repeat(32);
+ const entries=[
+  {lane:'records', id:'a'.repeat(64), verified:true},
+  {lane:'notices', id:'b'.repeat(64), verified:true},
+  {lane:'attendance-a1', id:'c'.repeat(64), verified:true},
+  {lane:'live', id:'d'.repeat(64), verified:true},
+  {lane:'file-'+'e'.repeat(64), id:'e'.repeat(64), verified:true, multipart:true},
+  {lane:'records', id:'f'.repeat(64), verified:false},
+ ];
+ for(const entry of entries){
+  await actor.stageR2Object(school,entry.lane,entry.id,0,new Uint8Array([1,2]).buffer);
+  if(entry.multipart) await actor.stageR2Object(school,entry.lane,entry.id,2,new Uint8Array([3,4]).buffer);
+  await actor.r2OriginalAccepted(school,entry.lane,entry.id);
+  if(entry.verified) await actor.r2OriginalVerified(school,entry.lane,entry.id);
+ }
+ // Other school's verified receipt must not appear in this school's report.
+ await actor.stageR2Object(foreign,'records','9'.repeat(64),0,new Uint8Array([9]).buffer);
+ await actor.r2OriginalAccepted(foreign,'records','9'.repeat(64));
+ await actor.r2OriginalVerified(foreign,'records','9'.repeat(64));
+ const afterHour=(Math.floor(Date.now()/3600000)+1)*3600000+1000;
+ const report=await actor.r2VerifiedHourSummary(school,afterHour);
+ assert.equal(report.schoolId,school);
+ assert.equal(report.scope,'r2VerifiedDeliveries');
+ assert.equal(report.verifiedCount,5);
+ assert.deepEqual(report.breakdown,{attendance:1,files:1,live:1,notices:1,records:1});
+ assert.equal(report.partial,true);
+ assert.equal(report.coverage,'r2-staged-only');
+ // A repeated verification and multiple file chunks cannot count twice.
+ await actor.r2OriginalVerified(school,'file-'+'e'.repeat(64),'e'.repeat(64));
+ assert.equal((await actor.r2VerifiedHourSummary(school,afterHour)).verifiedCount,5);
+ assert.equal((await actor.r2VerifiedHourSummary(foreign,afterHour)).verifiedCount,1);
+ assert.equal((await actor.r2VerifiedHourSummary(school,afterHour-3600000)).verifiedCount,0);
+ const signed=await rpc('verifiedHourSummary',{},'delivery');
+ assert.equal(signed.http,200);
+ assert.equal(signed.value.schoolId,school);
+ assert.equal(signed.value.scope,'r2VerifiedDeliveries');
+ assert.equal(signed.value.verifiedCount,0,
+   'A current-hour Drive receipt is not part of the previous closed hour');
+});
+
+test('read-only audit pages expose staged originals without claiming all-school Google Drive proof',async t=>{
+ const {rpc}=await harness(t);
+ const r=record('audit-paged');
+ assert.equal((await rpc('enqueue',r)).http,200);
+ const first=await rpc('r2OriginalAuditPage',{limit:1},'delivery');
+ assert.equal(first.http,200,JSON.stringify(first));
+ assert.equal(first.value.schoolId,school);
+ assert.equal(first.value.scope,'r2ImmutableOriginalStages');
+ assert.equal(first.value.coverage,'r2-staged-only');
+ assert.equal(first.value.partial,true,'R2 is not a full historical Drive audit');
+ assert.equal(first.value.entries.length,1);
+ assert.equal(first.value.entries[0].receiptId,r.id);
+ assert.equal(first.value.entries[0].state,'stored');
+ assert.equal(first.value.entries[0].originalAccepted,true);
+ assert.equal(first.value.entries[0].verifiedAt,null);
+ assert.equal(first.value.nextCursor,null);
+ const foreign='saarthi-v1/vs-'+'f'.repeat(32)+'/records/';
+ assert.equal((await rpc('r2OriginalAuditPage',{after:foreign,limit:1},'delivery')).http,400);
+ assert.equal((await rpc('r2OriginalAuditPage',{limit:101},'delivery')).http,400);
+});
+
+
+test('legacy record audit recovers only broker-stamped original verified event time, never a scan timestamp',async t=>{
+ const {rpc}=await harness(t);
+ const r=record('signed-finish-time');
+ assert.equal((await rpc('enqueue',r)).http,200);
+ const before=await rpc('auditJournalPage',{after:0,limit:10});
+ assert.equal(before.http,200,JSON.stringify(before));
+ assert.equal(before.value.entries[0].verifiedAt,null);
+ assert.equal(before.value.entries[0].driveOwnerReceiptPresent,false);
+ const claim='signed-owner-audit-claim-20261119';
+ assert.equal((await rpc('claim',{id:r.id,claim,expires:Date.now()+60000})).value,true);
+ const originalVerifiedAt=Date.now();
+ const done=await rpc('finish',{id:r.id,claim,values:{
+  state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  result:{success:true,schoolId:school,syncProtocol:2,recordRevision:'signed-drive-original-revision'},
+  timing:{version:1,observedAt:originalVerifiedAt,deliveryMillis:2}
+ }});
+ assert.equal(done.http,200,JSON.stringify(done));
+ assert.equal(done.value,true);
+ const after=await rpc('auditJournalPage',{after:0,limit:10});
+ assert.equal(after.http,200,JSON.stringify(after));
+ const original=after.value.entries.find(entry=>entry.id===r.id);
+ assert.equal(original.driveOwnerReceiptPresent,true);
+ assert.equal(original.verifiedAt,originalVerifiedAt,
+  'stored signed broker completion timestamp is used, not later audit time');
+ assert.equal(after.value.partial,true);
+});
+
+
+test('distinct person Cloudflare ACKs are immediate while person Drive/CAS order stays safe',async t=>{
+ const {rpc}=await harness(t);
+ const make=(collection,id,operationId,operation='write',expectedRecordRevision='')=>{
+  const request={action:'managed_records',collection,id,operationId,
+   operation,syncProtocol:2,expectedRecordRevision,
+   ...(operation==='write'?{data:{schoolId:school,title:id}}:{})};
+  return {request,id:digest(JSON.stringify([school,request.action,
+   [request.collection,request.id,request.operationId]]))};
+ };
+ const a=make('students_directory','new-student-one','person-create-operation-one-20261119');
+ const b=make('teachers_directory','new-teacher-two','person-create-operation-two-20261119');
+ assert.equal((await rpc('enqueue',a)).http,200);
+ assert.equal((await rpc('enqueue',b)).http,200);
+ const initial=await rpc('pending',{limit:2});
+ assert.equal(initial.http,200);
+ assert.deepEqual(initial.value.map(row=>row.id),[a.id],
+  'both Cloudflare saves are accepted but dependent person Drive operations remain FIFO');
+ const same=make('students_directory','new-student-one','person-edit-operation-one-20261119');
+ const deletion=make('students_directory','old-student-three',
+  'person-delete-operation-20261119','delete','signed-previous-revision');
+ const afterDelete=make('students_directory','new-student-four','person-create-operation-four-20261119');
+ for(const job of [same,deletion,afterDelete])
+  assert.equal((await rpc('enqueue',job)).http,200);
+ const selected=await rpc('pending',{limit:2});
+ assert.deepEqual(selected.value.map(row=>row.id),[a.id],
+  'another person, same-student edit and delete cascade stay behind the first owner');
+ const claim='synthetic-independent-owner-claim';
+ assert.equal((await rpc('claim',{id:a.id,claim,expires:Date.now()+60000})).value,true);
+ assert.equal((await rpc('finish',{id:a.id,claim,
+   values:{state:'retry',nextAttemptAt:Date.now()+60000}})).value,true);
+ const later=await rpc('pending',{limit:2});
+ assert.equal(later.value.length,0,
+  'later person Drive delivery must not overtake an unverified earlier person');
+ assert.ok(!later.value.some(row=>row.id===same.id),
+  'same-student mutation never overtakes the unfinished original');
+ assert.ok(!later.value.some(row=>row.id===afterDelete.id),
+  'new person after a Delete Everywhere-type barrier must not overtake it');
+});

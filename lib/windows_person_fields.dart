@@ -1,4 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'mobile/dob_input_formatter.dart';
+
+/// Shared entry rules for Windows student, teacher and other-staff names.
+final windowsPersonNameInputFormatters = <TextInputFormatter>[
+  FilteringTextInputFormatter.allow(RegExp(r"[A-Za-z\u00C0-\u024F\u0900-\u097F\u0980-\u09FF .'-]")),
+];
+
+bool validWindowsPersonName(String text) {
+  final value = text.trim();
+  return value.isNotEmpty &&
+      RegExp(r"^[A-Za-z\u00C0-\u024F\u0900-\u097F\u0980-\u09FF .'-]+$").hasMatch(value) &&
+      RegExp(r'[A-Za-z\u00C0-\u024F\u0900-\u097F\u0980-\u09FF]').hasMatch(value);
+}
+
+bool validIndianPinCode(String text) =>
+    RegExp(r'^[0-9]{6}$').hasMatch(text.trim());
 
 DateTime? parsePersonBirthDate(String value) {
   final parts = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$')
@@ -22,11 +39,13 @@ class WindowsDateOfBirthField extends StatelessWidget {
       labelText: 'Date of Birth (DD/MM/YYYY)',
     ),
     this.enabled = true,
+    this.helpText = 'Select date of birth',
   });
   final TextEditingController controller;
   final TextStyle? style;
   final InputDecoration decoration;
   final bool enabled;
+  final String helpText;
   @override
   Widget build(BuildContext context) {
     Future<void> selectDate() async {
@@ -42,7 +61,7 @@ class WindowsDateOfBirthField extends StatelessWidget {
         initialDate: initial,
         firstDate: first,
         lastDate: today,
-        helpText: 'Select date of birth',
+        helpText: helpText,
       );
       if (chosen != null && context.mounted) {
         controller.text =
@@ -55,9 +74,10 @@ class WindowsDateOfBirthField extends StatelessWidget {
       style: style,
       enabled: enabled,
       keyboardType: TextInputType.datetime,
+      inputFormatters: [DateOfBirthInputFormatter()],
       decoration: decoration.copyWith(
         suffixIcon: IconButton(
-          tooltip: 'Select date of birth',
+          tooltip: helpText,
           onPressed: enabled ? selectDate : null,
           icon: const Icon(Icons.calendar_month_outlined),
         ),
