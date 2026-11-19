@@ -111,8 +111,11 @@ async function acceptance({env=process.env,request=transport}={}){
   async function record(collection,id,data,extra={}){
    const body={action:'managed/records',operation:'write',syncProtocol:2,collection,id,
     operationId:hash(SCHOOL+':'+collection+':'+id),expectedRecordRevision:'',data:{...data,schoolId:SCHOOL},edgeDeliveryVersion:1,...extra};
-   const route=collection==='teachers_directory'?'person':'edge';
    let result=await originalRequest(body);
+   // Person lifecycle may be owner-signed; otherwise require the exact
+   // Cloudflare receipt and independent Drive verification for each person.
+   const route=['teachers_directory','students_directory'].includes(collection)&&
+     result.personLifecycleVersion===1?'person':'edge';
    if(route==='edge'&&result.delivery)result=await settle(result);
    requireCheck(verifiedRecordRoute(result,route));
    const replay=await originalRequest(body);
@@ -177,6 +180,82 @@ async function acceptance({env=process.env,request=transport}={}){
   stage='staff signed lifecycle, verified Drive write and exact replay';
   const staff='CF_TEST_STAFF_'+run;
   await record('teachers_directory',staff,{teacherId:staff,name:'SYNTHETIC CLOUD DELIVERY TEST',role:'staff'});
+
+  // Additional isolated TEST coverage is deliberately opt-in. Never write
+  // production-school data, process user photos, or delete retained fixtures.
+  if(env.VS_CF_EXTENDED_LANES==='1'){
+   report.extendedCoverage={scope:'synthetic isolated TEST only',verifiedCollections:[],
+    originalPhotoBytesVerified:false,completeProductionBackupCertified:false};
+   stage='valid immutable TEST PNG before Cloudflare upload';
+   const photoBytes=Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAGAAAACACAIAAAB7vvvtAAABFElEQVR4nO3QQRHAIADAMMDNNKEMt1Ow65M9EgW9zmefwbd1O+DvDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFAwKBgUDAoGBYOCQcGgYFB4Abn9Ah0R5M54AAAAAElFTkSuQmCC','base64');
+   const photoHash=hash(photoBytes);
+   requireCheck(photoBytes.length===333&&photoHash==='a9edee8c3322156b7610e74023d0ee8ea50c692a502c074064e3454673c5fdaa');
+   stage='synthetic PNG Cloudflare-to-Google Drive upload';
+   const photoKey='cf_test_photo_'+run;
+   const photoMeta={action:'managed/file/upload/resumable',uploadKey:photoKey,
+    name:photoKey+'.png',mime:'image/png',sha256:photoHash,sizeBytes:photoBytes.length,edgeDeliveryVersion:1};
+   let photoProgress=await call({...photoMeta,operation:'begin'});
+   if(photoProgress.delivery)photoProgress=await settle(photoProgress);
+   if(!photoProgress.committed){
+    const offset=photoProgress.offset;
+    requireCheck(Number.isSafeInteger(offset)&&offset>=0&&offset<photoBytes.length);
+    const part=photoBytes.subarray(offset);
+    photoProgress=await call({...photoMeta,operation:'part',offset,
+     base64:part.toString('base64'),chunkSha256:hash(part)});
+    if(photoProgress.delivery)photoProgress=await settle(photoProgress);
+   }
+   requireCheck(photoProgress.committed===true&&photoProgress.sha256===photoHash&&
+    photoProgress.offset===photoBytes.length&&photoProgress.sizeBytes===photoBytes.length&&
+    /^[A-Za-z0-9_-]{1,200}$/.test(photoProgress.fileId||''));
+   const photoFileId=photoProgress.fileId;
+   stage='independent original PNG Drive bytes and hash readback';
+   const photoRead=await call({action:'managed/file/read',fileId:photoFileId});
+   const photoSaved=Buffer.from(photoRead.base64||'','base64');
+   requireCheck(photoRead.mime==='image/png'&&photoSaved.length===photoBytes.length&&
+     photoSaved.equals(photoBytes)&&hash(photoSaved)===photoHash);
+   report.extendedCoverage.originalPhotoBytesVerified=true;
+   report.extendedCoverage.photoBytes=photoBytes.length;
+   report.checks.push({name:stage,status:'PASS'});
+   // Use one run-scoped original and exact CAS receipts. All references are
+   // to this synthetic TEST school, never to real students or finances.
+   const student='CF_TEST_STUDENT_'+run;
+   stage='student profile with verified photo owner Google Drive readback';
+   await record('students_directory',student,{studentId:student,
+    mobileStableId:'p-'+hash('synthetic-student:'+run).slice(0,32),
+    name:'SYNTHETIC CLOUD DELIVERY TEST',parentName:'SYNTHETIC',
+    class:'CF_TEST',studentClass:'CF_TEST',rollNo:String(parseInt(hash(run).slice(0,7),16)),
+    photoFileId,photoUrl:'https://drive.google.com/file/d/'+photoFileId+'/view'});
+   report.extendedCoverage.verifiedCollections.push('students_directory');
+   const fee='CF_TEST_FEE_'+run;
+   stage='fee payment record original Cloudflare ACK and signed Google Drive readback';
+   await record('fee_payments',fee,{paymentId:fee,receiptNo:fee,studentId:student,
+    studentName:'SYNTHETIC CLOUD DELIVERY TEST',amount:0,totalPaid:0,
+    paymentMode:'synthetic_test',status:'test_only'});
+   report.extendedCoverage.verifiedCollections.push('fee_payments');
+   stage='fee ledger record Cloudflare ACK and signed Google Drive readback';
+   await record('fee_ledger','CF_TEST_LEDGER_'+run,{
+    studentId:student,amount:0,paid:0,balance:0,source:'synthetic_cloud_delivery_test'});
+   report.extendedCoverage.verifiedCollections.push('fee_ledger');
+   stage='student attendance record Cloudflare ACK and signed Google Drive readback';
+   await record('attendance_records','CF_TEST_ATTENDANCE_'+run,{
+    studentId:student,date:'2026-11-19',status:'present',source:'synthetic_cloud_delivery_test'});
+   report.extendedCoverage.verifiedCollections.push('attendance_records');
+   stage='teacher attendance record Cloudflare ACK and signed Google Drive readback';
+   await record('teacher_attendance','CF_TEST_TEACHER_ATTENDANCE_'+run,{
+    teacherId:teacher,date:'2026-11-19',status:'present',source:'synthetic_cloud_delivery_test'});
+   report.extendedCoverage.verifiedCollections.push('teacher_attendance');
+   stage='exam result record Cloudflare ACK and signed Google Drive readback';
+   await record('exam_results','CF_TEST_EXAM_'+run,{
+    studentId:student,subject:'SYNTHETIC',marks:0,maxMarks:1,
+    source:'synthetic_cloud_delivery_test'});
+   report.extendedCoverage.verifiedCollections.push('exam_results');
+   // This evidence does not include encrypted attendance queue, every school
+   // Script instance or every production file; never claim all data complete.
+   report.extendedCoverage.legacyAndProductionLanesUnverified=true;
+   report.retainedExtendedFixtures={student,photoFileId,photoSha256:photoHash,
+    fee,collections:report.extendedCoverage.verifiedCollections};
+  }
   report.status='PASS';report.retainedFixtures={teacher,staff,calendar,document:'CF_TEST_IDCARD_'+run,fileId,sha256:meta.sha256};
  }catch(_){report.status='FAIL';report.failedStage=stage;}
  return report;
