@@ -137,9 +137,18 @@ class _AppDownloadButtonsState extends State<AppDownloadButtons> {
   }
 
   void _cancel(String platform) {
-    // Immediately aborts the active HTTP transfer, not a browser download
-    // already handed off. onCancelled resets the button when abort completes.
-    _active[platform]?.cancel();
+    final transfer = _active[platform];
+    if (transfer == null) return;
+    // Abort the in-page HTTP transfer. Reset the button immediately even if
+    // the browser dispatches its abort event asynchronously. Late progress
+    // and completion callbacks are ignored because ownership was released.
+    transfer.cancel();
+    if (!mounted || !identical(_active[platform], transfer)) return;
+    setState(() {
+      _active.remove(platform);
+      _received.remove(platform);
+      _totals.remove(platform);
+    });
   }
 
   @override
