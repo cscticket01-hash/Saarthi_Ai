@@ -372,6 +372,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   bool _syncing = false;
+  int _normalOutboxInFlight = 0;
+  bool _lateNoticeAdmissionBusy = false;
   bool _checkingCloud = false;
   bool get isCheckingCloud => _syncing && _checkingCloud;
   void _setCheckingCloud(bool value) {
@@ -1491,7 +1493,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (_quotaRetryAt == null || !_quotaRetryAt!.isAfter(DateTime.now())))
       _nextRetry = null;
     if (_syncing) {
-      if (localMutation) _rerunRequested = true;
+      if (localMutation) {
+        _rerunRequested = true;
+        // A new notice is in its own Cloudflare DO lane. Do not wait behind
+        // this cycle's long unrelated repair/download or Google Drive poll.
+        if (_normalOutboxInFlight == 0 && !_lateNoticeAdmissionBusy)
+          unawaited(_admitLateNoticeWhileSyncing());
+      }
       return;
     }
 
@@ -2507,6 +2515,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 _activeSchoolSyncId,canAdmit:()=>!isPaused));
           }
           await _measure('recordUploadStage', () => _pushManagedOutbox());
+          if (_rerunRequested && !_lateNoticeAdmissionBusy)
+            unawaited(_admitLateNoticeWhileSyncing());
           // Publish the durable queue/ACK state as soon as upload returns;
           // incoming reconciliation and read-only Drive receipt polling are
           // independent, so they must not prolong the outgoing sync display.
@@ -3249,12 +3259,59 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
   }
 
+  // Admit a newly saved notification even if the owning Sync cycle is still
+  // reconciling a person/delete. This is the SAME immutable local outbox
+  // receipt and never a Google Drive ACK or a new retry ID.
+  Future<void> _admitLateNoticeWhileSyncing() async {
+    if (_lateNoticeAdmissionBusy || _normalOutboxInFlight > 0 ||
+        !_syncing || !automaticScheduleExpected ||
+        !WindowsFirebaseRemote.edgeDeliverySupported) return;
+    _lateNoticeAdmissionBusy = true;
+    final db=FirebaseFirestore.instance, profile=db.activeProfileId;
+    final school=_activeSchoolSyncId;
+    try {
+      final snapshot=await db.collection('_windows_firebase_outbox').get();
+      if (profile!=db.activeProfileId || _activeSchoolSyncId!=school ||
+          _normalOutboxInFlight>0 || isPaused) return;
+      final rows=<Map<String,dynamic>>[];
+      for(final row in snapshot.docs) {
+        final data=row.data(), queued=data['queuedAt'];
+        rows.add({...data,'queueId':row.id,
+          'queuedAtMillis':queued is Timestamp
+            ? queued.millisecondsSinceEpoch
+            : queued is num ? queued.toInt() : 0});
+      }
+      final notice=oldestIndependentNotice(rows,schoolId:school,
+        nowMillis:DateTime.now().millisecondsSinceEpoch);
+      if(notice==null)return;
+      await _pushManagedOutbox(
+        onlyQueueId:notice['queueId'] as String,
+        onlyOperationId:notice['operationId'] as String,
+        canAdmit:()=>_syncing && !_syncBlocked &&
+          !isPaused && profile==db.activeProfileId &&
+          school==_activeSchoolSyncId);
+    }catch(_) {
+      // The original CAS outbox remains pending. The normal cycle will
+      // diagnose the exact failure instead of assuming cloud acceptance.
+      _rerunRequested=true;
+    }finally{
+      _lateNoticeAdmissionBusy=false;
+      if(profile==db.activeProfileId && school==_activeSchoolSyncId)
+        unawaited(refreshDetails());
+    }
+  }
+
   Future<void> _pushManagedOutbox({
     String? onlyQueueId,
     String? onlyOperationId,
     bool excludeNotices = false,
     bool Function()? canAdmit,
   }) async {
+    final generalAdmission=onlyQueueId==null;
+    if(generalAdmission)_normalOutboxInFlight++;
+    try {
+    if(generalAdmission && _lateNoticeAdmissionBusy)
+      excludeNotices=true;
     // Two independent Cloudflare admissions can be in flight at once:
     // a new school notice and a Student/Teacher record. Their original
     // local outbox entries remain durable until the matching Cloudflare ACK.
@@ -3433,6 +3490,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         return revision;
       },
     );
+    } finally {
+      if(generalAdmission)_normalOutboxInFlight--;
+    }
   }
 
   Future<Set<String>> _managedChangedCollections(
