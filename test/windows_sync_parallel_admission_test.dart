@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:saarthi_ai/windows_sync_parallel_admission.dart';
 
@@ -36,6 +37,22 @@ void main() {
    final dependent=notice('dependent','original-notice-operation-00006',2)
      ..['priorDeletion']={'operation':'delete'};
    expect(oldestIndependentNotice([dependent],schoolId:school,nowMillis:100),isNull);
+ });
+ test('person and notice calls start together and remain joined until both settle',() async {
+   final person=Completer<void>(),notice=Completer<void>();
+   final calls=<String>[];
+   final run=runIndependentCloudAdmissions(
+     () {calls.add('person');return person.future;},
+     () {calls.add('notice');return notice.future;});
+   expect(calls,['person','notice']);
+   var finished=false;
+   run.then((_)=>finished=true);
+   notice.complete();
+   await Future<void>.delayed(Duration.zero);
+   expect(finished,isFalse,'slow person must not be abandoned in background');
+   person.complete();
+   await run;
+   expect(finished,isTrue);
  });
  test('Cloudflare-accepted notice does not keep device upload queue busy',(){
    expect(oldestIndependentNotice([
