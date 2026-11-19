@@ -68,6 +68,32 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
 
  }
  const receipt=(row:Row)=>({id:row.id,state:row.state,due:row.due,response:row.response?JSON.parse(row.response):null});
+ // Enumerate historical and new immutable Edge receipts without ever
+ // exposing request bodies, personal data or Drive success from a mere ACK.
+ if(action==='auditJournalPage'){
+  const after=b.after??0,limit=b.limit??50;
+  demand(Number.isSafeInteger(after)&&Number(after)>=0&&
+    Number.isSafeInteger(limit)&&Number(limit)>=1&&Number(limit)<=100,
+    'Invalid immutable owner-journal page',400);
+  const rows=storage.sql.exec<Row>(
+    'SELECT * FROM edge_ops WHERE seq>? ORDER BY seq LIMIT ?',
+    Number(after),Number(limit)+1).toArray();
+  const page=rows.slice(0,Number(limit));
+  return {version:1,schoolId:school,scope:'edgeImmutableOwnerJournal',
+    source:lane==='records'?'edge-records':'edge-files',lane,
+    coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>{
+      let response:Json={};try{response=row.response?JSON.parse(row.response) as Json:{}}catch{}
+      const result=response.result as Json|undefined;
+      const ownerReceiptPresent=row.state==='completed'&&result?.success===true&&
+        result.schoolId===school;
+      return {sequence:row.seq,id:row.id,requestFingerprint:row.fingerprint,
+        state:row.state,acceptedAt:row.created>0?row.created:null,
+        driveOwnerReceiptPresent:ownerReceiptPresent,
+        verifiedAt:ownerReceiptPresent&&row.verified_at>0?row.verified_at:null};
+    }),
+    nextCursor:rows.length>Number(limit)?page[page.length-1].seq:null};
+ }
  if(action==='expireVerified'){
   // This cleanup runs only from an authenticated existing school-lane alarm;
   // a stale unverified request can stay queued past 24h without data loss.
