@@ -368,7 +368,14 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
 
   if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.operation!=='read'&&(body.syncProtocol!==2||!['write','delete'].includes(body.operation)))fail(409,'Cloudflare notice writes require versioned sync','SYNC_PROTOCOL_REQUIRED');
   if(!directNotice&&edgeEnabled(m.schoolId)&&body.action==='managed_records'&&body.collection==='school_notices'&&body.syncProtocol===2&&['read','write','delete'].includes(body.operation)){
-   if(body.operation!=='read'){const ack=await cloudflareSync.writeNotice(m.schoolId,body,()=>noticeBaseline(m.schoolId));invalidate(m.schoolId);await changeHint(m.schoolId,'school_notices',body.id);return ack;}
+   if(body.operation!=='read'){
+    const ack=await cloudflareSync.writeNotice(m.schoolId,body,()=>noticeBaseline(m.schoolId));
+    invalidate(m.schoolId);
+    // A durable Cloudflare receipt owns Save success. A best-effort peer
+    // notification must not hold the ACK behind a delayed push/hint.
+    void changeHint(m.schoolId,'school_notices',body.id).catch(()=>{});
+    return ack;
+   }
    const state=await cloudflareSync.notices(m.schoolId,()=>noticeBaseline(m.schoolId));const records=body.id?{...(state.records[body.id]?{[body.id]:state.records[body.id]}:{})}:state.records;return {success:true,schoolId:m.schoolId,syncProtocol:2,collectionRevision:state.revision,records:body.knownRevision===state.revision?{}:records,...(body.id?{pointRead:true}:{}),...(body.knownRevision===state.revision?{unchanged:true}:{}),cloudflareAccepted:true};
   }
   const ticket=await deliveryBudget(syncDelivery.prepare(m.schoolId,body));
