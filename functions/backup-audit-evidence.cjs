@@ -70,8 +70,17 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
       !OP.test(receipt.providerReceiptId)||!stamp(receipt.verifiedAt)){
       unverified.push(originalId);continue;
     }
-    if(receipt.fileSha256!==undefined&&
-      receipt.fileSha256!==row.originalSha256){
+    // A file's signed provider response must prove the original bytes,
+    // not just that some Drive file with the same name exists.
+    if(kindOf(row.source)==='files'&&
+      (!Number.isSafeInteger(row.fileBytes)||row.fileBytes<0||
+       receipt.fileSha256!==row.originalSha256||
+       receipt.fileBytes!==row.fileBytes||
+       typeof receipt.driveFileId!=='string'||
+       !/^[A-Za-z0-9_-]{5,256}$/.test(receipt.driveFileId))){
+      conflicts.push(originalId+':original-file-proof-missing');continue;
+    }
+    if(receipt.fileSha256!==undefined&&receipt.fileSha256!==row.originalSha256){
       conflicts.push(originalId+':file-hash-mismatch');continue;
     }
     if(receipt.fileBytes!==undefined&&
@@ -80,9 +89,11 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
       conflicts.push(originalId+':file-size-mismatch');continue;
     }
     verifiedOriginals++;
+    if(receipt.originalVerifiedAtUnknown===true){
+      undated.push(originalId);continue;
+    }
     if(receipt.verifiedAt>=hourStart&&receipt.verifiedAt<hourEnd)
       breakdown[kindOf(row.source)]++;
-    if(receipt.originalVerifiedAtUnknown===true)undated.push(originalId);
   }
   const verifiedCount=Object.values(breakdown).reduce((a,b)=>a+b,0);
   const complete=missingSources.length===0&&conflicts.length===0&&
