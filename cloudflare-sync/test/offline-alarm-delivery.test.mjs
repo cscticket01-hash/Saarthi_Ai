@@ -53,8 +53,22 @@ test('client-offline alarms retry a lost Google ACK with the immutable original 
  async function alarm(lane){const stub=ns.get(ns.idFromName(school+'/'+lane));assert.equal((await stub.fetch('https://fixture.invalid/__alarm')).status,200);}
  // No client write or status-poll drives delivery after durable acceptance.
  await alarm('records');await alarm('delivery');
+ // The scheduler may have admitted this lane in a separate waitUntil task.
+ // Assert eventual real owner progress, not synchronous callback timing.
+ async function waitFor(check,message){
+  for(let i=0;i<250;i++){
+   if(await check())return;
+   await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw Error(message);
+ }
+ await waitFor(()=>providerCalls>=1,'No independent owner call after client exit');
  assert.equal(providerCalls,1);
+ await waitFor(async()=>{const row=await edge.rpc(school,'records',
+  {command:'status',id:accepted.delivery.id});
+  return row?.state==='retry';},'Failed provider attempt was not safely retained');
  await alarm('records');await alarm('delivery');
+ await waitFor(()=>providerCalls>=2,'Original Drive retry did not run');
  assert.equal(providerCalls,2);assert.equal(callbackCalls,2);
  const result=await delivery.status(school,'records',accepted.delivery.id);
  assert.equal(result.driveState,'verified');assert.equal(result.recordRevision,firstRevision);

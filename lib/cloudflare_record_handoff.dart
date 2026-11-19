@@ -19,6 +19,14 @@ class CloudflareRecordHandoff implements Exception {
       'provider delivery is independently pending.';
 }
 
+bool _validDeletedStudentGeneration(Object? value) {
+  if (value is! String || !value.startsWith('p-')) return false;
+  final hex=value.substring(2);
+  return hex.length>=32 && hex.length<=64 &&
+    hex.codeUnits.every((code)=>
+      code>=48&&code<=57 || code>=97&&code<=102);
+}
+
 /// Real-school two-phase stage admission is negotiated from the existing,
 /// authenticated broker capability. A valid school ID by itself NEVER
 /// authorizes an early Cloudflare-only ACK.
@@ -37,8 +45,13 @@ bool eligibleForRecordHandoff(
       item['collection'] != 'documents' &&
       item['atomicBundleId'] == null &&
       item['priorDeletion'] == null &&
-      {'set','update'}.contains(item['operation']) &&
-      item['data'] is Map &&
+      ({'set','update'}.contains(item['operation']) &&
+        item['data'] is Map ||
+       item['operation'] == 'delete' &&
+        item['baseCloudRevision'] is String &&
+        (item['baseCloudRevision'] as String).isNotEmpty &&
+        (item['collection'] != 'students_directory' ||
+         _validDeletedStudentGeneration(item['deletedStudentGeneration']))) &&
       item['operationId'] is String &&
       RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['operationId']) &&
       item['baseCloudRevision'] is String;
@@ -60,11 +73,16 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       original['cloudTicketId']!=ticket||
       original['cloudTicketLane']!='records'||
       original['syncState']!='cloudAccepted'||
-      !{'set','update'}.contains(original['operation'])||
+      !{'set','update','delete'}.contains(original['operation'])||
       original['collection']=='documents'||
       original['atomicBundleId']!=null||
       original['priorDeletion']!=null||
-      original['data'] is! Map||
+      (original['operation']!='delete'&&original['data'] is! Map)||
+      (original['operation']=='delete'&&
+       (original['baseCloudRevision'] is! String||
+        (original['baseCloudRevision'] as String).isEmpty||
+        original['collection']=='students_directory'&&
+        !_validDeletedStudentGeneration(original['deletedStudentGeneration'])))||
       proof['success']!=true||proof['schoolId']!=school||
       proof['cloudflareAccepted']!=true||
       proof['driveState']!='verified'||
@@ -72,6 +90,18 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       proof['recordRevision'] is! String||
       (proof['recordRevision'] as String).isEmpty)
     return false;
+  final deleting=original['operation']=='delete';
+  if(deleting &&
+      (proof['deleteEverywhereVersion']!=1||
+       proof['driveDeletionComplete']!=true||
+       proof['firebaseDeletionComplete']!=true||
+       proof['record'] is! Map||
+       proof['record']['schoolId']!=school||
+       proof['record']['_syncDeleted']!=true||
+       proof['record']['_syncRevision']!=proof['recordRevision']||
+       proof['record']['_syncOperationId']!=original['operationId']||
+       proof['record']['_syncErasePlan'] is! Map||
+       proof['record']['_syncErasePlan']['complete']!=true)) return false;
   final record=proof['record'];
   if(record is Map) {
     // A verified Script projection sometimes omits wrapper metadata. Its

@@ -50,6 +50,80 @@ void main() {
       edgeDeliverySupported:true),false);
   });
 
+  test('Delete Everywhere is Cloudflare-accepted immediately, but final ACK requires Drive and Firebase cleanup', () async {
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'teachers_directory','documentId':'teacher-delete',
+      'operation':'delete','operationId':'original-delete-owner-2026111901',
+      'baseCloudRevision':'real-prior-revision','syncState':'pending',
+    };
+    expect(eligibleForRecordHandoff(original,school,
+      edgeDeliverySupported:true),true);
+    expect(eligibleForRecordHandoff({...original,'baseCloudRevision':''},school,
+      edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...original,'priorDeletion':{'operation':'delete'}},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForRecordHandoff({...original,'collection':'students_directory'},
+      school,edgeDeliverySupported:true),false,
+      reason:'Student delete requires a verified immutable generation');
+    expect(eligibleForRecordHandoff({...original,'collection':'students_directory',
+      'deletedStudentGeneration':'p-'+('a'*32)},school,edgeDeliverySupported:true),true);
+    final ref=db.collection('_windows_firebase_outbox').doc('original-delete');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    final before=(await ref.get()).data()!;
+    final ticket=exactTicket(original);
+    expect(await db.recordOutboxCloudHandoff(ref,before,ticketId:ticket),true);
+    final accepted=(await ref.get()).data()!;
+    expect(accepted['syncState'],'cloudAccepted');
+    expect(accepted['cloudTicketId'],ticket);
+    expect(accepted['operationId'],original['operationId']);
+    final journal={'ticketId':ticket,'schoolId':school,'action':'managed/records',
+      'collection':original['collection'],'id':original['documentId'],
+      'originalOperationId':original['operationId']};
+    final record={'schoolId':school,'id':original['documentId'],
+      '_syncDeleted':true,'_syncRevision':'new-signed-drive-revision',
+      '_syncOperationId':original['operationId'],
+      '_syncErasePlan':{'complete':true}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'new-signed-drive-revision',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,'record':record};
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'record':{...record,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...proof,'record':{...record,'_syncOperationId':'different-delete-id'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,other),false);
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/records','collection':'teachers_directory',
+      'id':'teacher-delete','operation':'delete',
+      'originalOperationId':original['operationId'],
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    await WindowsDriveDeliveryQueue.poll(school,
+      call:(action,body) async=>{...proof,'firebaseDeletionComplete':false});
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted',
+      reason:'Never clear Delete Everywhere while Firebase readback is missing');
+    // Advance only the synthetic journal poll deadline. Production retries
+    // retain their original exponential backoff and immutable ticket.
+    final retainedJournal=(await db.collection(WindowsDriveDeliveryQueue.collection)
+      .get()).docs.single.reference;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+      retainedJournal.set({'nextPollAt':0},const SetOptions(merge:true)));
+    await WindowsDriveDeliveryQueue.poll(school,
+      call:(action,body) async=>proof);
+    expect((await ref.get()).data(),isNull,
+      reason:'Only exact Drive+Firebase signed completion retires original delete');
+  });
+
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
     await db.collection('students_directory').doc('real-student')
       .set({'schoolId':school,'name':'Real school record'});

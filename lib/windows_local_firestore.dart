@@ -2426,6 +2426,14 @@ class _LocalSchoolDatabase {
       return ticketId==sha256.convert(utf8.encode(
         jsonEncode([school,uploadKey]))).toString();
     }
+    bool validDeletionGeneration() {
+      final value=original['deletedStudentGeneration'];
+      if(value is! String||!value.startsWith('p-'))return false;
+      final hex=value.substring(2);
+      return hex.length>=32&&hex.length<=64&&
+        hex.codeUnits.every((code)=>
+          code>=48&&code<=57||code>=97&&code<=102);
+    }
     final boundPhotoTicket=photoFileTicket();
     final done=Completer<bool>();
     _writeTail=_writeTail.then((_) async {
@@ -2439,11 +2447,15 @@ class _LocalSchoolDatabase {
             original['collection']=='documents' ||
             original['documentId'] is! String ||
             (original['documentId'] as String).isEmpty ||
-            !{'set','update'}.contains(original['operation']) ||
+            !{'set','update','delete'}.contains(original['operation']) ||
             original['atomicBundleId']!=null ||
             original['priorDeletion']!=null ||
             original['baseCloudRevision'] is! String ||
-            original['data'] is! Map ||
+            (original['operation']=='delete' &&
+             ((original['baseCloudRevision'] as String).isEmpty ||
+              (original['collection']=='students_directory' &&
+               !validDeletionGeneration()))) ||
+            (original['operation']!='delete'&&original['data'] is! Map) ||
             original['operationId'] is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
             !(lane=='records'&&ticketId==sha256.convert(utf8.encode(jsonEncode([
