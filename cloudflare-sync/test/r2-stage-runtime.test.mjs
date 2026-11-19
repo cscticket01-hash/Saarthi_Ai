@@ -283,3 +283,31 @@ test('read-only audit pages expose staged originals without claiming all-school 
  assert.equal((await rpc('r2OriginalAuditPage',{after:foreign,limit:1},'delivery')).http,400);
  assert.equal((await rpc('r2OriginalAuditPage',{limit:101},'delivery')).http,400);
 });
+
+
+test('legacy record audit recovers only broker-stamped original verified event time, never a scan timestamp',async t=>{
+ const {rpc}=await harness(t);
+ const r=record('signed-finish-time');
+ assert.equal((await rpc('enqueue',r)).http,200);
+ const before=await rpc('auditJournalPage',{after:0,limit:10});
+ assert.equal(before.http,200,JSON.stringify(before));
+ assert.equal(before.value.entries[0].verifiedAt,null);
+ assert.equal(before.value.entries[0].driveOwnerReceiptPresent,false);
+ const claim='signed-owner-audit-claim-20261119';
+ assert.equal((await rpc('claim',{id:r.id,claim,expires:Date.now()+60000})).value,true);
+ const originalVerifiedAt=Date.now();
+ const done=await rpc('finish',{id:r.id,claim,values:{
+  state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,
+  result:{success:true,schoolId:school,syncProtocol:2,recordRevision:'signed-drive-original-revision'},
+  timing:{version:1,observedAt:originalVerifiedAt,deliveryMillis:2}
+ }});
+ assert.equal(done.http,200,JSON.stringify(done));
+ assert.equal(done.value,true);
+ const after=await rpc('auditJournalPage',{after:0,limit:10});
+ assert.equal(after.http,200,JSON.stringify(after));
+ const original=after.value.entries.find(entry=>entry.id===r.id);
+ assert.equal(original.driveOwnerReceiptPresent,true);
+ assert.equal(original.verifiedAt,originalVerifiedAt,
+  'stored signed broker completion timestamp is used, not later audit time');
+ assert.equal(after.value.partial,true);
+});
