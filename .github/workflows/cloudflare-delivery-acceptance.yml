@@ -77,9 +77,10 @@ jobs:
         run: |
           git diff --exit-code "$VS_EXPECTED_RUNTIME" HEAD -- functions oauth-broker staging-school-cloud cloudflare-sync school-backend package.json package-lock.json
           node --check .github/scripts/cloudflare_delivery_acceptance.cjs
-      - name: Real isolated TEST Cloudflare accepted → Drive ACK → independent PDF readbacks
+      - name: Real isolated TEST Cloudflare → signed Drive readbacks for person, fees, attendance, photo and document
         env:
           VS_CF_DELIVERY_ACCEPTANCE: '1'
+          VS_CF_EXTENDED_LANES: '1'
           VS_CF_DELIVERY_RUN_ID: cf-drive-${{ github.run_id }}
           VS_TEST_LOGIN_EMAIL: ${{ secrets.VS_TEST_LOGIN_EMAIL }}
           VS_TEST_LOGIN_PASSWORD: ${{ secrets.VS_TEST_LOGIN_PASSWORD }}
