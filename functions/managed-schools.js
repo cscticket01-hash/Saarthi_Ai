@@ -645,8 +645,10 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     if(e.lastRenewalId===b.renewalId)return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:e.expiresAt,activated:e.activated===true};
     const prior=Number(l.expiresAt?.toMillis?.()??l.expiresAt);
     if(!Number.isSafeInteger(prior)||prior<=0)fail(409,'Invalid licence expiry; review before renewing');
-    const expiry=Math.max(t,prior)+b.days*86400000;
+    if(prior<=t)fail(409,'Expired licence cannot be extended. Generate a new school-bound key.');
+    const expiry=prior+b.days*86400000;
     if(!Number.isSafeInteger(expiry))fail(400,'Invalid renewal expiry');
+    tx.set(db.doc('platform_licence_receipts/'+b.renewalId),{type:'renew',schoolId:id,licenseId:licenceId,days:b.days,amount,paid:b.paid===true,at:t,expiresAt:expiry,actor:admin.uid});
     tx.set(licenceRef,{expiresAt:expiry,paid:b.paid===true,amount,renewedAt:t,renewedBy:admin.uid},{merge:true});
     tx.set(statusRef,{expiresAt:expiry,revoked:false},{merge:true});
     tx.set(ref,{expiresAt:expiry,status:b.paid===true?'paid':'licensed',lastRenewalId:b.renewalId},{merge:true});
@@ -662,14 +664,20 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    const current=await ref.get(),prior=current.exists?current.data():{};
    if(prior.status!=='trial'&&/^[a-f0-9]{64}$/.test(prior.licenseHash||'')){
     const previous=await db.doc('platform_license_status/'+prior.licenseHash).get();
-    if(previous.exists&&previous.data().schoolId===id&&previous.data().revoked===false)
-     fail(409,'Existing school licence must be renewed, not replaced','LICENCE_RENEW_EXISTING');
+    if(previous.exists&&previous.data().schoolId===id&&previous.data().revoked===false&&Number(previous.data().expiresAt?.toMillis?.()??previous.data().expiresAt)>now())
+     fail(409,'Existing active school licence must be renewed, not replaced','LICENCE_RENEW_EXISTING');
    }
    if(!Number.isInteger(b.days)||b.days<1||b.days>3650)fail(400,'Licence duration must be 1–3650 days');
    const amount=b.amount===undefined?0:Number(b.amount);
    if(!Number.isFinite(amount)||amount<0||amount>100000000)fail(400,'Invalid licence purchase amount');
    const t=now(),startsAt=b.startsAt===undefined?t:Number(b.startsAt);if(!Number.isSafeInteger(startsAt)||startsAt<0)fail(400,'Invalid licence start date');const key='VS-'+randomBytes(16).toString('hex').toUpperCase(),licenseHash=hash(key),expiresAt=startsAt+b.days*86400000;
-   const batch=db.batch();batch.set(db.doc('platform_licenses/'+licenseHash),{schoolId:id,issuedAt:t,expiresAt,startsAt,revoked:false,paid:b.paid===true,amount,keyHint:key.slice(-6),issuedBy:admin.uid});batch.set(db.doc('platform_license_status/'+licenseHash),{schoolId:id,expiresAt,revoked:false});batch.set(ref,{status:b.paid===true?'paid':'licensed',startsAt,expiresAt,licenseHash,activated:false},{merge:true});batch.set(db.doc('platform_schools/'+id),{activeLicenseHash:licenseHash,licenseId:licenseHash,licenseExpiresAt:expiresAt,purchased:b.paid===true},{merge:true});await batch.commit();return {success:true,key,expiresAt};
+   const batch=db.batch();
+   if(/^[a-f0-9]{64}$/.test(prior.licenseHash||'')&&prior.licenseHash!==licenseHash){
+    batch.set(db.doc('platform_license_status/'+prior.licenseHash),{schoolId:id,revoked:true},{merge:true});
+    batch.set(db.doc('platform_licenses/'+prior.licenseHash),{revoked:true,revokedAt:t},{merge:true});
+   }
+   batch.set(db.doc('platform_licence_receipts/'+licenseHash),{type:'issue',schoolId:id,licenseId:licenseHash,days:b.days,amount,paid:b.paid===true,at:t,expiresAt,actor:admin.uid});
+   batch.set(db.doc('platform_licenses/'+licenseHash),{schoolId:id,issuedAt:t,expiresAt,startsAt,revoked:false,paid:b.paid===true,amount,keyHint:key.slice(-6),issuedBy:admin.uid});batch.set(db.doc('platform_license_status/'+licenseHash),{schoolId:id,expiresAt,revoked:false});batch.set(ref,{status:b.paid===true?'paid':'licensed',startsAt,expiresAt,licenseHash,activated:false,lastRenewalId:null},{merge:true});batch.set(db.doc('platform_schools/'+id),{activeLicenseHash:licenseHash,licenseId:licenseHash,licenseExpiresAt:expiresAt,purchased:b.paid===true},{merge:true});await batch.commit();return {success:true,key,expiresAt};
   }else if((action==='developer/managed/revoke'||action==='developer/managed/delete-licence')){
    const e=(await ref.get()).data();await ref.set({expiresAt:0,activated:false},{merge:true});if(e.licenseHash){await db.doc('platform_license_status/'+e.licenseHash).set({schoolId:id,expiresAt:0,revoked:true});await db.doc('platform_licenses/'+e.licenseHash).set({revoked:true},{merge:true});}await db.doc('platform_schools/'+id).set({licenseExpiresAt:0},{merge:true});if(action.endsWith('/delete-licence')&&e.licenseHash)await db.doc('platform_licenses/'+e.licenseHash).delete();
   }else if(action==='developer/managed/storage'){
