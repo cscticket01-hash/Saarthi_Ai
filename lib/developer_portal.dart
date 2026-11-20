@@ -18,6 +18,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'platform/developer_service.dart';
 
@@ -176,7 +177,35 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
     try {
       const stagingRecovery = String.fromEnvironment('SAARTHI_STAGING_DEVELOPER_RECOVERY_URL');
       if (stagingRecovery.isEmpty) {
+        final preferences = await SharedPreferences.getInstance();
+        await preferences.reload();
+        final emailHash = sha256.convert(utf8.encode(email.toLowerCase()));
+        final key = 'developer.passwordReset.sent.$emailHash';
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final cutoff = now - const Duration(hours: 24).inMilliseconds;
+        List<int> recentSends() =>
+            (preferences.getStringList(key) ?? const <String>[])
+                .map(int.tryParse)
+                .whereType<int>()
+                .where((sentAt) => sentAt > cutoff)
+                .toList();
+        final sends = recentSends();
+        if (sends.length >= 2 ||
+            sends.any((sentAt) =>
+                now - sentAt < const Duration(minutes: 10).inMilliseconds)) {
+          if (mounted) {
+            setState(() => _error =
+                'Up to two reset emails are allowed in 24 hours in this browser. '
+                'Wait at least 10 minutes between emails.');
+          }
+          return;
+        }
         await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+        await preferences.reload();
+        await preferences.setStringList(key, [
+          ...recentSends().map((time) => time.toString()),
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        ]);
       } else {
         final endpoint = Uri.parse(stagingRecovery);
         if (endpoint.scheme != 'https' || endpoint.path != '/developer-recovery') {
