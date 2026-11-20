@@ -53,23 +53,27 @@ test('developer password cannot change without configured email security',async(
  assert.equal(f.emails.length,0);
 });
 
-test('OTP is emailed only, expires after ten minutes and unlocks one password change',async()=>{
+test('OTP is emailed only, expires after five minutes and unlocks one password change',async()=>{
  const f=fixture();
  await assert.rejects(f.run('change',{password:'StrongPassword123!'}),e=>e.status===403);
  const sent=await f.run('send');
- assert.equal(sent.success,true);assert.equal(sent.expiresAt,1000000000+600000);
+ assert.equal(sent.success,true);assert.equal(sent.expiresAt,1000000000+300000);
  assert.equal('otp' in sent,false);
  assert.equal('code' in sent,false);
  const row=f.docs.get('developer_password_otp/'+f.uid);
  assert.equal(row.hash.length,64);
  assert.equal(row.hash.includes(f.lastCode()),false);
- const wrong=await f.run('verify',{otp:'000001'});
+ const wrong=await f.run('verify',{otp:f.lastCode()==='000001'?'000002':'000001'});
  assert.equal(wrong.verified,false);
- assert.equal((await f.run('verify',{otp:f.lastCode()})).verified,true);
- assert.equal((await f.run('change',{password:'StrongPassword123!'})).passwordChanged,true);
+ const verification=await f.run('verify',{otp:f.lastCode()});
+ assert.equal(verification.verified,true);
+ const password='StrongPassword123!';
+ await assert.rejects(f.run('change',{password}),e=>e.status===403);
+ await assert.rejects(f.run('change',{password,proof:'0'.repeat(64)}),e=>e.status===403);
+ assert.equal((await f.run('change',{password,proof:verification.proof})).passwordChanged,true);
  assert.deepEqual(f.passwords,[{id:f.uid,changes:{password:'StrongPassword123!'}}]);
  assert.deepEqual(f.revoked,[f.uid]);
- await assert.rejects(f.run('change',{password:'OtherPassword456!'}),e=>e.status===403);
+ await assert.rejects(f.run('change',{password:'OtherPassword456!',proof:verification.proof}),e=>e.status===403);
 });
 
 test('resend invalidates previous OTP and enforces rate limit',async()=>{
@@ -92,7 +96,7 @@ test('expired OTP and unverified developer email cannot authorize a password upd
  const f=fixture();
  await f.run('send');
  const code=f.lastCode();
- f.advance(600001);
+ f.advance(300000);
  await assert.rejects(f.run('verify',{otp:code}),e=>e.status===403);
  await assert.rejects(f.run('change',{password:'StrongPassword123!'}),e=>e.status===403);
  const unverified=fixture({verified:false});

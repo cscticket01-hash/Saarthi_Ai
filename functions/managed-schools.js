@@ -640,18 +640,26 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     if(!/^[a-f0-9]{64}$/.test(licenceId||'')||e.status==='trial'||(owner.activeLicenseHash||owner.licenseId)!==licenceId)
       fail(409,'No current existing licence to renew; generate the first key instead');
     const licenceRef=db.doc('platform_licenses/'+licenceId),statusRef=db.doc('platform_license_status/'+licenceId);
-    const [licence,status]=await Promise.all([tx.get(licenceRef),tx.get(statusRef)]);
+    const receiptRef=db.doc('platform_licence_receipts/'+b.renewalId);
+    const [licence,status,receipt]=await Promise.all([tx.get(licenceRef),tx.get(statusRef),tx.get(receiptRef)]);
     const l=licence.exists?licence.data():null,s=status.exists?status.data():null;
     if(!l||!s||l.schoolId!==id||s.schoolId!==id||l.revoked!==false||s.revoked!==false)
       fail(409,'Existing licence was revoked or replaced; review the current school licence');
     // An old retry cannot claim success after the licence has been revoked.
+    if(receipt.exists){
+     const recorded=receipt.data();
+     if(recorded.type!=='renew'||recorded.schoolId!==id||recorded.licenseId!==licenceId||
+        recorded.days!==b.days||recorded.amount!==amount||recorded.paid!==(b.paid===true))
+      fail(409,'Renewal request already belongs to another transaction');
+     return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:recorded.expiresAt,activated:e.activated===true};
+    }
     if(e.lastRenewalId===b.renewalId)return {success:true,schoolId:id,renewed:true,unchanged:true,sameKey:true,licenseId:licenceId,expiresAt:e.expiresAt,activated:e.activated===true};
     const prior=Number(l.expiresAt?.toMillis?.()??l.expiresAt);
     if(!Number.isSafeInteger(prior)||prior<=0)fail(409,'Invalid licence expiry; review before renewing');
     if(prior<=t)fail(409,'Expired licence cannot be extended. Generate a new school-bound key.');
     const expiry=prior+b.days*86400000;
     if(!Number.isSafeInteger(expiry))fail(400,'Invalid renewal expiry');
-    tx.set(db.doc('platform_licence_receipts/'+b.renewalId),{type:'renew',schoolId:id,licenseId:licenceId,days:b.days,amount,paid:b.paid===true,at:t,expiresAt:expiry,actor:admin.uid});
+    tx.set(receiptRef,{type:'renew',schoolId:id,licenseId:licenceId,days:b.days,amount,paid:b.paid===true,at:t,previousExpiresAt:prior,expiresAt:expiry,actor:admin.uid});
     tx.set(licenceRef,{expiresAt:expiry,paid:b.paid===true,amount,renewedAt:t,renewedBy:admin.uid},{merge:true});
     tx.set(statusRef,{expiresAt:expiry,revoked:false},{merge:true});
     tx.set(ref,{expiresAt:expiry,status:b.paid===true?'paid':'licensed',lastRenewalId:b.renewalId},{merge:true});

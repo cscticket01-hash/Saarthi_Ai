@@ -381,8 +381,9 @@ class DeveloperService {
     final school=_db.collection('platform_schools').doc(schoolId);
     final licence=_db.collection('platform_licenses').doc(licenseId);
     final status=_db.collection('platform_license_status').doc(licenseId);
+    final receipt=_db.collection('platform_licence_receipts').doc(requestId);
     final result=await _db.runTransaction((tx)async {
-      final snapshots=await Future.wait([tx.get(school),tx.get(licence),tx.get(status)]);
+      final snapshots=await Future.wait([tx.get(school),tx.get(licence),tx.get(status),tx.get(receipt)]);
       final owner=snapshots[0].data(), old=snapshots[1].data(), state=snapshots[2].data();
       if(owner==null||owner['deletedAt']!=null||owner['blocked']==true||
          owner['loginDisabled']==true||owner['licenseId']!=licenseId||
@@ -393,6 +394,18 @@ class DeveloperService {
           ?(old['expiresAt'] as Timestamp).millisecondsSinceEpoch
           :old['expiresAt'] is num?(old['expiresAt'] as num).toInt():0;
       if(prior<=0)throw StateError('Existing licence expiry requires developer review.');
+      final recorded=snapshots[3].data();
+      if(recorded!=null){
+        final expiry=recorded['expiresAt'];
+        if(recorded['type']!='renew'||recorded['schoolId']!=schoolId||
+           recorded['licenseId']!=licenseId||recorded['days']!=days||
+           recorded['amount']!=amount||recorded['paid']!=(b['paid']==true)||
+           expiry is! Timestamp){
+          throw StateError('Renewal request already belongs to another transaction.');
+        }
+        return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
+          'sameKey':true,'unchanged':true,'renewed':true,'expiresAt':expiry.millisecondsSinceEpoch};
+      }
       if(old['lastRenewalId']==requestId)
         return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
           'sameKey':true,'unchanged':true,'renewed':true,'expiresAt':prior};
@@ -400,7 +413,7 @@ class DeveloperService {
       if(prior<=now)throw StateError('Expired licence requires a new school-bound key.');
       final expiry=prior+days*86400000;
       final validUntil=Timestamp.fromMillisecondsSinceEpoch(expiry);
-      tx.set(_db.collection('platform_licence_receipts').doc(requestId),{'type':'renew','schoolId':schoolId,'licenseId':licenseId,'days':days,'amount':amount,'paid':b['paid']==true,'at':Timestamp.fromMillisecondsSinceEpoch(now),'expiresAt':validUntil,'actor':uid});
+      tx.set(receipt,{'type':'renew','schoolId':schoolId,'licenseId':licenseId,'days':days,'amount':amount,'paid':b['paid']==true,'at':Timestamp.fromMillisecondsSinceEpoch(now),'expiresAt':validUntil,'actor':uid});
       tx.set(licence,{'expiresAt':validUntil,'renewedAt':Timestamp.fromMillisecondsSinceEpoch(now),
         'renewedBy':uid,'paid':b['paid']==true,'amount':amount,'lastRenewalId':requestId},SetOptions(merge:true));
       tx.set(status,{'expiresAt':validUntil,'revoked':false},SetOptions(merge:true));

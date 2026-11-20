@@ -24,8 +24,8 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
   Timer? ticker;
   bool busy=false,sent=false,verified=false;
   int expiresAt=0,resendAfter=0;
-  String? message;
-  int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,600).toInt();
+  String? message, changeProof;
+  int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,300).toInt();
   String get countdown => '${(remaining~/60).toString().padLeft(2,'0')}:${(remaining%60).toString().padLeft(2,'0')}';
   bool get unlocked => verified && remaining>0;
   @override
@@ -33,7 +33,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
     super.initState();
     ticker=Timer.periodic(const Duration(seconds:1),(_){
       if(mounted&&sent)setState((){
-        if(remaining==0)verified=false;
+        if(remaining==0){verified=false;changeProof=null;}
       });
     });
   }
@@ -56,7 +56,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
       final result=await ManagedDeveloperService.call('security/otp/send',{});
       if(!mounted)return;
       setState((){
-        sent=true;verified=false;otp.clear();next.clear();confirm.clear();
+        sent=true;verified=false;changeProof=null;otp.clear();next.clear();confirm.clear();
         expiresAt=(result['expiresAt'] as num).toInt();
         resendAfter=(result['resendAfter'] as num).toInt();
         message=null;
@@ -76,8 +76,11 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
     setState((){busy=true;message=null;});
     try{
       final result=await ManagedDeveloperService.call('security/otp/verify',{'otp':otp.text.trim()});
-      if(result['verified']!=true)throw StateError('Verification not confirmed');
-      if(mounted)setState(()=>verified=true);
+      final proof=result['proof'];
+      if(result['verified']!=true||proof is! String||proof.isEmpty){
+        throw StateError('Verification not confirmed');
+      }
+      if(mounted)setState((){verified=true;changeProof=proof;otp.clear();});
     }catch(_){
       if(mounted)setState(()=>message='Incorrect or expired OTP. Check your email or resend.');
     }finally{
@@ -92,11 +95,14 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
     }
     setState((){busy=true;message=null;});
     try{
-      final result=await ManagedDeveloperService.call('security/otp/change',{'password':next.text});
+      final result=await ManagedDeveloperService.call('security/otp/change',{'password':next.text,'proof':changeProof});
       if(result['passwordChanged']!=true)throw StateError('Password update was not confirmed');
       await FirebaseAuth.instance.signOut();
     }catch(_){
-      if(mounted)setState(()=>message='Password change was not confirmed. Verify a new OTP before retrying.');
+      if(mounted)setState((){
+        verified=false;changeProof=null;next.clear();confirm.clear();
+        message='Password change was not confirmed. Request a new OTP before retrying.';
+      });
     }finally{
       if(mounted)setState(()=>busy=false);
     }

@@ -551,7 +551,17 @@ test('pre-expiry renewal extends exact expiry and records one immutable receipt 
  assert.equal(f.docs.get('platform_licence_receipts/'+request.renewalId).amount,1250);
  const repeated=await f.call(request,'developer');
  assert.equal(repeated.unchanged,true);
- assert.equal(f.docs.get('platform_licence_receipts/'+request.renewalId).amount,1250);
+ const receiptPath='platform_licence_receipts/'+request.renewalId;
+ const receipt=structuredClone(f.docs.get(receiptPath));
+ assert.equal(receipt.amount,1250);
+ assert.equal(receipt.previousExpiresAt,original);
+ const later=await f.call({...request,renewalId:'c'.repeat(32)},'developer');
+ const oldRetry=await f.call(request,'developer');
+ assert.equal(oldRetry.unchanged,true);
+ assert.equal(oldRetry.expiresAt,result.expiresAt);
+ assert.equal(f.docs.get('platform_licenses/'+id).expiresAt,later.expiresAt);
+ await assert.rejects(f.call({...request,amount:1500},'developer'),e=>e.status===409);
+ assert.deepEqual(f.docs.get(receiptPath),receipt);
  assert.deepEqual(f.docs.get('school_storage_private/'+A),storage);
  assert.equal(f.sent.length,0);
 });
