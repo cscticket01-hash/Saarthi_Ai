@@ -1014,7 +1014,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           IconButton(
                             key:ValueKey('copy-license-${l['id']}'),
                             tooltip:_issuedSessionKeys[l['id']] == null
-                               ? 'Full key shown only once during issuance. Use renewal for a new key.'
+                               ? 'Full key is only available at issuance; older full keys were never stored.'
                                : 'Copy newly generated full licence key',
                             icon:const Icon(Icons.copy_outlined,size:17),
                             onPressed:_issuedSessionKeys[l['id']] == null
@@ -1046,10 +1046,18 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           mainAxisSize:MainAxisSize.min,
                           children: [
                             if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
-                              (s['licenseId']??s['activeLicenseHash'])==l['id']) &&
-                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now+30*86400000)
+                              (s['licenseId']??s['activeLicenseHash'])==l['id']&&s['blocked']!=true&&s['deletedAt']==null) &&
+                              l['expiresAt'] is num && (l['expiresAt'] as num)>_now)
+                              for(final duration in const [(30,'30d'),(90,'90d'),(365,'12m')])
+                                TextButton(
+                                  onPressed:()=>_issue(l['schoolId'].toString(),duration.$1),
+                                  child:Text(duration.$2),
+                                ),
+                            if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
+                              (s['licenseId']??s['activeLicenseHash'])==l['id']&&s['blocked']!=true&&s['deletedAt']==null) &&
+                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now)
                               TextButton(onPressed:()=>_issue(l['schoolId'].toString()),
-                                child:const Text('Renew same key')),
+                                child:const Text('New key')),
                             TextButton(
                               onPressed: l['revoked'] == true
                                   ? null
