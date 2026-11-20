@@ -24,8 +24,10 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
     if(busy)return;
     setState(()=>busy=true);
     try{
+      final started=DateTime.now();
       final d=await ManagedDeveloperService.call('monitor',{});
-      if(mounted)setState((){data=d;error=null;});
+      final elapsed=DateTime.now().difference(started).inMilliseconds;
+      if(mounted)setState((){data={...d,'responseMs':elapsed};error=null;});
     }catch(e){if(mounted)setState(()=>error='Cloud monitor unavailable: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -67,70 +69,77 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
   }
   @override
   Widget build(BuildContext context){
-    final firebase=data?['metrics'];
-    final cards=firebase is Map?firebaseMetricCards(firebase):<String,dynamic>{};
+    final raw=data?['metrics'];
+    final firebase=raw is Map?raw:<String,dynamic>{};
     final cf=data?['cloudflare'];
     final cloudflare=cf is Map?cf:<String,dynamic>{};
-    final enabled=cloudflare['available']==true;
-    final d1=cloudflare['d1'] is Map?cloudflare['d1'] as Map:<String,dynamic>{};
-    final d1Enabled=d1['available']==true;
-    String cfValue(String field)=>enabled&&cloudflare[field] is num
-      ? '${cloudflare[field]}':'Not available';
-    String d1Value(String field)=>d1Enabled&&d1[field] is num
-      ? '${d1[field]}':'Not available';
-    return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+    final samples=firebaseMetricCards(firebase);
+    final measured=data?['success']==true && data?['responseMs'] is num;
+    final cloudflareAvailable=cloudflare['available']==true;
+    final firebaseAvailable=firebase['available']==true;
+    Widget service(String name,IconData icon,String status,String description,Color accent){
+      return Card(
+        elevation:0,
+        color:const Color(0xFFF9FBFF),
+        shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(18),
+          side:const BorderSide(color:Colors.white,width:1.5)),
+        child:Padding(
+          padding:const EdgeInsets.all(17),
+          child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Row(children:[
+              Icon(icon,color:accent,size:24),
+              const SizedBox(width:9),
+              Expanded(child:Text(name,style:const TextStyle(fontSize:15,fontWeight:FontWeight.w800))),
+            ]),
+            const SizedBox(height:8),
+            Text(status,style:TextStyle(color:accent,fontWeight:FontWeight.w700,fontSize:12)),
+            const SizedBox(height:7),
+            Text(description,style:const TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+          ]),
+        ),
+      );
+    }
+    return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
       Row(children:[
-        const Expanded(child:Text('Cloud Services — Developer Only',
-          style:TextStyle(fontSize:23,fontWeight:FontWeight.bold))),
-        IconButton(onPressed:busy?null:load,tooltip:'Refresh measured cloud data',
-          icon:const Icon(Icons.refresh)),
+        const Expanded(child:Text('Cloud Services',style:TextStyle(fontSize:20,fontWeight:FontWeight.w800))),
+        IconButton(onPressed:busy?null:load,icon:const Icon(Icons.refresh),tooltip:'Refresh measured service data'),
       ]),
-      const Text('Measured provider samples only • Automatic refresh every 60 seconds • No estimated usage or speed.'),
       if(busy)const LinearProgressIndicator(),
-      if(error!=null)Text(error!,style:const TextStyle(color:Colors.orangeAccent)),
-      const SizedBox(height:18),
-      const Text('Firebase / Firestore',style:TextStyle(fontSize:19,fontWeight:FontWeight.w700)),
-      if(firebase is Map&&firebase['available']!=true)
-        Padding(padding:const EdgeInsets.only(top:7,bottom:7),
-          child:Text('${firebase['reason']??'Monitoring not configured'}. Grant the Render service account Cloud Monitoring Viewer and enable the Cloud Monitoring API; this developer page cannot override IAM.',
-            style:const TextStyle(color:Colors.orangeAccent))),
-      const SizedBox(height:9),
-      Wrap(spacing:10,runSpacing:10,children:[
-        for(final entry in [
-          ('Firestore storage','storageBytes',false),
-          ('Outbound traffic','outboundBitsPerSecond',true),
-          ('Inbound traffic','inboundBitsPerSecond',true),
-          ('Reads / second','readsPerSecond',false),
-          ('Writes / second','writesPerSecond',false),
-          ('Firestore latency','latency',false),
-        ])
-          metric(entry.$1,format(cards[entry.$2],bits:entry.$3,key:entry.$2),
-            sub:cards[entry.$2] is Map&&cards[entry.$2]['sampledAt'] is num
-              ? 'Sampled: ${DateTime.fromMillisecondsSinceEpoch((cards[entry.$2]['sampledAt'] as num).toInt()).toLocal()}'
-              : 'Google Cloud Monitoring'),
-      ]),
-      const SizedBox(height:22),
-      const Text('Cloudflare Worker & D1',style:TextStyle(fontSize:19,fontWeight:FontWeight.w700)),
-      if(!enabled)
-        Padding(padding:const EdgeInsets.only(top:7,bottom:7),
-          child:Text('${cloudflare['reason']??'Cloudflare analytics not configured'}. Use a separate account Analytics Read token on Render, never the sync secret or a browser key.',
-            style:const TextStyle(color:Colors.orangeAccent))),
-      if(enabled)Text('Worker: ${cloudflare['workerName']} • ${cloudflare['window']}; measured ${cloudflare['sampledAt'] is num?DateTime.fromMillisecondsSinceEpoch((cloudflare['sampledAt'] as num).toInt()).toLocal():'unknown'}',
-        style:const TextStyle(fontSize:12,color:Colors.white70)),
-      const SizedBox(height:9),
-      Wrap(spacing:10,runSpacing:10,children:[
-        metric('Worker requests',cfValue('requests'),sub:'Provider-reported 5-minute window'),
-        metric('Worker errors',cfValue('errors'),sub:'Provider-reported 5-minute window'),
-        metric('D1 read queries',d1Value('readQueries'),
-          sub:d1Enabled?'${d1['window']}':'${d1['reason']??'D1 analytics unavailable'}'),
-        metric('D1 write queries',d1Value('writeQueries'),
-          sub:d1Enabled?'${d1['window']}':'${d1['reason']??'D1 analytics unavailable'}'),
-        metric('Cloudflare network in/out','Not reported',
-          sub:'Bandwidth is not in this authorized Worker/D1 sample'),
-      ]),
-      const SizedBox(height:14),
-      const Text('Firebase and Cloudflare provider metrics are sampled and may lag. D1 query counts are not school Drive reads/writes. School-specific Drive usage is available under Schools after verified summary retrieval.',
-        style:TextStyle(fontSize:12,color:Colors.white70)),
+      if(error!=null)Text(error!,style:const TextStyle(color:Color(0xFFBD3549))),
+      LayoutBuilder(builder:(context,size){
+        final w=size.maxWidth>=890?(size.maxWidth-16)/3:size.maxWidth>=520?(size.maxWidth-8)/2:size.maxWidth;
+        return Wrap(spacing:8,runSpacing:8,children:[
+          SizedBox(width:w,child:service('Cloudflare',Icons.cloud_outlined,
+            cloudflareAvailable?'Metrics available':'Status unavailable',
+            cloudflareAvailable?'Worker analytics reported by provider':'Cloudflare analytics credentials or sample unavailable',
+            cloudflareAvailable?const Color(0xFF058D68):const Color(0xFFAD751C))),
+          SizedBox(width:w,child:service('Firebase',Icons.shield_outlined,
+            firebaseAvailable?'Metrics available':'Status unavailable',
+            firebaseAvailable?'Firebase / Firestore monitoring available':'Cloud Monitoring IAM or sample unavailable',
+            firebaseAvailable?const Color(0xFF058D68):const Color(0xFFAD751C))),
+          SizedBox(width:w,child:service('Render',Icons.dns_outlined,
+            measured?'Broker responded':'Status unavailable',
+            measured?'Authenticated request completed in ${data?['responseMs']} ms; not a full uptime guarantee':'Backend monitoring endpoint not verified',
+            measured?const Color(0xFF058D68):const Color(0xFFAD751C))),
+        ]);
+      }),
+      const SizedBox(height:10),
+      Card(
+        elevation:0,color:const Color(0xFFF9FBFF),
+        child:ExpansionTile(
+          title:const Text('Provider metrics',style:TextStyle(fontSize:14,fontWeight:FontWeight.w700)),
+          subtitle:const Text('Measured samples only; expand for details',style:TextStyle(fontSize:11)),
+          children:[Padding(padding:const EdgeInsets.all(12),
+            child:Wrap(spacing:8,runSpacing:8,children:[
+              metric('Firestore storage',format(samples['storageBytes'],key:'storageBytes')),
+              metric('Firestore reads/s',format(samples['readsPerSecond'],key:'readsPerSecond')),
+              metric('Firestore writes/s',format(samples['writesPerSecond'],key:'writesPerSecond')),
+              metric('Worker requests',cloudflareAvailable?'${cloudflare['requests']??'Not available'}':'Not available'),
+              metric('Worker errors',cloudflareAvailable?'${cloudflare['errors']??'Not available'}':'Not available'),
+            ])),
+          ],
+        ),
+      ),
     ]);
   }
 }

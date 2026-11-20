@@ -17,6 +17,8 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'platform/developer_service.dart';
 
@@ -26,7 +28,6 @@ List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
     List<Map<String,dynamic>> schools,
     List<Map<String,dynamic>> licenses,
     int nowMillis) {
-  const renewalWindow=Duration(days:30);
   return schools.where((school){
     final id=school['id'];
     if(school['deletedAt']!=null||school['blocked']==true||school['loginDisabled']==true) return false;
@@ -36,13 +37,13 @@ List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
     return !licenses.any((l)=>
       l['schoolId']==id&&(current==null||l['id']==current)&&l['revoked']!=true&&
       l['expiresAt'] is num &&
-      (l['expiresAt'] as num)>nowMillis+renewalWindow.inMilliseconds);
+      (l['expiresAt'] as num)>nowMillis);
   }).toList();
 }
 
-const _ink = Color(0xFF101B24),
-    _surface = Color(0xFF16242E),
-    _mint = Color(0xFF63E6BE);
+const _ink = Color(0xFFEAF3FF),
+    _surface = Color(0xFFF9FBFF),
+    _mint = Color(0xFF1268F3);
 
 class DeveloperPortal extends StatelessWidget {
   const DeveloperPortal({super.key});
@@ -115,6 +116,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
   bool _busy = false;
   bool _showPassword = false;
   bool _remember = false;
+  bool _forgot = false;
   String? _error;
   String? _information;
 
@@ -173,10 +175,55 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
       _information = null;
     });
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      const stagingRecovery = String.fromEnvironment('SAARTHI_STAGING_DEVELOPER_RECOVERY_URL');
+      if (stagingRecovery.isEmpty) {
+        final preferences = await SharedPreferences.getInstance();
+        await preferences.reload();
+        final emailHash = sha256.convert(utf8.encode(email.toLowerCase()));
+        final key = 'developer.passwordReset.sent.$emailHash';
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final cutoff = now - const Duration(hours: 24).inMilliseconds;
+        List<int> recentSends() =>
+            (preferences.getStringList(key) ?? const <String>[])
+                .map(int.tryParse)
+                .whereType<int>()
+                .where((sentAt) => sentAt > cutoff)
+                .toList();
+        final sends = recentSends();
+        if (sends.length >= 2 ||
+            sends.any((sentAt) =>
+                now - sentAt < const Duration(minutes: 10).inMilliseconds)) {
+          if (mounted) {
+            setState(() => _error =
+                'Up to two reset emails are allowed in 24 hours in this browser. '
+                'Wait at least 10 minutes between emails.');
+          }
+          return;
+        }
+        await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+        await preferences.reload();
+        await preferences.setStringList(key, [
+          ...recentSends().map((time) => time.toString()),
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        ]);
+      } else {
+        final endpoint = Uri.parse(stagingRecovery);
+        if (endpoint.scheme != 'https' || endpoint.path != '/developer-recovery') {
+          throw StateError('Invalid staging developer recovery URL');
+        }
+        final response = await http.post(endpoint,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'action': 'developer/recovery/request', 'email': email}),
+        ).timeout(const Duration(seconds: 20));
+        if (response.statusCode != 200 || jsonDecode(response.body)['success'] != true) {
+          throw StateError('Password recovery is unavailable');
+        }
+      }
       if (mounted) {
-        setState(() => _information =
-            'If this account can reset its password, check your email.');
+        setState(() {
+          _forgot = false;
+          _information = 'If this account can reset its password, check your email.';
+        });
       }
     } catch (_) {
       if (mounted) {
@@ -190,7 +237,29 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
 
   @override
   Widget build(BuildContext context) => DeveloperLoginShell(
-        form: Column(
+        form: _forgot ? Column(
+          mainAxisSize:MainAxisSize.min,
+          crossAxisAlignment:CrossAxisAlignment.stretch,
+          children:[
+            const Text('Forgot Password',textAlign:TextAlign.center,
+              style:TextStyle(fontSize:25,fontWeight:FontWeight.w800,color:Color(0xFF162A55))),
+            const SizedBox(height:8),
+            const Text('Enter your registered developer email.',textAlign:TextAlign.center,
+              style:TextStyle(fontSize:12,color:Color(0xFF647593))),
+            const SizedBox(height:23),
+            TextField(key:const ValueKey('developer-forgot-email'),
+              controller:_email,keyboardType:TextInputType.emailAddress,
+              decoration:const InputDecoration(hintText:'Email Address',prefixIcon:Icon(Icons.email_outlined))),
+            if(_error!=null)Padding(padding:const EdgeInsets.only(top:10),
+              child:Text(_error!,style:const TextStyle(color:Color(0xFFB12440)))),
+            const SizedBox(height:16),
+            FilledButton.icon(key:const ValueKey('developer-forgot-send'),
+              onPressed:_busy?null:_resetPassword,
+              icon:const Icon(Icons.send_outlined),label:Text(_busy?'Sending…':'Send Link')),
+            const SizedBox(height:8),
+            TextButton(onPressed:_busy?null:()=>setState((){_forgot=false;_error=null;}),child:const Text('Back to Login')),
+          ],
+        ) : Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -275,7 +344,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
                   ],
                 ),
                 TextButton(
-                  onPressed: _busy ? null : _resetPassword,
+                  onPressed: _busy ? null : () => setState(() { _forgot = true; _error = null; _information = null; }),
                   child: const Text('Forgot password?'),
                 ),
               ],
@@ -353,6 +422,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       .toList();
   final _service = DeveloperService();
   int _page = 0;
+  int _earningsDays = 30;
+  String _earningsSchool = 'all';
   String _search = '', _filter = 'all';
   bool _loading = true;
   String? _error;
@@ -363,6 +434,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   bool _refreshing = false;
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
+  List<Map<String, dynamic>> get _receipts => _maps(_data['receipts']);
   List<Map<String, dynamic>> get _complaints => _maps(_data['complaints']);
   List<Map<String, dynamic>> _maps(dynamic raw) => raw is List
       ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
@@ -370,9 +442,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   Map<String, dynamic> get _stats => Map<String, dynamic>.from(
     monitorSummary(_schools, DateTime.now().millisecondsSinceEpoch),
   );
-  int get _now =>
-      (_data['serverTime'] as num?)?.toInt() ??
-      DateTime.now().millisecondsSinceEpoch;
+  int get _now => DateTime.now().millisecondsSinceEpoch;
   @override
   void initState() {
     super.initState();
@@ -483,17 +553,22 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   );
   Widget _panel(Widget child) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.all(22),
+    padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       color: _surface,
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: Colors.white.withOpacity(.06)),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.white),
+      boxShadow: const [BoxShadow(color: Color(0x162A72D9), blurRadius: 22, offset: Offset(0, 9))],
     ),
     child: child,
   );
-  Future<void> _issue([String? selected]) async {
+  Future<void> _issue([String? selected, int initialDays=30]) async {
     final eligible = eligibleDeveloperLicenseSchools(
       _schools, _licenses, DateTime.now().millisecondsSinceEpoch);
+    if(selected!=null && !eligible.any((s)=>s['id']==selected)) {
+      final exact=_schools.where((s)=>s['id']==selected&&s['blocked']!=true&&s['deletedAt']==null).firstOrNull;
+      if(exact!=null)eligible.insert(0,exact);
+    }
     if (eligible.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content:Text('All schools hold active licences. They return for renewal in their final 30 days.')),
@@ -510,10 +585,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       final matching=_schools.where((s)=>s['id']==schoolId).firstOrNull;
       if(matching==null)return null;
       return _licenses.where((l)=>l['schoolId']==schoolId&&l['revoked']!=true&&
+        (l['expiresAt'] as num? ?? 0)>_now&&
         l['id']==(matching['licenseId']??matching['activeLicenseHash'])).firstOrNull;
     }
-    final days = TextEditingController(text: '365'),
-        amount = TextEditingController(text: '0');
+    int packageDays=initialDays;
+    final amount = TextEditingController(text: '0');
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
@@ -542,12 +618,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   onChanged: busy ? null : (v) => setDialog(() => school = v!),
                 ),
                 const SizedBox(height: 16),
-                TextField(
-                  controller: days,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Validity in days',
-                  ),
+                DropdownButtonFormField<int>(
+                  initialValue: packageDays,
+                  decoration: const InputDecoration(labelText: 'Licence package'),
+                  items: const [
+                    DropdownMenuItem(value:30,child:Text('30 days')),
+                    DropdownMenuItem(value:90,child:Text('90 days')),
+                    DropdownMenuItem(value:365,child:Text('12 months')),
+                  ],
+                  onChanged:busy?null:(v)=>setDialog(()=>packageDays=v??30),
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -567,7 +646,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   currentLicence(school)!=null
                     ? 'Existing school-bound key will remain valid; renewal extends expiry without changing the school, key, Drive or stored data.'
                     : 'New key is shown only once. Share it with this school and activate it in Windows.',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  style: const TextStyle(color: const Color(0xFF647899), fontSize: 12),
                 ),
                 if (error != null)
                   Text(error!, style: const TextStyle(color: Colors.redAccent)),
@@ -591,7 +670,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         final existing=currentLicence(school);
                         final r = await _call(existing==null?'license/issue':'license/renew', {
                           'schoolId': school,
-                          'days': int.tryParse(days.text),
+                          'days': packageDays,
                           'paid': paid,
                           'amount': double.tryParse(amount.text) ?? 0,
                           if(existing!=null)...{'licenseId':existing['id'],'renewalId':renewalId},
@@ -610,7 +689,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ),
       ),
     );
-    days.dispose();
     amount.dispose();
     if (result == null || !mounted) return;
     if(result['sameKey']==true){
@@ -795,123 +873,86 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     note.dispose();
   }
 
-  Widget _overview() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      LayoutBuilder(
-        builder: (ctx, c) {
-          final width = c.maxWidth > 1000
-              ? (c.maxWidth - 48) / 4
-              : (c.maxWidth - 16) / 2;
-          final stats = [
-            ('Active schools', 'activeSchools', Icons.school_outlined, _mint),
-            (
-              'Inactive schools',
-              'inactiveSchools',
-              Icons.pause_circle_outline,
-              Colors.orangeAccent,
-            ),
-            (
-              'Student app users',
-              'studentAppUsers',
-              Icons.people_outline,
-              Colors.lightBlueAccent,
-            ),
-            (
-              'Students online now',
-              'studentsOnline',
-              Icons.sensors,
-              Colors.purpleAccent,
-            ),
-            ('Total schools', 'totalSchools', Icons.apartment, Colors.white70),
-            (
-              'Purchased licences',
-              'purchasedSchools',
-              Icons.verified_outlined,
-              _mint,
-            ),
-            (
-              'Expiry in 14 days',
-              'expiringSchools',
-              Icons.event_busy,
-              Colors.orangeAccent,
-            ),
-          ];
-          return Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: stats
-                .map(
-                  (v) => SizedBox(
-                    width: width,
-                    child: _panel(
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(v.$3, color: v.$4, size: 24),
-                          const SizedBox(height: 22),
-                          Text(
-                            '${_stats[v.$2] ?? '—'}',
-                            style: const TextStyle(
-                              fontSize: 33,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            v.$1,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
-          );
-        },
-      ),
-      const SizedBox(height: 26),
-      _panel(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Licences approaching expiry',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 16),
-            if (_schools.where(_expiring).isEmpty)
-              const Text(
-                'No licences expire in the next 14 days.',
-                style: TextStyle(color: Colors.white54),
-              ),
-            ..._schools
-                .where(_expiring)
-                .map(
-                  (s) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s['name']?.toString() ?? s['id'].toString()),
-                    subtitle: Text(_date(s['licenseExpiresAt'])),
-                    trailing: TextButton(
-                      onPressed: () => _issue(s['id'].toString()),
-                      child: const Text('Renew'),
-                    ),
-                  ),
-                ),
+
+  Widget _overview(){
+    final active=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now).length;
+    final expiring=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now
+      && (l['expiresAt'] as num? ?? 0)<=_now+30*86400000).length;
+    final pending=_schools.where((s)=>s['blocked']==true||(s['licenseExpiresAt'] as num? ?? 0)>0
+      && (s['licenseExpiresAt'] as num? ?? 0)<=_now).length+expiring;
+    Widget counter(String label,int number,IconData icon)=>_panel(
+      Row(children:[
+        Container(padding:const EdgeInsets.all(9),decoration:BoxDecoration(color:const Color(0xFFE8F2FF),borderRadius:BorderRadius.circular(12)),child:Icon(icon,size:20,color:_mint)),
+        const SizedBox(width:10),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text(label,style:const TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+          Text('$number',style:const TextStyle(fontSize:22,fontWeight:FontWeight.w800)),
+        ])),
+      ]),
+    );
+    return Column(children:[
+      LayoutBuilder(builder:(context,size){
+        final cols=size.maxWidth>=920?4:size.maxWidth>=480?2:1;
+        final w=(size.maxWidth-(cols-1)*10)/cols;
+        return Wrap(spacing:10,runSpacing:10,children:[
+          SizedBox(width:w,child:counter('Total schools',_schools.length,Icons.apartment_outlined)),
+          SizedBox(width:w,child:counter('Active licences',active,Icons.verified_outlined)),
+          SizedBox(width:w,child:counter('Expiring in 30 days',expiring,Icons.schedule_outlined)),
+          SizedBox(width:w,child:counter('Pending actions',pending,Icons.notifications_outlined)),
+        ]);
+      }),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        Widget schools()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Row(children:[
+            const Expanded(child:Text('School health overview',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
+            TextButton(onPressed:()=>setState(()=>_page=1),child:const Text('View all schools')),
+          ]),
+          if(_schools.isEmpty)const Text('No schools registered.'),
+          for(final s in _schools.take(6))...[
+            const Divider(height:1,color:Color(0xFFE5ECF8)),
+            ListTile(dense:true,contentPadding:EdgeInsets.zero,
+              leading:const Icon(Icons.school_outlined,color:_mint,size:19),
+              title:Text(s['name']?.toString()??s['id']?.toString()??'School',maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(s['loginEmail']?.toString()??s['id']?.toString()??''),
+              trailing:_chip(s['blocked']==true?'Blocked':_active(s)?'Online':'Offline',
+                s['blocked']==true?const Color(0xFFBD3549):_active(s)?const Color(0xFF058D68):const Color(0xFFA46B12)),
+            )
+          ]
+        ]));
+        Widget backend()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Backend automation',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800)),
+          const SizedBox(height:5),
+          const Text('Sync repairs and learning run outside the developer website.',style:TextStyle(fontSize:11,color:Color(0xFF637DA4))),
+          for(final row in [
+            ('Policy updates','Signed rule distribution',Icons.shield_outlined),
+            ('Error learning','Anonymized, bounded observations',Icons.insights_outlined),
+            ('Auto repair','Verified allowlisted handlers',Icons.build_circle_outlined),
+            ('Device delivery','Updates after reconnect',Icons.devices_outlined),
+          ])...[
+            const Divider(height:13,color:Color(0xFFE5ECF8)),
+            Row(children:[
+              Icon(row.$3,color:_mint,size:18),
+              const SizedBox(width:9),
+              Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                Text(row.$1,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700)),
+                Text(row.$2,style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+              ])),
+              _chip('Server-side',const Color(0xFF637DA4)),
+            ])
           ],
-        ),
-      ),
-      const SizedBox(height: 16),
-      const Text(
-        'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
-        style: TextStyle(color: Colors.white38, fontSize: 11),
-      ),
-    ],
-  );
+          const SizedBox(height:9),
+          const Text('Runtime activation is not confirmed by this page.',style:TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+          const SizedBox(height:8),
+          OutlinedButton.icon(onPressed:()=>setState(()=>_page=3),icon:const Icon(Icons.bar_chart_outlined,size:17),label:const Text('School earnings')),
+        ]));
+        return size.maxWidth>=800?
+          Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Expanded(flex:6,child:schools()),const SizedBox(width:10),Expanded(flex:4,child:backend()),
+          ]):Column(children:[schools(),const SizedBox(height:10),backend()]);
+      })
+    ]);
+  }
   Future<bool> _confirm(String title, String message, String action) async =>
       await showDialog<bool>(
         context: context,
@@ -1043,7 +1084,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           IconButton(
                             key:ValueKey('copy-license-${l['id']}'),
                             tooltip:_issuedSessionKeys[l['id']] == null
-                               ? 'Full key shown only once during issuance. Use renewal for a new key.'
+                               ? 'Full key is only available at issuance; older full keys were never stored.'
                                : 'Copy newly generated full licence key',
                             icon:const Icon(Icons.copy_outlined,size:17),
                             onPressed:_issuedSessionKeys[l['id']] == null
@@ -1075,10 +1116,18 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           mainAxisSize:MainAxisSize.min,
                           children: [
                             if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
-                              (s['licenseId']??s['activeLicenseHash'])==l['id']) &&
-                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now+30*86400000)
+                              (s['licenseId']??s['activeLicenseHash'])==l['id']&&s['blocked']!=true&&s['deletedAt']==null) &&
+                              l['expiresAt'] is num && (l['expiresAt'] as num)>_now)
+                              for(final duration in const [(30,'30d'),(90,'90d'),(365,'12m')])
+                                TextButton(
+                                  onPressed:()=>_issue(l['schoolId'].toString(),duration.$1),
+                                  child:Text(duration.$2),
+                                ),
+                            if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
+                              (s['licenseId']??s['activeLicenseHash'])==l['id']&&s['blocked']!=true&&s['deletedAt']==null) &&
+                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now)
                               TextButton(onPressed:()=>_issue(l['schoolId'].toString()),
-                                child:const Text('Renew same key')),
+                                child:const Text('New key')),
                             TextButton(
                               onPressed: l['revoked'] == true
                                   ? null
@@ -1125,6 +1174,147 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       ],
     ),
   );
+
+  // Receipts are immutable licence purchase records, not school fee collections.
+  // Older installations have no receipt ledger; do not invent historic revenue.
+  String _money(num amount) => '₹${amount.toStringAsFixed(0)}';
+
+  Widget _earnings() {
+    final now=DateTime.now();
+    final cutoff=_earningsDays==0?0:now.subtract(Duration(days:_earningsDays)).millisecondsSinceEpoch;
+    final schoolIds=_schools.map((s)=>s['id']?.toString()??'').where((s)=>s.isNotEmpty).toSet();
+    final schoolNames={for(final s in _schools) s['id']?.toString()??'':s['name']?.toString()??s['id']?.toString()??''};
+    final visible=_receipts.where((r){
+      final at=(r['at'] as num?)?.toInt()??0;
+      return at>0 && at>=cutoff && (_earningsSchool=='all'||r['schoolId']==_earningsSchool);
+    }).toList()..sort((a,b)=>((b['at'] as num?)?.toInt()??0).compareTo((a['at'] as num?)?.toInt()??0));
+    final paid=visible.where((r)=>r['paid']==true).toList();
+    num total=0, pending=0;
+    for(final r in visible) {
+      final value=r['amount'] is num?(r['amount'] as num):0;
+      if(value<0)continue;
+      if(r['paid']==true)total+=value;else pending+=value;
+    }
+    final bySchool=<String,num>{};
+    for(final r in paid) {
+      final id=r['schoolId']?.toString()??'';
+      final amount=r['amount'] is num?(r['amount'] as num):0;
+      if(id.isEmpty||amount<0)continue;
+      bySchool[id]=(bySchool[id]??0)+amount;
+    }
+    final ranking=bySchool.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
+    final largest=ranking.isEmpty?1.0:max(1.0,ranking.first.value.toDouble());
+    final dated=paid.map((r)=>(r['at'] as num?)?.toInt()??0).where((d)=>d>0).toList();
+    final earliest=dated.isEmpty?now.millisecondsSinceEpoch:dated.reduce(min);
+    final date=DateTime.fromMillisecondsSinceEpoch(earliest);
+    final firstDay=DateTime(date.year,date.month,date.day);
+    final lastDay=DateTime(now.year,now.month,now.day);
+    final chartDays=_earningsDays==0?max(1,lastDay.difference(firstDay).inDays+1):_earningsDays;
+    final startDay=DateTime(now.year,now.month,now.day).subtract(Duration(days:chartDays-1));
+    final buckets=List<double>.filled(chartDays,0);
+    for(final r in paid){
+      final at=(r['at'] as num?)?.toInt()??0;
+      if(at<=0)continue;
+      final date=DateTime.fromMillisecondsSinceEpoch(at);
+      final day=DateTime(date.year,date.month,date.day);
+      final delta=day.difference(startDay).inDays;
+      if(delta>=0&&delta<chartDays) buckets[delta]+=(r['amount'] as num?)?.toDouble()??0;
+    }
+    Widget metric(String name,String value,IconData icon){
+      return _panel(Row(children:[
+        Container(padding:const EdgeInsets.all(8),decoration:BoxDecoration(color:const Color(0xFFE9F2FF),borderRadius:BorderRadius.circular(12)),child:Icon(icon,color:_mint,size:19)),
+        const SizedBox(width:10),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text(name,style:const TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+          const SizedBox(height:3),
+          Text(value,style:const TextStyle(fontSize:21,fontWeight:FontWeight.w800)),
+        ]))
+      ]));
+    }
+    return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Text('School licence earnings • recorded receipts only',style:TextStyle(color:Color(0xFF637DA4),fontSize:12)),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        final columns=size.maxWidth>=950?4:size.maxWidth>=460?2:1;
+        final w=(size.maxWidth-(columns-1)*10)/columns;
+        return Wrap(spacing:10,runSpacing:10,children:[
+          SizedBox(width:w,child:metric('Paid receipts',_money(total),Icons.account_balance_wallet_outlined)),
+          SizedBox(width:w,child:metric('Recorded payments','${paid.length}',Icons.receipt_long_outlined)),
+          SizedBox(width:w,child:metric('Unpaid recorded',_money(pending),Icons.schedule_outlined)),
+          SizedBox(width:w,child:metric('Schools with payments','${ranking.length}',Icons.school_outlined)),
+        ]);
+      }),
+      const SizedBox(height:10),
+      _panel(Wrap(spacing:12,runSpacing:8,crossAxisAlignment:WrapCrossAlignment.center,children:[
+        const Text('Period',style:TextStyle(fontWeight:FontWeight.w600)),
+        DropdownButton<int>(value:_earningsDays,items:const[
+          DropdownMenuItem(value:7,child:Text('Last 7 days')),
+          DropdownMenuItem(value:30,child:Text('Last 30 days')),
+          DropdownMenuItem(value:90,child:Text('Last 90 days')),
+          DropdownMenuItem(value:365,child:Text('Last 12 months')),
+          DropdownMenuItem(value:0,child:Text('All loaded receipts')),
+        ],onChanged:(v)=>setState(()=>_earningsDays=v??30)),
+        const Text('School',style:TextStyle(fontWeight:FontWeight.w600)),
+        DropdownButton<String>(value:schoolIds.contains(_earningsSchool)?_earningsSchool:'all',items:[
+          const DropdownMenuItem(value:'all',child:Text('All schools')),
+          for(final s in _schools) if(s['id']!=null)
+            DropdownMenuItem(value:s['id'].toString(),child:Text(s['name']?.toString()??s['id'].toString())),
+        ],onChanged:(v)=>setState(()=>_earningsSchool=v??'all')),
+        const Text('Only paid licence receipts count as earnings.',style:TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+      ])),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        final wide=size.maxWidth>=850;
+        final left=_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Earnings by date',style:TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+          const SizedBox(height:5),
+          SizedBox(height:158,child:CustomPaint(painter:_EarningsLinePainter(buckets),child:const SizedBox.expand())),
+          const SizedBox(height:3),
+          Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
+            Text(_date(startDay.millisecondsSinceEpoch),style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+            Text(_date(DateTime.now().millisecondsSinceEpoch),style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+          ])
+        ]));
+        final right=_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('School-wise earnings',style:TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+          const SizedBox(height:10),
+          if(ranking.isEmpty) const Text('No recorded paid licences in this period.',style:TextStyle(color:Color(0xFF637DA4))),
+          for(final e in ranking.take(5))...[
+            Row(children:[Expanded(child:Text(schoolNames[e.key]??e.key,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700))),Text(_money(e.value),style:const TextStyle(fontSize:11))]),
+            const SizedBox(height:4),
+            ClipRRect(borderRadius:BorderRadius.circular(4),child:LinearProgressIndicator(value:(e.value/largest).clamp(0.0,1.0).toDouble(),minHeight:7,color:_mint,backgroundColor:const Color(0xFFE0EAF8))),
+            const SizedBox(height:9),
+          ]
+        ]));
+        return wide?Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Expanded(flex:6,child:left),const SizedBox(width:10),Expanded(flex:4,child:right),
+        ]):Column(children:[left,const SizedBox(height:10),right]);
+      }),
+      const SizedBox(height:10),
+      _panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Row(children:[
+          const Expanded(child:Text('Payment history',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
+          Text('Latest ${min(visible.length,10)} / ${visible.length} loaded',style:const TextStyle(fontSize:11,color:Color(0xFF637DA4))),
+        ]),
+        const SizedBox(height:7),
+        if(visible.isEmpty)const Text('No recorded licence transactions for this selection. Older payments are not reconstructed.'),
+        for(final r in visible.take(10))...[
+          const Divider(height:1,color:Color(0xFFE5ECF8)),
+          ListTile(dense:true,contentPadding:EdgeInsets.zero,
+            title:Text(schoolNames[r['schoolId']]??r['schoolId']?.toString()??'Unknown school',maxLines:1,overflow:TextOverflow.ellipsis),
+            subtitle:Text('${_date(r['at'])} • ${r['type']=='renew'?'Extension':'New licence'} • ${r['days']??'—'} days'),
+            trailing:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.end,children:[
+              Text(_money(r['amount'] is num?r['amount'] as num:0),style:const TextStyle(fontWeight:FontWeight.w700)),
+              Text(r['paid']==true?'Recorded paid':'Unpaid',style:TextStyle(fontSize:10,color:r['paid']==true?const Color(0xFF078363):const Color(0xFFAE7216))),
+            ]),
+          ),
+        ],
+        const SizedBox(height:5),
+        const Text('Historical receipts before this ledger was introduced may be unavailable. These amounts are manually marked as paid, not bank-verified.',style:TextStyle(color:Color(0xFF637DA4),fontSize:10)),
+      ])),
+    ]);
+  }
+
   Widget _support() => _panel(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1152,7 +1342,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         if (_visibleComplaints.isEmpty)
           const Text(
             'No complaints received yet.',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: const Color(0xFF647899)),
           ),
         ..._visibleComplaints.map(
           (c) => ListTile(
@@ -1187,31 +1377,37 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       'Overview',
       'Schools',
       'Licences',
+      'School Earnings',
+      'App Themes',
+      'Admin Profile',
       'Support',
       'Cloud Services',
-      'Admin Profile',
-      'Windows Theme',
     ];
-    return DeveloperIdleSession(
+    return Theme(
+      data: ThemeData(useMaterial3:true,brightness:Brightness.light,
+        colorScheme:ColorScheme.fromSeed(seedColor:_mint,brightness:Brightness.light),
+        scaffoldBackgroundColor:_ink,
+        textTheme:ThemeData.light().textTheme.apply(bodyColor:const Color(0xFF18335C),displayColor:const Color(0xFF18335C))),
+      child:DeveloperIdleSession(
       child: Scaffold(
         backgroundColor: _ink,
         body: LayoutBuilder(
           builder: (ctx, c) {
             final narrow = c.maxWidth < 850;
             final nav = Container(
-              width: 230,
-              color: const Color(0xFF0C161E),
-              padding: const EdgeInsets.all(18),
+              width: 218,
+              color: const Color(0xFFF8FBFF),
+              padding: const EdgeInsets.all(14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 18),
                   const Row(
                     children: [
-                      Icon(Icons.hub_rounded, color: _mint),
+                      Icon(Icons.school_rounded, color: _mint),
                       SizedBox(width: 10),
                       Text(
-                        'Vidya Saarthi',
+                        'Saarthi AI',
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -1224,7 +1420,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                     child: Text(
                       'DEVELOPER PLATFORM',
                       style: TextStyle(
-                        color: Colors.white38,
+                        color: const Color(0xFF8195B2),
                         fontSize: 9,
                         letterSpacing: 1.8,
                       ),
@@ -1246,10 +1442,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             Icons.grid_view_rounded,
                             Icons.school_outlined,
                             Icons.vpn_key_outlined,
-                            Icons.support_agent_rounded,
-                            Icons.cloud_outlined,
-                            Icons.manage_accounts_outlined,
-                            Icons.palette_outlined,
+                             Icons.bar_chart_rounded,
+                             Icons.palette_outlined,
+                             Icons.manage_accounts_outlined,
+                             Icons.support_agent_rounded,
+                             Icons.cloud_outlined,
                           ][i],
                         ),
                         title: Text(titles[i]),
@@ -1260,7 +1457,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   const Spacer(),
                   Text(
                     FirebaseAuth.instance.currentUser?.email ?? '',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                    style: const TextStyle(color: const Color(0xFF8195B2), fontSize: 11),
                   ),
                   TextButton.icon(
                     onPressed: () => FirebaseAuth.instance.signOut(),
@@ -1271,7 +1468,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               ),
             );
             final main = Expanded(
-              child: _page == 6
+              child: _page == 4
                   ? Padding(
                       padding: EdgeInsets.all(narrow ? 12 : 20),
                       child: Column(
@@ -1281,7 +1478,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                               height: 42,
                               child: Row(
                                 children: [
-                                  const Expanded(child: Text('Vidya Saarthi')),
+                                  const Expanded(child: Text('Saarthi AI')),
                                   PopupMenuButton<int>(
                                     tooltip: 'Navigation',
                                     initialValue: _page,
@@ -1303,7 +1500,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                       ),
                     )
                   : ListView(
-                padding: EdgeInsets.all(narrow ? 20 : 36),
+                padding: EdgeInsets.all(narrow ? 14 : 20),
                 children: [
                   if (narrow)
                     Wrap(
@@ -1327,7 +1524,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             Text(
                               titles[_page],
                               style: const TextStyle(
-                                fontSize: 30,
+                                fontSize: 26,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -.5,
                               ),
@@ -1336,7 +1533,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             const Text(
                               'Your schools. Their activity. One control centre.',
                               style: TextStyle(
-                                color: Colors.white54,
+                                color: const Color(0xFF647899),
                                 fontSize: 13,
                               ),
                             ),
@@ -1370,10 +1567,12 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         : _page == 2
                         ? _licenceTable()
                         : _page == 3
+                        ? _earnings()
+                        : _page == 5
+                        ? const DeveloperAccountProfile()
+                        : _page == 6
                         ? _support()
-                        : _page == 4
-                        ? const FirebaseMonitorPanel()
-                        : _page == 5 ? const DeveloperAccountProfile() : const DeveloperWindowsTheme(),
+                        : const FirebaseMonitorPanel(),
                   ],
                   if (narrow)
                     TextButton(
@@ -1384,7 +1583,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               ),
             );
             return Row(children: [
-              if (!narrow) _page==6 ? SizedBox(width:230,child:FittedBox(
+              if (!narrow) _page==4 ? SizedBox(width:230,child:FittedBox(
                 fit:BoxFit.contain,alignment:Alignment.topCenter,
                 child:SizedBox(width:230,height:c.maxHeight<700?700:c.maxHeight,child:nav),
               )) : nav,
@@ -1393,6 +1592,34 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           },
         ),
       ),
-    );
+    ));
   }
+}
+
+class _EarningsLinePainter extends CustomPainter {
+  const _EarningsLinePainter(this.values);
+  final List<double> values;
+  @override
+  void paint(Canvas canvas,Size size){
+    final grid=Paint()..color=const Color(0xFFDCE7F7)..strokeWidth=1;
+    final line=Paint()..color=const Color(0xFF1268F3)..strokeWidth=2.5..style=PaintingStyle.stroke..strokeCap=StrokeCap.round;
+    for(var i=1;i<=3;i++){final y=size.height*i/4;canvas.drawLine(Offset(0,y),Offset(size.width,y),grid);}
+    if(values.isEmpty)return;
+    final highest=values.fold<double>(1,(v,x)=>max(v,x));
+    final points=<Offset>[];
+    for(var i=0;i<values.length;i++){
+      final x=values.length==1?size.width/2:size.width*i/(values.length-1);
+      final y=size.height-8-(values[i]/highest)*(size.height-18);
+      points.add(Offset(x,y));
+    }
+    final path=Path()..moveTo(points.first.dx,points.first.dy);
+    for(final point in points.skip(1))path.lineTo(point.dx,point.dy);
+    canvas.drawPath(path,line);
+    if(points.length<=35){
+      final dot=Paint()..color=const Color(0xFF1268F3);
+      for(final p in points)canvas.drawCircle(p,2.5,dot);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant _EarningsLinePainter old)=>old.values!=values;
 }

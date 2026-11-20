@@ -6,14 +6,200 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
-import 'school_password_panel.dart';
+import 'platform/managed_developer_service.dart';
 import 'release_download.dart';
 import 'website_installer_transfer.dart';
 import 'website_installer_transfer_stub.dart'
     if (dart.library.html) 'website_installer_transfer_web.dart' as transfers;
-class DeveloperAccountProfile extends StatelessWidget {
+
+class DeveloperAccountProfile extends StatefulWidget {
   const DeveloperAccountProfile({super.key});
-  @override Widget build(BuildContext context)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(FirebaseAuth.instance.currentUser?.email??'',style:const TextStyle(fontSize:20)),const Text('Developer administrator'),SchoolPasswordPanel(change:(current,next)async{final user=FirebaseAuth.instance.currentUser;if(user==null||user.email==null)throw StateError('Sign in again');await user.reauthenticateWithCredential(EmailAuthProvider.credential(email:user.email!,password:current));await user.updatePassword(next);await FirebaseAuth.instance.signOut();})]);
+  @override
+  State<DeveloperAccountProfile> createState() => _DeveloperAccountProfileState();
+}
+
+class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
+  final current=TextEditingController(),otp=TextEditingController(),
+      next=TextEditingController(),confirm=TextEditingController();
+  Timer? ticker;
+  bool busy=false,sent=false,verified=false;
+  int expiresAt=0,resendAfter=0;
+  String? message, changeProof;
+  int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,300).toInt();
+  String get countdown => '${(remaining~/60).toString().padLeft(2,'0')}:${(remaining%60).toString().padLeft(2,'0')}';
+  bool get unlocked => verified && remaining>0;
+  @override
+  void initState(){
+    super.initState();
+    ticker=Timer.periodic(const Duration(seconds:1),(_){
+      if(mounted&&sent)setState((){
+        if(remaining==0){verified=false;changeProof=null;}
+      });
+    });
+  }
+  @override
+  void dispose(){
+    ticker?.cancel();
+    current.dispose();otp.dispose();next.dispose();confirm.dispose();
+    super.dispose();
+  }
+  Future<void> send() async {
+    if(busy)return;
+    setState(() {busy=true;message=null;});
+    try{
+      final user=FirebaseAuth.instance.currentUser;
+      if(user==null||user.email==null)throw StateError('Developer sign-in required');
+      // Fresh password proof before the broker starts an email challenge.
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email:user.email!,password:current.text));
+      await user.getIdToken(true);
+      final result=await ManagedDeveloperService.call('security/otp/send',{});
+      if(!mounted)return;
+      setState((){
+        sent=true;verified=false;changeProof=null;otp.clear();next.clear();confirm.clear();
+        expiresAt=(result['expiresAt'] as num).toInt();
+        resendAfter=(result['resendAfter'] as num).toInt();
+        message=null;
+      });
+    }catch(_){
+      if(mounted)setState(()=>message='OTP could not be emailed. Check your current password and developer email setup.');
+    }finally{
+      if(mounted)setState(()=>busy=false);
+    }
+  }
+  Future<void> resend() async {
+    if(busy||!sent||DateTime.now().millisecondsSinceEpoch<resendAfter)return;
+    await send();
+  }
+  Future<void> verify() async {
+    if(busy||remaining==0||otp.text.trim().length!=6)return;
+    setState((){busy=true;message=null;});
+    try{
+      final result=await ManagedDeveloperService.call('security/otp/verify',{'otp':otp.text.trim()});
+      final proof=result['proof'];
+      if(result['verified']!=true||proof is! String||proof.isEmpty){
+        throw StateError('Verification not confirmed');
+      }
+      if(mounted)setState((){verified=true;changeProof=proof;otp.clear();});
+    }catch(_){
+      if(mounted)setState(()=>message='Incorrect or expired OTP. Check your email or resend.');
+    }finally{
+      if(mounted)setState(()=>busy=false);
+    }
+  }
+  Future<void> save() async {
+    if(busy||!unlocked)return;
+    if(next.text.length<12||next.text.length>128||next.text!=confirm.text){
+      setState(()=>message='Use 12–128 characters and matching passwords.');
+      return;
+    }
+    setState((){busy=true;message=null;});
+    try{
+      final result=await ManagedDeveloperService.call('security/otp/change',{'password':next.text,'proof':changeProof});
+      if(result['passwordChanged']!=true)throw StateError('Password update was not confirmed');
+      await FirebaseAuth.instance.signOut();
+    }catch(_){
+      if(mounted)setState((){
+        verified=false;changeProof=null;next.clear();confirm.clear();
+        message='Password change was not confirmed. Request a new OTP before retrying.';
+      });
+    }finally{
+      if(mounted)setState(()=>busy=false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context){
+    final small=MediaQuery.sizeOf(context).width<740;
+    final fieldDecoration=InputDecoration(
+      isDense:true,contentPadding:const EdgeInsets.symmetric(vertical:13,horizontal:12),
+      border:OutlineInputBorder(borderRadius:BorderRadius.circular(12)));
+    Widget lockedField(TextEditingController controller) => TextField(
+      controller:controller,enabled:unlocked&&!busy,obscureText:true,
+      enableSuggestions:false,autocorrect:false,
+      decoration:fieldDecoration.copyWith(
+        filled:true,fillColor:unlocked?Colors.white:const Color(0xFFE8EEF7),
+        prefixIcon:const Icon(Icons.lock_outline,size:18),
+      ),
+    );
+    final sendButton=FilledButton.icon(
+      key:const ValueKey('developer-security-send-otp'),
+      onPressed:busy||sent?null:send,icon:const Icon(Icons.mail_outline,size:17),
+      label:const Text('Send OTP'));
+    final otpControls=Row(children:[
+      Expanded(child:TextField(
+        key:const ValueKey('developer-security-otp'),
+        controller:otp,enabled:!busy&&!verified&&remaining>0,
+        keyboardType:TextInputType.number,maxLength:6,
+        decoration:fieldDecoration.copyWith(counterText:'',prefixIcon:const Icon(Icons.key_outlined,size:18)),
+      )),
+      const SizedBox(width:8),
+      FilledButton(key:const ValueKey('developer-security-verify'),
+        onPressed:busy||verified||remaining==0?null:verify,child:const Text('Verify OTP')),
+      const SizedBox(width:8),
+      OutlinedButton(
+        key:const ValueKey('developer-security-resend'),
+        onPressed:busy||DateTime.now().millisecondsSinceEpoch<resendAfter?null:resend,
+        child:Text('Resend ($countdown)')),
+    ]);
+    return Align(
+      alignment:Alignment.topCenter,
+      child:ConstrainedBox(
+        constraints:const BoxConstraints(maxWidth:980),
+        child:Container(
+          padding:EdgeInsets.all(small?12:20),
+          decoration:BoxDecoration(
+            color:const Color(0xFFF9FBFF),
+            borderRadius:BorderRadius.circular(20),
+            border:Border.all(color:Colors.white),
+            boxShadow:const [BoxShadow(color:Color(0x162A72D9),blurRadius:24,offset:Offset(0,10))],
+          ),
+          child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+            if(small)...[
+              TextField(key:const ValueKey('developer-security-current'),controller:current,
+                obscureText:true,enableSuggestions:false,autocorrect:false,
+                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline))),
+              const SizedBox(height:8),sendButton,
+            ] else Row(children:[
+              Expanded(child:TextField(key:const ValueKey('developer-security-current'),
+                controller:current,obscureText:true,enableSuggestions:false,autocorrect:false,
+                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline)))),
+              const SizedBox(width:10),sendButton,
+            ]),
+            if(sent)...[
+              const SizedBox(height:12),
+              if(small)Column(children:[
+                TextField(key:const ValueKey('developer-security-otp'),
+                  controller:otp,enabled:!busy&&!verified&&remaining>0,maxLength:6,
+                  keyboardType:TextInputType.number,decoration:fieldDecoration.copyWith(counterText:'')),
+                const SizedBox(height:8),
+                Row(children:[
+                  FilledButton(onPressed:busy||verified||remaining==0?null:verify,child:const Text('Verify OTP')),
+                  const SizedBox(width:8),
+                  OutlinedButton(onPressed:busy||DateTime.now().millisecondsSinceEpoch<resendAfter?null:resend,
+                    child:Text('Resend ($countdown)')),
+                ]),
+              ])else otpControls,
+            ],
+            const SizedBox(height:12),
+            lockedField(next),
+            const SizedBox(height:10),
+            lockedField(confirm),
+            if(message!=null)...[
+              const SizedBox(height:8),
+              Text(message!,style:const TextStyle(color:Color(0xFFC23D4B),fontSize:12)),
+            ],
+            const SizedBox(height:12),
+            Align(alignment:Alignment.centerLeft,child:FilledButton.icon(
+              key:const ValueKey('developer-security-save'),
+              onPressed:busy||!unlocked?null:save,icon:const Icon(Icons.save_outlined,size:17),
+              label:const Text('Save Password'),
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 class DeveloperIdleSession extends StatefulWidget {
   const DeveloperIdleSession({super.key,required this.child,this.idle=const Duration(minutes:30)});
