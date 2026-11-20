@@ -105,7 +105,7 @@ void main() {
           'assets/theme_preview_${preset.id == 'midnight-glass' ? 'electric-blue' : preset.id}_dashboard.webp',
           reason:'Every preset, including Glass, must preview a real Windows screen');
       }
-      expect(find.text('Unsaved selection'), findsOneWidget);
+      expect(find.text('Unsaved preset'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('theme-next')));
       await tester.pumpAndSettle();
       expect(find.text('Student Records  •  2 / 4'), findsOneWidget);
@@ -131,76 +131,46 @@ void main() {
       expect(calls.last['action'], 'theme/save');
       expect((calls.last['theme'] as Map)['presetId'], 'emerald-gold');
       expect((calls.last['theme'] as Map)['expectedRevision'], 'saved-1');
-      expect(find.text('Saved theme'), findsOneWidget);
+      expect(find.text('Saved preset'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
-  testWidgets('Glass RGB changes keep Glass selected and update same live preview', (tester) async {
+  testWidgets('preset-only editor has no RGB or HEX controls and Glass saves its canonical seed',(tester) async {
     final calls=<Map<String,dynamic>>[];
-    await mount(tester,const Size(1440,900),(action,body)async{
+    await mount(tester,const Size(1440,900),(action,body) async {
       calls.add({'action':action,...body});
       return {'theme':action=='theme/get'?initial():{...body['theme'] as Map,'revision':'saved-2'}};
     });
     await tester.tap(find.byKey(const ValueKey('theme-preset-midnight-glass')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
-    final firstPreview=tester.widget<Image>(find.byKey(const ValueKey('theme-preview-image')));
-    expect((firstPreview.image as AssetImage).assetName,
-      'assets/theme_preview_electric-blue_dashboard.webp');
-    await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')),'44');
-    await tester.pumpAndSettle();
-    expect(find.text('Liquid Glass • sample app screens'),findsOneWidget);
-    expect(find.byKey(const ValueKey('theme-preview-glass')),findsOneWidget);
+    expect(find.byKey(const ValueKey('theme-rgb-0')),findsNothing);
+    expect(find.byKey(const ValueKey('theme-hex')),findsNothing);
     expect(calls.length,1);
     await tester.tap(find.byKey(const ValueKey('theme-save')));
     await tester.pumpAndSettle();
-    expect((calls.last['theme'] as Map)['presetId'],'midnight-glass');
-    expect((calls.last['theme'] as Map)['red'],44);
-    expect(find.text('Saved theme'),findsOneWidget);
+    final theme=calls.last['theme'] as Map;
+    expect(theme['presetId'],'midnight-glass');
+    expect(theme['red'],141);
+    expect(theme['green'],219);
+    expect(theme['blue'],235);
+    expect(find.text('Saved preset'),findsOneWidget);
   });
-  testWidgets(
-    'RGB and HEX validation, quick colours and Reset retain explicit Save',
-    (tester) async {
-      final calls = <String>[];
-      await mount(tester, const Size(1366, 650), (action, body) async {
-        calls.add(action);
-        return {
-          'theme': action == 'theme/get'
-              ? initial()
-              : {...body['theme'] as Map, 'revision': 'saved-2'},
-        };
-      });
-      for (final name in ['Teal', 'Ocean', 'Violet', 'Amber', 'Rose'])
-        expect(find.text(name), findsOneWidget);
-      await tester.tap(find.text('Violet'));
-      await tester.pumpAndSettle();
-      expect(calls.length, 1);
-      await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')), '256');
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('theme-save')))
-            .onPressed,
-        isNull,
-      );
-      await tester.enterText(find.byKey(const ValueKey('theme-rgb-0')), '100');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Save Theme'));
-      await tester.pumpAndSettle();
-      expect(calls.length, 2);
-      await tester.enterText(find.byKey(const ValueKey('theme-hex')), 'bad');
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('theme-save')))
-            .onPressed,
-        isNull,
-      );
-      await tester.tap(find.text('Reset'));
-      await tester.pumpAndSettle();
-      expect(find.text('Saved theme'), findsOneWidget);
-    },
-  );
+  testWidgets('Reset restores a saved preset without posting a draft',(tester) async {
+    final calls=<String>[];
+    await mount(tester,const Size(1366,650),(action,body) async {
+      calls.add(action);
+      return {'theme':action=='theme/get'?initial():{...body['theme'] as Map,'revision':'saved-2'}};
+    });
+    await tester.tap(find.byKey(const ValueKey('theme-preset-electric-blue')));
+    await tester.pumpAndSettle();
+    expect(find.text('Unsaved preset'),findsOneWidget);
+    await tester.tap(find.text('Reset'));
+    await tester.pumpAndSettle();
+    expect(calls.length,1);
+    expect(find.text('Saved preset'),findsOneWidget);
+    expect(find.byKey(const ValueKey('theme-hex')),findsNothing);
+  });
   testWidgets(
     'entire workspace fits desktop and laptop viewports without scrolling or clipped controls',
     (tester) async {
@@ -226,8 +196,6 @@ void main() {
           'theme-save',
           'theme-next',
           'theme-previous',
-          'theme-hex',
-          'theme-rgb-2',
         ]) {
           final rect = tester.getRect(find.byKey(ValueKey(name)));
           expect(rect.left, greaterThanOrEqualTo(230));
@@ -262,7 +230,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save Theme'));
     await tester.pumpAndSettle();
-    expect(find.text('Unsaved selection'), findsOneWidget);
+    expect(find.text('Unsaved preset'), findsOneWidget);
     expect(find.textContaining('Theme was not confirmed'), findsOneWidget);
     expect(find.text('Electric Blue • sample app screens'), findsOneWidget);
   });
@@ -281,7 +249,7 @@ void main() {
       {'schoolId':schoolB,'expiresAt':now+15*86400000,'revoked':false},
     ];
     expect(eligibleDeveloperLicenseSchools(schools,licences,now)
-      .map((s)=>s['id']).toList(),[schoolB,schoolC]);
+      .map((s)=>s['id']).toList(),[schoolC]);
     licences[0]['revoked']=true;
     expect(eligibleDeveloperLicenseSchools(schools,licences,now)
       .map((s)=>s['id']),contains(schoolA));
