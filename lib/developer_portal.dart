@@ -114,6 +114,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
   bool _busy = false;
   bool _showPassword = false;
   bool _remember = false;
+  bool _forgot = false;
   String? _error;
   String? _information;
 
@@ -174,8 +175,10 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
     try {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (mounted) {
-        setState(() => _information =
-            'If this account can reset its password, check your email.');
+        setState(() {
+          _forgot = false;
+          _information = 'If this account can reset its password, check your email.';
+        });
       }
     } catch (_) {
       if (mounted) {
@@ -189,7 +192,29 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
 
   @override
   Widget build(BuildContext context) => DeveloperLoginShell(
-        form: Column(
+        form: _forgot ? Column(
+          mainAxisSize:MainAxisSize.min,
+          crossAxisAlignment:CrossAxisAlignment.stretch,
+          children:[
+            const Text('Forgot Password',textAlign:TextAlign.center,
+              style:TextStyle(fontSize:25,fontWeight:FontWeight.w800,color:Color(0xFF162A55))),
+            const SizedBox(height:8),
+            const Text('Enter your registered developer email.',textAlign:TextAlign.center,
+              style:TextStyle(fontSize:12,color:Color(0xFF647593))),
+            const SizedBox(height:23),
+            TextField(key:const ValueKey('developer-forgot-email'),
+              controller:_email,keyboardType:TextInputType.emailAddress,
+              decoration:const InputDecoration(hintText:'Email Address',prefixIcon:Icon(Icons.email_outlined))),
+            if(_error!=null)Padding(padding:const EdgeInsets.only(top:10),
+              child:Text(_error!,style:const TextStyle(color:Color(0xFFB12440)))),
+            const SizedBox(height:16),
+            FilledButton.icon(key:const ValueKey('developer-forgot-send'),
+              onPressed:_busy?null:_resetPassword,
+              icon:const Icon(Icons.send_outlined),label:Text(_busy?'Sending…':'Send Link')),
+            const SizedBox(height:8),
+            TextButton(onPressed:_busy?null:()=>setState((){_forgot=false;_error=null;}),child:const Text('Back to Login')),
+          ],
+        ) : Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -274,7 +299,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
                   ],
                 ),
                 TextButton(
-                  onPressed: _busy ? null : _resetPassword,
+                  onPressed: _busy ? null : () => setState(() { _forgot = true; _error = null; _information = null; }),
                   child: const Text('Forgot password?'),
                 ),
               ],
