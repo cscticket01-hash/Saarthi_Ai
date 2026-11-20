@@ -80,7 +80,7 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
     reject(400,'Password must contain 12–128 characters');
    await db.runTransaction(async tx=>{
     const row=await tx.get(ref),value=row.exists?row.data():null;
-    if(!value||!value.verifiedAt||value.consumedAt||value.expiresAt<=t||t-value.verifiedAt>180000)
+    if(!value||!value.verifiedAt||value.consumedAt||value.expiresAt<=t)
      reject(403,'Verify a fresh email OTP before changing password');
     tx.set(ref,{consumedAt:t,hash:''},{merge:true});
    });
