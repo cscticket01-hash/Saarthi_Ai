@@ -277,7 +277,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
     const SizedBox(height:12),
     Text(windowsThemePreset(draftPreset)?.name??'Choose a preset above',maxLines:2,style:const TextStyle(fontSize:15)),
     const SizedBox(height:12),
-    OutlinedButton(onPressed:busy||!loaded?null:()=>change(saved,presetId:savedPreset),child:const Text('Reset')),
+    OutlinedButton(onPressed:busy||!loaded?null:()=>change(saved,presetId:savedPreset,clearPreset:savedPreset==null),child:const Text('Reset')),
     const SizedBox(height:8),
     FilledButton.icon(key:const ValueKey('theme-save'),onPressed:busy||!loaded||!dirty||draftPreset==null?null:save,
       icon:const Icon(Icons.save_outlined,size:17),label:const Text('Save Theme')),
