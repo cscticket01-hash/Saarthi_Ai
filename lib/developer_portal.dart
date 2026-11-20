@@ -17,6 +17,7 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import 'platform/developer_service.dart';
 
@@ -173,7 +174,22 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
       _information = null;
     });
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      const stagingRecovery = String.fromEnvironment('SAARTHI_STAGING_DEVELOPER_RECOVERY_URL');
+      if (stagingRecovery.isEmpty) {
+        await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      } else {
+        final endpoint = Uri.parse(stagingRecovery);
+        if (endpoint.scheme != 'https' || endpoint.path != '/developer-recovery') {
+          throw StateError('Invalid staging developer recovery URL');
+        }
+        final response = await http.post(endpoint,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'action': 'developer/recovery/request', 'email': email}),
+        ).timeout(const Duration(seconds: 20));
+        if (response.statusCode != 200 || jsonDecode(response.body)['success'] != true) {
+          throw StateError('Password recovery is unavailable');
+        }
+      }
       if (mounted) {
         setState(() {
           _forgot = false;
