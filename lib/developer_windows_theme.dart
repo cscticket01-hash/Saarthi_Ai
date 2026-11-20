@@ -271,188 +271,19 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
       ],
     ),
   );
-  Widget editor() => panel(
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Custom colour',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (c, s) => GestureDetector(
-              onPanUpdate: busy || !loaded
-                  ? null
-                  : (d) => pick(d.localPosition, s.maxWidth, s.maxHeight),
-              onTapDown: busy || !loaded
-                  ? null
-                  : (d) => pick(d.localPosition, s.maxWidth, s.maxHeight),
-              child: CustomPaint(
-                painter: _ColourPad(hsv),
-                child: const SizedBox.expand(),
-              ),
-            ),
-          ),
-        ),
-        SizedBox(
-          height: 34,
-          child: Row(
-            children: [
-              const Text('Hue'),
-              Expanded(
-                child: Slider(
-                  min: 0,
-                  max: 360,
-                  value: hsv.hue,
-                  onChanged: busy || !loaded
-                      ? null
-                      : (v) {
-                          final next = hsv.withHue(v);
-                          change(next.toColor(), selection: next);
-                        },
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(
-          height: 40,
-          child: TextField(
-            key: const ValueKey('theme-hex'),
-            controller: hex,
-            enabled: !busy && loaded,
-            decoration: const InputDecoration(
-              labelText: 'HEX',
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 10,
-              ),
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (v) {
-              if (!RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(v)) {
-                setState(() => inputError = 'Enter a six-digit HEX colour.');
-                return;
-              }
-              final c = Color(
-                0xFF000000 | int.parse(v.replaceAll('#', ''), radix: 16),
-              );
-              final text = hex.text;
-              change(c);
-              hex.text = text;
-              hex.selection = TextSelection.collapsed(offset: text.length);
-            },
-          ),
-        ),
-        const SizedBox(height: 6),
-        for (var i = 0; i < 3; i++)
-          SizedBox(
-            height: 38,
-            child: Row(
-              children: [
-                SizedBox(width: 16, child: Text(['R', 'G', 'B'][i])),
-                Expanded(
-                  child: Slider(
-                    min: 0,
-                    max: 255,
-                    divisions: 255,
-                    value: channels(draft)[i].toDouble(),
-                    onChanged: busy || !loaded
-                        ? null
-                        : (v) {
-                            final ch = channels(draft);
-                            ch[i] = v.round();
-                            change(Color.fromARGB(255, ch[0], ch[1], ch[2]));
-                          },
-                  ),
-                ),
-                SizedBox(
-                  width: 54,
-                  child: TextField(
-                    key: ValueKey('theme-rgb-$i'),
-                    controller: rgb[i],
-                    enabled: !busy && loaded,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 8,
-                      ),
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (_) {
-                      final ch = rgb.map((c) => int.tryParse(c.text)).toList();
-                      if (ch.any((v) => v == null || v < 0 || v > 255)) {
-                        setState(
-                          () => inputError =
-                              'RGB must use whole numbers from 0 to 255.',
-                        );
-                        return;
-                      }
-                      final text = rgb[i].text;
-                      change(Color.fromARGB(255, ch[0]!, ch[1]!, ch[2]!));
-                      rgb[i].text = text;
-                      rgb[i].selection = TextSelection.collapsed(
-                        offset: text.length,
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (inputError != null)
-          Text(
-            inputError!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.error,
-            ),
-          ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            SizedBox(
-              width: 86,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                onPressed: busy || !loaded
-                    ? null
-                    : () => change(saved, presetId: savedPreset),
-                child: const Text('Reset', maxLines: 1),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton.icon(
-                key: const ValueKey('theme-save'),
-                onPressed: busy || !loaded || inputError != null || !dirty
-                    ? null
-                    : save,
-                icon: const Icon(Icons.save, size: 16),
-                label: const Text('Save Theme', maxLines: 1),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          dirty ? 'Unsaved selection' : 'Saved theme',
-          key: const ValueKey('theme-save-status'),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 12),
-        ),
-      ],
-    ),
-  );
+  // Preloaded presets only: custom HSV, HEX and RGB editors are not exposed.
+  Widget editor() => panel(Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+    const Text('Selected preset',style:TextStyle(fontSize:18,fontWeight:FontWeight.w700)),
+    const SizedBox(height:12),
+    Text(windowsThemePreset(draftPreset)?.name??'Choose a preset above',maxLines:2,style:const TextStyle(fontSize:15)),
+    const SizedBox(height:12),
+    OutlinedButton(onPressed:busy||!loaded?null:()=>change(saved,presetId:savedPreset),child:const Text('Reset')),
+    const SizedBox(height:8),
+    FilledButton.icon(key:const ValueKey('theme-save'),onPressed:busy||!loaded||!dirty||draftPreset==null?null:save,
+      icon:const Icon(Icons.save_outlined,size:17),label:const Text('Save Theme')),
+    const SizedBox(height:8),
+    Text(dirty?'Unsaved preset':'Saved preset',key:const ValueKey('theme-save-status'),style:const TextStyle(fontSize:11)),
+  ]));
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, bounds) {
@@ -500,7 +331,7 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                   ],
                 ),
                 const Text(
-                  'Choose a preset or RGB colour, check the preview, then Save Theme.',
+                  'Choose one preset, review the preview, then Save Theme.',
                   style: TextStyle(fontSize: 12),
                 ),
                 const SizedBox(height: 10),
@@ -577,29 +408,6 @@ class _DeveloperWindowsThemeState extends State<DeveloperWindowsTheme> {
                                 ],
                               ),
                             ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  height: 32,
-                  child: Row(
-                    children: [
-                      for (final entry in quickColours.entries)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
-                            visualDensity: VisualDensity.compact,
-                            label: Text(
-                              entry.key,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            avatar: CircleAvatar(backgroundColor: entry.value),
-                            onPressed: busy || !loaded
-                                ? null
-                                : () => change(entry.value, clearPreset: true),
                           ),
                         ),
                     ],
