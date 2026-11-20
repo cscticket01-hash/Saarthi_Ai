@@ -3,6 +3,7 @@ const {createCloudflareDelivery}=require('./cloudflare-delivery');
 const {createDeleteEverywhere}=require('./delete-everywhere');
 const {createProviderPressure,retryAfterMillis,firebaseQuota,quotaError}=require('./provider-pressure');
 const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
+const {createDeveloperPasswordOtp}=require('./developer-password-otp');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
 const {createManagedSupport}=require('./managed-support');
@@ -24,6 +25,7 @@ function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
 function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
+ const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
@@ -502,6 +504,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  }
  if(action?.startsWith('developer/managed/')){
   const admin=await developer(req),id=b.schoolId;
+  if(action?.startsWith('developer/managed/security/otp/'))return developerPasswordOtp(action,b,admin,req);
   if(action==='developer/managed/repair-knowledge/status')return {success:true,...await repairKnowledge.status()};
   if(action==='developer/managed/repair-knowledge/publish')return {success:true,...await repairKnowledge.publish(b.publication,admin.uid)};
   if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
