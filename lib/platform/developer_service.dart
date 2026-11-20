@@ -434,48 +434,24 @@ class DeveloperService {
     final batch = _db.batch();
     final existing = (await school.get()).data();
     final currentId = (existing?['licenseId'] ?? existing?['activeLicenseHash'])?.toString();
-    if (currentId != null && RegExp(r'^[a-f0-9]{64}
-      'schoolId': schoolId,
-      'expiresAt': Timestamp.fromDate(expires),
-      'issuedAt': FieldValue.serverTimestamp(),
-      'issuedBy': uid,
-      'paid': b['paid'] == true,
-      'amount': amount,
-      'revoked': false,
-      'keyHint': key.substring(key.length - 6),
-    });
-    batch.set(_db.collection('platform_license_status').doc(id), {
-      'schoolId': schoolId,
-      'expiresAt': Timestamp.fromDate(expires),
-      'revoked': false,
-    });
-    batch.set(school, {
-      'licenseId': id,
-      'licenseExpiresAt': Timestamp.fromDate(expires),
-      if (b['paid'] == true) 'purchased': true,
-    }, SetOptions(merge: true));
-    await batch.commit();
-    return {
-      'success': true,
-      'key': key,
-      'expiresAt': expires.millisecondsSinceEpoch,
-      if (setup['setup'] != null)
-        'setup': {...setup['setup'] as Map, 'licenseKey': key},
-    };
-  }
-}
-).hasMatch(currentId)) {
-      final previous = (await _db.collection('platform_licenses').doc(currentId).get()).data();
+    if(currentId != null && currentId.length==64) {
+      final oldDoc = await _db.collection('platform_licenses').doc(currentId).get();
+      final previous = oldDoc.data();
       final expiry = previous?['expiresAt'] is Timestamp
-          ? (previous!['expiresAt'] as Timestamp).millisecondsSinceEpoch
-          : (previous?['expiresAt'] as num?)?.toInt() ?? 0;
-      if (previous?['revoked'] != true && expiry > DateTime.now().millisecondsSinceEpoch) {
+        ? (previous!['expiresAt'] as Timestamp).millisecondsSinceEpoch
+        : (previous?['expiresAt'] as num?)?.toInt() ?? 0;
+      if(previous?['revoked'] != true && expiry > DateTime.now().millisecondsSinceEpoch)
         throw StateError('Active licence must be extended using the same key.');
+      if(previous != null && previous['schoolId'] == schoolId) {
+        batch.set(_db.collection('platform_licenses').doc(currentId), {'revoked':true},SetOptions(merge:true));
+        batch.set(_db.collection('platform_license_status').doc(currentId), {'revoked':true},SetOptions(merge:true));
       }
-      batch.set(_db.collection('platform_licenses').doc(currentId), {'revoked': true}, SetOptions(merge:true));
-      batch.set(_db.collection('platform_license_status').doc(currentId), {'revoked': true}, SetOptions(merge:true));
     }
-    batch.set(_db.collection('platform_licence_receipts').doc(id),{'type':'issue','schoolId':schoolId,'licenseId':id,'days':days,'paid':b['paid']==true,'amount':amount,'at':FieldValue.serverTimestamp(),'expiresAt':Timestamp.fromDate(expires),'actor':uid});
+    batch.set(_db.collection('platform_licence_receipts').doc(id), {
+      'type':'issue','schoolId':schoolId,'licenseId':id,'days':days,
+      'paid':b['paid']==true,'amount':amount,'at':FieldValue.serverTimestamp(),
+      'expiresAt':Timestamp.fromDate(expires),'actor':uid,
+    });
     batch.set(_db.collection('platform_licenses').doc(id), {
       'schoolId': schoolId,
       'expiresAt': Timestamp.fromDate(expires),
