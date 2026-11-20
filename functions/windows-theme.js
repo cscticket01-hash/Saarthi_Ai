@@ -1,7 +1,16 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
 const DEFAULT_THEME=Object.freeze({schemaVersion:1,red:0,green:140,blue:120,revision:'default'});
-const PRESET_IDS=new Set(["neon-teal", "electric-blue", "mint-light", "sunset-ember", "aurora-violet", "emerald-gold", "midnight-glass"]);
+const PRESET_COLOURS=Object.freeze({
+ 'midnight-glass':[141,219,235],
+ 'neon-teal':[0,217,192],
+ 'electric-blue':[22,139,255],
+ 'mint-light':[0,140,120],
+ 'sunset-ember':[255,112,91],
+ 'aurora-violet':[139,92,255],
+ 'emerald-gold':[216,187,101]
+});
+const PRESET_IDS=new Set(Object.keys(PRESET_COLOURS));
 function theme(value){
  if(!value||value.schemaVersion!==1||!['red','green','blue'].every(k=>Number.isInteger(value[k])&&value[k]>=0&&value[k]<=255))throw Object.assign(Error('Use whole RGB values from 0 to 255'),{status:400,publicMessage:true});
  if(value.presetId!=null&&!PRESET_IDS.has(value.presetId))throw Object.assign(Error('Unknown Windows theme preset'),{status:400,publicMessage:true});
@@ -59,7 +68,9 @@ function createWindowsTheme({db,now=Date.now}){
     return latest;
    });
   },
-  async save(input,uid){const next=theme(input);if(typeof input.expectedRevision!=='string')throw Object.assign(Error('Reload theme before saving'),{status:400,publicMessage:true});
+  async save(input,uid){const next=theme(input);const preset=PRESET_COLOURS[input?.presetId];
+   if(!preset||[input.red,input.green,input.blue].some((v,i)=>v!==preset[i]))throw Object.assign(Error('Select one of the built-in theme presets'),{status:400,publicMessage:true});
+   if(typeof input.expectedRevision!=='string')throw Object.assign(Error('Reload theme before saving'),{status:400,publicMessage:true});
    return db.runTransaction(async tx=>{const r=ref(),old=await tx.get(r),revision=old.exists?theme(old.data()).revision:'default';
     if(revision!==input.expectedRevision)throw Object.assign(Error('Theme changed. Reload before saving.'),{status:409,publicMessage:true});
     const saved={...next,activationBase:old.exists?theme(old.data().activationBase||old.data()):{...DEFAULT_THEME},revision:randomUUID(),updatedAt:now(),updatedBy:uid};tx.set(r,saved);return theme(saved);

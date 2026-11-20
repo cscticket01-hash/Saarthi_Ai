@@ -15,6 +15,8 @@ function createServer(options = {}) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    if (options.developerRecovery && ['/developer-recovery','/developer-recovery.js'].includes(req.url))
+      return options.developerRecovery(req,res);
     if (await downloads(req,res)) return;
     if (req.url === '/school-cloud' || req.url === '/school-cloud/healthz') {
       if (!options.schoolCloud) return send(503, {success:false,message:'Central school staging is not configured'});
@@ -50,7 +52,8 @@ if (require.main === module) {
     schoolCloud = require('../staging-school-cloud/server.cjs').fromEnvironment(process.env);
   }
   const server = createServer({ clientId: process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID,
-    clientSecret: process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET, schoolCloud });
+    clientSecret: process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET, schoolCloud,
+    developerRecovery: require('./developer-recovery-handler.cjs').fromEnvironment(process.env) });
   server.requestTimeout = 30000;
   server.headersTimeout = 10000;
   server.listen(Number(process.env.PORT || 8080), '0.0.0.0');
