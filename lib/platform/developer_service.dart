@@ -240,6 +240,7 @@ class DeveloperService {
         _list('platform_schools'),
         _list('platform_school_trials'),
         _list('platform_licenses'),
+        _list('platform_licence_receipts', limit: 500),
         _db
             .collection('platform_complaints')
             .orderBy('createdAt', descending: true)
@@ -270,7 +271,8 @@ class DeveloperService {
       _cached = {
         'schools': byId.values.toList(),
         'licenses': lists[2],
-        'complaints': lists[3],
+        'receipts': lists[3],
+        'complaints': lists[4],
       };
       _loadedAt = DateTime.now();
     }
@@ -395,8 +397,10 @@ class DeveloperService {
         return <String,dynamic>{'success':true,'schoolId':schoolId,'licenseId':licenseId,
           'sameKey':true,'unchanged':true,'renewed':true,'expiresAt':prior};
       final now=DateTime.now().toUtc().millisecondsSinceEpoch;
-      final expiry=max(now,prior)+days*86400000;
+      if(prior<=now)throw StateError('Expired licence requires a new school-bound key.');
+      final expiry=prior+days*86400000;
       final validUntil=Timestamp.fromMillisecondsSinceEpoch(expiry);
+      tx.set(_db.collection('platform_licence_receipts').doc(requestId),{'type':'renew','schoolId':schoolId,'licenseId':licenseId,'days':days,'amount':amount,'paid':b['paid']==true,'at':Timestamp.fromMillisecondsSinceEpoch(now),'expiresAt':validUntil,'actor':uid});
       tx.set(licence,{'expiresAt':validUntil,'renewedAt':Timestamp.fromMillisecondsSinceEpoch(now),
         'renewedBy':uid,'paid':b['paid']==true,'amount':amount,'lastRenewalId':requestId},SetOptions(merge:true));
       tx.set(status,{'expiresAt':validUntil,'revoked':false},SetOptions(merge:true));
@@ -428,6 +432,50 @@ class DeveloperService {
     final id = sha256.convert(utf8.encode(key)).toString();
     final expires = DateTime.now().toUtc().add(Duration(days: days));
     final batch = _db.batch();
+    final existing = (await school.get()).data();
+    final currentId = (existing?['licenseId'] ?? existing?['activeLicenseHash'])?.toString();
+    if (currentId != null && RegExp(r'^[a-f0-9]{64}
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'issuedAt': FieldValue.serverTimestamp(),
+      'issuedBy': uid,
+      'paid': b['paid'] == true,
+      'amount': amount,
+      'revoked': false,
+      'keyHint': key.substring(key.length - 6),
+    });
+    batch.set(_db.collection('platform_license_status').doc(id), {
+      'schoolId': schoolId,
+      'expiresAt': Timestamp.fromDate(expires),
+      'revoked': false,
+    });
+    batch.set(school, {
+      'licenseId': id,
+      'licenseExpiresAt': Timestamp.fromDate(expires),
+      if (b['paid'] == true) 'purchased': true,
+    }, SetOptions(merge: true));
+    await batch.commit();
+    return {
+      'success': true,
+      'key': key,
+      'expiresAt': expires.millisecondsSinceEpoch,
+      if (setup['setup'] != null)
+        'setup': {...setup['setup'] as Map, 'licenseKey': key},
+    };
+  }
+}
+).hasMatch(currentId)) {
+      final previous = (await _db.collection('platform_licenses').doc(currentId).get()).data();
+      final expiry = previous?['expiresAt'] is Timestamp
+          ? (previous!['expiresAt'] as Timestamp).millisecondsSinceEpoch
+          : (previous?['expiresAt'] as num?)?.toInt() ?? 0;
+      if (previous?['revoked'] != true && expiry > DateTime.now().millisecondsSinceEpoch) {
+        throw StateError('Active licence must be extended using the same key.');
+      }
+      batch.set(_db.collection('platform_licenses').doc(currentId), {'revoked': true}, SetOptions(merge:true));
+      batch.set(_db.collection('platform_license_status').doc(currentId), {'revoked': true}, SetOptions(merge:true));
+    }
+    batch.set(_db.collection('platform_licence_receipts').doc(id),{'type':'issue','schoolId':schoolId,'licenseId':id,'days':days,'paid':b['paid']==true,'amount':amount,'at':FieldValue.serverTimestamp(),'expiresAt':Timestamp.fromDate(expires),'actor':uid});
     batch.set(_db.collection('platform_licenses').doc(id), {
       'schoolId': schoolId,
       'expiresAt': Timestamp.fromDate(expires),
