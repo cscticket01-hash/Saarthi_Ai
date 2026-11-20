@@ -25,7 +25,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
   bool busy=false,sent=false,verified=false;
   int expiresAt=0,resendAfter=0;
   String? message;
-  int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,600);
+  int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,600).toInt();
   String get countdown => '${(remaining~/60).toString().padLeft(2,'0')}:${(remaining%60).toString().padLeft(2,'0')}';
   bool get unlocked => verified && remaining>0;
   @override
