@@ -803,123 +803,86 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     note.dispose();
   }
 
-  Widget _overview() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      LayoutBuilder(
-        builder: (ctx, c) {
-          final width = c.maxWidth > 1000
-              ? (c.maxWidth - 48) / 4
-              : (c.maxWidth - 16) / 2;
-          final stats = [
-            ('Active schools', 'activeSchools', Icons.school_outlined, _mint),
-            (
-              'Inactive schools',
-              'inactiveSchools',
-              Icons.pause_circle_outline,
-              Colors.orangeAccent,
-            ),
-            (
-              'Student app users',
-              'studentAppUsers',
-              Icons.people_outline,
-              Colors.lightBlueAccent,
-            ),
-            (
-              'Students online now',
-              'studentsOnline',
-              Icons.sensors,
-              Colors.purpleAccent,
-            ),
-            ('Total schools', 'totalSchools', Icons.apartment, Colors.white70),
-            (
-              'Purchased licences',
-              'purchasedSchools',
-              Icons.verified_outlined,
-              _mint,
-            ),
-            (
-              'Expiry in 14 days',
-              'expiringSchools',
-              Icons.event_busy,
-              Colors.orangeAccent,
-            ),
-          ];
-          return Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: stats
-                .map(
-                  (v) => SizedBox(
-                    width: width,
-                    child: _panel(
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(v.$3, color: v.$4, size: 24),
-                          const SizedBox(height: 22),
-                          Text(
-                            '${_stats[v.$2] ?? '—'}',
-                            style: const TextStyle(
-                              fontSize: 33,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            v.$1,
-                            style: const TextStyle(
-                              color: const Color(0xFF647899),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
-          );
-        },
-      ),
-      const SizedBox(height: 26),
-      _panel(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Licences approaching expiry',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 16),
-            if (_schools.where(_expiring).isEmpty)
-              const Text(
-                'No licences expire in the next 14 days.',
-                style: TextStyle(color: const Color(0xFF647899)),
-              ),
-            ..._schools
-                .where(_expiring)
-                .map(
-                  (s) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(s['name']?.toString() ?? s['id'].toString()),
-                    subtitle: Text(_date(s['licenseExpiresAt'])),
-                    trailing: TextButton(
-                      onPressed: () => _issue(s['id'].toString()),
-                      child: const Text('Renew'),
-                    ),
-                  ),
-                ),
+
+  Widget _overview(){
+    final active=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now).length;
+    final expiring=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now
+      && (l['expiresAt'] as num? ?? 0)<=_now+30*86400000).length;
+    final pending=_schools.where((s)=>s['blocked']==true||(s['licenseExpiresAt'] as num? ?? 0)>0
+      && (s['licenseExpiresAt'] as num? ?? 0)<=_now).length+expiring;
+    Widget counter(String label,int number,IconData icon)=>_panel(
+      Row(children:[
+        Container(padding:const EdgeInsets.all(9),decoration:BoxDecoration(color:const Color(0xFFE8F2FF),borderRadius:BorderRadius.circular(12)),child:Icon(icon,size:20,color:_mint)),
+        const SizedBox(width:10),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text(label,style:const TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+          Text('$number',style:const TextStyle(fontSize:22,fontWeight:FontWeight.w800)),
+        ])),
+      ]),
+    );
+    return Column(children:[
+      LayoutBuilder(builder:(context,size){
+        final cols=size.maxWidth>=920?4:size.maxWidth>=480?2:1;
+        final w=(size.maxWidth-(cols-1)*10)/cols;
+        return Wrap(spacing:10,runSpacing:10,children:[
+          SizedBox(width:w,child:counter('Total schools',_schools.length,Icons.apartment_outlined)),
+          SizedBox(width:w,child:counter('Active licences',active,Icons.verified_outlined)),
+          SizedBox(width:w,child:counter('Expiring in 30 days',expiring,Icons.schedule_outlined)),
+          SizedBox(width:w,child:counter('Pending actions',pending,Icons.notifications_outlined)),
+        ]);
+      }),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        Widget schools()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Row(children:[
+            const Expanded(child:Text('School health overview',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
+            TextButton(onPressed:()=>setState(()=>_page=1),child:const Text('View all schools')),
+          ]),
+          if(_schools.isEmpty)const Text('No schools registered.'),
+          for(final s in _schools.take(6))...[
+            const Divider(height:1,color:Color(0xFFE5ECF8)),
+            ListTile(dense:true,contentPadding:EdgeInsets.zero,
+              leading:const Icon(Icons.school_outlined,color:_mint,size:19),
+              title:Text(s['name']?.toString()??s['id']?.toString()??'School',maxLines:1,overflow:TextOverflow.ellipsis),
+              subtitle:Text(s['loginEmail']?.toString()??s['id']?.toString()??''),
+              trailing:_chip(s['blocked']==true?'Blocked':_active(s)?'Online':'Offline',
+                s['blocked']==true?const Color(0xFFBD3549):_active(s)?const Color(0xFF058D68):const Color(0xFFA46B12)),
+            )
+          ]
+        ]));
+        Widget backend()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Backend automation',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800)),
+          const SizedBox(height:5),
+          const Text('Sync repairs and learning run outside the developer website.',style:TextStyle(fontSize:11,color:Color(0xFF637DA4))),
+          for(final row in [
+            ('Policy updates','Signed rule distribution',Icons.shield_outlined),
+            ('Error learning','Anonymized, bounded observations',Icons.insights_outlined),
+            ('Auto repair','Verified allowlisted handlers',Icons.build_circle_outlined),
+            ('Device delivery','Updates after reconnect',Icons.devices_outlined),
+          ])...[
+            const Divider(height:13,color:Color(0xFFE5ECF8)),
+            Row(children:[
+              Icon(row.$3,color:_mint,size:18),
+              const SizedBox(width:9),
+              Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                Text(row.$1,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700)),
+                Text(row.$2,style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+              ])),
+              _chip('Server-side',const Color(0xFF637DA4)),
+            ])
           ],
-        ),
-      ),
-      const SizedBox(height: 16),
-      const Text(
-        'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
-        style: TextStyle(color: const Color(0xFF8195B2), fontSize: 11),
-      ),
-    ],
-  );
+          const SizedBox(height:9),
+          const Text('Runtime activation is not confirmed by this page.',style:TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+          const SizedBox(height:8),
+          OutlinedButton.icon(onPressed:()=>setState(()=>_page=3),icon:const Icon(Icons.bar_chart_outlined,size:17),label:const Text('School earnings')),
+        ]));
+        return size.maxWidth>=800?
+          Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Expanded(flex:6,child:schools()),const SizedBox(width:10),Expanded(flex:4,child:backend()),
+          ]):Column(children:[schools(),const SizedBox(height:10),backend()]);
+      })
+    ]);
+  }
   Future<bool> _confirm(String title, String message, String action) async =>
       await showDialog<bool>(
         context: context,
@@ -1163,7 +1126,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     }
     final ranking=bySchool.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
     final largest=ranking.isEmpty?1.0:max(1.0,ranking.first.value.toDouble());
-    final chartDays=_earningsDays==0?30:_earningsDays.clamp(7,90);
+    final chartDays=_earningsDays==0?30:_earningsDays.clamp(7,90).toInt();
     final startDay=DateTime(now.year,now.month,now.day).subtract(Duration(days:chartDays-1));
     final buckets=List<double>.filled(chartDays,0);
     for(final r in paid){
