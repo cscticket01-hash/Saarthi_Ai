@@ -26,7 +26,6 @@ List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
     List<Map<String,dynamic>> schools,
     List<Map<String,dynamic>> licenses,
     int nowMillis) {
-  const renewalWindow=Duration(days:30);
   return schools.where((school){
     final id=school['id'];
     if(school['deletedAt']!=null||school['blocked']==true||school['loginDisabled']==true) return false;
@@ -36,13 +35,13 @@ List<Map<String,dynamic>> eligibleDeveloperLicenseSchools(
     return !licenses.any((l)=>
       l['schoolId']==id&&(current==null||l['id']==current)&&l['revoked']!=true&&
       l['expiresAt'] is num &&
-      (l['expiresAt'] as num)>nowMillis+renewalWindow.inMilliseconds);
+      (l['expiresAt'] as num)>nowMillis);
   }).toList();
 }
 
-const _ink = Color(0xFF101B24),
-    _surface = Color(0xFF16242E),
-    _mint = Color(0xFF63E6BE);
+const _ink = Color(0xFFEAF3FF),
+    _surface = Color(0xFFF9FBFF),
+    _mint = Color(0xFF1268F3);
 
 class DeveloperPortal extends StatelessWidget {
   const DeveloperPortal({super.key});
@@ -353,6 +352,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       .toList();
   final _service = DeveloperService();
   int _page = 0;
+  int _earningsDays = 30;
+  String _earningsSchool = 'all';
   String _search = '', _filter = 'all';
   bool _loading = true;
   String? _error;
@@ -363,6 +364,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   bool _refreshing = false;
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
+  List<Map<String, dynamic>> get _receipts => _maps(_data['receipts']);
   List<Map<String, dynamic>> get _complaints => _maps(_data['complaints']);
   List<Map<String, dynamic>> _maps(dynamic raw) => raw is List
       ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
@@ -370,9 +372,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   Map<String, dynamic> get _stats => Map<String, dynamic>.from(
     monitorSummary(_schools, DateTime.now().millisecondsSinceEpoch),
   );
-  int get _now =>
-      (_data['serverTime'] as num?)?.toInt() ??
-      DateTime.now().millisecondsSinceEpoch;
+  int get _now => DateTime.now().millisecondsSinceEpoch;
   @override
   void initState() {
     super.initState();
@@ -483,17 +483,22 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   );
   Widget _panel(Widget child) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.all(22),
+    padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       color: _surface,
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: Colors.white.withOpacity(.06)),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.white),
+      boxShadow: const [BoxShadow(color: Color(0x162A72D9), blurRadius: 22, offset: Offset(0, 9))],
     ),
     child: child,
   );
-  Future<void> _issue([String? selected]) async {
+  Future<void> _issue([String? selected, int initialDays=30]) async {
     final eligible = eligibleDeveloperLicenseSchools(
       _schools, _licenses, DateTime.now().millisecondsSinceEpoch);
+    if(selected!=null && !eligible.any((s)=>s['id']==selected)) {
+      final exact=_schools.where((s)=>s['id']==selected&&s['blocked']!=true&&s['deletedAt']==null).firstOrNull;
+      if(exact!=null)eligible.insert(0,exact);
+    }
     if (eligible.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content:Text('All schools hold active licences. They return for renewal in their final 30 days.')),
@@ -510,10 +515,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       final matching=_schools.where((s)=>s['id']==schoolId).firstOrNull;
       if(matching==null)return null;
       return _licenses.where((l)=>l['schoolId']==schoolId&&l['revoked']!=true&&
+        (l['expiresAt'] as num? ?? 0)>_now&&
         l['id']==(matching['licenseId']??matching['activeLicenseHash'])).firstOrNull;
     }
-    final days = TextEditingController(text: '365'),
-        amount = TextEditingController(text: '0');
+    int packageDays=initialDays;
+    final amount = TextEditingController(text: '0');
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
@@ -542,12 +548,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   onChanged: busy ? null : (v) => setDialog(() => school = v!),
                 ),
                 const SizedBox(height: 16),
-                TextField(
-                  controller: days,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Validity in days',
-                  ),
+                DropdownButtonFormField<int>(
+                  initialValue: packageDays,
+                  decoration: const InputDecoration(labelText: 'Licence package'),
+                  items: const [
+                    DropdownMenuItem(value:30,child:Text('30 days')),
+                    DropdownMenuItem(value:90,child:Text('90 days')),
+                    DropdownMenuItem(value:365,child:Text('12 months')),
+                  ],
+                  onChanged:busy?null:(v)=>setDialog(()=>packageDays=v??30),
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -567,7 +576,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   currentLicence(school)!=null
                     ? 'Existing school-bound key will remain valid; renewal extends expiry without changing the school, key, Drive or stored data.'
                     : 'New key is shown only once. Share it with this school and activate it in Windows.',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  style: const TextStyle(color: const Color(0xFF647899), fontSize: 12),
                 ),
                 if (error != null)
                   Text(error!, style: const TextStyle(color: Colors.redAccent)),
@@ -591,7 +600,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         final existing=currentLicence(school);
                         final r = await _call(existing==null?'license/issue':'license/renew', {
                           'schoolId': school,
-                          'days': int.tryParse(days.text),
+                          'days': packageDays,
                           'paid': paid,
                           'amount': double.tryParse(amount.text) ?? 0,
                           if(existing!=null)...{'licenseId':existing['id'],'renewalId':renewalId},
@@ -610,7 +619,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ),
       ),
     );
-    days.dispose();
     amount.dispose();
     if (result == null || !mounted) return;
     if(result['sameKey']==true){
@@ -861,7 +869,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                           Text(
                             v.$1,
                             style: const TextStyle(
-                              color: Colors.white54,
+                              color: const Color(0xFF647899),
                               fontSize: 12,
                             ),
                           ),
@@ -887,7 +895,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
             if (_schools.where(_expiring).isEmpty)
               const Text(
                 'No licences expire in the next 14 days.',
-                style: TextStyle(color: Colors.white54),
+                style: TextStyle(color: const Color(0xFF647899)),
               ),
             ..._schools
                 .where(_expiring)
@@ -908,7 +916,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       const SizedBox(height: 16),
       const Text(
         'Managed school online status uses a 90-second Windows heartbeat timeout. Student totals and data usage show the last school Drive summary; unavailable totals are not estimated.',
-        style: TextStyle(color: Colors.white38, fontSize: 11),
+        style: TextStyle(color: const Color(0xFF8195B2), fontSize: 11),
       ),
     ],
   );
@@ -1152,7 +1160,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         if (_visibleComplaints.isEmpty)
           const Text(
             'No complaints received yet.',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: const Color(0xFF647899)),
           ),
         ..._visibleComplaints.map(
           (c) => ListTile(
@@ -1187,31 +1195,37 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       'Overview',
       'Schools',
       'Licences',
+      'School Earnings',
+      'App Themes',
+      'Admin Profile',
       'Support',
       'Cloud Services',
-      'Admin Profile',
-      'Windows Theme',
     ];
-    return DeveloperIdleSession(
+    return Theme(
+      data: ThemeData(useMaterial3:true,brightness:Brightness.light,
+        colorScheme:ColorScheme.fromSeed(seedColor:_mint,brightness:Brightness.light),
+        scaffoldBackgroundColor:_ink,
+        textTheme:ThemeData.light().textTheme.apply(bodyColor:const Color(0xFF18335C),displayColor:const Color(0xFF18335C))),
+      child:DeveloperIdleSession(
       child: Scaffold(
         backgroundColor: _ink,
         body: LayoutBuilder(
           builder: (ctx, c) {
             final narrow = c.maxWidth < 850;
             final nav = Container(
-              width: 230,
-              color: const Color(0xFF0C161E),
-              padding: const EdgeInsets.all(18),
+              width: 218,
+              color: const Color(0xFFF8FBFF),
+              padding: const EdgeInsets.all(14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 18),
                   const Row(
                     children: [
-                      Icon(Icons.hub_rounded, color: _mint),
+                      Icon(Icons.school_rounded, color: _mint),
                       SizedBox(width: 10),
                       Text(
-                        'Vidya Saarthi',
+                        'Saarthi AI',
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -1224,7 +1238,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                     child: Text(
                       'DEVELOPER PLATFORM',
                       style: TextStyle(
-                        color: Colors.white38,
+                        color: const Color(0xFF8195B2),
                         fontSize: 9,
                         letterSpacing: 1.8,
                       ),
@@ -1246,10 +1260,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             Icons.grid_view_rounded,
                             Icons.school_outlined,
                             Icons.vpn_key_outlined,
-                            Icons.support_agent_rounded,
-                            Icons.cloud_outlined,
-                            Icons.manage_accounts_outlined,
-                            Icons.palette_outlined,
+                             Icons.bar_chart_rounded,
+                             Icons.palette_outlined,
+                             Icons.manage_accounts_outlined,
+                             Icons.support_agent_rounded,
+                             Icons.cloud_outlined,
                           ][i],
                         ),
                         title: Text(titles[i]),
@@ -1260,7 +1275,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   const Spacer(),
                   Text(
                     FirebaseAuth.instance.currentUser?.email ?? '',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
+                    style: const TextStyle(color: const Color(0xFF8195B2), fontSize: 11),
                   ),
                   TextButton.icon(
                     onPressed: () => FirebaseAuth.instance.signOut(),
@@ -1271,7 +1286,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               ),
             );
             final main = Expanded(
-              child: _page == 6
+              child: _page == 4
                   ? Padding(
                       padding: EdgeInsets.all(narrow ? 12 : 20),
                       child: Column(
@@ -1281,7 +1296,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                               height: 42,
                               child: Row(
                                 children: [
-                                  const Expanded(child: Text('Vidya Saarthi')),
+                                  const Expanded(child: Text('Saarthi AI')),
                                   PopupMenuButton<int>(
                                     tooltip: 'Navigation',
                                     initialValue: _page,
@@ -1303,7 +1318,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                       ),
                     )
                   : ListView(
-                padding: EdgeInsets.all(narrow ? 20 : 36),
+                padding: EdgeInsets.all(narrow ? 14 : 20),
                 children: [
                   if (narrow)
                     Wrap(
@@ -1327,7 +1342,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             Text(
                               titles[_page],
                               style: const TextStyle(
-                                fontSize: 30,
+                                fontSize: 26,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -.5,
                               ),
@@ -1336,7 +1351,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                             const Text(
                               'Your schools. Their activity. One control centre.',
                               style: TextStyle(
-                                color: Colors.white54,
+                                color: const Color(0xFF647899),
                                 fontSize: 13,
                               ),
                             ),
@@ -1370,10 +1385,12 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         : _page == 2
                         ? _licenceTable()
                         : _page == 3
+                        ? _earnings()
+                        : _page == 5
+                        ? const DeveloperAccountProfile()
+                        : _page == 6
                         ? _support()
-                        : _page == 4
-                        ? const FirebaseMonitorPanel()
-                        : _page == 5 ? const DeveloperAccountProfile() : const DeveloperWindowsTheme(),
+                        : const FirebaseMonitorPanel(),
                   ],
                   if (narrow)
                     TextButton(
@@ -1384,7 +1401,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               ),
             );
             return Row(children: [
-              if (!narrow) _page==6 ? SizedBox(width:230,child:FittedBox(
+              if (!narrow) _page==4 ? SizedBox(width:230,child:FittedBox(
                 fit:BoxFit.contain,alignment:Alignment.topCenter,
                 child:SizedBox(width:230,height:c.maxHeight<700?700:c.maxHeight,child:nav),
               )) : nav,
@@ -1393,6 +1410,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           },
         ),
       ),
-    );
+    ));
   }
 }
