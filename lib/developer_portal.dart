@@ -1159,7 +1159,12 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     }
     final ranking=bySchool.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
     final largest=ranking.isEmpty?1.0:max(1.0,ranking.first.value.toDouble());
-    final chartDays=_earningsDays==0?30:_earningsDays.clamp(7,90).toInt();
+    final dated=paid.map((r)=>(r['at'] as num?)?.toInt()??0).where((d)=>d>0).toList();
+    final earliest=dated.isEmpty?now.millisecondsSinceEpoch:dated.reduce(min);
+    final date=DateTime.fromMillisecondsSinceEpoch(earliest);
+    final firstDay=DateTime(date.year,date.month,date.day);
+    final lastDay=DateTime(now.year,now.month,now.day);
+    final chartDays=_earningsDays==0?max(1,lastDay.difference(firstDay).inDays+1):_earningsDays;
     final startDay=DateTime(now.year,now.month,now.day).subtract(Duration(days:chartDays-1));
     final buckets=List<double>.filled(chartDays,0);
     for(final r in paid){

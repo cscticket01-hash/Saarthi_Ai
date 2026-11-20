@@ -24,8 +24,10 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
     if(busy)return;
     setState(()=>busy=true);
     try{
+      final started=DateTime.now();
       final d=await ManagedDeveloperService.call('monitor',{});
-      if(mounted)setState((){data=d;error=null;});
+      final elapsed=DateTime.now().difference(started).inMilliseconds;
+      if(mounted)setState((){data={...d,'responseMs':elapsed};error=null;});
     }catch(e){if(mounted)setState(()=>error='Cloud monitor unavailable: $e');}
     finally{if(mounted)setState(()=>busy=false);}
   }
@@ -117,7 +119,7 @@ class _FirebaseMonitorPanelState extends State<FirebaseMonitorPanel> {
             firebaseAvailable?const Color(0xFF058D68):const Color(0xFFAD751C))),
           SizedBox(width:w,child:service('Render',Icons.dns_outlined,
             measured?'Broker responded':'Status unavailable',
-            measured?'Server responded in ${data?['responseMs']} ms; not a full uptime guarantee':'Backend monitoring endpoint not verified',
+            measured?'Authenticated request completed in ${data?['responseMs']} ms; not a full uptime guarantee':'Backend monitoring endpoint not verified',
             measured?const Color(0xFF058D68):const Color(0xFFAD751C))),
         ]);
       }),
