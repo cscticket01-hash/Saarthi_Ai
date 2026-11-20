@@ -1133,6 +1133,142 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       ],
     ),
   );
+
+  // Receipts are immutable licence purchase records, not school fee collections.
+  // Older installations have no receipt ledger; do not invent historic revenue.
+  String _money(num amount) => '₹${amount.toStringAsFixed(0)}';
+
+  Widget _earnings() {
+    final now=DateTime.now();
+    final cutoff=_earningsDays==0?0:now.subtract(Duration(days:_earningsDays)).millisecondsSinceEpoch;
+    final schoolIds=_schools.map((s)=>s['id']?.toString()??'').where((s)=>s.isNotEmpty).toSet();
+    final schoolNames={for(final s in _schools) s['id']?.toString()??'':s['name']?.toString()??s['id']?.toString()??''};
+    final visible=_receipts.where((r){
+      final at=(r['at'] as num?)?.toInt()??0;
+      return at>0 && at>=cutoff && (_earningsSchool=='all'||r['schoolId']==_earningsSchool);
+    }).toList()..sort((a,b)=>((b['at'] as num?)?.toInt()??0).compareTo((a['at'] as num?)?.toInt()??0));
+    final paid=visible.where((r)=>r['paid']==true).toList();
+    num total=0, pending=0;
+    for(final r in visible) {
+      final value=r['amount'] is num?(r['amount'] as num):0;
+      if(value<0)continue;
+      if(r['paid']==true)total+=value;else pending+=value;
+    }
+    final bySchool=<String,num>{};
+    for(final r in paid) {
+      final id=r['schoolId']?.toString()??'';
+      final amount=r['amount'] is num?(r['amount'] as num):0;
+      if(id.isEmpty||amount<0)continue;
+      bySchool[id]=(bySchool[id]??0)+amount;
+    }
+    final ranking=bySchool.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));
+    final largest=ranking.isEmpty?1.0:max(1.0,ranking.first.value.toDouble());
+    final chartDays=_earningsDays==0?30:_earningsDays.clamp(7,90);
+    final startDay=DateTime(now.year,now.month,now.day).subtract(Duration(days:chartDays-1));
+    final buckets=List<double>.filled(chartDays,0);
+    for(final r in paid){
+      final at=(r['at'] as num?)?.toInt()??0;
+      if(at<=0)continue;
+      final date=DateTime.fromMillisecondsSinceEpoch(at);
+      final day=DateTime(date.year,date.month,date.day);
+      final delta=day.difference(startDay).inDays;
+      if(delta>=0&&delta<chartDays) buckets[delta]+=(r['amount'] as num?)?.toDouble()??0;
+    }
+    Widget metric(String name,String value,IconData icon){
+      return _panel(Row(children:[
+        Container(padding:const EdgeInsets.all(8),decoration:BoxDecoration(color:const Color(0xFFE9F2FF),borderRadius:BorderRadius.circular(12)),child:Icon(icon,color:_mint,size:19)),
+        const SizedBox(width:10),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text(name,style:const TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+          const SizedBox(height:3),
+          Text(value,style:const TextStyle(fontSize:21,fontWeight:FontWeight.w800)),
+        ]))
+      ]));
+    }
+    return Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Text('School licence earnings • recorded receipts only',style:TextStyle(color:Color(0xFF637DA4),fontSize:12)),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        final columns=size.maxWidth>=950?4:size.maxWidth>=460?2:1;
+        final w=(size.maxWidth-(columns-1)*10)/columns;
+        return Wrap(spacing:10,runSpacing:10,children:[
+          SizedBox(width:w,child:metric('Paid receipts',_money(total),Icons.account_balance_wallet_outlined)),
+          SizedBox(width:w,child:metric('Recorded payments','${paid.length}',Icons.receipt_long_outlined)),
+          SizedBox(width:w,child:metric('Unpaid recorded',_money(pending),Icons.schedule_outlined)),
+          SizedBox(width:w,child:metric('Schools with payments','${ranking.length}',Icons.school_outlined)),
+        ]);
+      }),
+      const SizedBox(height:10),
+      _panel(Wrap(spacing:12,runSpacing:8,crossAxisAlignment:WrapCrossAlignment.center,children:[
+        const Text('Period',style:TextStyle(fontWeight:FontWeight.w600)),
+        DropdownButton<int>(value:_earningsDays,items:const[
+          DropdownMenuItem(value:7,child:Text('Last 7 days')),
+          DropdownMenuItem(value:30,child:Text('Last 30 days')),
+          DropdownMenuItem(value:90,child:Text('Last 90 days')),
+          DropdownMenuItem(value:365,child:Text('Last 12 months')),
+          DropdownMenuItem(value:0,child:Text('All loaded receipts')),
+        ],onChanged:(v)=>setState(()=>_earningsDays=v??30)),
+        const Text('School',style:TextStyle(fontWeight:FontWeight.w600)),
+        DropdownButton<String>(value:schoolIds.contains(_earningsSchool)?_earningsSchool:'all',items:[
+          const DropdownMenuItem(value:'all',child:Text('All schools')),
+          for(final s in _schools) if(s['id']!=null)
+            DropdownMenuItem(value:s['id'].toString(),child:Text(s['name']?.toString()??s['id'].toString())),
+        ],onChanged:(v)=>setState(()=>_earningsSchool=v??'all')),
+        const Text('Only paid licence receipts count as earnings.',style:TextStyle(color:Color(0xFF637DA4),fontSize:11)),
+      ])),
+      const SizedBox(height:10),
+      LayoutBuilder(builder:(context,size){
+        final wide=size.maxWidth>=850;
+        final left=_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Earnings by date',style:TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+          const SizedBox(height:5),
+          SizedBox(height:158,child:CustomPaint(painter:_EarningsLinePainter(buckets),child:const SizedBox.expand())),
+          const SizedBox(height:3),
+          Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
+            Text(_date(startDay.millisecondsSinceEpoch),style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+            Text(_date(DateTime.now().millisecondsSinceEpoch),style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
+          ])
+        ]));
+        final right=_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('School-wise earnings',style:TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+          const SizedBox(height:10),
+          if(ranking.isEmpty) const Text('No recorded paid licences in this period.',style:TextStyle(color:Color(0xFF637DA4))),
+          for(final e in ranking.take(5))...[
+            Row(children:[Expanded(child:Text(schoolNames[e.key]??e.key,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w700))),Text(_money(e.value),style:const TextStyle(fontSize:11))]),
+            const SizedBox(height:4),
+            ClipRRect(borderRadius:BorderRadius.circular(4),child:LinearProgressIndicator(value:(e.value/largest).clamp(0.0,1.0).toDouble(),minHeight:7,color:_mint,backgroundColor:const Color(0xFFE0EAF8))),
+            const SizedBox(height:9),
+          ]
+        ]));
+        return wide?Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Expanded(flex:6,child:left),const SizedBox(width:10),Expanded(flex:4,child:right),
+        ]):Column(children:[left,const SizedBox(height:10),right]);
+      }),
+      const SizedBox(height:10),
+      _panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Row(children:[
+          const Expanded(child:Text('Payment history',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
+          Text('Latest ${min(visible.length,10)} / ${visible.length} loaded',style:const TextStyle(fontSize:11,color:Color(0xFF637DA4))),
+        ]),
+        const SizedBox(height:7),
+        if(visible.isEmpty)const Text('No recorded licence transactions for this selection. Older payments are not reconstructed.'),
+        for(final r in visible.take(10))...[
+          const Divider(height:1,color:Color(0xFFE5ECF8)),
+          ListTile(dense:true,contentPadding:EdgeInsets.zero,
+            title:Text(schoolNames[r['schoolId']]??r['schoolId']?.toString()??'Unknown school',maxLines:1,overflow:TextOverflow.ellipsis),
+            subtitle:Text('${_date(r['at'])} • ${r['type']=='renew'?'Extension':'New licence'} • ${r['days']??'—'} days'),
+            trailing:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.end,children:[
+              Text(_money(r['amount'] is num?r['amount'] as num:0),style:const TextStyle(fontWeight:FontWeight.w700)),
+              Text(r['paid']==true?'Recorded paid':'Unpaid',style:TextStyle(fontSize:10,color:r['paid']==true?const Color(0xFF078363):const Color(0xFFAE7216))),
+            ]),
+          ),
+        ],
+        const SizedBox(height:5),
+        const Text('Historical receipts before this ledger was introduced may be unavailable. These amounts are manually marked as paid, not bank-verified.',style:TextStyle(color:Color(0xFF637DA4),fontSize:10)),
+      ])),
+    ]);
+  }
+
   Widget _support() => _panel(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1412,4 +1548,32 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
       ),
     ));
   }
+}
+
+class _EarningsLinePainter extends CustomPainter {
+  const _EarningsLinePainter(this.values);
+  final List<double> values;
+  @override
+  void paint(Canvas canvas,Size size){
+    final grid=Paint()..color=const Color(0xFFDCE7F7)..strokeWidth=1;
+    final line=Paint()..color=const Color(0xFF1268F3)..strokeWidth=2.5..style=PaintingStyle.stroke..strokeCap=StrokeCap.round;
+    for(var i=1;i<=3;i++){final y=size.height*i/4;canvas.drawLine(Offset(0,y),Offset(size.width,y),grid);}
+    if(values.isEmpty)return;
+    final highest=values.fold<double>(1,(v,x)=>max(v,x));
+    final points=<Offset>[];
+    for(var i=0;i<values.length;i++){
+      final x=values.length==1?size.width/2:size.width*i/(values.length-1);
+      final y=size.height-8-(values[i]/highest)*(size.height-18);
+      points.add(Offset(x,y));
+    }
+    final path=Path()..moveTo(points.first.dx,points.first.dy);
+    for(final point in points.skip(1))path.lineTo(point.dx,point.dy);
+    canvas.drawPath(path,line);
+    if(points.length<=35){
+      final dot=Paint()..color=const Color(0xFF1268F3);
+      for(final p in points)canvas.drawCircle(p,2.5,dot);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant _EarningsLinePainter old)=>old.values!=values;
 }
