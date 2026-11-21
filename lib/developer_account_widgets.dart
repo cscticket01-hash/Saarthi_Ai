@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'platform/managed_developer_service.dart';
@@ -137,7 +136,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
           onPressed: busy ? null : () => setState(() {
             _showCurrentPassword = !_showCurrentPassword;
           }),
-          icon: Icon(_showCurrentPassword ? Icons.visibility_off : Icons.visibility),
+          icon: Icon(_showCurrentPassword ? Icons.visibility : Icons.visibility_off),
         ),
       ),
     );
@@ -215,22 +214,6 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
       ),
     );
   }
-}
-class DeveloperIdleSession extends StatefulWidget {
-  const DeveloperIdleSession({super.key,required this.child,this.idle=const Duration(minutes:30)});
-  final Widget child;final Duration idle;
-  @override State<DeveloperIdleSession> createState()=>_DeveloperIdleSessionState();
-}
-class _DeveloperIdleSessionState extends State<DeveloperIdleSession> with WidgetsBindingObserver{
-  Timer? timer;DateTime activity=DateTime.now(),persisted=DateTime.fromMillisecondsSinceEpoch(0);bool ready=false;
-  String get key=>'vs_developer_activity_${FirebaseAuth.instance.currentUser?.uid}';
-  @override void initState(){super.initState();WidgetsBinding.instance.addObserver(this);restore();timer=Timer.periodic(const Duration(seconds:1),(_)=>check());}
-  Future<void> restore()async{final p=await SharedPreferences.getInstance();final prior=p.getInt(key);final user=FirebaseAuth.instance.currentUser;final signed=user?.metadata.lastSignInTime?.millisecondsSinceEpoch??0;activity=DateTime.fromMillisecondsSinceEpoch(prior!=null&&prior>=signed?prior:signed);if(activity.millisecondsSinceEpoch==0)activity=DateTime.now();ready=true;await p.setInt(key,activity.millisecondsSinceEpoch);check();if(mounted)setState((){});}
-  void touch(){if(!ready)return;check();if(DateTime.now().difference(activity)>=widget.idle)return;activity=DateTime.now();if(activity.difference(persisted)>const Duration(seconds:15)){persisted=activity;unawaited(SharedPreferences.getInstance().then((p)=>p.setInt(key,activity.millisecondsSinceEpoch)));}setState((){});}
-  void check(){if(!ready)return;if(DateTime.now().difference(activity)>=widget.idle){ready=false;unawaited(FirebaseAuth.instance.signOut());}else if(mounted)setState((){});}
-  @override void didChangeAppLifecycleState(AppLifecycleState state){if(state==AppLifecycleState.resumed)check();}
-  @override void dispose(){timer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
-  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(color:const Color(0xFF16242E),child:Padding(padding:const EdgeInsets.all(8),child:Text('Auto logout ${seconds~/60}:${(seconds%60).toString().padLeft(2,'0')}')))))])));}
 }
 /// Both cards have independent transfers. Browser-native downloads cannot be
 /// cancelled by Flutter once dispatched, so Web first downloads the verified

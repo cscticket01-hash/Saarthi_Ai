@@ -28,9 +28,10 @@ class DeveloperService {
 
   Future<List<Map<String, dynamic>>> _list(
     String collection, {
-    int limit = 500,
+    int? limit = 500,
   }) async {
-    final s = await _db.collection(collection).limit(limit).get();
+    final query = _db.collection(collection);
+    final s = await (limit == null ? query : query.limit(limit)).get();
     return s.docs
         .map(
           (d) => <String, dynamic>{
@@ -74,7 +75,7 @@ class DeveloperService {
         );
       }
     }
-    if (action == 'license/revoke' || action == 'license/delete') {
+    if (action == 'license/revoke') {
       final licence =
           (await _db
                   .collection('platform_licenses')
@@ -94,7 +95,7 @@ class DeveloperService {
               'This is an old licence. Manage the current school licence from central controls.',
             );
           return ManagedDeveloperService.call(
-            action == 'license/delete' ? 'delete-licence' : 'revoke',
+            'revoke',
             {'schoolId': licence['schoolId']},
           );
         }
@@ -123,26 +124,6 @@ class DeveloperService {
       final current = (await school.get()).data();
       if (current?['licenseId'] == id)
         batch.update(school, {'licenseExpiresAt': 0});
-      await batch.commit();
-      return {'success': true};
-    }
-    if (action == 'license/delete') {
-      final id = body['licenseId'].toString();
-      final doc = _db.collection('platform_licenses').doc(id);
-      final license = (await doc.get()).data();
-      if (license == null) throw StateError('Licence not found');
-      final schoolId = license['schoolId']?.toString() ?? '';
-      final school = _db.collection('platform_schools').doc(schoolId);
-      final current = (await school.get()).data();
-      final batch = _db.batch();
-      batch.delete(doc);
-      batch.delete(_db.collection('platform_license_status').doc(id));
-      if (current?['licenseId'] == id) {
-        batch.set(school, {
-          'licenseId': FieldValue.delete(),
-          'licenseExpiresAt': FieldValue.delete(),
-        }, SetOptions(merge: true));
-      }
       await batch.commit();
       return {'success': true};
     }
@@ -237,8 +218,8 @@ class DeveloperService {
         _loadedAt == null ||
         DateTime.now().difference(_loadedAt!) > const Duration(minutes: 30)) {
       final lists = await Future.wait([
-        _list('platform_schools'),
-        _list('platform_school_trials'),
+        _list('platform_schools', limit: null),
+        _list('platform_school_trials', limit: null),
         _list('platform_licenses'),
         _list('platform_licence_receipts', limit: 500),
         _db
@@ -276,7 +257,7 @@ class DeveloperService {
       };
       _loadedAt = DateTime.now();
     }
-    final summaries = await _list('platform_school_summaries');
+    final summaries = await _list('platform_school_summaries', limit: null);
     final byId = {for (final s in summaries) s['id']: s};
     final licenses = {for (final l in _cached!['licenses'] as List) l['id']: l};
     final schools = (_cached!['schools'] as List)
