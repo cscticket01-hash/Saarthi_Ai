@@ -203,6 +203,8 @@ void main() {
     final output=result['optimized'] as Uint8List;
     expect(result['pageCount'],1);
     expect(result['sourceRetained'],false);
+    expect(result['highQuality'],orderedEquals(oversized));
+    expect(String.fromCharCodes(output.take(5)),'%PDF-');
     expect(output.length,lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
     expect(output, isNot(orderedEquals(oversized)));
     expect(result['cleanupStatus'],contains('compression completed'));
