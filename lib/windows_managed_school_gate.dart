@@ -373,7 +373,9 @@ class _WindowsManagedSchoolLoginState extends State<WindowsManagedSchoolLogin> {
                   autocorrect: false,
                   enableIMEPersonalizedLearning: false,
                   keyboardType: TextInputType.visiblePassword,
-                  onChanged: (_) => setState(() {}),
+                  // WIN-001: keep the active Windows text-input composition
+                  // and caret stable; visibility is the only UI state here.
+                  // The controller already owns password editing changes.
                   decoration: InputDecoration(
                     labelText: 'Password',
                     suffixIcon: Semantics(
