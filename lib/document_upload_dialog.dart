@@ -325,6 +325,8 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                   child: selected!.mime == 'application/pdf'
                       ? DocumentPdfPreview(
                           pages: processed!['previewPages'] as List<Uint8List>,
+                          pdfBytes: processed!['optimized'] as Uint8List,
+                          fullResolutionPages: (processed!['previewDpi'] as num? ?? 0) >= 150,
                         )
                       : Image.memory(
                           processed!['optimized'] as Uint8List,
