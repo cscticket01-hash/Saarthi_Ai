@@ -27,7 +27,7 @@ class _DocumentPdfPreviewState extends State<DocumentPdfPreview>{
   @override
   void didUpdateWidget(covariant DocumentPdfPreview oldWidget){
     super.didUpdateWidget(oldWidget);
-    if(oldWidget.pages!=widget.pages||oldWidget.pdfBytes!=widget.pdfBytes){selected=0;selectedPage=renderSelected(0);}
+    if(oldWidget.pages!=widget.pages||oldWidget.pdfBytes!=widget.pdfBytes||oldWidget.fullResolutionPages!=widget.fullResolutionPages){selected=0;selectedPage=renderSelected(0);}
   }
   @override
   Widget build(BuildContext context){
