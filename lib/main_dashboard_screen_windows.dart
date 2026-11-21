@@ -20111,7 +20111,9 @@ class _StudentDocumentsScreenState
     setState(() => _uploading = true);
     try {
       final file = await showDialog<SelectedDocument>(context: context,
-        builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  DocumentUploadDialog(name: docName, scope: _schoolProfile,
+        builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return DocumentUploadDialog(name: docName, scope: _schoolProfile,
+          inventoryUsage: StudentInventoryPolicy.usage(_documents,
+              replacingId: replace?['documentId']?.toString() ?? ''),
           isCurrent: () => FirebaseFirestore.instance.activeProfileId == _schoolProfile); });
       if (file == null || !mounted) return;
       if (FirebaseFirestore.instance.activeProfileId != _schoolProfile) throw StateError('School changed. Reopen documents.');
@@ -20225,7 +20227,8 @@ class _StudentDocumentsScreenState
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
-    final ratio = (_totalBytes / (300*1024)).clamp(0.0, 1.0).toDouble();
+    final scanUsage = StudentInventoryPolicy.usage(_documents);
+    final ratio = (scanUsage.bytes / StudentInventoryPolicy.maxScanBytes).clamp(0.0, 1.0).toDouble();
     return Scaffold(
       backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
       appBar: AppBar(
@@ -20299,7 +20302,7 @@ class _StudentDocumentsScreenState
                               color: WindowsAppearance.foreground(Colors.white),
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • image target ~80 KB; quality protected • ${_uploading ? 'Optimizing / pending' : _totalBytes > 640*1024 ? 'Readability Protected' : _documents.isEmpty ? 'Awaiting documents' : 'Optimized'}',
+                      Expanded(child:Text('${_documents.length} documents • ${_documents.every((d)=>d['sourceBytes'] is num) ? _formatBytes(_documents.fold<int>(0,(sum,d)=>sum+(d['sourceBytes'] as num).toInt())) : 'Not fully recorded'} original • ${_formatBytes(_totalBytes)} optimized • imported scans: ${scanUsage.unknown ? 'unverified' : '${scanUsage.pages}/8 pages'} • ${_formatBytes(scanUsage.bytes)} / 500 KB • ${_uploading ? 'Optimizing / pending' : scanUsage.unknown ? 'Review required' : scanUsage.bytes > StudentInventoryPolicy.maxScanBytes ? 'Limit exceeded' : _documents.isEmpty ? 'Awaiting documents' : 'Storage measured'}',
                           textAlign:TextAlign.right,maxLines:3,
                           style:  TextStyle(fontFamily: 'Segoe UI', 
                               color: WindowsAppearance.foreground(Colors.white54), fontSize: 10.5))),
@@ -20311,14 +20314,14 @@ class _StudentDocumentsScreenState
                     minHeight: 7,
                     backgroundColor: WindowsAppearance.background(Colors.white10),
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      _uploading ? Colors.amber : _totalBytes > 640*1024 ? Colors.orangeAccent : const Color(0xFF00A884),
+                      _uploading ? Colors.amber : scanUsage.unknown || scanUsage.bytes > StudentInventoryPolicy.maxScanBytes ? Colors.orangeAccent : const Color(0xFF00A884),
                     ),
                   ),
                   const SizedBox(height: 7),
                    Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Target: about 80 KB per image where readable; quality takes priority. Preview uses original. Actual optimized sizes shown.',
+                      'PDF/JPG/JPEG/PNG • source up to 50 MB. Imported scans: max 8 pages / 500 KB per student. Preview shows saved optimized copy; originals retained.',
                       style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white38), fontSize: 10),
                     ),
                   ),
