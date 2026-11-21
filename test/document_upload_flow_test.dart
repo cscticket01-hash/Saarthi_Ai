@@ -87,9 +87,11 @@ void main() {
       expect(perPage * pageCount,
           lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
       expect(perPage, greaterThan(0));
-      expect(perPage, lessThanOrEqualTo(80 * 1024));
+      expect(perPage, lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
     }
-    expect(DocumentPipeline.pageImageTargetFor(8), 64000);
+    expect(DocumentPipeline.pageImageTargetFor(4), 126976);
+    expect(DocumentPipeline.pageImageTargetFor(8), 63488);
+    expect(DocumentPipeline.pageImageTargetFor(4), greaterThan(80 * 1024));
     expect(() => DocumentPipeline.pageImageTargetFor(0), throwsRangeError);
     expect(() => DocumentPipeline.pageImageTargetFor(9), throwsRangeError);
   });
