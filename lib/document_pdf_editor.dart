@@ -52,7 +52,7 @@ class _DocumentPdfEditorState extends State<DocumentPdfEditor> {
     final result=await showDialog<Map<String,dynamic>>(context:context,builder:(_)=>DocumentScanEditor(
       bytes:pages![index],mime:'image/png',scope:widget.scope,
       initialEdits:Map<String,dynamic>.from(row['edits'] as Map),
-      isCurrent:widget.isCurrent,initialTool:'crop'));
+      isCurrent:widget.isCurrent,initialTool:'crop',deferFullApply:true));
     if(!mounted||result==null)return;
     // Return the declarative edit, never the already compressed preview.
     change(()=>plan[selected]={'index':index,'edits':result});
