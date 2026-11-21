@@ -220,8 +220,9 @@ class DocumentProcessingEngine {
     final detected = portrait ? null : _paperCorners(image);
     bool corrected = false;
     if (detected != null) {
-      image = _rectify(image, detected);
-      corrected = true;
+      final rectified = _rectify(image, detected);
+      corrected = !identical(image, rectified);
+      image = rectified;
     }
     final deskew = portrait ? 0.0 : _textAngle(image);
     if (deskew.abs() >= 0.5) {
@@ -310,33 +311,9 @@ class DocumentProcessingEngine {
       optimizedWidth = image.width;
       optimizedHeight = image.height;
     }
-    // Try additional safe JPEG encodings before giving up on the size goal.
-    // Preserve the existing minimum resolution and never silently replace
-    // readable documents with thumbnails or binary/thresholded text.
-    if (optimized.length > target) {
-      final candidateImage =
-          math.max(image.width, image.height) > minimumEdge
-          ? img.copyResize(
-              image,
-              width: image.width >= image.height ? minimumEdge : null,
-              height: image.height > image.width ? minimumEdge : null,
-              interpolation: img.Interpolation.average,
-            )
-          : image;
-      for (final q in [78]) {
-        final candidate = Uint8List.fromList(
-          img.encodeJpg(candidateImage, quality: q),
-        );
-        if (candidate.length < optimized.length) {
-          optimized = candidate;
-          optimizedMime = 'image/jpeg';
-          optimizedWidth = candidateImage.width;
-          optimizedHeight = candidateImage.height;
-          quality = q;
-        }
-        if (optimized.length <= target) break;
-      }
-    }
+    // The q78 rendition at the minimum allowed edge was already measured
+    // above. Repeating that exact resize and encode cannot improve the bytes.
+    // Keep the better measured JPEG or lossless candidate.
     // ID photos are small printed/displayed regions, unlike full-page scans.
     // Adapt resolution to the measured encoded size while keeping JPEG q78,
     // aspect ratio, the uncropped face and at least a 256px long edge. Resize
