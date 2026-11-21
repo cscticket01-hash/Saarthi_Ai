@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 6aaf44e93c5913dfec9ba819ffb43a8f509255de
+          ref: ee9e6f7d8ab11968b8a7c0e01b74a10c6c600c2a
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 6aaf44e93c5913dfec9ba819ffb43a8f509255de
+          ref: ee9e6f7d8ab11968b8a7c0e01b74a10c6c600c2a
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 6aaf44e93c5913dfec9ba819ffb43a8f509255de
+          ref: ee9e6f7d8ab11968b8a7c0e01b74a10c6c600c2a
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
