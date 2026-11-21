@@ -465,7 +465,8 @@ void main() {
       'id': 'staff:guard',
       'name': 'School Guard',
       'employeeId': 'G-1',
-      'role': 'Guard',
+      'role': 'Other staff',
+      'designation': 'Guard',
       'country': 'India',
       'state': 'Assam',
       'district': 'Sribhumi',
@@ -477,8 +478,10 @@ void main() {
     expect(savedGuard['district'], 'Sribhumi');
     final people = await StaffPayroll.staff(profile);
     expect(people.length, 2);
-    final guard = people.singleWhere((p) => p['role'] == 'Guard');
+    final guard = people.singleWhere((p) => p['role'] == 'Other staff');
     expect(guard['employeeId'], 'G-1');
+    expect(guard['designation'], 'Guard');
+    expect(StaffPayroll.displayCategory(guard), 'Other staff');
     final salary = await StaffPayroll.save(
       profile,
       guard,
@@ -494,7 +497,8 @@ void main() {
       OtherStaffDirectory.save(profile, {
         'name': 'Duplicate',
         'employeeId': 'g-1',
-        'role': 'Guard',
+        'role': 'Other staff',
+        'designation': 'Guard',
       }),
       throwsStateError,
     );
@@ -502,7 +506,8 @@ void main() {
       OtherStaffDirectory.save(profile, {
         'name': 'Duplicate Teacher',
         'employeeId': 'T-11',
-        'role': 'Other',
+        'role': 'Other staff',
+        'designation': 'Assistant',
       }),
       throwsStateError,
     );
@@ -513,7 +518,8 @@ void main() {
       OtherStaffDirectory.save(profile, {
         'name': 'Foreign',
         'employeeId': 'F-1',
-        'role': 'Other',
+        'role': 'Other staff',
+        'designation': 'Assistant',
       }),
       throwsStateError,
     );
@@ -522,6 +528,49 @@ void main() {
       (await OtherStaffDirectory.load(profile)).single['name'],
       'School Guard',
     );
+  });
+  test('other staff requires manual designation and preserves legacy staff until edited', () async {
+    final profile = db.activeProfileId;
+    await expectLater(
+      OtherStaffDirectory.save(profile, {
+        'name': 'New Guard',
+        'employeeId': 'G-2',
+        'role': 'Other staff',
+        'designation': '   ',
+      }),
+      throwsArgumentError,
+    );
+    expect(await OtherStaffDirectory.load(profile), isEmpty);
+
+    // Seed a historical record exactly as stored before designation was required.
+    await db.collection('school_settings').doc('staff_payroll_directory').set({
+      'staff': [
+        {
+          'id': 'staff:legacy-guard',
+          'name': 'Legacy Guard',
+          'employeeId': 'G-OLD',
+          'role': 'Guard',
+          'active': true,
+        },
+      ],
+    });
+    final legacy = (await OtherStaffDirectory.load(profile)).single;
+    expect(legacy['role'], 'Guard');
+    expect(legacy.containsKey('designation'), isFalse);
+    expect(OtherStaffDirectory.suggestedDesignation(legacy), 'Guard');
+    final payrollPerson = (await StaffPayroll.staff(profile)).single;
+    expect(StaffPayroll.displayCategory(payrollPerson), 'Other staff');
+    expect(payrollPerson['employeeId'], 'G-OLD');
+    expect((await OtherStaffDirectory.load(profile)).single, legacy);
+
+    await OtherStaffDirectory.save(profile, {
+      ...legacy,
+      'designation': OtherStaffDirectory.suggestedDesignation(legacy),
+    });
+    final edited = (await OtherStaffDirectory.load(profile)).single;
+    expect(edited['id'], 'staff:legacy-guard');
+    expect(edited['role'], 'Guard');
+    expect(edited['designation'], 'Guard');
   });
   test('promotion rejects invented final flags, unsaved results and mismatched results', () async {
     final exam = {'examId': 'final-check', 'isFinal': true};
