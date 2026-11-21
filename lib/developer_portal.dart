@@ -1041,6 +1041,79 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     ),
   );
 
+  List<Map<String, dynamic>> _licenceReceipts(Map<String, dynamic> licence) {
+    return _receipts
+        .where((receipt) =>
+            receipt['schoolId'] == licence['schoolId'] &&
+            receipt['licenseId'] == licence['id'] &&
+            receipt['at'] is num &&
+            (receipt['at'] as num) > 0)
+        .toList()
+      ..sort((a, b) => (b['at'] as num).compareTo(a['at'] as num));
+  }
+
+  Future<void> _showLicenceHistory(
+    List<Map<String, dynamic>> receipts,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Licence history'),
+        content: SizedBox(
+          width: 460,
+          child: receipts.isEmpty
+              ? const Text('No receipts are available for this licence.')
+              : SizedBox(
+                  height: 320,
+                  child: ListView.builder(
+                  itemCount: receipts.length,
+                  itemBuilder: (_, index) {
+                    final receipt = receipts[index];
+                    final kind = receipt['type'] == 'renew' ? 'Extension' : 'Issue';
+                    final amount = receipt['amount'];
+                    final payment = receipt['paid'] == true ? 'Paid' : 'Unpaid';
+                    return ListTile(
+                      title: Text('$kind · ${_date(receipt['at'])}'),
+                      subtitle: Text(
+                        '$payment · ${amount is num ? _money(amount) : 'Amount unavailable'}'
+                        '\nValid until ${_date(receipt['expiresAt'])}',
+                      ),
+                    );
+                  },
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _licenceExpiry(dynamic value) {
+    if (value is! num || value <= 0) return const Text('—');
+    final date = DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    final time = TimeOfDay.fromDateTime(date).format(context);
+    final remaining = date.difference(DateTime.fromMillisecondsSinceEpoch(_now.toInt()));
+    final left = remaining.inDays > 0
+        ? '${remaining.inDays}d ${remaining.inHours % 24}h left'
+        : remaining.inHours > 0
+            ? '${remaining.inHours}h ${remaining.inMinutes % 60}m left'
+            : '${remaining.inMinutes.clamp(1, 59)}m left';
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${_date(value)} · $time'),
+        Text(remaining.inMilliseconds > 0 ? left : 'Expired',
+            style: const TextStyle(fontSize: 11)),
+      ],
+    );
+  }
+
   Widget _licenceTable() => _panel(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1070,12 +1143,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
               DataColumn(label: Text('KEY')),
               DataColumn(label: Text('STATUS')),
               DataColumn(label: Text('EXPIRES')),
-              DataColumn(label: Text('PURCHASE')),
+              DataColumn(label: Text('LAST PAYMENT')),
               DataColumn(label: Text('')),
             ],
             rows: _licenses
                 .map(
-                  (l) => DataRow(
+                  (l) {
+                    final receipts = _licenceReceipts(l);
+                    final lastPayment = receipts.where((r) => r['paid'] == true).firstOrNull;
+                    return DataRow(
                     cells: [
                       DataCell(Text(_schools.where((s)=>s['id']==l['schoolId']).map((s)=>s['name']?.toString()??'').where((s)=>s.isNotEmpty).firstOrNull??l['schoolId'].toString())),
                       DataCell(
@@ -1105,10 +1181,24 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                               : Colors.orangeAccent,
                         ),
                       ),
-                      DataCell(Text(_date(l['expiresAt']))),
+                      DataCell(_licenceExpiry(l['expiresAt'])),
                       DataCell(
-                        Text(
-                          l['paid'] == true ? (l['amount'] is num?'INR ${l['amount']}':'Paid · amount not recorded') : 'Unpaid',
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(lastPayment != null
+                                ? (lastPayment['amount'] is num
+                                    ? _money(lastPayment['amount'] as num)
+                                    : 'Paid · amount unavailable')
+                                : l['paid'] == true
+                                    ? (l['amount'] is num
+                                        ? 'INR ${l['amount']}'
+                                        : 'Paid · amount not recorded')
+                                    : 'Unpaid'),
+                            Text(lastPayment == null ? 'Date unavailable' : _date(lastPayment['at']),
+                                style: const TextStyle(fontSize: 11)),
+                          ],
                         ),
                       ),
                       DataCell(
@@ -1123,11 +1213,21 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                                   onPressed:()=>_issue(l['schoolId'].toString(),duration.$1),
                                   child:Text(duration.$2),
                                 ),
-                            if(l['revoked']!=true && _schools.any((s)=>s['id']==l['schoolId']&&
-                              (s['licenseId']??s['activeLicenseHash'])==l['id']&&s['blocked']!=true&&s['deletedAt']==null) &&
-                              l['expiresAt'] is num && (l['expiresAt'] as num)<=_now)
-                              TextButton(onPressed:()=>_issue(l['schoolId'].toString()),
-                                child:const Text('New key')),
+                            if (_schools.any((s) =>
+                                s['id'] == l['schoolId'] &&
+                                (s['licenseId'] ?? s['activeLicenseHash']) == l['id'] &&
+                                s['blocked'] != true && s['loginDisabled'] != true &&
+                                s['deletedAt'] == null) &&
+                                (l['revoked'] == true ||
+                                    l['expiresAt'] is num && (l['expiresAt'] as num) <= _now))
+                              TextButton(
+                                onPressed: () => _issue(l['schoolId'].toString()),
+                                child: const Text('New Key'),
+                              ),
+                            TextButton(
+                              onPressed: () => _showLicenceHistory(receipts),
+                              child: const Text('History'),
+                            ),
                             TextButton(
                               onPressed: l['revoked'] == true
                                   ? null
@@ -1166,7 +1266,8 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                         ),
                       ),
                     ],
-                  ),
+                    );
+                  },
                 )
                 .toList(),
           ),
