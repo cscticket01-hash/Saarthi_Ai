@@ -383,8 +383,13 @@ class DocumentProcessingEngine {
     // Retain the original container when processing expands it: this is an
     // explicitly reported fallback, not a claim that cleanup was applied.
     final sourceContainer = _sanitizedSource(bytes, sourceOrientation);
-    final retainedSource =
-        sourceContainer != null && optimized.length > sourceContainer.length;
+    // Do not replace a successfully cropped/deskewed document with the
+    // original JPEG merely because the processed encoding is larger. That
+    // silently undoes the visible cleanup in Student Inventory.
+    final retainedSource = sourceContainer != null &&
+        optimized.length > sourceContainer.length &&
+        !corrected &&
+        deskew.abs() < 0.5;
     if (retainedSource) {
       optimized = sourceContainer!;
       optimizedMime = bytes[0] == 137 ? 'image/png' : 'image/jpeg';
