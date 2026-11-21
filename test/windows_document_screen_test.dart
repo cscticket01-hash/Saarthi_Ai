@@ -210,7 +210,7 @@ void main() {
       expect(find.text('Adjust'), findsOneWidget);
     }
     expect(await io(t, count), 0);
-    expect(find.textContaining('optimized'), findsWidgets);
+    expect(find.byKey(const ValueKey('document-preview-metrics')), findsOneWidget);
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
     await waitFor(
         t,
@@ -241,7 +241,9 @@ void main() {
     expect(await io(t, WindowsRuntimeFlags.localStorageEnabled), false);
     expect(await io(t, db.localPersistenceEnabled), true);
     expect(row['optimizedPath'], isNotEmpty);
-    expect(row['cleanupStatus'], contains(pdf ? 'pages processed' : ''));
+    expect(row['cleanupStatus'], contains(pdf
+        ? 'Original PDF retained'
+        : ''));
     final optimized = await io(t, () => File(row['optimizedPath'] as String).readAsBytes());
     expect(row['sizeBytes'], optimized!.length);
     expect(await io(t, () => File(row['processedPath'] as String).exists()), true);
@@ -249,7 +251,10 @@ void main() {
       // Preview and Save must reuse the prepared page owned by this source.
       expect(rasterizer.rasterCalls, 1);
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
-      expect(optimized, isNot(source));
+      expect(optimized, orderedEquals(source));
+      expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
+      expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
     }
 
     // Continue the real screen/session, including its existing document. This
