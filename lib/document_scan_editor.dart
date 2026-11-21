@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'document_pipeline.dart';
+import 'document_processing_engine.dart';
 
 /// Crop handles refer to the EXIF-normalized source, never to a thumbnail
 /// that has already been cropped. Preview recompression uses original bytes.
@@ -69,6 +70,26 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
     });
   }
 
+  Future<void> autoDetect() async {
+    if (busy) return;
+    setState(() { busy = true; error = null; preview = null; });
+    try {
+      final detected = await compute(DocumentProcessingEngine.suggestCrop, await source);
+      if (!mounted) return;
+      setState(() {
+        manual = true;
+        corners = detected == null ? full.toList() : [
+          for (var i = 0; i < 8; i += 2) Offset(detected[i], detected[i + 1]),
+        ];
+        if (detected == null) error = 'No confident boundary. Adjust the four corners manually.';
+      });
+    } catch (e) {
+      if (mounted) setState(() => error = 'Auto-detect unavailable. Use manual crop.');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> render({required bool apply}) async {
     if (busy) return;
     final requested = edits;
@@ -114,12 +135,13 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
       )),
       const SizedBox(height: 8),
       Wrap(spacing: 6, runSpacing: 4, alignment: WrapAlignment.center, children: [
-        OutlinedButton.icon(onPressed: busy ? null : () => change(() {
-          manual = false; corners = full.toList(); rotation = 0;
-        }), icon: const Icon(Icons.auto_fix_high), label: const Text('Auto-detect')),
+        OutlinedButton.icon(onPressed: busy ? null : autoDetect,
+          icon: const Icon(Icons.auto_fix_high), label: const Text('Auto-detect')),
         OutlinedButton.icon(key: const ValueKey('scan-manual-crop'),
           onPressed: busy ? null : () => change(() => manual = !manual),
           icon: const Icon(Icons.crop), label: Text(manual ? 'Manual crop on' : 'Crop')),
+        OutlinedButton.icon(onPressed: busy ? null : () => render(apply: false),
+          icon: const Icon(Icons.straighten), label: const Text('Straighten')),
         OutlinedButton.icon(onPressed: busy ? null : () => change(() {
           rotation = (rotation + 90) % 360;
         }), icon: const Icon(Icons.rotate_right), label: Text('Rotate ${rotation}°')),
@@ -133,15 +155,20 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
         for (final item in filters.entries)
           Padding(padding: const EdgeInsets.symmetric(horizontal: 3),
             child: ChoiceChip(label: Text(item.value), selected: item.key == filter,
-              onSelected: busy ? null : (_) => change(() => filter = item.key))),
+              onSelected: busy ? null : (_) {
+                change(() => filter = item.key);
+                render(apply: false);
+              })),
       ])),
       Row(children: [
         const SizedBox(width: 86, child: Text('Brightness')),
         Expanded(child: Slider(value: brightness, min: -0.4, max: 0.4,
-          onChanged: busy ? null : (v) => change(() => brightness = v))),
+          onChanged: busy ? null : (v) => change(() => brightness = v),
+          onChangeEnd: busy ? null : (_) => render(apply: false))),
         const SizedBox(width: 86, child: Text('Contrast')),
         Expanded(child: Slider(value: contrast, min: -0.5, max: 0.5,
-          onChanged: busy ? null : (v) => change(() => contrast = v))),
+          onChanged: busy ? null : (v) => change(() => contrast = v),
+          onChangeEnd: busy ? null : (_) => render(apply: false))),
       ]),
       if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error), maxLines: 2),
       if (busy) const LinearProgressIndicator(),
