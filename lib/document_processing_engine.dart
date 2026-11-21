@@ -504,32 +504,32 @@ class DocumentProcessingEngine {
   static Map<String, dynamic> _scanQualityGuard(img.Image reference, Uint8List encoded) {
     final decoded = img.decodeImage(encoded);
     if (decoded == null) throw const FormatException('Optimized scan cannot be decoded.');
-    // Dart image exposes absent G/B channels as zero for grayscale PNG.
-    // Expand decoded grayscale into display RGB before comparing luminance.
-    final normalized = decoded.numChannels == 1
-        ? decoded.convert(numChannels: 3) : decoded;
+    // Use the channel count from the Image API (image 4.10), not Pixel.
+    // A grayscale sample represents equal displayed R/G/B values even when
+    // the storage object exposes absent green and blue channels as zero.
     final w = math.min(180, math.min(reference.width, decoded.width));
     final h = math.min(180, math.min(reference.height, decoded.height));
     final a = img.copyResize(reference, width: w, height: h,
         interpolation: img.Interpolation.average);
-    final b = img.copyResize(normalized, width: w, height: h,
+    final b = img.copyResize(decoded, width: w, height: h,
         interpolation: img.Interpolation.average);
-    double lum(img.Pixel p) {
-      final alpha = p.aNormalized;
-      if (p.numChannels == 1 || p.numChannels == 2) {
-        return p.rNormalized * 255 * alpha + (1 - alpha) * 255;
-      }
-      return (p.rNormalized * 0.299 + p.gNormalized * 0.587 +
-          p.bNormalized * 0.114) * 255 * alpha + (1 - alpha) * 255;
+    double lum(img.Image raster, int x, int y) {
+      final p = raster.getPixel(x, y);
+      final alpha = raster.hasAlpha ? p.aNormalized : 1.0;
+      final value = raster.numChannels <= 2
+          ? p.rNormalized
+          : p.rNormalized * 0.299 + p.gNormalized * 0.587 +
+              p.bNormalized * 0.114;
+      return value * 255 * alpha + (1 - alpha) * 255;
     }
     var error = 0.0, edges = 0, kept = 0;
     for (var y = 0; y < h; y++) {
       for (var x = 0; x < w; x++) {
-        final av = lum(a.getPixel(x, y)), bv = lum(b.getPixel(x, y));
+        final av = lum(a, x, y), bv = lum(b, x, y);
         error += (av - bv).abs();
         if (x == 0) continue;
-        final da = (av - lum(a.getPixel(x - 1, y))).abs();
-        final db = (bv - lum(b.getPixel(x - 1, y))).abs();
+        final da = (av - lum(a, x - 1, y)).abs();
+        final db = (bv - lum(b, x - 1, y)).abs();
         if (da >= 40) {
           edges++;
           if (db >= da * 0.55) kept++;
