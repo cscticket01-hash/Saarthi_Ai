@@ -9,9 +9,9 @@ import 'document_processing_engine.dart';
 class DocumentScanEditor extends StatefulWidget {
   const DocumentScanEditor({super.key, required this.bytes,
     required this.mime, required this.scope, required this.initialEdits,
-    required this.isCurrent});
+    required this.isCurrent, this.initialTool = 'all'});
   final Uint8List bytes;
-  final String mime, scope;
+  final String mime, scope, initialTool;
   final Map<String, dynamic> initialEdits;
   final bool Function() isCurrent;
 
@@ -50,6 +50,11 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
     filter = e['scanFilter']?.toString() ?? 'auto';
     brightness = (e['brightness'] as num? ?? 0).toDouble();
     contrast = (e['contrast'] as num? ?? 0).toDouble();
+    if (widget.initialTool == 'crop' && crop == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) autoDetect();
+      });
+    }
   }
 
   Map<String, dynamic> get edits => {
@@ -142,9 +147,10 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
           icon: const Icon(Icons.crop), label: Text(manual ? 'Manual crop on' : 'Crop')),
         OutlinedButton.icon(onPressed: busy ? null : () => render(apply: false),
           icon: const Icon(Icons.straighten), label: const Text('Straighten')),
-        OutlinedButton.icon(onPressed: busy ? null : () => change(() {
-          rotation = (rotation + 90) % 360;
-        }), icon: const Icon(Icons.rotate_right), label: Text('Rotate ${rotation}°')),
+        OutlinedButton.icon(onPressed: busy ? null : () {
+          change(() => rotation = (rotation + 90) % 360);
+          render(apply: false);
+        }, icon: const Icon(Icons.rotate_right), label: Text('Rotate ${rotation}°')),
         OutlinedButton.icon(onPressed: busy ? null : () => change(() {
           manual = false; corners = full.toList(); rotation = 0;
           brightness = 0; contrast = 0; filter = 'auto';
