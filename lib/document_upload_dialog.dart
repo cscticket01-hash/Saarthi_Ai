@@ -237,6 +237,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
               if (processed != null) ...[
                 Text(
                   '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
+                  key: const ValueKey('document-preview-metrics'),
                 ),
                 Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
                 const Text(
