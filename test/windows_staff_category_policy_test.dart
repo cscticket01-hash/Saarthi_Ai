@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_other_staff.dart';
+import '../lib/windows_staff_payroll.dart';
 
 void main() {
   test('only three top-level staff tabs are needed', () {
@@ -36,5 +37,14 @@ void main() {
       ),
       'Lab Attendant',
     );
+  });
+  test('payroll groups legacy and new records without rewriting stored roles', () {
+    for (final role in ['Driver', 'Guard', 'Support staff', 'Other', 'Other staff']) {
+      final person = {'role': role};
+      expect(StaffPayroll.displayCategory(person), 'Other staff');
+      expect(person['role'], role);
+    }
+    expect(StaffPayroll.displayCategory({'role': 'Teacher'}), 'Teacher');
+    expect(StaffPayroll.displayCategory({'role': 'Office staff'}), 'Office staff');
   });
 }
