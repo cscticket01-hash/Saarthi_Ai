@@ -162,7 +162,10 @@ void main() {
       );
       expect(calls, 1);
       expect(writes, 0);
-      expect(find.textContaining('optimized'), findsOneWidget);
+      final metrics = find.byKey(const ValueKey('document-preview-metrics'));
+      expect(metrics, findsOneWidget);
+      expect(t.widget<Text>(metrics).data, contains('optimized ${bytes.length} bytes'));
+      expect(t.widget<Text>(metrics).data, contains('original ${bytes.length} bytes'));
       await t.tap(find.byKey(const ValueKey('document-confirm-save')));
       await t.pumpAndSettle();
       expect(writes, 1);
