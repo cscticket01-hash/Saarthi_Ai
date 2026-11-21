@@ -8,6 +8,24 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('pink fabric background is cropped without reverting to source', () {
+    final photo = img.Image(width: 600, height: 800);
+    img.fill(photo, color: img.ColorRgb8(145, 55, 95));
+    img.fillRect(
+      photo,
+      x1: 75,
+      y1: 85,
+      x2: 525,
+      y2: 705,
+      color: img.ColorRgb8(243, 238, 235),
+    );
+    final original = Uint8List.fromList(img.encodeJpg(photo, quality: 35));
+    final result = DocumentProcessingEngine.process({'bytes': original});
+    expect(result['perspectiveCorrected'], true);
+    expect(result['sourceRetained'], false);
+    expect(result['cleanupStatus'], contains('Detected paper boundary'));
+  });
+
   test(
       'neutral text keeps readable processed pixels with a smaller lossless grayscale container',
       () {
