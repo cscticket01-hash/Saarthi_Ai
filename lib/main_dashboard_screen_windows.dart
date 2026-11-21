@@ -16466,6 +16466,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                         backgroundColor: WindowsAppearance.background(Colors.redAccent),
                         content: Text(e.message),
                       ));
+                    } catch (_) {
+                      if (!dialogContext.mounted) return;
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(
+                        backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                        content: const Text('Photo process nahi ho paaya. Doosra image select karein.'),
+                      ));
                     }
                   },
                   icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.foreground(Colors.white70)),
@@ -16490,6 +16496,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                           final rollNumber = int.tryParse(roll);
                           if (name.isEmpty || parent.isEmpty ||
+                              !RegExp(r'^[0-9]+$').hasMatch(roll) ||
                               rollNumber == null || rollNumber <= 0 || contact.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
