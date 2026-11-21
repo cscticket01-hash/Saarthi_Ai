@@ -586,6 +586,39 @@ class DocumentProcessingEngine {
     return best > baseline * 1.18 ? angle : 0;
   }
 
+  // Compute a between-class variance threshold from a small detection raster.
+  // Technique reference: Otsu's method; also used by
+  // https://github.com/Nardo86/document_scanner (MIT).
+  static int _adaptivePaperThreshold(img.Image sample) {
+    final bins = List<int>.filled(256, 0);
+    var count = 0;
+    var weighted = 0;
+    for (var y = 0; y < sample.height; y += 2) {
+      for (var x = 0; x < sample.width; x += 2) {
+        final pixel = sample.getPixel(x, y);
+        final value = ((pixel.r + pixel.g + pixel.b) / 3).round().clamp(0, 255).toInt();
+        bins[value]++;
+        count++;
+        weighted += value;
+      }
+    }
+    var leftCount = 0, leftSum = 0, split = 0;
+    var best = -1.0;
+    for (var level = 0; level < 255; level++) {
+      leftCount += bins[level];
+      leftSum += level * bins[level];
+      final rightCount = count - leftCount;
+      if (leftCount == 0 || rightCount == 0) continue;
+      final gap = leftSum / leftCount - (weighted - leftSum) / rightCount;
+      final variance = leftCount.toDouble() * rightCount * gap * gap;
+      if (variance > best) {
+        best = variance;
+        split = level;
+      }
+    }
+    return split;
+  }
+
   /// Conservative bright-paper detection against a darker surrounding surface.
   /// Ambiguous/background-free scans retain all content instead of guessing.
   static List<img.Point>? _paperCorners(img.Image source) {
@@ -609,8 +642,13 @@ class DocumentProcessingEngine {
       border.add(light(sample.width - 1, y));
     }
     border.sort();
+    if (border.isEmpty) return null;
     final background = border[border.length ~/ 2];
-    if (background > 190) return null;
+    if (background > 215) return null;
+    // A relative threshold handles light cloth and shadowed paper without
+    // dropping the neutral-colour and connected-page geometry safeguards.
+    final adaptive = _adaptivePaperThreshold(sample);
+    final threshold = math.max(165.0, math.max(background + 22, adaptive.toDouble()));
     // Use one connected, neutral paper surface. Unrelated bright table/hand
     // pixels must never become the page's corners.
     final gw = (sample.width + 1) ~/ 2, gh = (sample.height + 1) ~/ 2;
@@ -623,8 +661,7 @@ class DocumentProcessingEngine {
             math.min(pixel.r, math.min(pixel.g, pixel.b));
         // Allow softly lit / slightly tinted paper against patterned cloth,
         // but keep colour contrast and largest-component geometry safeguards.
-        if (light(x * 2, y * 2) > math.max(185, background + 32) &&
-            spread < 45) {
+        if (light(x * 2, y * 2) > threshold && spread < 45) {
           mask[y * gw + x] = 1;
         }
       }
@@ -638,8 +675,13 @@ class DocumentProcessingEngine {
       for (var index = 0; index < queue.length; index++) {
         final cell = queue[index], x = cell % gw, y = cell ~/ gw;
         component.add(img.Point(x * 2, y * 2));
-        for (final next in [cell - 1, cell + 1, cell - gw, cell + gw]) {
-          if (next >= 0 && next < mask.length && mask[next] == 1) {
+        for (final next in [
+          if (x > 0) cell - 1,
+          if (x + 1 < gw) cell + 1,
+          if (y > 0) cell - gw,
+          if (y + 1 < gh) cell + gw,
+        ]) {
+          if (mask[next] == 1) {
             mask[next] = 2;
             queue.add(next);
           }
@@ -671,7 +713,9 @@ class DocumentProcessingEngine {
       area += a.x * b.y - b.x * a.y;
     }
     final quadArea = area.abs() / 2;
-    if (quadArea < sample.width * sample.height * 0.30 ||
+    final frameArea = sample.width * sample.height;
+    if (quadArea < frameArea * 0.30 ||
+        quadArea > frameArea * 0.96 ||
         points.length * 4 / quadArea < 0.70)
       return null;
     // Preserve a small margin so border text/seals are not shaved off.
