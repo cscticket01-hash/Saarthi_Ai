@@ -22,7 +22,11 @@ class _MultiFilePicker extends FileSelectorPlatform {
     String? initialDirectory,String? confirmButtonText}) async => files;
 }
 
-void main() {  test('multiple selection never rewrites source PDFs by merging them', () async {
+void main() {
+  final bytes = Uint8List.fromList(
+    img.encodePng(img.Image(width: 40, height: 60)),
+  );
+  test('multiple selection never rewrites source PDFs by merging them', () async {
     final previous=FileSelectorPlatform.instance;
     FileSelectorPlatform.instance=_MultiFilePicker([
       XFile.fromData(bytes,name:'one.pdf'),
@@ -32,10 +36,6 @@ void main() {  test('multiple selection never rewrites source PDFs by merging th
     await expectLater(DocumentFilePicker.pick(),throwsFormatException);
   });
 
-
-  final bytes = Uint8List.fromList(
-    img.encodePng(img.Image(width: 40, height: 60)),
-  );
   Future<Map<String, dynamic>> processed(
     Uint8List b,
     String m, {
