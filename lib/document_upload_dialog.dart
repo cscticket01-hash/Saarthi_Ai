@@ -313,8 +313,12 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                   Text(
                     processed!['cleanupStatus'].toString(),
                     style: TextStyle(
-                      color: processed!['sourceRetained'] == true
-                          ? Colors.orangeAccent : null,
+                      color: processed!['sourceRetained'] == true &&
+                              processed!['qualityGuard'] != 'original-pdf-retained'
+                          ? Colors.orangeAccent
+                          : processed!['qualityGuard'] == 'original-pdf-retained'
+                              ? Colors.green
+                              : null,
                     ),
                     maxLines: 3,
                   ),
