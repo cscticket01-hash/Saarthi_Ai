@@ -210,13 +210,14 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
     }
   }
 
-  Future<void> editScan() async {
+  Future<void> editScan([String tool = 'all']) async {
     final file = selected;
     if (busy || file == null || file.mime == 'application/pdf') return;
     final requested = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => DocumentScanEditor(bytes: file.bytes, mime: file.mime,
-        scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent),
+        scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent,
+        initialTool: tool),
     );
     if (!mounted || requested == null) return;
     if (!widget.isCurrent()) {
@@ -274,14 +275,6 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
               ],
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
-              if (selected != null && selected!.mime != 'application/pdf' &&
-                  widget.processor == DocumentPipeline.process)
-                OutlinedButton.icon(
-                  key: const ValueKey('document-edit-scan'),
-                  onPressed: busy ? null : editScan,
-                  icon: const Icon(Icons.tune),
-                  label: const Text('Crop • Rotate • Filters • Adjust'),
-                ),
               if (processed != null) ...[
                 Text(
                   '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
@@ -326,6 +319,22 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     ),
                   ),
                 ),
+              if (selected != null && selected!.mime != 'application/pdf' &&
+                  widget.processor == DocumentPipeline.process)
+                Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(
+                  alignment: WrapAlignment.center, spacing: 8, runSpacing: 4,
+                  children: [
+                    OutlinedButton.icon(key: const ValueKey('document-edit-scan'),
+                      onPressed: busy ? null : () => editScan('crop'),
+                      icon: const Icon(Icons.crop), label: const Text('Crop')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('rotate'),
+                      icon: const Icon(Icons.rotate_right), label: const Text('Rotate')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('filters'),
+                      icon: const Icon(Icons.filter), label: const Text('Filters')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('adjust'),
+                      icon: const Icon(Icons.tune), label: const Text('Adjust')),
+                  ],
+                )),
             ],
           ),
         ),
