@@ -292,7 +292,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
               if (processed != null) ...[
                 Text(
                   selected!.mime == 'application/pdf'
-                    ? '${selected!.name} • ${processed!['pageCount']} pages • ${(processed!['optimized'] as Uint8List).length} bytes'
+                    ? '${selected!.name} • ${processed!['pageCount']} ${processed!['pageCount'] == 1 ? 'page' : 'pages'} • ${(processed!['optimized'] as Uint8List).length} bytes'
                     : '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
                   key: const ValueKey('document-preview-metrics'),
                 ),
