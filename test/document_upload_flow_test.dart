@@ -32,7 +32,14 @@ void main() {
     Uint8List b,
     String m, {
     String scope = '',
-  }) async => {'optimized': bytes, 'mimeType': 'image/jpeg'};
+  }) async => {
+    'optimized': bytes,
+    'highQuality': bytes,
+    'mimeType': m,
+    'pageCount': 1,
+    if(m == 'application/pdf') 'previewPages': <Uint8List>[bytes],
+    if(m == 'application/pdf') 'sourceRetained': true,
+  };
   Future<void> host(
     WidgetTester t, {
     required Future<SelectedDocument?> Function() picker,
@@ -180,8 +187,15 @@ void main() {
       expect(writes, 0);
       final metrics = find.byKey(const ValueKey('document-preview-metrics'));
       expect(metrics, findsOneWidget);
-      expect(t.widget<Text>(metrics).data, contains('optimized ${bytes.length} bytes'));
-      expect(t.widget<Text>(metrics).data, contains('original ${bytes.length} bytes'));
+      if (ext == 'pdf') {
+        expect(t.widget<Text>(metrics).data, contains('1 page'));
+        expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
+        expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
+        expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
+      } else {
+        expect(t.widget<Text>(metrics).data, contains('optimized ${bytes.length} bytes'));
+        expect(t.widget<Text>(metrics).data, contains('original ${bytes.length} bytes'));
+      }
       await t.tap(find.byKey(const ValueKey('document-confirm-save')));
       await t.pumpAndSettle();
       expect(writes, 1);
