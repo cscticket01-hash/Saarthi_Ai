@@ -8,6 +8,31 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('PDF compression mode changes encoding only, never crops, rotates or deskews', () {
+    final sourceImage=img.Image(width:600,height:800);
+    img.fill(sourceImage,color:img.ColorRgb8(190,130,145));
+    img.fillRect(sourceImage,x1:55,y1:65,x2:545,y2:735,
+      color:img.ColorRgb8(245,240,235));
+    for(var y=120;y<700;y+=28){
+      img.drawLine(sourceImage,x1:95,y1:y,x2:510,y2:y,
+        color:img.ColorRgb8(35,35,35),thickness:2);
+    }
+    final source=Uint8List.fromList(img.encodePng(sourceImage));
+    final before=List<int>.from(source);
+    final result=DocumentProcessingEngine.process({
+      'bytes':source,'kind':'pdfCompression','targetBytes':400*1024,
+      'autoRotation':90,
+    });
+    expect(result['rotationDegrees'],0);
+    expect(result['perspectiveCorrected'],false);
+    expect(result['deskewDegrees'],0);
+    expect(result['manualCrop'],false);
+    expect(result['scanFilter'],'original');
+    expect(result['sourceRetained'],false);
+    expect(source,before);
+    expect(result['optimized'],isA<Uint8List>());
+  });
+
   test('four-corner perspective correction, explicit rotation and filters are non-destructive', () {
     final input = img.Image(width: 640, height: 800);
     img.fill(input, color: img.ColorRgb8(170, 110, 125));
