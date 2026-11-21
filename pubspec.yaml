@@ -21,6 +21,9 @@ dependencies:
   cryptography: ^2.7.0
   http: ^1.2.0
   url_launcher: ^6.3.2
+  flutter_map: ^8.3.2
+  flutter_map_dragmarker: ^8.0.3
+  latlong2: ^0.9.1
   font_awesome_flutter: ^11.0.0
   flutter_secure_storage: ^9.2.2
   google_generative_ai: ^0.4.0
