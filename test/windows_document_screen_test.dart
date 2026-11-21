@@ -241,7 +241,10 @@ void main() {
                 .onPressed !=
             null);
     if (pdf) debugPrint('PDF regression: processed preview ready');
-    if (pdf) await t.pumpAndSettle();
+    if (pdf) {
+      await t.pump();
+      await waitFor(t,()=>rasterizer.rasterCalls>=2);
+    }
     expect(picker.calls, 1);
     if (!pdf) {
       expect(find.byKey(const ValueKey('document-edit-scan')), findsOneWidget);
