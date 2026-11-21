@@ -20129,6 +20129,7 @@ class _StudentDocumentsScreenState
         'fileName': file.name,
         'mimeType': mime,
         'fileBase64': dataUrl,
+        if (file.edits.isNotEmpty) 'scanEdits': file.edits,
         'replaceDocumentId': replace?['documentId']?.toString() ?? '',
         'uploadedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
       });
