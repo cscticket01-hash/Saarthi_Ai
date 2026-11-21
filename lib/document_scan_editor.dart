@@ -9,9 +9,10 @@ import 'document_processing_engine.dart';
 class DocumentScanEditor extends StatefulWidget {
   const DocumentScanEditor({super.key, required this.bytes,
     required this.mime, required this.scope, required this.initialEdits,
-    required this.isCurrent, this.initialTool = 'all'});
+    required this.isCurrent, this.initialTool = 'all', this.deferFullApply = false});
   final Uint8List bytes;
   final String mime, scope, initialTool;
+  final bool deferFullApply;
   final Map<String, dynamic> initialEdits;
   final bool Function() isCurrent;
 
@@ -125,7 +126,7 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
     try {
       if (!widget.isCurrent()) throw StateError('School changed. Reopen the document.');
       // Preview uses the bounded original thumbnail, Apply uses full-size source.
-      final bytes = apply
+      final bytes = apply && !widget.deferFullApply
           ? (await DocumentPipeline.process(widget.bytes, widget.mime,
               scope: widget.scope, edits: requested))['optimized'] as Uint8List
           : await DocumentPipeline.editThumbnail(await source, requested, scope:widget.scope);
@@ -146,7 +147,12 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
   Widget cropCanvas(Uint8List bytes) => LayoutBuilder(builder: (context, constraints) {
     // Resolve the exact displayed image rectangle before positioning handles.
     return _CropSurface(bytes: bytes, corners: corners, enabled: manual && !busy,
-      onChange: (i, value) => change(() => corners[i] = value));
+      onStart: () {
+        undoStack.add(edits);
+        if (undoStack.length > 32) undoStack.removeAt(0);
+        redoStack.clear();
+      },
+      onChange: (value) => setState(() { corners = value; preview = null; error = null; }));
   });
 
   @override
@@ -209,7 +215,7 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
       if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error), maxLines: 2),
       if (busy) const LinearProgressIndicator(),
       Text(preview != null ? 'Processed preview' : manual
-          ? 'Drag the four blue corners. Preview applies perspective correction.'
+          ? 'Drag the blue corners or side handles. Preview applies perspective correction.'
           : 'Original view. Preview applies the selected adjustments.',
         style: Theme.of(context).textTheme.bodySmall),
     ])),
@@ -225,17 +231,20 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
 
 class _CropSurface extends StatefulWidget {
   const _CropSurface({required this.bytes, required this.corners,
-    required this.enabled, required this.onChange});
+    required this.enabled, required this.onStart, required this.onChange});
   final Uint8List bytes;
   final List<Offset> corners;
   final bool enabled;
-  final void Function(int, Offset) onChange;
+  final VoidCallback onStart;
+  final ValueChanged<List<Offset>> onChange;
   @override
   State<_CropSurface> createState() => _CropSurfaceState();
 }
 
 class _CropSurfaceState extends State<_CropSurface> {
   int? active;
+  Offset? last;
+  Offset clampPoint(Offset p) => Offset(p.dx.clamp(0.0,1.0).toDouble(),p.dy.clamp(0.0,1.0).toDouble());
   // The editor raster is a decoded PNG with a known IHDR size.
   Size get imageSize {
     final data = ByteData.sublistView(widget.bytes);
@@ -252,19 +261,38 @@ class _CropSurfaceState extends State<_CropSurface> {
       onPanStart: !widget.enabled ? null : (event) {
         double best = 30;
         active = null;
-        for (var i = 0; i < widget.corners.length; i++) {
-          final distance = (absolute(widget.corners[i]) - event.localPosition).distance;
+        final handles = [...widget.corners, for(var i=0;i<4;i++)
+          (widget.corners[i]+widget.corners[(i+1)%4])/2];
+        for (var i = 0; i < handles.length; i++) {
+          final distance = (absolute(handles[i]) - event.localPosition).distance;
           if (distance < best) { best = distance; active = i; }
         }
+        last = event.localPosition;
+        if(active != null) widget.onStart();
       },
       onPanUpdate: !widget.enabled ? null : (event) {
         if (active == null || rect.width <= 0 || rect.height <= 0) return;
-        widget.onChange(active!, Offset(
-          ((event.localPosition.dx - rect.left) / rect.width).clamp(0.0, 1.0).toDouble(),
-          ((event.localPosition.dy - rect.top) / rect.height).clamp(0.0, 1.0).toDouble(),
-        ));
+        final value = Offset((event.localPosition.dx-rect.left)/rect.width,
+          (event.localPosition.dy-rect.top)/rect.height);
+        final next=widget.corners.toList();
+        if(active!<4){
+          next[active!]=clampPoint(value);
+        }else{
+          final a=active!-4,b=(a+1)%4;
+          final delta=event.localPosition-(last??event.localPosition);
+          final dx=delta.dx/rect.width,dy=delta.dy/rect.height;
+          final minX=next[a].dx<next[b].dx?next[a].dx:next[b].dx;
+          final maxX=next[a].dx>next[b].dx?next[a].dx:next[b].dx;
+          final minY=next[a].dy<next[b].dy?next[a].dy:next[b].dy;
+          final maxY=next[a].dy>next[b].dy?next[a].dy:next[b].dy;
+          final move=Offset(dx.clamp(-minX,1-maxX).toDouble(),dy.clamp(-minY,1-maxY).toDouble());
+          next[a]+=move;next[b]+=move;
+        }
+        last=event.localPosition;
+        widget.onChange(next);
       },
-      onPanEnd: (_) => active = null,
+      onPanEnd: (_) {active=null;last=null;},
+      onPanCancel: () {active=null;last=null;},
       child: Stack(fit: StackFit.expand, children: [
         Image.memory(widget.bytes, fit: BoxFit.contain, gaplessPlayback: true),
         if (widget.enabled) CustomPaint(painter: _CropOutline(
