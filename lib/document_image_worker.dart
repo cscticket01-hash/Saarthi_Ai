@@ -131,6 +131,12 @@ class DocumentImageWorker {
             sha256.convert(input['bytes'] as Uint8List).toString(),
             input['kind'],
             input['targetBytes'],
+            input['manualEdit'],
+            input['manualCorners'],
+            input['autoRotation'],
+            input['scanFilter'],
+            input['brightness'],
+            input['contrast'],
           ]),
         ),
       )
