@@ -163,10 +163,12 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> {
                         ),
                       ]),
                       DragMarkers(markers: [
-                        if (_pin != null)
-                          DragMarker(
+                        DragMarker(
                             key: ValueKey('win002-red-pin-${_pinRevision}'),
-                            point: LatLng(_pin!.latitude, _pin!.longitude),
+                            point: LatLng(
+                              (_pin ?? _areaCenter).latitude,
+                              (_pin ?? _areaCenter).longitude,
+                            ),
                             size: const Size.square(54),
                             offset: const Offset(0, -18),
                             builder: (_, __, ___) => const Icon(
