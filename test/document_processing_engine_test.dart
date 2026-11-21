@@ -34,8 +34,15 @@ void main() {
     expect(result['width'], greaterThan(result['height'] as int));
     expect(result['qualityGuard'], anyOf('pixel-check-passed', 'review-required'));
     final optimized = img.decodeImage(result['optimized'] as Uint8List)!;
-    final pixel = optimized.getPixel(optimized.width ~/ 2, optimized.height ~/ 2);
-    expect((pixel.r - pixel.g).abs(), lessThanOrEqualTo(3));
+    final rgb = optimized.convert(numChannels: 3);
+    for (var y = 0; y < rgb.height; y += 11) {
+      for (var x = 0; x < rgb.width; x += 11) {
+        final pixel = rgb.getPixel(x, y);
+        expect((pixel.r - pixel.g).abs(), lessThanOrEqualTo(3));
+        expect((pixel.r - pixel.b).abs(), lessThanOrEqualTo(3));
+      }
+    }
+    expect(result['qualityGuard'], 'pixel-check-passed');
     expect(source, before);
   });
 
