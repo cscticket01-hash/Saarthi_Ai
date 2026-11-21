@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 import '../lib/document_upload_dialog.dart';
+import '../lib/document_pdf_preview.dart';
 import '../lib/document_pipeline.dart';
 
 void main() {
@@ -76,6 +77,18 @@ void main() {
     await t.pump(const Duration(milliseconds: 300));
   }
 
+
+  testWidgets('PDF preview scrolls thumbnails horizontally and opens selected page',(t) async {
+    final second=Uint8List.fromList(img.encodePng(img.Image(width:50,height:70)));
+    await t.pumpWidget(MaterialApp(home:Scaffold(body:DocumentPdfPreview(pages:[bytes,second]))));
+    expect(find.text('Page 1 of 2'),findsOneWidget);
+    expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')),findsOneWidget);
+    expect(find.byKey(const ValueKey('pdf-page-thumbnail-1')),findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('pdf-page-thumbnail-1')));
+    await t.pump();
+    expect(find.text('Page 2 of 2'),findsOneWidget);
+    expect(t.takeException(),isNull);
+  });
 
   test('WIN-004 rejects more than eight selected Smart Scan pages', () async {
     final input = {
