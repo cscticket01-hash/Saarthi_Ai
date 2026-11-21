@@ -8,6 +8,63 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('four-corner perspective correction, explicit rotation and filters are non-destructive', () {
+    final input = img.Image(width: 640, height: 800);
+    img.fill(input, color: img.ColorRgb8(170, 110, 125));
+    img.fillRect(input, x1: 60, y1: 70, x2: 570, y2: 720,
+      color: img.ColorRgb8(240, 230, 224));
+    for (var y = 130; y < 680; y += 30) {
+      img.drawLine(input, x1: 110, y1: y, x2: 520, y2: y,
+        color: img.ColorRgb8(25, 25, 25), thickness: 3);
+    }
+    final source = Uint8List.fromList(img.encodePng(input));
+    final before = Uint8List.fromList(source);
+    final result = DocumentProcessingEngine.process({
+      'bytes': source,
+      'manualEdit': [0, 0, 1, 1, 90],
+      'manualCorners': [.09, .08, .90, .09, .89, .90, .09, .91],
+      'scanFilter': 'grayscale',
+      'brightness': .05,
+      'contrast': .12,
+    });
+    expect(result['manualCrop'], true);
+    expect(result['rotationDegrees'], 90);
+    expect(result['scanFilter'], 'grayscale');
+    expect(result['sourceRetained'], false);
+    expect(result['width'], greaterThan(result['height'] as int));
+    expect(result['qualityGuard'], anyOf('pixel-check-passed', 'review-required'));
+    final optimized = img.decodeImage(result['optimized'] as Uint8List)!;
+    final pixel = optimized.getPixel(optimized.width ~/ 2, optimized.height ~/ 2);
+    expect((pixel.r - pixel.g).abs(), lessThanOrEqualTo(3));
+    expect(source, before);
+  });
+
+  test('crossed or out-of-bounds manual crop coordinates are rejected', () {
+    final bytes = Uint8List.fromList(img.encodePng(img.Image(width: 320, height: 400)));
+    expect(() => DocumentProcessingEngine.process({
+      'bytes': bytes, 'manualEdit': [0, 0, 1, 1, 0],
+      'manualCorners': [0, 0, 1, 1, 1, 0, 0, 1],
+    }), throwsFormatException);
+    expect(() => DocumentProcessingEngine.process({
+      'bytes': bytes, 'scanFilter': 'invalid',
+    }), throwsFormatException);
+  });
+
+  for (final angle in [90, 180, 270]) {
+    test('confident right-angle correction $angle preserves orientation metadata', () {
+      final image = img.Image(width: 520, height: 700);
+      img.fill(image, color: img.ColorRgb8(255, 255, 255));
+      final result = DocumentProcessingEngine.process({
+        'bytes': Uint8List.fromList(img.encodePng(image)),
+        'autoRotation': angle,
+      });
+      expect(result['rotationDegrees'], angle);
+      expect(result['sourceRetained'], false);
+      expect(result['width'], angle == 180 ? 520 : 700);
+      expect(result['height'], angle == 180 ? 700 : 520);
+    });
+  }
+
   test('light patterned cloth is excluded using relative paper brightness', () {
     final image = img.Image(width: 640, height: 800);
     img.fill(image, color: img.ColorRgb8(204, 180, 192));
