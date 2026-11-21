@@ -242,29 +242,6 @@ class DocumentPipeline {
   // trust a caller-supplied encoded result or path as the saved generation.
   static Map<String, dynamic> checkedEdits(Map<String, dynamic>? input) {
     if (input == null || input.isEmpty) return {};
-    if (input.containsKey('pdfPages')) {
-      if (input.length != 1 || input['pdfPages'] is! List) {
-        throw const FormatException('Invalid PDF page plan.');
-      }
-      final plan = input['pdfPages'] as List;
-      if (plan.isEmpty || plan.length > maxScanPages) {
-        throw const FormatException('Keep between 1 and 8 pages.');
-      }
-      final seen = <int>{};
-      final out = <Map<String,dynamic>>[];
-      for (final row in plan) {
-        if (row is! Map || row.length != 2 || row['index'] is! int ||
-            row['edits'] is! Map) throw const FormatException('Invalid PDF page edit.');
-        final index = row['index'] as int;
-        if (index < 0 || index >= maxScanPages || !seen.add(index)) {
-          throw const FormatException('Duplicate or invalid PDF page.');
-        }
-        final edit = Map<String,dynamic>.from(row['edits'] as Map);
-        if (edit.containsKey('pdfPages')) throw const FormatException('Nested PDF plans are not allowed.');
-        out.add({'index':index,'edits':checkedEdits(edit)});
-      }
-      return {'pdfPages':out};
-    }
     if (input.keys.any((key) => !{
       'manualEdit','manualCorners','scanFilter','brightness','contrast',
     }.contains(key))) {
