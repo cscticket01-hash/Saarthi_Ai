@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'document_pipeline.dart';
 import 'fitted_document_preview.dart';
+import 'student_inventory_policy.dart';
 
 class SelectedDocument {
   SelectedDocument(this.name, this.mime, this.bytes);
@@ -121,9 +122,11 @@ class DocumentUploadDialog extends StatefulWidget {
     required this.isCurrent,
     this.picker = DocumentFilePicker.pick,
     this.processor = DocumentPipeline.process,
+    this.inventoryUsage,
   });
   final String name, scope;
   final bool Function() isCurrent;
+  final ScanInventoryUsage? inventoryUsage;
   final Future<SelectedDocument?> Function() picker;
   final Future<Map<String, dynamic>> Function(Uint8List, String, {String scope})
       processor;
@@ -180,6 +183,16 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
           (result['optimized'] as Uint8List).isEmpty) {
         throw const FormatException('Processing returned no readable output.');
       }
+      final usage = widget.inventoryUsage;
+      if (usage != null) {
+        final pageCount = result['pageCount'] as int? ??
+            (file.mime == 'application/pdf' ? 0 : 1);
+        final problem = usage.problem(
+          addingBytes: (result['optimized'] as Uint8List).length,
+          addingPages: pageCount,
+        );
+        if (problem != null) throw FormatException(problem);
+      }
       setState(() => processed = result);
     } catch (e) {
       if (mounted && current == generation)
@@ -227,7 +240,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 ),
                 Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
                 const Text(
-                  'Single image target: 80 KB. Up to 8 PDF/image pages: 500 KB total page-image budget. PDF size can be larger; readability takes priority.',
+                  'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.',
                 ),
                 if (processed!['sourceRetained'] == true)
                   Text(
