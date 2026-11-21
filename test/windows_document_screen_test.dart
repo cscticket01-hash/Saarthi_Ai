@@ -59,6 +59,19 @@ class ReviewPicker extends FileSelectorPlatform {
         acceptedTypeGroups!.single.extensions, ['jpg', 'jpeg', 'png', 'pdf']);
     return selection;
   }
+
+  // WIN-004: The production picker now permits multi-selection through the
+  // SAME button. Keep this existing native-picker test adapter in sync.
+  @override
+  Future<List<XFile>> openFiles(
+      {List<XTypeGroup>? acceptedTypeGroups,
+      String? initialDirectory,
+      String? confirmButtonText}) async {
+    calls++;
+    expect(
+        acceptedTypeGroups!.single.extensions, ['jpg', 'jpeg', 'png', 'pdf']);
+    return selection == null ? <XFile>[] : <XFile>[selection!];
+  }
 }
 
 void main() {
