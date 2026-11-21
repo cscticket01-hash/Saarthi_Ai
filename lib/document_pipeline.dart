@@ -100,8 +100,10 @@ class DocumentPipeline {
       } else if (mime == 'image/png' || mime == 'image/jpeg') {
         SchoolImageInput.validate(bytes);
         // Reuse the existing image processor for orientation and text quality.
-        final result = await _image({'bytes': bytes}, scope);
-        addPage(result['highQuality'] as Uint8List,
+        // Assemble an import container without sharpening or compressing
+        // each image twice. The main pipeline processes the PDF pages once.
+        final result = await compute(_importImage, bytes);
+        addPage(result['bytes'] as Uint8List,
             result['width'] as int, result['height'] as int);
       } else {
         throw const FormatException('Select JPG, JPEG, PNG or PDF.');
@@ -114,6 +116,24 @@ class DocumentPipeline {
       throw const FormatException('Combined PDF exceeds 50 MB.');
     }
     return output;
+  }
+
+  static Map<String, dynamic> _importImage(Uint8List bytes) {
+    SchoolImageInput.validate(bytes);
+    final decoder = img.findDecoderForData(bytes);
+    final info = decoder?.startDecode(bytes);
+    if (info == null || info.width <= 0 || info.height <= 0 ||
+        info.width * info.height > 20000000 || decoder!.numFrames() != 1) {
+      throw const FormatException('Unsupported scan image.');
+    }
+    final decoded = decoder!.decodeFrame(0);
+    if (decoded == null) throw const FormatException('Could not decode scan.');
+    final image = img.bakeOrientation(decoded);
+    image.exif = img.ExifData();
+    image.textData = null;
+    image.iccProfile = null;
+    return {'bytes': Uint8List.fromList(img.encodePng(image, level: 1)),
+      'width': image.width, 'height': image.height};
   }
 
   static void _validatePdf(Uint8List bytes) {
@@ -150,13 +170,15 @@ class DocumentPipeline {
         decoder!.numFrames() != 1) {
       throw const FormatException('Invalid scan image.');
     }
-    final decoded = decoder.decodeFrame(0);
+    final decoded = decoder!.decodeFrame(0);
     if (decoded == null) throw const FormatException('Could not decode scan.');
     final image = img.bakeOrientation(decoded);
-    final raster = img.copyResize(image,
-      width: image.width >= image.height ? 900 : null,
-      height: image.height > image.width ? 900 : null,
-      interpolation: img.Interpolation.average);
+    final raster = image.width > 900 || image.height > 900
+        ? img.copyResize(image,
+          width: image.width >= image.height ? 900 : null,
+          height: image.height > image.width ? 900 : null,
+          interpolation: img.Interpolation.average)
+        : image;
     return Uint8List.fromList(img.encodePng(raster, level: 1));
   }
 
