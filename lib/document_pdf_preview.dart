@@ -60,7 +60,7 @@ class _DocumentPdfPreviewState extends State<DocumentPdfPreview>{
         itemBuilder:(context,index)=>InkWell(
           key:ValueKey('pdf-page-thumbnail-$index'),
           borderRadius:BorderRadius.circular(6),
-          onTap:()=>setState(()=>{selected=index,selectedPage=renderSelected(index)}),
+          onTap:()=>setState(() {selected=index;selectedPage=renderSelected(index);}),
           child:Container(
             width:66,
             padding:const EdgeInsets.all(3),
