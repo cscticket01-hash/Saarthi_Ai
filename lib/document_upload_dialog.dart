@@ -5,13 +5,15 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import 'document_pipeline.dart';
+import 'document_scan_editor.dart';
 import 'fitted_document_preview.dart';
 import 'student_inventory_policy.dart';
 
 class SelectedDocument {
-  SelectedDocument(this.name, this.mime, this.bytes);
+  SelectedDocument(this.name, this.mime, this.bytes, {this.edits = const {}});
   final String name, mime;
   final Uint8List bytes;
+  final Map<String, dynamic> edits;
 }
 
 class DocumentFilePicker {
@@ -208,6 +210,44 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
     }
   }
 
+  Future<void> editScan() async {
+    final file = selected;
+    if (busy || file == null || file.mime == 'application/pdf') return;
+    final requested = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => DocumentScanEditor(bytes: file.bytes, mime: file.mime,
+        scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent),
+    );
+    if (!mounted || requested == null) return;
+    if (!widget.isCurrent()) {
+      setState(() { processed = null; error = 'School changed. Reopen documents.'; });
+      return;
+    }
+    final current = ++generation;
+    setState(() { busy = true; stage = 'Applying scan edits…'; error = null; });
+    try {
+      final result = await DocumentPipeline.process(file.bytes, file.mime,
+        scope: widget.scope, edits: requested);
+      if (!mounted || current != generation) return;
+      if (!widget.isCurrent()) throw StateError('School changed. Reopen documents.');
+      final output = result['optimized'] as Uint8List;
+      final problem = widget.inventoryUsage?.problem(
+        addingBytes: output.length, addingPages: 1);
+      if (problem != null) throw FormatException(problem);
+      setState(() {
+        selected = SelectedDocument(file.name, file.mime, file.bytes,
+          edits: DocumentPipeline.checkedEdits(requested));
+        processed = result;
+      });
+    } catch (e) {
+      if (mounted && current == generation) setState(() {
+        error = e is FormatException ? e.message.toString() : e.toString();
+      });
+    } finally {
+      if (mounted && current == generation) setState(() => busy = false);
+    }
+  }
+
   @override
   void dispose() {
     generation++;
@@ -234,6 +274,14 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
               ],
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
+              if (selected != null && selected!.mime != 'application/pdf' &&
+                  widget.processor == DocumentPipeline.process)
+                OutlinedButton.icon(
+                  key: const ValueKey('document-edit-scan'),
+                  onPressed: busy ? null : editScan,
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Crop • Rotate • Filters • Adjust'),
+                ),
               if (processed != null) ...[
                 Text(
                   '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
@@ -257,6 +305,9 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     ),
                     maxLines: 3,
                   ),
+                if (processed!['qualityGuard'] == 'review-required')
+                  const Text('Quality check needs review. Inspect the text and seals before saving.',
+                    style: TextStyle(color: Colors.orangeAccent)),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
                       ? FittedDocumentPreview(
