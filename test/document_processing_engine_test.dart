@@ -8,6 +8,32 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('light patterned cloth is excluded using relative paper brightness', () {
+    final image = img.Image(width: 640, height: 800);
+    img.fill(image, color: img.ColorRgb8(204, 180, 192));
+    for (var y = 15; y < 800; y += 75) {
+      for (var x = 15; x < 640; x += 90) {
+        img.fillCircle(image, x: x, y: y, radius: 14,
+          color: img.ColorRgb8(160, 100, 135));
+      }
+    }
+    img.fillRect(image, x1: 85, y1: 95, x2: 560, y2: 710,
+      color: img.ColorRgb8(234, 230, 227));
+    for (var y = 150; y < 650; y += 36) {
+      img.drawLine(image, x1: 125, y1: y, x2: 510, y2: y,
+        color: img.ColorRgb8(15, 15, 15), thickness: 2);
+    }
+    final source = Uint8List.fromList(img.encodePng(image));
+    final before = Uint8List.fromList(source);
+    final result = DocumentProcessingEngine.process({'bytes': source});
+    expect(result['perspectiveCorrected'], isTrue);
+    expect(result['sourceRetained'], isFalse);
+    final output = img.decodeImage(result['optimized'] as Uint8List)!;
+    expect(output.width, lessThan(600));
+    expect(output.height, lessThan(750));
+    expect(source, before);
+  });
+
   test('pink fabric background is cropped without reverting to source', () {
     final photo = img.Image(width: 600, height: 800);
     img.fill(photo, color: img.ColorRgb8(145, 55, 95));
