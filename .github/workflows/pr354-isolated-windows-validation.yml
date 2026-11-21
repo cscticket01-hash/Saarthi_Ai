@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: pr354-isolated-windows-validation
+  group: pr354-smartscan-final-validation-20261121
   cancel-in-progress: true
 env:
   FLUTTER_SUPPRESS_ANALYTICS: 'true'
