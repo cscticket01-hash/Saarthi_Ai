@@ -135,6 +135,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   SelectedDocument? selected;
   Map<String, dynamic>? processed;
   bool busy = false;
+  String stage = '';
   String? error;
   int generation = 0;
   @override
@@ -151,6 +152,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
     final current = ++generation;
     setState(() {
       busy = true;
+      stage = 'Selecting document files…';
       selected = null;
       processed = null;
       error = null;
@@ -165,6 +167,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
         return;
       }
       selected = file; // Original stays untouched, even when processing fails.
+      setState(() => stage = 'Processing pages, crop and compression…');
       final result = await widget.processor(
         file.bytes,
         file.mime,
@@ -181,8 +184,11 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
     } catch (e) {
       if (mounted && current == generation)
         setState(
-          () => error =
-              'Unable to process document: $e. Original file is unchanged. Select another file.',
+          () {
+            final details = e is FormatException ? e.message : e.toString();
+            error = 'Unable to process document: $details. '
+                'Original file is unchanged. Select another file or retry.';
+          },
         );
     } finally {
       if (mounted && current == generation) setState(() => busy = false);
@@ -209,7 +215,10 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 icon: const Icon(Icons.file_open),
                 label: const Text('Select file — JPG / JPEG / PNG / PDF'),
               ),
-              if (busy) const LinearProgressIndicator(),
+              if (busy) ...[
+                Text(stage),
+                const LinearProgressIndicator(),
+              ],
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
               if (processed != null) ...[
@@ -220,6 +229,12 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 const Text(
                   'Single image target: 80 KB. Up to 8 PDF/image pages: 500 KB total page-image budget. PDF size can be larger; readability takes priority.',
                 ),
+                if (processed!['sourceRetained'] == true)
+                  Text(
+                    processed!['cleanupStatus']?.toString() ??
+                        'Original retained to protect readability.',
+                    style: const TextStyle(color: Colors.orangeAccent),
+                  ),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
                       ? FittedDocumentPreview(
