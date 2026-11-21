@@ -23,8 +23,8 @@ class DocumentFilePicker {
     mimeTypes: ['image/jpeg', 'image/png', 'application/pdf'],
   );
   static Future<SelectedDocument?> pick({String scope = ''}) async {
-    // The same button now accepts one or several documents, without a
-    // replacement screen. Any combination still counts toward eight pages.
+    // The same button accepts one PDF or an image batch. PDFs are never
+    // merged with other files because that would rewrite the supplied source.
     final files = await openFiles(acceptedTypeGroups: [types]);
     if (files.isEmpty) return null;
     if (files.length > DocumentPipeline.maxScanPages) {
