@@ -18,6 +18,7 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
+import '../lib/document_pipeline.dart';
 
 // Only the OS PDF raster boundary is simulated. The production pipeline still
 // processes raster pixels, builds both PDFs, previews and persists them.
@@ -173,6 +174,31 @@ void main() {
     expect(picker.calls, beforeCalls + 1);
     expect(await io(t, count), existing);
   }
+
+  testWidgets('PDF above 500 KB enters compression-only path and remains within quota',(t) async {
+    final document=pw.Document()..addPage(pw.Page(build:(_)=>pw.Text('Original searchable school PDF')));
+    final source=(await io(t,document.save))!;
+    final sourceText=String.fromCharCodes(source);
+    final eof=sourceText.lastIndexOf('%%EOF');
+    expect(eof,greaterThan(0));
+    final oversized=Uint8List.fromList([
+      ...source.take(eof),
+      ...List<int>.filled(520*1024,0x20),
+      ...source.skip(eof),
+    ]);
+    expect(oversized.length,greaterThan(DocumentPipeline.scanPageImageBudget));
+    final result=(await io(t,()=>DocumentPipeline.process(
+      oversized,'application/pdf',scope:'pdf-compression-over-limit'))) as Map<String,dynamic>;
+    final output=result['optimized'] as Uint8List;
+    expect(result['pageCount'],1);
+    expect(result['sourceRetained'],false);
+    expect(output.length,lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
+    expect(output, isNot(orderedEquals(oversized)));
+    expect(result['cleanupStatus'],contains('compression completed'));
+    expect(result['previewPages'],isA<List<Uint8List>>());
+    expect(rasterizer.rasterCalls,1);
+    expect(t.takeException(),isNull);
+  });
 
   testWidgets(
       'production Documents screen legacy toggle OFF: PNG and PDF offline save, cancellation and failure preserve records/queue',
