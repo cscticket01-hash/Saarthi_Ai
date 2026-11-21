@@ -22,7 +22,7 @@ class DocumentFilePicker {
     extensions: ['jpg', 'jpeg', 'png', 'pdf'],
     mimeTypes: ['image/jpeg', 'image/png', 'application/pdf'],
   );
-  static Future<SelectedDocument?> pick() async {
+  static Future<SelectedDocument?> pick({String scope = ''}) async {
     // The same button now accepts one or several documents, without a
     // replacement screen. Any combination still counts toward eight pages.
     final files = await openFiles(acceptedTypeGroups: [types]);
@@ -62,7 +62,7 @@ class DocumentFilePicker {
         sources.first['bytes'] as Uint8List,
       );
     }
-    final combined = await DocumentPipeline.combineSources(sources);
+    final combined = await DocumentPipeline.combineSources(sources, scope: scope);
     final name = files.first.name;
     final dot = name.lastIndexOf('.');
     final stem = dot > 0 ? name.substring(0, dot) : name;
@@ -163,7 +163,9 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
       error = null;
     });
     try {
-      final file = await widget.picker();
+      final file = await (widget.picker == DocumentFilePicker.pick
+          ? DocumentFilePicker.pick(scope: widget.scope)
+          : widget.picker());
       if (!mounted || current != generation) return;
       if (!widget.isCurrent())
         throw StateError('School changed. Reopen documents.');
@@ -252,6 +254,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   @override
   void dispose() {
     generation++;
+    DocumentPipeline.clearCombinedPreparation(widget.scope);
     super.dispose();
   }
 
@@ -303,9 +306,20 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     style: TextStyle(color: Colors.orangeAccent)),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
-                      ? FittedDocumentPreview(
-                          bytes: processed!['optimized'] as Uint8List,
-                        )
+                      ? (processed!['previewPages'] is List<Uint8List>
+                          ? ListView(
+                              children: [
+                                for (final page in processed!['previewPages'] as List<Uint8List>)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 6),
+                                    child: Image.memory(page, fit: BoxFit.contain,
+                                      gaplessPlayback: true),
+                                  ),
+                              ],
+                            )
+                          : FittedDocumentPreview(
+                              bytes: processed!['optimized'] as Uint8List,
+                            ))
                       : Image.memory(
                           processed!['optimized'] as Uint8List,
                           fit: BoxFit.contain,
