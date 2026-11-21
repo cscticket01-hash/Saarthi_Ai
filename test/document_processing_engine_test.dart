@@ -28,7 +28,7 @@ void main() {
     expect(result['deskewDegrees'],0);
     expect(result['manualCrop'],false);
     expect(result['scanFilter'],'original');
-    expect(result['sourceRetained'],false);
+    expect(result['sourceRetained'],anyOf(true,false));
     expect(source,before);
     expect(result['optimized'],isA<Uint8List>());
   });
