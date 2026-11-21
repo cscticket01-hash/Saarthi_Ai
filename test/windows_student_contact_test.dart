@@ -122,13 +122,15 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await db.collection('students_directory').doc('Class 1_Roll_1').set({
-      'name': 'Original student',
-      'class': 'Class 1',
-      'rollNo': '1',
-      'parentName': 'Original guardian',
-      'parentContact': '9876543210',
-    });
+    // Flutter widget tests use fake time; disk I/O must run in real async.
+    await tester.runAsync(() => db.collection('students_directory')
+        .doc('Class 1_Roll_1').set({
+          'name': 'Original student',
+          'class': 'Class 1',
+          'rollNo': '1',
+          'parentName': 'Original guardian',
+          'parentContact': '9876543210',
+        }));
     await tester.pumpWidget(const MaterialApp(home: AllStudentsListScreen()));
     for (var i = 0; i < 100 && find.byType(CircularProgressIndicator).evaluate().isNotEmpty; i++) {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
