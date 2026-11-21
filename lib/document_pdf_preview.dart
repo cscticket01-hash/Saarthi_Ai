@@ -5,7 +5,7 @@ import 'package:printing/printing.dart';
 /// Display-only horizontal page strip. Preview rasters are never saved as the
 /// document; Save continues to use the original or approved compressed PDF.
 class DocumentPdfPreview extends StatefulWidget {
-  const DocumentPdfPreview({super.key,required this.pages,this.pdfBytes,this.fullResolutionPages});
+  const DocumentPdfPreview({super.key,required this.pages,this.pdfBytes,this.fullResolutionPages=false});
   final List<Uint8List> pages;
   final Uint8List? pdfBytes;
   final bool fullResolutionPages;
