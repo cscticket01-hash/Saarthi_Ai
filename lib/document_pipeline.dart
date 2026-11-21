@@ -74,9 +74,22 @@ class DocumentPipeline {
     _pdfSource = pending;
     return pending;
   }
-  static Future<List<Uint8List>> pdfEditorPages(Uint8List bytes,{required String scope}) async =>
-      [for(final page in await _sourcePages(bytes,scope))
-        Uint8List.fromList(page['bytes'] as Uint8List)];
+  /// Render display-only page previews. These bytes are never used for saving.
+  /// Low DPI keeps normal, already-small PDFs out of the compression pipeline.
+  static Future<List<Uint8List>> _previewPdfPages(Uint8List bytes) async {
+    _validatePdf(bytes);
+    final previews=<Uint8List>[];
+    var pixels=0;
+    await for(final page in Printing.raster(bytes,dpi:60).take(maxScanPages+1)){
+      pixels+=page.width*page.height;
+      if(previews.length>=maxScanPages||pixels>40000000){
+        throw const FormatException('PDF exceeds 8 pages / 40 megapixel preview limit.');
+      }
+      previews.add(await page.toPng());
+    }
+    if(previews.isEmpty)throw const FormatException('PDF has no readable pages.');
+    return previews;
+  }
 
   static Future<Uint8List> editThumbnail(Uint8List thumbnail, Map<String,dynamic> edits,
       {required String scope}) async {
@@ -337,129 +350,82 @@ class DocumentPipeline {
       }
       return {...result, 'pageCount': 1};
     }
-    if (options.isNotEmpty && !options.containsKey('pdfPages')) {
-      throw const FormatException('Select a PDF page to edit.');
+    if (options.isNotEmpty) {
+      throw const FormatException('PDF files are uploaded as-is; page editing is not supported.');
     }
+    _validatePdf(bytes);
+    // Normal PDFs are immutable: count/render for preview only, and retain
+    // the exact source bytes. No OCR, image cleanup, crop or recompression.
+    if (bytes.length <= scanPageImageBudget) {
+      final previews=await _previewPdfPages(bytes);
+      return {
+        'optimized':Uint8List.fromList(bytes),
+        'highQuality':Uint8List.fromList(bytes),
+        'sourceRetained':true,
+        'mimeType':'application/pdf',
+        'actualBytes':bytes.length,
+        'originalBytes':bytes.length,
+        'targetBytes':scanPageImageBudget,
+        'pageCount':previews.length,
+        'previewPages':previews,
+        'targetMet':true,
+        'qualityGuard':'original-pdf-retained',
+        'cleanupStatus':'Original PDF retained; compression not required.',
+      };
+    }
+    // Only PDFs above the 500 KB inventory limit enter this compression path.
+    // Rasterization is for compression only; no OCR, auto-crop, deskew or edits.
     final originals = await _sourcePages(bytes, scope);
-    final plan = options['pdfPages'] as List?;
-    final pages = <Map<String,dynamic>>[];
-    if (plan == null) {
-      pages.addAll(originals);
-    } else {
-      for (final row in plan) {
-        final index = row['index'] as int;
-        if (index >= originals.length) throw const FormatException('PDF page no longer exists.');
-        pages.add({...originals[index], 'edits':row['edits']});
-      }
-    }
-    final explicitlyEdited = plan != null;
     final optimized = pw.Document();
-    // Keep the original PDF as the full-quality copy. A second PDF containing
-    // large 94-quality JPEG rasters doubles encoding/memory without improving
-    // fidelity over the original source.
-    var encodedImageBytes = 0;
-    var cleanedPages = 0;
-    var needsQualityReview = false;
-    final previewPages = <Uint8List>[];
-    // Spend the remaining budget across unprocessed pages. A simple text
-    // page leaves room for the harder pages instead of wasting its share.
-    for (var index = 0; index < pages.length; index++) {
-      final page = pages[index];
-      final remaining = scanPageImageBudget - 4096 - encodedImageBytes;
-      final target = (remaining ~/ (pages.length - index))
-          .clamp(1, scanPageImageBudget).toInt();
-      final pageBytes = page['bytes'] as Uint8List;
-      final pageEdits = Map<String,dynamic>.from(page['edits'] as Map? ?? {});
-      final result = await _image({
-        'bytes': pageBytes,
-        'targetBytes': target,
-        'autoRotation': pageEdits.containsKey('manualEdit') ? 0 :
-            await TemplateForgeOfflineOcr.scanRotation(pageBytes),
-        ...pageEdits,
-      }, scope);
-      final outputPage = result['optimized'] as Uint8List;
-      encodedImageBytes += outputPage.length;
+    var encodedImageBytes=0;
+    var needsQualityReview=false;
+    final previewPages=<Uint8List>[];
+    for(var index=0;index<originals.length;index++){
+      final page=originals[index];
+      final remaining=scanPageImageBudget-4096-encodedImageBytes;
+      final target=(remaining~/(originals.length-index)).clamp(1,scanPageImageBudget).toInt();
+      final result=await _image({
+        'bytes':page['bytes'] as Uint8List,
+        'targetBytes':target,
+        'kind':'pdfCompression',
+      },scope);
+      final outputPage=result['optimized'] as Uint8List;
+      encodedImageBytes+=outputPage.length;
       previewPages.add(outputPage);
-      if (result['qualityGuard'] == 'review-required') needsQualityReview = true;
-      if (result['sourceRetained'] != true &&
-          (result['perspectiveCorrected'] == true ||
-              ((result['rotationDegrees'] as num?) ?? 0) != 0 ||
-              ((result['deskewDegrees'] as num?) ?? 0).abs() >= 0.5)) {
-        cleanedPages++;
-      }
-      // Match the saved PDF page to the corrected image: no sideways
-      // letterboxing or reintroduction of the removed background.
-      final format = PdfPageFormat(
-        (result['width'] as int) * 72 / 150,
-        (result['height'] as int) * 72 / 150,
+      if(result['qualityGuard']=='review-required')needsQualityReview=true;
+      final format=PdfPageFormat(
+        (result['width'] as int)*72/150,
+        (result['height'] as int)*72/150,
       );
-      void add(pw.Document doc, Uint8List image) => doc.addPage(
-        pw.Page(
-          pageFormat: format,
-          margin: pw.EdgeInsets.zero,
-          build: (_) => pw.Image(pw.MemoryImage(image), fit: pw.BoxFit.contain),
-        ),
-      );
-      add(optimized, outputPage);
+      optimized.addPage(pw.Page(
+        pageFormat:format,margin:pw.EdgeInsets.zero,
+        build:(_)=>pw.Image(pw.MemoryImage(outputPage),fit:pw.BoxFit.contain),
+      ));
     }
-    // Never reject an already-small original PDF just because converting it
-    // to scan JPEGs increased its size. The untouched source remains readable.
-    // This is explicitly a no-crop fallback, not a successful optimization.
-    if (encodedImageBytes > scanPageImageBudget) {
-      if (!explicitlyEdited && bytes.length <= scanPageImageBudget) {
-        return {
-          'optimized': Uint8List.fromList(bytes),
-          'sourceRetained': true,
-          'highQuality': Uint8List.fromList(bytes),
-          'mimeType': 'application/pdf',
-          'actualBytes': bytes.length,
-          'originalBytes': bytes.length,
-          'targetBytes': scanPageImageBudget,
-          'optimizedPageImageBytes': encodedImageBytes,
-          'savingsPercent': 0.0,
-          'pageCount': pages.length,
-          'targetMet': true,
-          'cleanupStatus':
-              'Original PDF retained: processing could not meet the 500 KB scan budget without reducing readability; auto-crop not applied',
-        };
-      }
+    if(encodedImageBytes>scanPageImageBudget){
       throw FormatException(
-        'The ${pages.length}-page scan needs $encodedImageBytes bytes after '
-        'quality-safe processing, above the 500 KB scan budget. '
-        'Your original is unchanged. Try a clearer scan or fewer pages.',
+        'The ${originals.length}-page PDF cannot be compressed below 500 KB without risking readability. Original unchanged.',
       );
     }
-    final processedOutput = await optimized.save();
-    // Preserve the usable original PDF when rasterization expands its vector
-    // content. This avoids uploading a larger, lower fidelity substitute.
-    final sourceRetained = !explicitlyEdited && bytes.length <= scanPageImageBudget &&
-        (processedOutput.length > scanPageImageBudget ||
-            (cleanedPages == 0 && processedOutput.length > bytes.length));
-    final output = sourceRetained ? Uint8List.fromList(bytes) : processedOutput;
-    if (output.length > scanPageImageBudget) {
+    final output=await optimized.save();
+    if(output.length>scanPageImageBudget){
       throw FormatException(
-        'The readable PDF is ${output.length} bytes including its page wrapper; '
-        'the limit is 500 KB. Original unchanged.',
+        'Compressed PDF is ${output.length} bytes; the limit is 500 KB. Original unchanged.',
       );
     }
     return {
-      'optimized': output,
-      'sourceRetained': sourceRetained,
-      if (!sourceRetained) 'previewPages': previewPages,
-      'qualityGuard': sourceRetained ? 'source-retained' :
-          needsQualityReview ? 'review-required' : 'pixel-check-passed',
-      'highQuality': Uint8List.fromList(bytes),
-      'mimeType': 'application/pdf',
-      'actualBytes': output.length,
-      'originalBytes': bytes.length,
-      'targetBytes': scanPageImageBudget,
-      'optimizedPageImageBytes': encodedImageBytes,
-      'savingsPercent': 100 * (1 - output.length / bytes.length),
-      'pageCount': pages.length,
-      'targetMet': output.length <= scanPageImageBudget,
-      'cleanupStatus': sourceRetained
-          ? 'Original PDF retained: optimized encoding would enlarge upload or exceed 500 KB; crop not applied'
-          : '${pages.length} pages processed; $cleanedPages pages corrected; original PDF retained',
+      'optimized':Uint8List.fromList(output),
+      'highQuality':Uint8List.fromList(bytes),
+      'sourceRetained':false,
+      'mimeType':'application/pdf',
+      'actualBytes':output.length,
+      'originalBytes':bytes.length,
+      'targetBytes':scanPageImageBudget,
+      'pageCount':originals.length,
+      'previewPages':previewPages,
+      'targetMet':true,
+      'qualityGuard':needsQualityReview?'review-required':'pixel-check-passed',
+      'cleanupStatus':'PDF exceeded 500 KB; compression completed.',
     };
   }
 }
