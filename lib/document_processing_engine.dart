@@ -219,6 +219,36 @@ class DocumentProcessingEngine {
       );
     // Crop coordinates refer to the EXIF-oriented original, before rotation.
     final edit = portrait ? null : input['manualEdit'];
+    final quad = portrait ? null : input['manualCorners'];
+    final filter = portrait ? 'auto' : input['scanFilter'] ?? 'auto';
+    final brightness = portrait ? 0.0 : (input['brightness'] as num? ?? 0).toDouble();
+    final contrast = portrait ? 0.0 : (input['contrast'] as num? ?? 0).toDouble();
+    if (!{'auto', 'original', 'lightText', 'grayscale', 'whiteboard'}.contains(filter) ||
+        !brightness.isFinite || !contrast.isFinite ||
+        brightness.abs() > 0.4 || contrast.abs() > 0.5) {
+      throw const FormatException('Invalid scan filter or adjustment.');
+    }
+    final adjusted = filter != 'auto' || brightness != 0 || contrast != 0;
+    List<img.Point>? manualPoints;
+    if (quad != null) {
+      if (quad is! List || quad.length != 8 ||
+          quad.any((v) => v is! num || !v.isFinite || v < 0 || v > 1)) {
+        throw const FormatException('Invalid four-corner crop.');
+      }
+      final v = quad.cast<num>();
+      manualPoints = [
+        for (var i = 0; i < 8; i += 2)
+          img.Point(v[i] * (image.width - 1), v[i + 1] * (image.height - 1)),
+      ];
+      for (var i = 0; i < 4; i++) {
+        final a = manualPoints[i], b = manualPoints[(i + 1) % 4],
+            c = manualPoints[(i + 2) % 4];
+        if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) <= 0) {
+          throw const FormatException('Keep the crop corners in clockwise order.');
+        }
+      }
+      if (edit == null) throw const FormatException('Manual crop requires explicit edit settings.');
+    }
     var manualCrop = false;
     var rotation = 0;
     if (edit != null) {
@@ -241,7 +271,16 @@ class DocumentProcessingEngine {
         throw const FormatException('Manual crop is too small.');
       }
       manualCrop = x != 0 || y != 0 || w != image.width || h != image.height;
-      if (manualCrop) image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      if (manualPoints != null) {
+        final correctedImage = _rectify(image, manualPoints);
+        if (identical(correctedImage, image)) {
+          throw const FormatException('Crop is too small or corners are not valid.');
+        }
+        image = correctedImage;
+        manualCrop = true;
+      } else if (manualCrop) {
+        image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      }
       rotation = values[4].toInt();
     } else if (!portrait && {90, 180, 270}.contains(input['autoRotation']) &&
         sourceOrientation == 1) {
@@ -264,17 +303,25 @@ class DocumentProcessingEngine {
         interpolation: img.Interpolation.linear,
       );
     }
-    for (final pixel in image) {
-      pixel.r = ((pixel.r - 128) * 1.025 + 128).clamp(0, 255);
-      pixel.g = ((pixel.g - 128) * 1.025 + 128).clamp(0, 255);
-      pixel.b = ((pixel.b - 128) * 1.025 + 128).clamp(0, 255);
+    if (filter == 'grayscale' || filter == 'whiteboard') {
+      image = img.grayscale(image);
     }
-    // Mild local sharpening; do not threshold text/stamps into binary pixels.
-    image = img.convolution(
-      image,
-      filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
-      amount: 0.12,
-    );
+    final factor = (filter == 'original' ? 1.0 : filter == 'lightText' ? 1.16 :
+        filter == 'whiteboard' ? 1.22 : 1.025) * (1 + contrast);
+    final lift = brightness * 255 + (filter == 'whiteboard' ? 12 : filter == 'lightText' ? 6 : 0);
+    for (final pixel in image) {
+      pixel.r = ((pixel.r - 128) * factor + 128 + lift).clamp(0, 255);
+      pixel.g = ((pixel.g - 128) * factor + 128 + lift).clamp(0, 255);
+      pixel.b = ((pixel.b - 128) * factor + 128 + lift).clamp(0, 255);
+    }
+    // Mild sharpening; never erase text, seals or signatures by thresholding.
+    if (filter != 'original') {
+      image = img.convolution(
+        image,
+        filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
+        amount: 0.12,
+      );
+    }
     // Retain normalized source pixels as a fallback if sharpening expands a
     // previously compressed upload. Orientation and transparency were baked.
     // Re-encoding strips EXIF/GPS and unrelated source metadata.
@@ -396,7 +443,7 @@ class DocumentProcessingEngine {
     // silently undoes the visible cleanup in Student Inventory.
     final retainedSource = sourceContainer != null &&
         optimized.length > sourceContainer.length &&
-        !corrected && !manualCrop && rotation == 0 && edit == null &&
+        !corrected && !manualCrop && rotation == 0 && edit == null && !adjusted &&
         deskew.abs() < 0.5;
     if (retainedSource) {
       optimized = sourceContainer!;
@@ -435,6 +482,9 @@ class DocumentProcessingEngine {
       'perspectiveCorrected': corrected,
       'manualCrop': manualCrop,
       'rotationDegrees': rotation,
+      'scanFilter': filter,
+      'brightness': brightness,
+      'contrast': contrast,
       'deskewDegrees': deskew,
       ...qualityGuard,
       'width': optimizedWidth,
