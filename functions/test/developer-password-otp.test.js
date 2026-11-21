@@ -3,17 +3,18 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {createDeveloperPasswordOtp}=require('../developer-password-otp');
 
-function fixture({configured=true,verified=true}={}){
+function fixture({configured=true,verified=true,authTime=1000000}={}){
  const docs=new Map(),emails=[],passwords=[],revoked=[];
  let at=1000000000;
  const uid='developer-uid',email='developer@example.test';
  const auth={
   async getUser(id){assert.equal(id,uid);return {email,emailVerified:verified};},
+  async verifyIdToken(token,checkRevoked){assert.equal(token,'test-token');assert.equal(checkRevoked,true);return {uid,auth_time:authTime};},
   async updateUser(id,changes){passwords.push({id,changes});},
   async revokeRefreshTokens(id){revoked.push(id);}
  };
  const db={
-  doc(path){return {path,delete:async()=>docs.delete(path)};},
+  doc(path){return {path};},
   collection(path){return {add:async row=>{docs.set(path+'/audit',row);}};},
   async runTransaction(fn){
    const tx={
@@ -30,10 +31,6 @@ function fixture({configured=true,verified=true}={}){
  }:{};
  const handler=createDeveloperPasswordOtp({
   auth,db,now:()=>at,env,
-  verifyCurrentPassword:async(account,password)=>{
-   assert.equal(account.email,email);
-   if(password!=='correct')throw Object.assign(Error('Incorrect current password'),{status:401});
-  },
   fetchImpl:async(url,options)=>{
    assert.equal(url,'https://api.resend.com/emails');
    const body=JSON.parse(options.body);
@@ -41,15 +38,11 @@ function fixture({configured=true,verified=true}={}){
    return {ok:true};
   }
  });
- const sessionId='a'.repeat(64);
- const sessionPath='developer_sessions/'+sessionId;
- docs.set(sessionPath,{uid,expiresAt:at+1800000});
- const run=(action,body={},session=sessionId)=>handler(
-  'developer/managed/security/otp/'+action,{currentPassword:'correct',...body},{uid,developerSessionId:session});
-
+ const req={headers:{authorization:'Bearer test-token'}};
+ const run=(action,body={})=>handler('developer/managed/security/otp/'+action,body,{uid},req);
  const advance=ms=>{at+=ms;};
  const lastCode=()=>emails.at(-1).text.match(/\b\d{6}\b/)?.[0];
- return {run,docs,emails,passwords,revoked,advance,lastCode,uid,sessionPath};
+ return {run,docs,emails,passwords,revoked,advance,lastCode,uid};
 }
 
 test('developer password cannot change without configured email security',async()=>{
@@ -80,7 +73,6 @@ test('OTP is emailed only, expires after five minutes and unlocks one password c
  assert.equal((await f.run('change',{password,proof:verification.proof})).passwordChanged,true);
  assert.deepEqual(f.passwords,[{id:f.uid,changes:{password:'StrongPassword123!'}}]);
  assert.deepEqual(f.revoked,[f.uid]);
- assert.equal(f.docs.has(f.sessionPath),false);
  await assert.rejects(f.run('change',{password:'OtherPassword456!',proof:verification.proof}),e=>e.status===403);
 });
 
@@ -109,13 +101,4 @@ test('expired OTP and unverified developer email cannot authorize a password upd
  await assert.rejects(f.run('change',{password:'StrongPassword123!'}),e=>e.status===403);
  const unverified=fixture({verified:false});
  await assert.rejects(unverified.run('send'),e=>e.status===403);
-});
-
-test('current password must be correct and OTP cannot cross MFA sessions',async()=>{
- const f=fixture();
- await assert.rejects(f.run('send',{currentPassword:'incorrect'}),{status:401});
- assert.equal(f.emails.length,0);
- await f.run('send');
- await assert.rejects(f.run('verify',{otp:f.lastCode()},'b'.repeat(64)),{status:403});
- assert.equal((await f.run('verify',{otp:f.lastCode()})).verified,true);
 });

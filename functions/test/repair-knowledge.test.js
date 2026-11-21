@@ -92,7 +92,7 @@ test('telemetry rate limits never block shared rule delivery',async()=>{
 });
 test('browser developer wildcard excludes signing state, source hashes and CI evidence',()=>{
  const source=require('node:fs').readFileSync('../firestore.platform.rules','utf8');
- assert.match(source,/!\(root in \['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources',\s*'developer_password_otp','platform_licence_receipts',/);
+ assert.match(source,/!\(root in \['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','platform_licence_receipts'\]\)/);
  assert.match(source,/match \/platform_licence_receipts\/\{receipt\}/);
 });
 test('optional signing misconfiguration disables knowledge without disabling normal school access',async()=>{

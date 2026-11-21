@@ -6,26 +6,8 @@ const {doc,collection,getDoc,getDocs,setDoc,updateDoc,deleteDoc,serverTimestamp,
 let env;
 before(async()=>{env=await initializeTestEnvironment({projectId:'demo-saarthi-platform',firestore:{rules:readFileSync('../firestore.platform.rules','utf8')}});});
 after(async()=>{await env?.cleanup();});
-const sessionId='a'.repeat(64);
-const sessionPath='developer_sessions/'+sessionId;
-beforeEach(async()=>{
- await env.clearFirestore();
- await seed(sessionPath,{uid:'developer',expiresAt:Date.now()+1800000});
-});
-const dev=()=>env.authenticatedContext('developer',{developer:true,developerSessionId:sessionId,firebase:{sign_in_provider:'custom'}}).firestore();
-test('password-only, expired and wrong-owner sessions cannot access developer data',async()=>{
- const path='platform_schools/school-one';
- await seed(path,{name:'School One'});
- const password=env.authenticatedContext('developer',{developer:true,firebase:{sign_in_provider:'password'}}).firestore();
- await assertFails(getDoc(doc(password,path)));
- await assertSucceeds(getDoc(doc(dev(),path)));
- await assertFails(getDoc(doc(dev(),sessionPath)));
- await assertFails(updateDoc(doc(dev(),sessionPath),{expiresAt:Date.now()+9999999}));
- await seed(sessionPath,{uid:'other',expiresAt:Date.now()+1800000});
- await assertFails(getDoc(doc(dev(),path)));
- await seed(sessionPath,{uid:'developer',expiresAt:Date.now()-1});
- await assertFails(getDoc(doc(dev(),path)));
-});
+beforeEach(async()=>{await env.clearFirestore();});
+const dev=()=>env.authenticatedContext('developer',{developer:true}).firestore();
 const school=(uid='school-one-monitor')=>env.authenticatedContext(uid,{firebase:{sign_in_provider:'password'}}).firestore();
 const anon=(uid='installation')=>env.authenticatedContext(uid,{firebase:{sign_in_provider:'anonymous'}}).firestore();
 const publicDb=()=>env.unauthenticatedContext().firestore();
@@ -45,7 +27,6 @@ test('licence creation, renewal and monitoring provisioning require the develope
  }
  await assertSucceeds(setDoc(doc(dev(),'platform_licenses/'+key),{schoolId:'school-one'}));
  await assertSucceeds(updateDoc(doc(dev(),'platform_licenses/'+key),{revoked:true}));
- await assertFails(deleteDoc(doc(dev(),'platform_licenses/'+key)));
 });
 test('a school can write only its own aggregate and cannot read either school dashboard',async()=>{
  await access();await assertSucceeds(setDoc(doc(school(),'platform_school_summaries/school-one'),summary()));

@@ -3,13 +3,12 @@ const {createSchoolCloud} = require('../functions/school-cloud-core');
 const {randomUUID,createHash}=require('node:crypto');
 const ACTIONS=new Set(['onboard','status','migration/import','drive/link','profile/initialize','school/bind','license/activate','school/heartbeat','installation/status','school/notice','setup/diagnostic']);
 const PROJECT = 'saarthi-ai-df12b';
-const DEVELOPER_STAGING_PROJECT = 'saarthi-ai-staging';
 function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE===undefined||env.SAARTHI_ISOLATED_TEST_MODE==='false')return null;
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
   return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
 }
-function createHandler({handle,health,projectId=PROJECT,developerStaging=false,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
+function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
   let healthCache;
@@ -34,8 +33,7 @@ function createHandler({handle,health,projectId=PROJECT,developerStaging=false,a
     if(req.method==='GET' && req.url==='/school-cloud/healthz'){
       try{
         if(!healthCache || Date.now()-healthCache.at>30000){await health();healthCache={at:Date.now()};}
-        return send(200,{service:'vidya-saarthi-central-staging',projectId,architecture:'central-v2',ready:true,
-          ...(developerStaging?{developerStaging:true,runtimeCommit:runtimeCommit||null}:{}),
+        return send(200,{service:'vidya-saarthi-central-staging',projectId:PROJECT,architecture:'central-v2',ready:true,
           ...(testSchoolId&&/^[a-f0-9]{40}$/.test(runtimeCommit||'')?{runtimeCommit}: {}),
           ...(testSchoolId&&/^[a-f0-9]{64}$/.test(adminCredentialFingerprint||'')?{adminCredentialFingerprint}: {}),
            ...(testSchoolId&&typeof wrappingPublicKey==='string'&&/^[A-Za-z0-9+/]+={0,2}$/.test(wrappingPublicKey)&&/^[a-f0-9]{64}$/.test(wrappingKeyFingerprint||'')?{wrappingPublicKey,wrappingKeyFingerprint}: {})});
@@ -126,47 +124,7 @@ function managedFeatureOptions(env,testSchoolId) {
   ...(deviceAccessEnforced?{deviceOfflinePrivateKey:env.SAARTHI_TEST_DEVICE_OFFLINE_PRIVATE_KEY}:{}),
   ...(dailyDeviceLease?{deviceOfflineWindowMs:86400000}:{})};
 }
-function developerStagingFromEnvironment(env) {
-  const key=JSON.parse(env.SAARTHI_DEVELOPER_STAGING_FIREBASE_ADMIN_JSON || '{}');
-  if(key.project_id!==DEVELOPER_STAGING_PROJECT||
-    !key.client_email?.endsWith('@'+DEVELOPER_STAGING_PROJECT+'.iam.gserviceaccount.com')||
-    typeof key.private_key!=='string'||!env.SAARTHI_DEVELOPER_FIREBASE_API_KEY||
-    !env.SAARTHI_DEVELOPER_TOTP_SECRETS)
-    throw Error('Isolated developer staging credentials and MFA configuration required');
-
-  const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
-  const {initializeApp,cert}=runtimeRequire('firebase-admin/app');
-  const app=initializeApp({credential:cert(key),projectId:DEVELOPER_STAGING_PROJECT},'developer-portal-staging');
-  const auth=runtimeRequire('firebase-admin/auth').getAuth(app);
-  const db=runtimeRequire('firebase-admin/firestore').getFirestore(app);
-  db.settings({ignoreUndefinedProperties:true});
-  const managed=require('../functions/managed-schools').createManagedSchools({
-    auth,db,projectId:DEVELOPER_STAGING_PROJECT,developerLoginEnv:env,
-  });
-
-  return createHandler({
-    developerStaging:true,
-    projectId:DEVELOPER_STAGING_PROJECT,
-    allowedOrigins:[
-      'https://'+DEVELOPER_STAGING_PROJECT+'.web.app',
-      'https://'+DEVELOPER_STAGING_PROJECT+'.firebaseapp.com',
-    ],
-    runtimeCommit:env.RENDER_GIT_COMMIT,
-    handle:req=>{
-      if(!/^developer\/managed\/[a-zA-Z0-9_/-]+$/.test(req.body?.action||''))
-        throw Object.assign(Error('This staging service accepts developer portal actions only'),{status:403,publicMessage:true});
-      return managed(req);
-    },
-    health:async()=>{
-      await db.doc('_central_staging_health/runtime').get();
-      try{await auth.getUser('__saarthi_staging_health__');}
-      catch(error){if(error.code!=='auth/user-not-found')throw error;}
-    },
-  });
-}
-
 function fromEnvironment(env) {
-  if(env.SAARTHI_DEVELOPER_STAGING_MODE==='true')return developerStagingFromEnvironment(env);
   const testSchoolId=isolatedTestSchool(env);
   const managedFeatures=managedFeatureOptions(env,testSchoolId);
   const runtimeRequire=require('node:module').createRequire(require.resolve('../oauth-broker/package.json'));
@@ -198,7 +156,7 @@ function fromEnvironment(env) {
   const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
     ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:env.SAARTHI_EDGE_RECORD_PARALLELISM==='2'?2:1,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,developerLoginEnv:env,
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:env.SAARTHI_EDGE_RECORD_PARALLELISM==='2'?2:1,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),
     cloudflareMonitor:require('../functions/cloudflare-monitor').createCloudflareMonitor({

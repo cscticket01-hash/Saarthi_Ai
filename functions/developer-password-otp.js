@@ -5,7 +5,7 @@ const OTP_TTL_MS=5*60*1000;
 
 // This module never returns a generated code. Password changes fail closed
 // unless the protected mail provider and OTP pepper are configured on Render.
-function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=process.env,verifyCurrentPassword}){
+function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=process.env}){
  const reject=(status,message)=>{const e=new Error(message);e.status=status;e.publicMessage=true;throw e;};
  const digest=(uid,nonce,code)=>createHmac('sha256',env.SAARTHI_DEVELOPER_OTP_PEPPER)
    .update(uid+'\n'+nonce+'\n'+code).digest('hex');
@@ -13,7 +13,7 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
   const expected=Buffer.from(stored||'','hex');
   return expected.length===32&&timingSafeEqual(expected,Buffer.from(actual,'hex'));
  };
- return async function handle(action,body,admin){
+ return async function handle(action,body,admin,req){
   const pepper=env.SAARTHI_DEVELOPER_OTP_PEPPER||'';
   const apiKey=env.SAARTHI_DEVELOPER_OTP_RESEND_API_KEY||'';
   const from=env.SAARTHI_DEVELOPER_OTP_FROM||'';
@@ -23,12 +23,17 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
   const account=await auth.getUser(uid);
   if(!account?.email||account.emailVerified!==true)
    reject(403,'Verify the registered developer email before changing password');
-  // The broker checks the current password without replacing the MFA token.
-  const sessionId=admin.developerSessionId;
-  if(!/^[a-f0-9]{64}$/.test(sessionId || ''))
-   reject(401,'Developer session expired');
+   // The client reauthenticates with CURRENT password; a recent auth_time
+   // is enforced by the broker, not inferred from an editable UI state.
+   const bearer=String(req.headers?.authorization||'').replace(/^Bearer\s+/i,'');
+   const verified=await auth.verifyIdToken(bearer,true);
+   const authTime=verified.auth_time;
+   const age=t-authTime*1000;
+   if(verified.uid!==uid||!Number.isFinite(authTime)||age<0||age>=OTP_TTL_MS+180000)
+    reject(401,'Re-enter the current password before requesting OTP');
   if(action==='developer/managed/security/otp/send'){
-   await verifyCurrentPassword(account,body.currentPassword);
+   if(age>180000)
+    reject(401,'Re-enter the current password before requesting OTP');
    const code=String(randomInt(1000000)).padStart(6,'0');
    const nonce=randomBytes(24).toString('hex');
    await db.runTransaction(async tx=>{
@@ -37,7 +42,7 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
     if(t-Number(old.lastSentAt||0)<60000)reject(429,'Wait before resending OTP');
     if(inWindow&&Number(old.sentInWindow||0)>=6)reject(429,'Too many OTP requests today');
     tx.set(ref,{nonce,hash:digest(uid,nonce,code),sentAt:t,expiresAt:t+OTP_TTL_MS,
-     email:account.email,sessionId,lastSentAt:t,attempts:0,verifiedAt:0,consumedAt:0,
+     email:account.email,authTime,lastSentAt:t,attempts:0,verifiedAt:0,consumedAt:0,
      windowStartAt:inWindow?old.windowStartAt:t,sentInWindow:(inWindow?Number(old.sentInWindow||0):0)+1});
    });
    try{
@@ -64,7 +69,7 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
    if(!/^\d{6}$/.test(code))reject(400,'Enter a valid six-digit OTP');
    return db.runTransaction(async tx=>{
     const row=await tx.get(ref),value=row.exists?row.data():null;
-    if(!value||value.sessionId!==sessionId||value.email!==account.email||
+    if(!value||value.authTime!==authTime||value.email!==account.email||
       !value.hash||value.expiresAt<=t||value.consumedAt||
       Number(value.attempts||0)>=5)reject(403,'OTP expired or unavailable');
     if(value.verifiedAt)reject(409,'OTP was already verified');
@@ -85,7 +90,7 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
     reject(403,'Verify a fresh email OTP before changing password');
    await db.runTransaction(async tx=>{
     const row=await tx.get(ref),value=row.exists?row.data():null;
-    if(!value||value.sessionId!==sessionId||value.email!==account.email||
+    if(!value||value.authTime!==authTime||value.email!==account.email||
       !value.verifiedAt||value.consumedAt||value.expiresAt<=t||
       !matchesDigest(value.proofHash,digest(uid,value.nonce,proof)))
      reject(403,'Verify a fresh email OTP before changing password');
@@ -93,7 +98,6 @@ function createDeveloperPasswordOtp({auth,db,now=Date.now,fetchImpl=fetch,env=pr
    });
    await auth.updateUser(uid,{password});
    await auth.revokeRefreshTokens(uid);
-   await db.doc('developer_sessions/'+sessionId).delete();
    await db.collection('platform_audit').add({action,actor:uid,at:t});
    return {success:true,passwordChanged:true};
   }
