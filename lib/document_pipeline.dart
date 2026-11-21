@@ -15,6 +15,13 @@ import 'school_image_input.dart';
 class DocumentPipeline {
   static const int maxScanPages = 8;
   static const int scanPageImageBudget = 500 * 1024;
+  static int pageImageTargetFor(int pageCount) {
+    if (pageCount < 1 || pageCount > maxScanPages) {
+      throw RangeError.range(pageCount, 1, maxScanPages, 'pageCount');
+    }
+    return (scanPageImageBudget ~/ pageCount)
+        .clamp(1, DocumentProcessingEngine.photoTarget).toInt();
+  }
   static String? _key;
   static Future<Map<String, dynamic>>? _prepared;
   static Map<String, dynamic> _copy(Map<String, dynamic> result) => {
@@ -168,8 +175,7 @@ class DocumentPipeline {
     if (pages.isEmpty)
       throw const FormatException('PDF has no readable pages.');
     final optimized = pw.Document(), high = pw.Document();
-    final perPageBudget = (scanPageImageBudget ~/ pages.length)
-        .clamp(1, DocumentProcessingEngine.photoTarget);
+    final perPageBudget = pageImageTargetFor(pages.length);
     var encodedImageBytes = 0;
     for (final page in pages) {
       final result = await _image({
