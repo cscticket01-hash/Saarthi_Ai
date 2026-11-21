@@ -11,6 +11,9 @@ import 'package:pdf/widgets.dart' as pw;
 
 import 'document_processing_engine.dart';
 import 'school_image_input.dart';
+import 'document_scan_osd_stub.dart'
+    if (dart.library.io) 'windows_template_forge_ocr.dart';
+import 'package:image/image.dart' as img;
 
 class DocumentPipeline {
   static const int maxScanPages = 8;
@@ -126,17 +129,50 @@ class DocumentPipeline {
     }
   }
 
+  // Only declarative editor settings are accepted by the backend. Never
+  // trust a caller-supplied encoded result or path as the saved generation.
+  static Map<String, dynamic> checkedEdits(Map<String, dynamic>? input) {
+    if (input == null || input.isEmpty) return {};
+    if (input.keys.any((key) => !{
+      'manualEdit','manualCorners','scanFilter','brightness','contrast',
+    }.contains(key))) {
+      throw const FormatException('Unknown scan edit setting.');
+    }
+    return Map<String, dynamic>.from(jsonDecode(jsonEncode(input)) as Map);
+  }
+
+  /// Editor thumbnails use the same EXIF-normalized coordinates as the worker.
+  static Uint8List editorImage(Uint8List bytes) {
+    SchoolImageInput.validate(bytes);
+    final decoder = img.findDecoderForData(bytes);
+    final info = decoder?.startDecode(bytes);
+    if (info == null || info.width * info.height > 20000000 ||
+        decoder!.numFrames() != 1) {
+      throw const FormatException('Invalid scan image.');
+    }
+    final decoded = decoder.decodeFrame(0);
+    if (decoded == null) throw const FormatException('Could not decode scan.');
+    final image = img.bakeOrientation(decoded);
+    final raster = img.copyResize(image,
+      width: image.width >= image.height ? 900 : null,
+      height: image.height > image.width ? 900 : null,
+      interpolation: img.Interpolation.average);
+    return Uint8List.fromList(img.encodePng(raster, level: 1));
+  }
+
   static Future<Map<String, dynamic>> process(
     Uint8List bytes,
     String mime, {
     String scope = '',
+    Map<String, dynamic>? edits,
   }) {
-    final key = jsonEncode([scope, mime, sha256.convert(bytes).toString()]);
+    final options = checkedEdits(edits);
+    final key = jsonEncode([scope, mime, sha256.convert(bytes).toString(), options]);
     if (_key == key && _prepared != null) return _prepared!.then(_copy);
     _key = key;
     late final Future<Map<String, dynamic>> future;
     final stopwatch = Stopwatch()..start();
-    future = _process(Uint8List.fromList(bytes), mime, scope).then((result) {
+    future = _process(Uint8List.fromList(bytes), mime, scope, options).then((result) {
       stopwatch.stop();
       return <String, dynamic>{
         ...result,
@@ -160,18 +196,28 @@ class DocumentPipeline {
     Uint8List bytes,
     String mime,
     String scope,
+    Map<String, dynamic> options,
   ) async {
     if (mime != 'application/pdf') {
       if (!{'image/jpeg', 'image/png'}.contains(mime)) {
         throw const FormatException('Select JPG, JPEG, PNG or PDF.');
       }
-      final result = await _image({'bytes': bytes}, scope);
+      final rotation = options.containsKey('manualEdit')
+          ? 0 : await TemplateForgeOfflineOcr.scanRotation(bytes);
+      final result = await _image({
+        'bytes': bytes,
+        'autoRotation': rotation,
+        ...options,
+      }, scope);
       if ((result['optimized'] as Uint8List).length > scanPageImageBudget) {
         throw const FormatException(
           'The readable scan exceeds 500 KB. Original unchanged.',
         );
       }
       return {...result, 'pageCount': 1};
+    }
+    if (options.isNotEmpty) {
+      throw const FormatException('Manual editing is currently supported for JPG and PNG scans.');
     }
     _validatePdf(bytes);
     final pages = <Map<String, dynamic>>[];
@@ -203,19 +249,24 @@ class DocumentPipeline {
       final remaining = scanPageImageBudget - 4096 - encodedImageBytes;
       final target = (remaining ~/ (pages.length - index))
           .clamp(1, scanPageImageBudget).toInt();
+      final pageBytes = page['bytes'] as Uint8List;
       final result = await _image({
-        'bytes': page['bytes'],
+        'bytes': pageBytes,
         'targetBytes': target,
+        'autoRotation': await TemplateForgeOfflineOcr.scanRotation(pageBytes),
       }, scope);
       encodedImageBytes += (result['optimized'] as Uint8List).length;
       if (result['sourceRetained'] != true &&
           (result['perspectiveCorrected'] == true ||
+              ((result['rotationDegrees'] as num?) ?? 0) != 0 ||
               ((result['deskewDegrees'] as num?) ?? 0).abs() >= 0.5)) {
         cleanedPages++;
       }
       final format = PdfPageFormat(
-        (page['width'] as int) * 72 / 150,
-        (page['height'] as int) * 72 / 150,
+        (result['rotationDegrees'] == 90 || result['rotationDegrees'] == 270
+            ? page['height'] as int : page['width'] as int) * 72 / 150,
+        (result['rotationDegrees'] == 90 || result['rotationDegrees'] == 270
+            ? page['width'] as int : page['height'] as int) * 72 / 150,
       );
       void add(pw.Document doc, Uint8List image) => doc.addPage(
         pw.Page(
