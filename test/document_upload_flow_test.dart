@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
@@ -9,7 +10,25 @@ import '../lib/document_upload_dialog.dart';
 import '../lib/document_pdf_preview.dart';
 import '../lib/document_pipeline.dart';
 
-void main() {
+class _MultiFilePicker extends FileSelectorPlatform {
+  _MultiFilePicker(this.files);
+  final List<XFile> files;
+  @override
+  Future<List<XFile>> openFiles({List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,String? confirmButtonText}) async => files;
+}
+
+void main() {  test('multiple selection never rewrites source PDFs by merging them', () async {
+    final previous=FileSelectorPlatform.instance;
+    FileSelectorPlatform.instance=_MultiFilePicker([
+      XFile.fromData(bytes,name:'one.pdf'),
+      XFile.fromData(bytes,name:'two.png'),
+    ]);
+    addTearDown(()=>FileSelectorPlatform.instance=previous);
+    await expectLater(DocumentFilePicker.pick(),throwsFormatException);
+  });
+
+
   final bytes = Uint8List.fromList(
     img.encodePng(img.Image(width: 40, height: 60)),
   );
