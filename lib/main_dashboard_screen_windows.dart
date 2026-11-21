@@ -16495,7 +16495,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final contact = contactCtrl.text.trim();
 
                           final rollNumber = int.tryParse(roll);
-                          if (name.isEmpty || parent.isEmpty ||
+                          if (name.isEmpty ||
                               !RegExp(r'^[0-9]+$').hasMatch(roll) ||
                               rollNumber == null || rollNumber <= 0 || contact.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -16516,6 +16516,15 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 content: Text('Contact number mein exactly 10 digits daalein.'),
                               ),
                             );
+                            return;
+                          }
+
+                          // Keep the existing contact-number error priority.
+                          if (parent.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                              content: const Text('Parent/Guardian Name bharna zaroori hai.'),
+                            ));
                             return;
                           }
 
