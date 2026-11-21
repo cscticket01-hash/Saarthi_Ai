@@ -28,6 +28,62 @@ class DocumentPipeline {
   }
   static String? _key;
   static Future<Map<String, dynamic>>? _prepared;
+  static String? _pdfSourceKey;
+  static Future<List<Map<String,dynamic>>>? _pdfSource;
+  static void clearPdfSource(String scope) {
+    if (_pdfSourceKey != null && (jsonDecode(_pdfSourceKey!) as List).first == scope) {
+      _pdfSourceKey = null; _pdfSource = null;
+    }
+  }
+  static Future<List<Map<String,dynamic>>> _sourcePages(Uint8List bytes, String scope) {
+    _validatePdf(bytes);
+    final key = _sourceKey(scope, bytes);
+    if (_pdfSourceKey == key && _pdfSource != null) return _pdfSource!;
+    _pdfSourceKey = key;
+    late final Future<List<Map<String,dynamic>>> pending;
+    pending = (() async {
+    final pages = <Map<String, dynamic>>[];
+    final combined = _combinedKey == _sourceKey(scope, bytes) ? _combinedPages : null;
+    clearCombinedPreparation(scope);
+    if (combined != null) {
+      pages.addAll(combined);
+    } else {
+      var pixels = 0;
+      await for (final page in Printing.raster(bytes, dpi: 150)) {
+        pixels += page.width * page.height;
+        if (pages.length >= maxScanPages || pixels > 40000000) {
+          throw const FormatException(
+            'PDF exceeds 8 pages / 40 megapixel processing safety limit.',
+          );
+        }
+        pages.add({
+          'bytes': await page.toPng(),
+          'width': page.width,
+          'height': page.height,
+        });
+      }
+    }
+    if (pages.isEmpty)
+      throw const FormatException('PDF has no readable pages.');
+
+      return pages;
+    })().catchError((Object error, StackTrace stack) {
+      if (identical(_pdfSource,pending)) { _pdfSourceKey=null; _pdfSource=null; }
+      Error.throwWithStackTrace(error,stack);
+    });
+    _pdfSource = pending;
+    return pending;
+  }
+  static Future<List<Uint8List>> pdfEditorPages(Uint8List bytes,{required String scope}) async =>
+      [for(final page in await _sourcePages(bytes,scope))
+        Uint8List.fromList(page['bytes'] as Uint8List)];
+
+  static Future<Uint8List> editThumbnail(Uint8List thumbnail, Map<String,dynamic> edits,
+      {required String scope}) async {
+    final result = await _image({'bytes':thumbnail,
+      ...checkedEdits(edits), 'targetBytes':256*1024},scope);
+    return result['optimized'] as Uint8List;
+  }
   static String? _combinedKey;
   static List<Map<String, dynamic>>? _combinedPages;
   static String _sourceKey(String scope, Uint8List bytes) =>
@@ -173,6 +229,29 @@ class DocumentPipeline {
   // trust a caller-supplied encoded result or path as the saved generation.
   static Map<String, dynamic> checkedEdits(Map<String, dynamic>? input) {
     if (input == null || input.isEmpty) return {};
+    if (input.containsKey('pdfPages')) {
+      if (input.length != 1 || input['pdfPages'] is! List) {
+        throw const FormatException('Invalid PDF page plan.');
+      }
+      final plan = input['pdfPages'] as List;
+      if (plan.isEmpty || plan.length > maxScanPages) {
+        throw const FormatException('Keep between 1 and 8 pages.');
+      }
+      final seen = <int>{};
+      final out = <Map<String,dynamic>>[];
+      for (final row in plan) {
+        if (row is! Map || row.length != 2 || row['index'] is! int ||
+            row['edits'] is! Map) throw const FormatException('Invalid PDF page edit.');
+        final index = row['index'] as int;
+        if (index < 0 || index >= maxScanPages || !seen.add(index)) {
+          throw const FormatException('Duplicate or invalid PDF page.');
+        }
+        final edit = Map<String,dynamic>.from(row['edits'] as Map);
+        if (edit.containsKey('pdfPages')) throw const FormatException('Nested PDF plans are not allowed.');
+        out.add({'index':index,'edits':checkedEdits(edit)});
+      }
+      return {'pdfPages':out};
+    }
     if (input.keys.any((key) => !{
       'manualEdit','manualCorners','scanFilter','brightness','contrast',
     }.contains(key))) {
@@ -241,7 +320,7 @@ class DocumentPipeline {
     Map<String, dynamic> options,
   ) async {
     if (mime != 'application/pdf') {
-      if (!{'image/jpeg', 'image/png'}.contains(mime)) {
+      if (options.containsKey('pdfPages') || !{'image/jpeg', 'image/png'}.contains(mime)) {
         throw const FormatException('Select JPG, JPEG, PNG or PDF.');
       }
       final rotation = options.containsKey('manualEdit')
@@ -258,33 +337,22 @@ class DocumentPipeline {
       }
       return {...result, 'pageCount': 1};
     }
-    if (options.isNotEmpty) {
-      throw const FormatException('Manual editing is currently supported for JPG and PNG scans.');
+    if (options.isNotEmpty && !options.containsKey('pdfPages')) {
+      throw const FormatException('Select a PDF page to edit.');
     }
-    _validatePdf(bytes);
-    final pages = <Map<String, dynamic>>[];
-    final combined = _combinedKey == _sourceKey(scope, bytes) ? _combinedPages : null;
-    clearCombinedPreparation(scope);
-    if (combined != null) {
-      pages.addAll(combined);
+    final originals = await _sourcePages(bytes, scope);
+    final plan = options['pdfPages'] as List?;
+    final pages = <Map<String,dynamic>>[];
+    if (plan == null) {
+      pages.addAll(originals);
     } else {
-      var pixels = 0;
-      await for (final page in Printing.raster(bytes, dpi: 150)) {
-        pixels += page.width * page.height;
-        if (pages.length >= maxScanPages || pixels > 40000000) {
-          throw const FormatException(
-            'PDF exceeds 8 pages / 40 megapixel processing safety limit.',
-          );
-        }
-        pages.add({
-          'bytes': await page.toPng(),
-          'width': page.width,
-          'height': page.height,
-        });
+      for (final row in plan) {
+        final index = row['index'] as int;
+        if (index >= originals.length) throw const FormatException('PDF page no longer exists.');
+        pages.add({...originals[index], 'edits':row['edits']});
       }
     }
-    if (pages.isEmpty)
-      throw const FormatException('PDF has no readable pages.');
+    final explicitlyEdited = plan != null;
     final optimized = pw.Document();
     // Keep the original PDF as the full-quality copy. A second PDF containing
     // large 94-quality JPEG rasters doubles encoding/memory without improving
@@ -301,10 +369,13 @@ class DocumentPipeline {
       final target = (remaining ~/ (pages.length - index))
           .clamp(1, scanPageImageBudget).toInt();
       final pageBytes = page['bytes'] as Uint8List;
+      final pageEdits = Map<String,dynamic>.from(page['edits'] as Map? ?? {});
       final result = await _image({
         'bytes': pageBytes,
         'targetBytes': target,
-        'autoRotation': await TemplateForgeOfflineOcr.scanRotation(pageBytes),
+        'autoRotation': pageEdits.containsKey('manualEdit') ? 0 :
+            await TemplateForgeOfflineOcr.scanRotation(pageBytes),
+        ...pageEdits,
       }, scope);
       final outputPage = result['optimized'] as Uint8List;
       encodedImageBytes += outputPage.length;
@@ -335,7 +406,7 @@ class DocumentPipeline {
     // to scan JPEGs increased its size. The untouched source remains readable.
     // This is explicitly a no-crop fallback, not a successful optimization.
     if (encodedImageBytes > scanPageImageBudget) {
-      if (bytes.length <= scanPageImageBudget) {
+      if (!explicitlyEdited && bytes.length <= scanPageImageBudget) {
         return {
           'optimized': Uint8List.fromList(bytes),
           'sourceRetained': true,
@@ -361,7 +432,7 @@ class DocumentPipeline {
     final processedOutput = await optimized.save();
     // Preserve the usable original PDF when rasterization expands its vector
     // content. This avoids uploading a larger, lower fidelity substitute.
-    final sourceRetained = bytes.length <= scanPageImageBudget &&
+    final sourceRetained = !explicitlyEdited && bytes.length <= scanPageImageBudget &&
         (processedOutput.length > scanPageImageBudget ||
             (cleanedPages == 0 && processedOutput.length > bytes.length));
     final output = sourceRetained ? Uint8List.fromList(bytes) : processedOutput;
