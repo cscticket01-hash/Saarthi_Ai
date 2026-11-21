@@ -1,5 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_dragmarker/flutter_map_dragmarker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -79,15 +81,56 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:Builder(builder:(context)=>Scaffold(body:TextButton(
       onPressed:() async { result=await selectWindowsSchoolMapPin(context, schoolName:'Test School', radiusMeters:75); }, child:const Text('Select'))))));
     await tester.tap(find.text('Select')); await tester.pumpAndSettle();
-    final confirm=find.text('Use this school location • 75 m');
+    final confirm=find.text('Save Location');
+    expect(find.textContaining('Selection area: 1 km'), findsOneWidget);
+    expect(find.byKey(const ValueKey('win002-save-location')), findsOneWidget);
     expect(tester.widget<FilledButton>(find.ancestor(of:confirm, matching:find.byType(FilledButton))).onPressed, isNull);
     await tester.enterText(find.byType(TextField), 'https://www.google.com/maps/@24.8,92.8,17z');
     await tester.tap(find.text('Read location')); await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(find.ancestor(of:confirm, matching:find.byType(FilledButton))).onPressed, isNull);
     await tester.enterText(find.byType(TextField), '24.8123456, 92.8123456');
     await tester.tap(find.text('Read location')); await tester.pumpAndSettle();
-    expect(find.text('Attendance boundary: 75 metres from this location'), findsOneWidget);
+    expect(find.textContaining('Attendance boundary: 75 metres'), findsOneWidget);
     await tester.tap(confirm); await tester.pumpAndSettle();
     expect(result!.latitude, 24.8123456); expect(result!.longitude, 92.8123456);
   });
+  testWidgets('WIN-002 opens the in-app map inside School Settings picker', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SchoolMapPin? saved;
+    const initial = SchoolMapPin(24.8714073, 92.5109471);
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
+      Scaffold(body: TextButton(
+        onPressed: () async {
+          saved = await selectWindowsSchoolMapPin(context,
+            schoolName: 'School',
+            current: initial,
+            radiusMeters: 100);
+        },
+        child: const Text('Open school map'),
+      )),
+    )));
+    await tester.tap(find.text('Open school map'));
+    await tester.pump();
+    expect(find.byType(FlutterMap), findsOneWidget);
+    expect(find.byType(CircleLayer), findsOneWidget);
+    expect(find.byType(DragMarkers), findsOneWidget);
+    expect(find.text('Save Location'), findsOneWidget);
+    expect(find.textContaining('Attendance boundary: 100 metres'), findsOneWidget);
+    await tester.tap(find.text('Save Location'));
+    await tester.pump();
+    expect(saved!.latitude, initial.latitude);
+    expect(saved!.longitude, initial.longitude);
+  });
+
+  test('WIN-002 keeps the map picker 1 km separate from attendance geofence', () {
+    const centre = SchoolMapPin(24.8714073, 92.5109471);
+    const nearby = SchoolMapPin(24.875, 92.5109471);
+    const far = SchoolMapPin(24.891, 92.5109471);
+    expect(schoolDistanceMeters(centre, nearby), lessThan(1000));
+    expect(schoolDistanceMeters(centre, far), greaterThan(1000));
+    expect(parseSchoolAttendanceRadius(25), 25);
+    expect(parseSchoolAttendanceRadius(200), 200);
+  });
+
 }

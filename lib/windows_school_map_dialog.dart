@@ -1,142 +1,249 @@
 import 'windows_appearance.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_dragmarker/flutter_map_dragmarker.dart';
+import 'package:latlong2/latlong.dart';
 import 'windows_school_map.dart';
+
+const double _schoolPickerAreaMeters = 1000.0;
 
 Future<SchoolMapPin?> selectWindowsSchoolMapPin(BuildContext context,
     {required String schoolName, SchoolMapPin? current, double radiusMeters = schoolAttendanceRadiusMeters}) {
-  return showDialog<SchoolMapPin>(context: context,
-      builder: (_) => _SchoolMapPinDialog(schoolName: schoolName, current: current, radiusMeters: radiusMeters));
+  return showDialog<SchoolMapPin>(
+    context: context,
+    builder: (_) => _SchoolMapPinDialog(
+      schoolName: schoolName,
+      current: current,
+      radiusMeters: radiusMeters,
+    ),
+  );
 }
 
 class _SchoolMapPinDialog extends StatefulWidget {
-  const _SchoolMapPinDialog({required this.schoolName, this.current, required this.radiusMeters});
+  const _SchoolMapPinDialog({
+    required this.schoolName,
+    this.current,
+    required this.radiusMeters,
+  });
+
   final String schoolName;
   final double radiusMeters;
   final SchoolMapPin? current;
+
   @override
   State<_SchoolMapPinDialog> createState() => _SchoolMapPinDialogState();
 }
 
-class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> with WidgetsBindingObserver {
+class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> {
+  final _mapController = MapController();
   final _input = TextEditingController();
+  late SchoolMapPin _areaCenter;
   SchoolMapPin? _pin;
   String? _error;
   bool _busy = false;
-  bool _mapOpened = false;
-  String _clipboardBeforeMap = '';
+  int _pinRevision = 0;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    // Use the school's already saved coordinates. For a new school the
+    // coordinate field below can set the centre before picking the pin.
     _pin = widget.current?.valid == true ? widget.current : null;
+    _areaCenter = _pin ?? const SchoolMapPin(20.5937, 78.9629);
     _input.text = _pin?.coordinates ?? '';
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _input.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _mapOpened && !_busy) {
-      _importClipboard(onlyNew: true);
+  void _selectOnMap(SchoolMapPin candidate) {
+    if (!candidate.valid) {
+      setState(() => _error = 'Please select valid school coordinates.');
+      return;
     }
-  }
-
-  Future<void> _open({bool preview = false}) async {
-    try {
-      _clipboardBeforeMap = (await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '';
-      final query = widget.schoolName.trim().isNotEmpty ? widget.schoolName : 'school';
-      final uri = preview ? _pin!.mapsUri : schoolMapsSearchUri(query);
-      await WindowsSchoolMaps.open(uri);
-      if (mounted) setState(() { _mapOpened = true; _error = null; });
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+    if (schoolDistanceMeters(_areaCenter, candidate) > _schoolPickerAreaMeters) {
+      setState(() {
+        _pinRevision++;
+        _error = 'Red pin ko 1 km selection circle ke andar rakhein.';
+      });
+      return;
     }
+    setState(() {
+      _pinRevision++;
+      _pin = candidate;
+      _input.text = candidate.coordinates;
+      _error = null;
+    });
   }
 
-  Future<void> _importClipboard({bool onlyNew = false}) async {
-    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text?.trim() ?? '';
-    if (!mounted || (onlyNew && (text.isEmpty || text == _clipboardBeforeMap))) return;
-    if (onlyNew && parseSchoolMapPin(text) == null &&
-        !text.startsWith('https://maps.app.goo.gl/')) return;
-    _input.text = text;
-    await _resolve();
-  }
-
-  Future<void> _resolve() async {
+  Future<void> _resolveCoordinates() async {
     if (_busy) return;
-    setState(() { _busy = true; _pin = null; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
+      // Keep existing exact coordinates / Google place-pin parser as a
+      // fallback for new schools, but do not launch an external browser.
       final pin = await WindowsSchoolMaps.resolve(_input.text);
       if (!mounted) return;
+      if (pin == null || !pin.valid) {
+        setState(() => _error =
+            'Valid latitude, longitude ya exact Google Maps place-pin link dalein.');
+        return;
+      }
       setState(() {
+        _areaCenter = pin;
         _pin = pin;
-        if (pin == null) {
-          _error = 'Selected school location nahi mila. Google Maps mein school ke exact point par right-click karke pehli coordinate line copy karein. Sirf map ka camera-centre link accept nahi hota.';
-        }
+        _pinRevision++;
+        _input.text = pin.coordinates;
+        _error = null;
       });
+      _mapController.move(LatLng(pin.latitude, pin.longitude), 16);
     } catch (_) {
-      if (mounted) setState(() => _error = 'Map link read nahi hua. School location ke latitude, longitude copy karke paste karein.');
+      if (mounted) {
+        setState(() => _error = 'Location read nahi hui. Latitude, longitude check karein.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) { WindowsAppearance.watch(context);
+  Widget build(BuildContext context) {
+    WindowsAppearance.watch(context);
+    final area = LatLng(_areaCenter.latitude, _areaCenter.longitude);
+    final height = MediaQuery.sizeOf(context).height;
+    final width = MediaQuery.sizeOf(context).width;
     return AlertDialog(
-      title: const Text('Select school location on Google Maps'),
-      content: SizedBox(width: 590, child: SingleChildScrollView(child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(widget.schoolName.isEmpty ? 'School location' : widget.schoolName,
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
-          const Text('1. Open Google Maps and zoom to the school campus.\n2. Right-click the exact attendance point; copy the first latitude, longitude line.\n3. Return here, paste the location and confirm it.'),
-          const SizedBox(height: 12),
-          FilledButton.icon(onPressed: _busy ? null : () => _open(),
-              icon: const Icon(Icons.map), label: const Text('Open Google Maps in browser')),
-          const SizedBox(height: 16),
-          TextField(controller: _input, maxLines: 2,
-              onChanged: (_) => setState(() { _pin = null; _error = null; }),
-              decoration: const InputDecoration(border: OutlineInputBorder(),
-                  labelText: 'School location coordinates or Google Maps place link',
-                  hintText: '24.8000000, 92.8000000')),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            OutlinedButton.icon(onPressed: _busy ? null : () => _importClipboard(),
-                icon: const Icon(Icons.content_paste), label: const Text('Paste selected location')),
-            OutlinedButton(onPressed: _busy ? null : _resolve, child: const Text('Read location')),
-          ]),
-          if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
-          if (_error != null) Padding(padding: const EdgeInsets.only(top: 12),
-              child: Text(_error!, style: TextStyle(fontFamily: 'Segoe UI', color: Theme.of(context).colorScheme.error))),
-          if (_pin != null) ...[
-            const SizedBox(height: 12),
-            Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (_pin!.name.isNotEmpty) Text(_pin!.name),
-                SelectableText('School location: ${_pin!.coordinates}'),
-                Text('Attendance boundary: ${widget.radiusMeters.toStringAsFixed(0)} metres from this location'),
-                TextButton.icon(onPressed: () => _open(preview: true),
-                    icon: const Icon(Icons.location_on), label: const Text('Verify this exact location in Google Maps')),
-              ]))),
+      title: const Text('Pinpoint School Location'),
+      content: SizedBox(
+        width: (width * 0.84).clamp(300.0, 850.0),
+        height: (height * 0.72).clamp(350.0, 650.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.schoolName.isEmpty ? 'School location' : widget.schoolName,
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 5),
+            const Text('Map par click karein ya red pin drag karein. Pin 1 km circle ke andar rahega.'),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(children: [
+                  FlutterMap(
+                    mapController: _mapController,
+                    options: MapOptions(
+                      initialCenter: area,
+                      initialZoom: 16,
+                      minZoom: 3,
+                      maxZoom: 19,
+                      onTap: (_, point) => _selectOnMap(
+                          SchoolMapPin(point.latitude, point.longitude)),
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'org.saarthi.school',
+                      ),
+                      CircleLayer(circles: [
+                        CircleMarker(
+                          point: area,
+                          radius: _schoolPickerAreaMeters,
+                          useRadiusInMeter: true,
+                          color: const Color(0x2255B3A6),
+                          borderColor: const Color(0xFF008E80),
+                          borderStrokeWidth: 2,
+                        ),
+                      ]),
+                      DragMarkers(markers: [
+                        DragMarker(
+                            key: ValueKey('win002-red-pin-${_pinRevision}'),
+                            point: LatLng(
+                              (_pin ?? _areaCenter).latitude,
+                              (_pin ?? _areaCenter).longitude,
+                            ),
+                            size: const Size.square(54),
+                            offset: const Offset(0, -18),
+                            builder: (_, __, ___) => const Icon(
+                              Icons.location_on,
+                              color: Colors.red,
+                              size: 52,
+                            ),
+                            onDragEnd: (_, point) => _selectOnMap(
+                                SchoolMapPin(point.latitude, point.longitude)),
+                          ),
+                      ]),
+                    ],
+                  ),
+                  Positioned(
+                    right: 6,
+                    bottom: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      color: Colors.white,
+                      child: const Text('© OpenStreetMap contributors',
+                          style: TextStyle(color: Colors.black87, fontSize: 10)),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Selected: ${_pin?.coordinates ?? 'Map par school pin select karein'}'),
+            Text('Selection area: 1 km • Attendance boundary: ${widget.radiusMeters.toStringAsFixed(0)} metres',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _input,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                labelText: 'Latitude, longitude or exact Google Maps link (optional)',
+                hintText: '24.8000000, 92.8000000',
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(spacing: 8, children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : () async {
+                  final clip = await Clipboard.getData(Clipboard.kTextPlain);
+                  if (!mounted) return;
+                  _input.text = clip?.text?.trim() ?? '';
+                  await _resolveCoordinates();
+                },
+                icon: const Icon(Icons.content_paste),
+                label: const Text('Paste location'),
+              ),
+              OutlinedButton(
+                onPressed: _busy ? null : _resolveCoordinates,
+                child: const Text('Read location'),
+              ),
+            ]),
+            if (_busy) const LinearProgressIndicator(),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Text(_error!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
           ],
-          const SizedBox(height: 8),
-          const Text('Choose the school campus point, not this PC location. GPS accuracy on the attendance device is checked separately.'),
-        ],
-      ))),
+        ),
+      ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _busy || _pin == null ? null : () => Navigator.pop(context, _pin),
-            child: Text('Use this school location • ${widget.radiusMeters.toStringAsFixed(0)} m')),
+        TextButton(onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+          key: const ValueKey('win002-save-location'),
+          onPressed: _busy || _pin == null ? null : () => Navigator.pop(context, _pin),
+          child: const Text('Save Location'),
+        ),
       ],
     );
   }
