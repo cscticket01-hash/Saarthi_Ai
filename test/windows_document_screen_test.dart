@@ -255,6 +255,9 @@ void main() {
     expect(await io(t, count), 0);
     expect(find.byKey(const ValueKey('document-preview-metrics')), findsOneWidget);
     if (pdf) {
+      expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
+      expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
     }
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
     await waitFor(
@@ -297,9 +300,6 @@ void main() {
       expect(rasterizer.rasterCalls, 2);
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
       expect(optimized, orderedEquals(source));
-      expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
-      expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
-      expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
     }
 
     // Continue the real screen/session, including its existing document. This
