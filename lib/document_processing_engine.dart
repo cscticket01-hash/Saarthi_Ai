@@ -504,14 +504,21 @@ class DocumentProcessingEngine {
   static Map<String, dynamic> _scanQualityGuard(img.Image reference, Uint8List encoded) {
     final decoded = img.decodeImage(encoded);
     if (decoded == null) throw const FormatException('Optimized scan cannot be decoded.');
+    // Dart image exposes absent G/B channels as zero for grayscale PNG.
+    // Expand decoded grayscale into display RGB before comparing luminance.
+    final normalized = decoded.numChannels == 1
+        ? decoded.convert(numChannels: 3) : decoded;
     final w = math.min(180, math.min(reference.width, decoded.width));
     final h = math.min(180, math.min(reference.height, decoded.height));
     final a = img.copyResize(reference, width: w, height: h,
         interpolation: img.Interpolation.average);
-    final b = img.copyResize(decoded, width: w, height: h,
+    final b = img.copyResize(normalized, width: w, height: h,
         interpolation: img.Interpolation.average);
     double lum(img.Pixel p) {
       final alpha = p.aNormalized;
+      if (p.numChannels == 1 || p.numChannels == 2) {
+        return p.rNormalized * 255 * alpha + (1 - alpha) * 255;
+      }
       return (p.rNormalized * 0.299 + p.gNormalized * 0.587 +
           p.bNormalized * 0.114) * 255 * alpha + (1 - alpha) * 255;
     }
