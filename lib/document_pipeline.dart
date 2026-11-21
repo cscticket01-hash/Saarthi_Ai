@@ -28,11 +28,23 @@ class DocumentPipeline {
   }
   static String? _key;
   static Future<Map<String, dynamic>>? _prepared;
+  static String? _combinedKey;
+  static List<Map<String, dynamic>>? _combinedPages;
+  static String _sourceKey(String scope, Uint8List bytes) =>
+      jsonEncode([scope, sha256.convert(bytes).toString()]);
+  static void clearCombinedPreparation(String scope) {
+    if (_combinedKey != null && (jsonDecode(_combinedKey!) as List).first == scope) {
+      _combinedKey = null;
+      _combinedPages = null;
+    }
+  }
   static Map<String, dynamic> _copy(Map<String, dynamic> result) => {
     for (final e in result.entries)
       e.key: e.value is Uint8List
           ? Uint8List.fromList(e.value as Uint8List)
-          : e.value,
+          : e.value is List<Uint8List>
+              ? (e.value as List<Uint8List>).map(Uint8List.fromList).toList()
+              : e.value,
   };
   static Future<Map<String, dynamic>> _image(
     Map<String, dynamic> input,
@@ -51,6 +63,7 @@ class DocumentPipeline {
       throw const FormatException('Smart Scan allows 1 to 8 pages total.');
     }
     final pdf = pw.Document();
+    final rasterPages = <Map<String, dynamic>>[];
     var count = 0, totalBytes = 0, pixels = 0;
 
     void addPage(Uint8List encoded, int width, int height) {
@@ -69,6 +82,7 @@ class DocumentPipeline {
         build: (_) =>
             pw.Image(pw.MemoryImage(encoded), fit: pw.BoxFit.contain),
       ));
+      rasterPages.add({'bytes': encoded, 'width': width, 'height': height});
       count++;
     }
 
@@ -114,6 +128,12 @@ class DocumentPipeline {
     final output = await pdf.save();
     if (output.length > DocumentProcessingEngine.sourceLimit) {
       throw const FormatException('Combined PDF exceeds 50 MB.');
+    }
+    // The exact combined source and school own the already-rasterized pages.
+    // Do not rasterize the freshly generated PDF a second time on upload.
+    if (scope.isNotEmpty) {
+      _combinedKey = _sourceKey(scope, output);
+      _combinedPages = rasterPages;
     }
     return output;
   }
@@ -243,18 +263,25 @@ class DocumentPipeline {
     }
     _validatePdf(bytes);
     final pages = <Map<String, dynamic>>[];
-    var pixels = 0;
-    await for (final page in Printing.raster(bytes, dpi: 150)) {
-      pixels += page.width * page.height;
-      if (pages.length >= maxScanPages || pixels > 40000000)
-        throw const FormatException(
-          'PDF exceeds 8 pages / 40 megapixel processing safety limit.',
-        );
-      pages.add({
-        'bytes': await page.toPng(),
-        'width': page.width,
-        'height': page.height,
-      });
+    final combined = _combinedKey == _sourceKey(scope, bytes) ? _combinedPages : null;
+    clearCombinedPreparation(scope);
+    if (combined != null) {
+      pages.addAll(combined);
+    } else {
+      var pixels = 0;
+      await for (final page in Printing.raster(bytes, dpi: 150)) {
+        pixels += page.width * page.height;
+        if (pages.length >= maxScanPages || pixels > 40000000) {
+          throw const FormatException(
+            'PDF exceeds 8 pages / 40 megapixel processing safety limit.',
+          );
+        }
+        pages.add({
+          'bytes': await page.toPng(),
+          'width': page.width,
+          'height': page.height,
+        });
+      }
     }
     if (pages.isEmpty)
       throw const FormatException('PDF has no readable pages.');
@@ -264,6 +291,8 @@ class DocumentPipeline {
     // fidelity over the original source.
     var encodedImageBytes = 0;
     var cleanedPages = 0;
+    var needsQualityReview = false;
+    final previewPages = <Uint8List>[];
     // Spend the remaining budget across unprocessed pages. A simple text
     // page leaves room for the harder pages instead of wasting its share.
     for (var index = 0; index < pages.length; index++) {
@@ -277,18 +306,21 @@ class DocumentPipeline {
         'targetBytes': target,
         'autoRotation': await TemplateForgeOfflineOcr.scanRotation(pageBytes),
       }, scope);
-      encodedImageBytes += (result['optimized'] as Uint8List).length;
+      final outputPage = result['optimized'] as Uint8List;
+      encodedImageBytes += outputPage.length;
+      previewPages.add(outputPage);
+      if (result['qualityGuard'] == 'review-required') needsQualityReview = true;
       if (result['sourceRetained'] != true &&
           (result['perspectiveCorrected'] == true ||
               ((result['rotationDegrees'] as num?) ?? 0) != 0 ||
               ((result['deskewDegrees'] as num?) ?? 0).abs() >= 0.5)) {
         cleanedPages++;
       }
+      // Match the saved PDF page to the corrected image: no sideways
+      // letterboxing or reintroduction of the removed background.
       final format = PdfPageFormat(
-        (result['rotationDegrees'] == 90 || result['rotationDegrees'] == 270
-            ? page['height'] as int : page['width'] as int) * 72 / 150,
-        (result['rotationDegrees'] == 90 || result['rotationDegrees'] == 270
-            ? page['width'] as int : page['height'] as int) * 72 / 150,
+        (result['width'] as int) * 72 / 150,
+        (result['height'] as int) * 72 / 150,
       );
       void add(pw.Document doc, Uint8List image) => doc.addPage(
         pw.Page(
@@ -297,7 +329,7 @@ class DocumentPipeline {
           build: (_) => pw.Image(pw.MemoryImage(image), fit: pw.BoxFit.contain),
         ),
       );
-      add(optimized, result['optimized'] as Uint8List);
+      add(optimized, outputPage);
     }
     // Never reject an already-small original PDF just because converting it
     // to scan JPEGs increased its size. The untouched source remains readable.
@@ -342,6 +374,9 @@ class DocumentPipeline {
     return {
       'optimized': output,
       'sourceRetained': sourceRetained,
+      if (!sourceRetained) 'previewPages': previewPages,
+      'qualityGuard': sourceRetained ? 'source-retained' :
+          needsQualityReview ? 'review-required' : 'pixel-check-passed',
       'highQuality': Uint8List.fromList(bytes),
       'mimeType': 'application/pdf',
       'actualBytes': output.length,
