@@ -14,6 +14,10 @@ class _MultiFilePicker extends FileSelectorPlatform {
   _MultiFilePicker(this.files);
   final List<XFile> files;
   @override
+  Future<XFile?> openFile({List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,String? confirmButtonText}) async =>
+      files.isEmpty?null:files.first;
+  @override
   Future<List<XFile>> openFiles({List<XTypeGroup>? acceptedTypeGroups,
     String? initialDirectory,String? confirmButtonText}) async => files;
 }
