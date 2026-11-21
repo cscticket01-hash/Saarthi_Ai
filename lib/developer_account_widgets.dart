@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'platform/managed_developer_service.dart';
@@ -23,6 +24,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
       next=TextEditingController(),confirm=TextEditingController();
   Timer? ticker;
   bool busy=false,sent=false,verified=false;
+  bool showCurrentPassword = false;
   int expiresAt=0,resendAfter=0;
   String? message, changeProof;
   int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,300).toInt();
@@ -49,11 +51,9 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
     try{
       final user=FirebaseAuth.instance.currentUser;
       if(user==null||user.email==null)throw StateError('Developer sign-in required');
-      // Fresh password proof before the broker starts an email challenge.
-      await user.reauthenticateWithCredential(
-        EmailAuthProvider.credential(email:user.email!,password:current.text));
-      await user.getIdToken(true);
-      final result=await ManagedDeveloperService.call('security/otp/send',{});
+      final result = await ManagedDeveloperService.call(
+        'security/otp/send', {'currentPassword': current.text},
+      );
       if(!mounted)return;
       setState((){
         sent=true;verified=false;changeProof=null;otp.clear();next.clear();confirm.clear();
@@ -114,6 +114,22 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
     final fieldDecoration=InputDecoration(
       isDense:true,contentPadding:const EdgeInsets.symmetric(vertical:13,horizontal:12),
       border:OutlineInputBorder(borderRadius:BorderRadius.circular(12)));
+    final currentField = TextField(
+      key: const ValueKey('developer-security-current'),
+      controller: current,
+      obscureText: !showCurrentPassword,
+      enableSuggestions: false,
+      autocorrect: false,
+      decoration: fieldDecoration.copyWith(
+        hintText: 'Current Password',
+        prefixIcon: const Icon(Icons.lock_outline),
+        suffixIcon: IconButton(
+          tooltip: showCurrentPassword ? 'Hide current password' : 'Show current password',
+          icon: Icon(showCurrentPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+          onPressed: () => setState(() => showCurrentPassword = !showCurrentPassword),
+        ),
+      ),
+    );
     Widget lockedField(TextEditingController controller) => TextField(
       controller:controller,enabled:unlocked&&!busy,obscureText:true,
       enableSuggestions:false,autocorrect:false,
@@ -156,14 +172,10 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
           ),
           child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
             if(small)...[
-              TextField(key:const ValueKey('developer-security-current'),controller:current,
-                obscureText:true,enableSuggestions:false,autocorrect:false,
-                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline))),
+              currentField,
               const SizedBox(height:8),sendButton,
             ] else Row(children:[
-              Expanded(child:TextField(key:const ValueKey('developer-security-current'),
-                controller:current,obscureText:true,enableSuggestions:false,autocorrect:false,
-                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline)))),
+              Expanded(child: currentField),
               const SizedBox(width:10),sendButton,
             ]),
             if(sent)...[
@@ -202,20 +214,142 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
   }
 }
 class DeveloperIdleSession extends StatefulWidget {
-  const DeveloperIdleSession({super.key,required this.child,this.idle=const Duration(minutes:30)});
-  final Widget child;final Duration idle;
-  @override State<DeveloperIdleSession> createState()=>_DeveloperIdleSessionState();
+  const DeveloperIdleSession({super.key, required this.child});
+  final Widget child;
+
+  @override
+  State<DeveloperIdleSession> createState() => _DeveloperIdleSessionState();
 }
-class _DeveloperIdleSessionState extends State<DeveloperIdleSession> with WidgetsBindingObserver{
-  Timer? timer;DateTime activity=DateTime.now(),persisted=DateTime.fromMillisecondsSinceEpoch(0);bool ready=false;
-  String get key=>'vs_developer_activity_${FirebaseAuth.instance.currentUser?.uid}';
-  @override void initState(){super.initState();WidgetsBinding.instance.addObserver(this);restore();timer=Timer.periodic(const Duration(seconds:1),(_)=>check());}
-  Future<void> restore()async{final p=await SharedPreferences.getInstance();final prior=p.getInt(key);final user=FirebaseAuth.instance.currentUser;final signed=user?.metadata.lastSignInTime?.millisecondsSinceEpoch??0;activity=DateTime.fromMillisecondsSinceEpoch(prior!=null&&prior>=signed?prior:signed);if(activity.millisecondsSinceEpoch==0)activity=DateTime.now();ready=true;await p.setInt(key,activity.millisecondsSinceEpoch);check();if(mounted)setState((){});}
-  void touch(){if(!ready)return;check();if(DateTime.now().difference(activity)>=widget.idle)return;activity=DateTime.now();if(activity.difference(persisted)>const Duration(seconds:15)){persisted=activity;unawaited(SharedPreferences.getInstance().then((p)=>p.setInt(key,activity.millisecondsSinceEpoch)));}setState((){});}
-  void check(){if(!ready)return;if(DateTime.now().difference(activity)>=widget.idle){ready=false;unawaited(FirebaseAuth.instance.signOut());}else if(mounted)setState((){});}
-  @override void didChangeAppLifecycleState(AppLifecycleState state){if(state==AppLifecycleState.resumed)check();}
-  @override void dispose(){timer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
-  @override Widget build(BuildContext context){if(!ready)return const Scaffold(body:Center(child:CircularProgressIndicator()));final seconds=(widget.idle-DateTime.now().difference(activity)).inSeconds.clamp(0,widget.idle.inSeconds);return Listener(onPointerDown:(_)=>touch(),onPointerSignal:(_)=>touch(),child:Focus(onKeyEvent:(_,__) {touch();return KeyEventResult.ignored;},child:Stack(children:[widget.child,Positioned(right:20,bottom:10,child:IgnorePointer(child:Material(color:const Color(0xFF16242E),child:Padding(padding:const EdgeInsets.all(8),child:Text('Auto logout ${seconds~/60}:${(seconds%60).toString().padLeft(2,'0')}')))))])));}
+
+class _DeveloperIdleSessionState extends State<DeveloperIdleSession>
+    with WidgetsBindingObserver {
+  Timer? _expiry;
+  Timer? _activityTimer;
+  DateTime? _checkedAt;
+  bool _ready = false;
+  bool _checking = false;
+  bool _activityPending = false;
+  bool _unavailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_handlePointer);
+    HardwareKeyboard.instance.addHandler(_handleKey);
+    unawaited(_check());
+  }
+
+  Future<void> _check({bool activity = false}) async {
+    if (_checking || !mounted) return;
+    _checking = true;
+    final started = DateTime.now();
+    try {
+      final session = await ManagedDeveloperService.call(
+        activity ? 'session/activity' : 'session/status',
+        {},
+        timeout: const Duration(seconds: 10),
+      );
+      if (!mounted) return;
+      final remaining = (session['expiresAt'] as int) - (session['serverTime'] as int);
+      _checkedAt = started;
+      _expiry?.cancel();
+      _expiry = Timer(
+        Duration(milliseconds: remaining),
+        () {
+          if (!mounted) return;
+          _hideDashboard();
+          unawaited(_check());
+        },
+      );
+      if (!_ready || _unavailable) {
+        setState(() {
+          _ready = true;
+          _unavailable = false;
+        });
+      }
+    } on DeveloperRequestException catch (error) {
+      if (!mounted) return;
+      _hideDashboard();
+      if (error.status == 401 || error.status == 403) {
+        await FirebaseAuth.instance.signOut();
+      } else {
+        setState(() => _unavailable = true);
+      }
+    } catch (_) {
+      if (mounted) {
+        _hideDashboard();
+        setState(() => _unavailable = true);
+      }
+    } finally {
+      _checking = false;
+      if (_activityPending && mounted && !_unavailable) _scheduleActivity();
+    }
+  }
+
+  void _hideDashboard() {
+    Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+    setState(() => _ready = false);
+  }
+
+  void _handlePointer(PointerEvent event) {
+    if (event is PointerDownEvent || event is PointerSignalEvent) _recordActivity();
+  }
+
+  bool _handleKey(KeyEvent event) {
+    if (event is KeyDownEvent || event is KeyRepeatEvent) _recordActivity();
+    return false;
+  }
+
+  void _recordActivity() {
+    if (!_ready || _unavailable) return;
+    _activityPending = true;
+    _scheduleActivity();
+  }
+
+  void _scheduleActivity() {
+    if (_checking || _activityTimer?.isActive == true) return;
+    const interval = Duration(seconds: 5);
+    final elapsed = DateTime.now().difference(_checkedAt ?? DateTime.now());
+    _activityTimer = Timer(interval - elapsed, () {
+      _activityPending = false;
+      unawaited(_check(activity: true));
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_check());
+  }
+
+  @override
+  void dispose() {
+    _expiry?.cancel();
+    _activityTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_handlePointer);
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_unavailable) {
+      return Scaffold(
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Developer session could not be verified.'),
+            TextButton(onPressed: () => _check(), child: const Text('Retry')),
+            TextButton(onPressed: ManagedDeveloperService.signOut, child: const Text('Sign out')),
+          ]),
+        ),
+      );
+    }
+    if (!_ready) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return widget.child;
+  }
 }
 /// Both cards have independent transfers. Browser-native downloads cannot be
 /// cancelled by Flutter once dispatched, so Web first downloads the verified

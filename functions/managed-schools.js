@@ -3,6 +3,7 @@ const {createCloudflareDelivery}=require('./cloudflare-delivery');
 const {createDeleteEverywhere}=require('./delete-everywhere');
 const {createProviderPressure,retryAfterMillis,firebaseQuota,quotaError}=require('./provider-pressure');
 const {createWindowsTheme,DEFAULT_THEME}=require('./windows-theme');
+const {createDeveloperLogin,requireDeveloper}=require('./developer-login');
 const {createDeveloperPasswordOtp}=require('./developer-password-otp');
 const {createSchoolSyncDelivery}=require('./school-sync-delivery');
 'use strict';
@@ -23,9 +24,12 @@ function protect(value,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Manage
 function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed storage encryption is not configured');const c=createDecipheriv('aes-256-gcm',Buffer.from(key,'hex'),Buffer.from(v.iv,'hex'));c.setAuthTag(Buffer.from(v.tag,'hex'));return Buffer.concat([c.update(Buffer.from(v.body,'base64')),c.final()]).toString('utf8');}
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
-function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,developerLoginEnv=process.env,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
  const windowsTheme=createWindowsTheme({db,now});
- const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
+ const developerLogin=createDeveloperLogin({auth,db,now,env:developerLoginEnv});
+ const developerPasswordOtp=createDeveloperPasswordOtp({
+  auth,db,now,fetchImpl,env:developerLoginEnv,verifyCurrentPassword:developerLogin.verifyCurrentPassword,
+ });
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
  const deviceAccess=createManagedDeviceAccess({store:deviceStore||firestoreManagedDeviceStore(db),enforced:deviceAccessEnforced,managementEnabled:deviceManagementEnabled,enrollmentEnabled:deviceEnrollmentEnabled,offlinePrivateKey:deviceOfflinePrivateKey,now,...(deviceOfflineWindowMs==null?{}:{offlineWindowMs:deviceOfflineWindowMs})});
  const cardAuthority=createManagedCardIssueAuthority({db,now});
@@ -270,7 +274,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return data;
  }
  async function user(req){const token=String(req.headers.authorization||'').match(/^Bearer (.+)$/)?.[1];if(!token)fail(401,'School login required');try{return await auth.verifyIdToken(token,true);}catch{fail(401,'Login expired or disabled');}}
- async function developer(req){const u=await user(req),m=await db.doc('school_memberships/'+u.uid).get();if(m.exists||!(u.developer===true||(u.admin===true&&!u.schoolId)))fail(403,'Developer access required');return u;}
+
  async function identity(req,expected){const u=await user(req),m=await db.doc('school_memberships/'+u.uid).get();if(!m.exists||m.data().managed!==true||m.data().active!==true||m.data().role!=='school_admin')fail(403,'Managed school login is inactive');const id=m.data().schoolId;if(!SCHOOL.test(id)||expected&&expected!==id)fail(403,'Another school is not accessible');const e=await db.doc('school_entitlements/'+id).get();if(!e.exists||e.data().active!==true||e.data().blocked===true)fail(403,'School is blocked or disabled');if(Number(e.data().sessionValidAfter||0)>Number(u.auth_time||0))fail(401,'Sign in again');const entitlement={...e.data()};
  if(entitlement.status!=='trial'&&entitlement.licenseHash){const licence=await db.doc('platform_license_status/'+entitlement.licenseHash).get();if(!licence.exists||licence.data().schoolId!==id||licence.data().revoked!==false){entitlement.expiresAt=0;}else{const end=licence.data().expiresAt;entitlement.expiresAt=typeof end?.toMillis==='function'?end.toMillis():Number(end||0);}}
  return {uid:u.uid,schoolId:id,entitlement,authenticatedAt:Number(u.auth_time)*1000};}
@@ -502,9 +506,18 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!lease(m).allowed||m.entitlement.status!=='trial'&&m.entitlement.activated!==true)fail(403,'School licence is inactive');
   ticket.used=true;return {success:true,schoolId:m.schoolId};
  }
+ if(action?.startsWith('developer/managed/login/'))
+  return developerLogin.handle(action.slice('developer/managed/login/'.length),b);
  if(action?.startsWith('developer/managed/')){
-  const admin=await developer(req),id=b.schoolId;
-  if(action?.startsWith('developer/managed/security/otp/'))return developerPasswordOtp(action,b,admin,req);
+  const admin=await user(req),id=b.schoolId;
+  const sessionOperation={
+   'developer/managed/session/status':'read',
+   'developer/managed/session/activity':'touch',
+   'developer/managed/session/end':'end',
+  }[action];
+  const session=await requireDeveloper(auth,db,admin,now,sessionOperation);
+  if(sessionOperation)return session;
+  if(action?.startsWith('developer/managed/security/otp/'))return developerPasswordOtp(action,b,admin);
   if(action==='developer/managed/repair-knowledge/status')return {success:true,...await repairKnowledge.status()};
   if(action==='developer/managed/repair-knowledge/publish')return {success:true,...await repairKnowledge.publish(b.publication,admin.uid)};
   if(action==='developer/managed/theme/get')return {success:true,theme:await windowsTheme.read()};if(action==='developer/managed/theme/save')return {success:true,theme:await windowsTheme.save(b.theme,admin.uid)};if(action==='developer/managed/create'){
@@ -689,8 +702,15 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    }
    batch.set(db.doc('platform_licence_receipts/'+licenseHash),{type:'issue',schoolId:id,licenseId:licenseHash,days:b.days,amount,paid:b.paid===true,at:t,expiresAt,actor:admin.uid});
    batch.set(db.doc('platform_licenses/'+licenseHash),{schoolId:id,issuedAt:t,expiresAt,startsAt,revoked:false,paid:b.paid===true,amount,keyHint:key.slice(-6),issuedBy:admin.uid});batch.set(db.doc('platform_license_status/'+licenseHash),{schoolId:id,expiresAt,revoked:false});batch.set(ref,{status:b.paid===true?'paid':'licensed',startsAt,expiresAt,licenseHash,activated:false,lastRenewalId:null},{merge:true});batch.set(db.doc('platform_schools/'+id),{activeLicenseHash:licenseHash,licenseId:licenseHash,licenseExpiresAt:expiresAt,purchased:b.paid===true},{merge:true});await batch.commit();return {success:true,key,expiresAt};
-  }else if((action==='developer/managed/revoke'||action==='developer/managed/delete-licence')){
-   const e=(await ref.get()).data();await ref.set({expiresAt:0,activated:false},{merge:true});if(e.licenseHash){await db.doc('platform_license_status/'+e.licenseHash).set({schoolId:id,expiresAt:0,revoked:true});await db.doc('platform_licenses/'+e.licenseHash).set({revoked:true},{merge:true});}await db.doc('platform_schools/'+id).set({licenseExpiresAt:0},{merge:true});if(action.endsWith('/delete-licence')&&e.licenseHash)await db.doc('platform_licenses/'+e.licenseHash).delete();
+  }else if(action==='developer/managed/revoke'){
+   await db.runTransaction(async tx=>{
+    const e=(await tx.get(ref)).data();
+    if(!e?.licenseHash||e.licenseHash!==b.licenseId)fail(409,'The current licence has changed');
+    tx.set(ref,{expiresAt:0,activated:false},{merge:true});
+    tx.set(db.doc('platform_license_status/'+e.licenseHash),{schoolId:id,expiresAt:0,revoked:true},{merge:true});
+    tx.set(db.doc('platform_licenses/'+e.licenseHash),{revoked:true,revokedAt:now()},{merge:true});
+    tx.set(db.doc('platform_schools/'+id),{licenseExpiresAt:0},{merge:true});
+   });
   }else if(action==='developer/managed/storage'){
    const url=scriptUrl(b.scriptUrl);if(!/^[a-f0-9]{64}$/.test(b.secret||''))fail(400,'Copy the connection secret produced by school Script setup');const secret=protect(b.secret,encryptionKey);
    const old=await db.doc('school_storage_private/'+id).get();const staged={url,secret,ready:true};

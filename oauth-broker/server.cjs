@@ -51,9 +51,10 @@ if (require.main === module) {
   if (process.env.SAARTHI_SCHOOL_CLOUD_ENABLED === 'true') {
     schoolCloud = require('../staging-school-cloud/server.cjs').fromEnvironment(process.env);
   }
-  const server = createServer({ clientId: process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID,
+  const developerStaging = process.env.SAARTHI_DEVELOPER_STAGING_MODE === 'true';
+  const server = createServer({ clientId: developerStaging ? undefined : process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_ID,
     clientSecret: process.env.SAARTHI_GOOGLE_DESKTOP_CLIENT_SECRET, schoolCloud,
-    developerRecovery: require('./developer-recovery-handler.cjs').fromEnvironment(process.env) });
+    developerRecovery: developerStaging ? undefined : require('./developer-recovery-handler.cjs').fromEnvironment(process.env) });
   server.requestTimeout = 30000;
   server.headersTimeout = 10000;
   server.listen(Number(process.env.PORT || 8080), '0.0.0.0');

@@ -1,11 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function activeDeveloperSession(id) {
+      let session = get(/databases/$(database)/documents/developer_sessions/$(id));
+      return session.data.uid == request.auth.uid &&
+        session.data.expiresAt > request.time.toMillis();
+    }
     function developer() {
       return request.auth != null &&
         (request.auth.token.get('developer', false) == true ||
-          (request.auth.token.get('admin', false) == true && request.auth.token.get('schoolId', '') == '' &&
-            !exists(/databases/$(database)/documents/school_memberships/$(request.auth.uid))));
+          (request.auth.token.get('admin', false) == true && request.auth.token.get('schoolId', '') == '')) &&
+        !exists(/databases/$(database)/documents/school_memberships/$(request.auth.uid)) &&
+        request.auth.token.firebase.sign_in_provider == 'custom' &&
+        request.auth.token.get('developerSessionId', '').matches('^[a-f0-9]{64}$') &&
+        activeDeveloperSession(request.auth.token.developerSessionId);
     }
     function anonymous() {
       return request.auth != null && request.auth.token.firebase.sign_in_provider == 'anonymous';
@@ -146,8 +154,15 @@ service cloud.firestore {
     }
     // Developer-only enumeration, keys, renewal, support and legacy collections.
     match /{root}/{document=**} {
-      allow read, write: if developer() &&
-        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','platform_licence_receipts']);
+      allow read: if developer() && developerCollection(root);
+      allow create, update: if developer() && developerCollection(root);
+      allow delete: if developer() && developerCollection(root) &&
+        !(root in ['platform_licenses','platform_license_status']);
+    }
+    function developerCollection(root) {
+      return !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources',
+        'developer_password_otp','platform_licence_receipts','developer_sessions','developer_auth_limits',
+        'developer_login_challenges','developer_totp_state','developer_recovery']);
     }
   }
 }

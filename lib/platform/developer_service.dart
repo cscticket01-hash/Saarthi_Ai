@@ -28,9 +28,10 @@ class DeveloperService {
 
   Future<List<Map<String, dynamic>>> _list(
     String collection, {
-    int limit = 500,
+    int? limit = 500,
   }) async {
-    final s = await _db.collection(collection).limit(limit).get();
+    final query = _db.collection(collection);
+    final s = await (limit == null ? query : query.limit(limit)).get();
     return s.docs
         .map(
           (d) => <String, dynamic>{
@@ -74,78 +75,10 @@ class DeveloperService {
         );
       }
     }
-    if (action == 'license/revoke' || action == 'license/delete') {
-      final licence =
-          (await _db
-                  .collection('platform_licenses')
-                  .doc(body['licenseId'].toString())
-                  .get())
-              .data();
-      if (licence != null) {
-        final school =
-            (await _db
-                    .collection('platform_schools')
-                    .doc(licence['schoolId'])
-                    .get())
-                .data();
-        if (school?['managed'] == true) {
-          if (school?['licenseId'] != body['licenseId'])
-            throw StateError(
-              'This is an old licence. Manage the current school licence from central controls.',
-            );
-          return ManagedDeveloperService.call(
-            action == 'license/delete' ? 'delete-licence' : 'revoke',
-            {'schoolId': licence['schoolId']},
-          );
-        }
-      }
-    }
-
     if (action == 'school/create') return _createSchool(body);
     if (action == 'license/issue') return _issue(body, user.uid);
     if (action == 'license/renew') return _renew(body, user.uid);
-    if (action == 'license/revoke') {
-      final id = body['licenseId'].toString();
-      final doc = _db.collection('platform_licenses').doc(id);
-      final license = (await doc.get()).data();
-      if (license == null) throw StateError('Licence not found');
-      final batch = _db.batch();
-      batch.update(doc, {
-        'revoked': true,
-        'revokedAt': FieldValue.serverTimestamp(),
-      });
-      batch.update(_db.collection('platform_license_status').doc(id), {
-        'revoked': true,
-      });
-      final school = _db
-          .collection('platform_schools')
-          .doc(license['schoolId']);
-      final current = (await school.get()).data();
-      if (current?['licenseId'] == id)
-        batch.update(school, {'licenseExpiresAt': 0});
-      await batch.commit();
-      return {'success': true};
-    }
-    if (action == 'license/delete') {
-      final id = body['licenseId'].toString();
-      final doc = _db.collection('platform_licenses').doc(id);
-      final license = (await doc.get()).data();
-      if (license == null) throw StateError('Licence not found');
-      final schoolId = license['schoolId']?.toString() ?? '';
-      final school = _db.collection('platform_schools').doc(schoolId);
-      final current = (await school.get()).data();
-      final batch = _db.batch();
-      batch.delete(doc);
-      batch.delete(_db.collection('platform_license_status').doc(id));
-      if (current?['licenseId'] == id) {
-        batch.set(school, {
-          'licenseId': FieldValue.delete(),
-          'licenseExpiresAt': FieldValue.delete(),
-        }, SetOptions(merge: true));
-      }
-      await batch.commit();
-      return {'success': true};
-    }
+    if (action == 'license/revoke') return _revoke(body['licenseId'].toString());
     if (action == 'school/block') {
       final schoolId = body['schoolId'].toString();
       final blocked = body['blocked'] == true;
@@ -231,14 +164,48 @@ class DeveloperService {
     throw ArgumentError('Unknown developer action');
   }
 
+  Future<Map<String, dynamic>> _revoke(String id) async {
+    final licenceRef = _db.collection('platform_licenses').doc(id);
+    final result = await _db.runTransaction<String?>((tx) async {
+      final licence = (await tx.get(licenceRef)).data();
+      if (licence == null) throw StateError('Licence not found');
+      final schoolId = licence['schoolId'] as String;
+      final schoolRef = _db.collection('platform_schools').doc(schoolId);
+      final school = (await tx.get(schoolRef)).data();
+      if (school?['managed'] == true) return schoolId;
+      if (licence['revoked'] == true) return null;
+
+      tx.update(licenceRef, {
+        'revoked': true,
+        'revokedAt': FieldValue.serverTimestamp(),
+      });
+      tx.set(
+        _db.collection('platform_license_status').doc(id),
+        {'schoolId': schoolId, 'revoked': true},
+        SetOptions(merge: true),
+      );
+      if ((school?['licenseId'] ?? school?['activeLicenseHash']) == id) {
+        tx.update(schoolRef, {'licenseExpiresAt': 0});
+      }
+      return null;
+    });
+    if (result != null) {
+      return ManagedDeveloperService.call('revoke', {
+        'schoolId': result,
+        'licenseId': id,
+      });
+    }
+    return {'success': true};
+  }
+
   Future<Map<String, dynamic>> _dashboard(bool refresh) async {
     if (refresh ||
         _cached == null ||
         _loadedAt == null ||
         DateTime.now().difference(_loadedAt!) > const Duration(minutes: 30)) {
       final lists = await Future.wait([
-        _list('platform_schools'),
-        _list('platform_school_trials'),
+        _list('platform_schools', limit: null),
+        _list('platform_school_trials', limit: null),
         _list('platform_licenses'),
         _list('platform_licence_receipts', limit: 500),
         _db
@@ -276,7 +243,7 @@ class DeveloperService {
       };
       _loadedAt = DateTime.now();
     }
-    final summaries = await _list('platform_school_summaries');
+    final summaries = await _list('platform_school_summaries', limit: null);
     final byId = {for (final s in summaries) s['id']: s};
     final licenses = {for (final l in _cached!['licenses'] as List) l['id']: l};
     final schools = (_cached!['schools'] as List)
@@ -296,12 +263,21 @@ class DeveloperService {
         })
         .toList();
     final now = DateTime.now().millisecondsSinceEpoch;
+    final reportedCounts = schools
+        .map((school) => school['studentCount'])
+        .whereType<int>()
+        .where((count) => count >= 0)
+        .toList();
     return {
       'success': true,
       ..._cached!,
       'schools': schools,
       'serverTime': now,
-      'summary': monitorSummary(schools, now),
+      'summary': {
+        ...monitorSummary(schools, now),
+        'totalStudents': reportedCounts.fold<int>(0, (total, count) => total + count),
+        'schoolsWithoutStudentCount': schools.length - reportedCounts.length,
+      },
     };
   }
 

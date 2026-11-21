@@ -17,9 +17,9 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import 'platform/developer_service.dart';
+import 'platform/managed_developer_service.dart';
 
 /// Active license holders disappear from the issue picker until the last
 /// 30 days of validity. Expired and revoked schools remain eligible.
@@ -54,51 +54,10 @@ class DeveloperPortal extends StatelessWidget {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       return s.data == null
           ? const _DeveloperLogin()
-          : _DeveloperAccess(user: s.data!);
-    },
-  );
-}
-
-class _DeveloperAccess extends StatelessWidget {
-  const _DeveloperAccess({required this.user});
-  final User user;
-  @override
-  Widget build(BuildContext context) => FutureBuilder<IdTokenResult>(
-    future: user.getIdTokenResult(true),
-    builder: (context, s) {
-      if (s.hasError)
-        return Scaffold(
-          body: Center(
-            child: TextButton(
-              onPressed: () => FirebaseAuth.instance.signOut(),
-              child: const Text('Sign in again to verify developer access'),
-            ),
-          ),
-        );
-      if (!s.hasData)
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
-      if (s.data!.claims?['admin'] != true &&
-          s.data!.claims?['developer'] != true)
-        return Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.lock_outline, size: 48),
-                const SizedBox(height: 16),
-                const Text('Developer access required'),
-                const Text(
-                  'School accounts do not have access to this website.',
-                ),
-                TextButton(
-                  onPressed: () => FirebaseAuth.instance.signOut(),
-                  child: const Text('Sign out'),
-                ),
-              ],
-            ),
-          ),
-        );
-      return const _DeveloperDashboard();
+          : DeveloperIdleSession(
+              key: ValueKey(s.data!.uid),
+              child: const _DeveloperDashboard(),
+            );
     },
   );
 }
@@ -112,6 +71,8 @@ class _DeveloperLogin extends StatefulWidget {
 class _DeveloperLoginState extends State<_DeveloperLogin> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _otp = TextEditingController();
+  String? _challenge;
   bool _busy = false;
   bool _showPassword = false;
   bool _remember = false;
@@ -123,6 +84,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _otp.dispose();
     super.dispose();
   }
 
@@ -134,25 +96,30 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
       _information = null;
     });
     try {
-      // Session-only remains the safe default. Persistence changes only when
-      // the user explicitly chooses the visible Remember me checkbox.
-      await FirebaseAuth.instance.setPersistence(
-        _remember ? Persistence.LOCAL : Persistence.SESSION,
-      );
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        setState(() => _error = e.code == 'invalid-credential'
-            ? 'Check your email and password.'
-            : 'Login unavailable. Please try again.');
+      final challenge = _challenge;
+      if (challenge == null) {
+        final result = await ManagedDeveloperService.login('start', {
+          'email': _email.text.trim(),
+          'password': _password.text,
+        });
+        if (!mounted) return;
+        _password.clear();
+        setState(() => _challenge = result['challenge'] as String);
+      } else {
+        final result = await ManagedDeveloperService.login('confirm', {
+          'challenge': challenge,
+          'otp': _otp.text.trim(),
+        });
+        if (!mounted) return;
+        await FirebaseAuth.instance.setPersistence(
+          _remember ? Persistence.LOCAL : Persistence.SESSION,
+        );
+        await FirebaseAuth.instance.signInWithCustomToken(result['customToken'] as String);
       }
+    } on DeveloperRequestException catch (error) {
+      if (mounted) setState(() => _error = error.message);
     } catch (_) {
-      if (mounted) {
-        setState(() => _error = 'Login unavailable. Please try again.');
-      }
+      if (mounted) setState(() => _error = 'Login unavailable. Please try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -174,22 +141,7 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
       _information = null;
     });
     try {
-      const stagingRecovery = String.fromEnvironment('SAARTHI_STAGING_DEVELOPER_RECOVERY_URL');
-      if (stagingRecovery.isEmpty) {
-        await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      } else {
-        final endpoint = Uri.parse(stagingRecovery);
-        if (endpoint.scheme != 'https' || endpoint.path != '/developer-recovery') {
-          throw StateError('Invalid staging developer recovery URL');
-        }
-        final response = await http.post(endpoint,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'action': 'developer/recovery/request', 'email': email}),
-        ).timeout(const Duration(seconds: 20));
-        if (response.statusCode != 200 || jsonDecode(response.body)['success'] != true) {
-          throw StateError('Password recovery is unavailable');
-        }
-      }
+      await ManagedDeveloperService.login('recover', {'email': email});
       if (mounted) {
         setState(() {
           _forgot = false;
@@ -229,6 +181,33 @@ class _DeveloperLoginState extends State<_DeveloperLogin> {
               icon:const Icon(Icons.send_outlined),label:Text(_busy?'Sending…':'Send Link')),
             const SizedBox(height:8),
             TextButton(onPressed:_busy?null:()=>setState((){_forgot=false;_error=null;}),child:const Text('Back to Login')),
+          ],
+        ) : _challenge != null ? Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Verify developer sign-in', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            TextField(
+              key: const ValueKey('developer-login-otp'),
+              controller: _otp,
+              enabled: !_busy,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+              decoration: const InputDecoration(labelText: 'Authenticator code'),
+              onSubmitted: (_) => _login(),
+            ),
+            if (_error != null) Text(_error!, style: const TextStyle(color: Color(0xFFB12440))),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: _busy ? null : _login, child: const Text('Verify and sign in')),
+            TextButton(
+              onPressed: _busy ? null : () => setState(() {
+                _challenge = null;
+                _otp.clear();
+                _error = null;
+              }),
+              child: const Text('Back to Login'),
+            ),
           ],
         ) : Column(
           mainAxisSize: MainAxisSize.min,
@@ -401,7 +380,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
   Map<String, dynamic> _data = {};
   final Map<String, String> _issuedSessionKeys = {}; // Volatile; never persisted or returned by dashboard.
   Timer? _timer;
-  StreamSubscription? _schoolsWatch, _licencesWatch;
+  StreamSubscription? _schoolsWatch, _licencesWatch, _studentCountsWatch;
   bool _refreshing = false;
   List<Map<String, dynamic>> get _schools => _maps(_data['schools']);
   List<Map<String, dynamic>> get _licenses => _maps(_data['licenses']);
@@ -425,34 +404,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         .collection('platform_schools')
         .snapshots()
         .listen(
-          (snapshot) {
-            if (mounted)
-              setState(() {
-                _data['schools'] = snapshot.docs
-                    .where((d) => d.data()['deletedAt'] == null)
-                    .map(
-                      (d) => <String, dynamic>{
-                        ...d.data().map(
-                          (k, v) => MapEntry(
-                            k,
-                            v is Timestamp ? v.millisecondsSinceEpoch : v,
-                          ),
-                        ),
-                        'id': d.id,
-                      },
-                    )
-                    .toList();
-                _data['summary'] = monitorSummary(
-                  _schools,
-                  DateTime.now().millisecondsSinceEpoch,
-                );
-              });
-          },
+          (_) => _load(silent: true),
           onError: (Object e) {
             if (mounted)
               setState(() => _error = 'Live school updates unavailable: $e');
           },
         );
+    _studentCountsWatch = FirebaseFirestore.instance
+        .collection('platform_school_summaries').snapshots().skip(1)
+        .listen((_) => _load(silent: true));
     _licencesWatch = FirebaseFirestore.instance
         .collection('platform_licenses')
         .snapshots()
@@ -470,6 +430,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     _timer?.cancel();
     _schoolsWatch?.cancel();
     _licencesWatch?.cancel();
+    _studentCountsWatch?.cancel();
     super.dispose();
   }
 
@@ -849,9 +810,15 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
     final active=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now).length;
     final expiring=_licenses.where((l)=>l['revoked']!=true && (l['expiresAt'] as num? ?? 0)>_now
       && (l['expiresAt'] as num? ?? 0)<=_now+30*86400000).length;
-    final pending=_schools.where((s)=>s['blocked']==true||(s['licenseExpiresAt'] as num? ?? 0)>0
-      && (s['licenseExpiresAt'] as num? ?? 0)<=_now).length+expiring;
-    Widget counter(String label,int number,IconData icon)=>_panel(
+    final summary = _data['summary'] as Map?;
+    final totalStudents = summary?['totalStudents'];
+    final missingCounts = summary?['schoolsWithoutStudentCount'] as int? ?? 0;
+    final studentCount = switch ((totalStudents, missingCounts)) {
+      (null, _) => '—',
+      (final count, 0) => '$count',
+      (final count, final missing) => '$count reported · $missing missing',
+    };
+    Widget counter(String label,Object number,IconData icon)=>_panel(
       Row(children:[
         Container(padding:const EdgeInsets.all(9),decoration:BoxDecoration(color:const Color(0xFFE8F2FF),borderRadius:BorderRadius.circular(12)),child:Icon(icon,size:20,color:_mint)),
         const SizedBox(width:10),
@@ -869,12 +836,11 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           SizedBox(width:w,child:counter('Total schools',_schools.length,Icons.apartment_outlined)),
           SizedBox(width:w,child:counter('Active licences',active,Icons.verified_outlined)),
           SizedBox(width:w,child:counter('Expiring in 30 days',expiring,Icons.schedule_outlined)),
-          SizedBox(width:w,child:counter('Pending actions',pending,Icons.notifications_outlined)),
+          SizedBox(width:w,child:counter('Total Students',studentCount,Icons.groups_outlined)),
         ]);
       }),
       const SizedBox(height:10),
-      LayoutBuilder(builder:(context,size){
-        Widget schools()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      _panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
           Row(children:[
             const Expanded(child:Text('School health overview',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
             TextButton(onPressed:()=>setState(()=>_page=1),child:const Text('View all schools')),
@@ -890,38 +856,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                 s['blocked']==true?const Color(0xFFBD3549):_active(s)?const Color(0xFF058D68):const Color(0xFFA46B12)),
             )
           ]
-        ]));
-        Widget backend()=>_panel(Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          const Text('Backend automation',style:TextStyle(fontSize:16,fontWeight:FontWeight.w800)),
-          const SizedBox(height:5),
-          const Text('Sync repairs and learning run outside the developer website.',style:TextStyle(fontSize:11,color:Color(0xFF637DA4))),
-          for(final row in [
-            ('Policy updates','Signed rule distribution',Icons.shield_outlined),
-            ('Error learning','Anonymized, bounded observations',Icons.insights_outlined),
-            ('Auto repair','Verified allowlisted handlers',Icons.build_circle_outlined),
-            ('Device delivery','Updates after reconnect',Icons.devices_outlined),
-          ])...[
-            const Divider(height:13,color:Color(0xFFE5ECF8)),
-            Row(children:[
-              Icon(row.$3,color:_mint,size:18),
-              const SizedBox(width:9),
-              Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-                Text(row.$1,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w700)),
-                Text(row.$2,style:const TextStyle(fontSize:10,color:Color(0xFF637DA4))),
-              ])),
-              _chip('Server-side',const Color(0xFF637DA4)),
-            ])
-          ],
-          const SizedBox(height:9),
-          const Text('Runtime activation is not confirmed by this page.',style:TextStyle(fontSize:10,color:Color(0xFF637DA4))),
-          const SizedBox(height:8),
-          OutlinedButton.icon(onPressed:()=>setState(()=>_page=3),icon:const Icon(Icons.bar_chart_outlined,size:17),label:const Text('School earnings')),
-        ]));
-        return size.maxWidth>=800?
-          Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Expanded(flex:6,child:schools()),const SizedBox(width:10),Expanded(flex:4,child:backend()),
-          ]):Column(children:[schools(),const SizedBox(height:10),backend()]);
-      })
+        ])),
     ]);
   }
   Future<bool> _confirm(String title, String message, String action) async =>
@@ -943,24 +878,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         ),
       ) ??
       false;
-
-  Future<void> _deleteLicence(Map<String, dynamic> licence) async {
-    final yes = await _confirm(
-      'Delete this licence?',
-      'This permanently removes the selected licence from the developer dashboard. The key will stop working. School records are not deleted.',
-      'Delete licence',
-    );
-    if (!yes) return;
-    try {
-      await _call('license/delete', {'licenseId': licence['id']});
-      await _load(silent: true);
-    } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
-    }
-  }
 
   Future<void> _setSchoolBlocked(Map<String, dynamic> school) async {
     final blocked = school['blocked'] == true;
@@ -1124,15 +1041,9 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                                         }
                                       }
                                     },
-                              child: const Text('Revoke'),
+                              child: const Text('Revoke Licence'),
                             ),
-                            TextButton(
-                              onPressed: () => _deleteLicence(l),
-                              child: const Text(
-                                'Delete',
-                                style: TextStyle(color: Colors.redAccent),
-                              ),
-                            ),
+
                           ],
                         ),
                       ),
@@ -1359,7 +1270,6 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
         colorScheme:ColorScheme.fromSeed(seedColor:_mint,brightness:Brightness.light),
         scaffoldBackgroundColor:_ink,
         textTheme:ThemeData.light().textTheme.apply(bodyColor:const Color(0xFF18335C),displayColor:const Color(0xFF18335C))),
-      child:DeveloperIdleSession(
       child: Scaffold(
         backgroundColor: _ink,
         body: LayoutBuilder(
@@ -1431,7 +1341,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                     style: const TextStyle(color: const Color(0xFF8195B2), fontSize: 11),
                   ),
                   TextButton.icon(
-                    onPressed: () => FirebaseAuth.instance.signOut(),
+                    onPressed: ManagedDeveloperService.signOut,
                     icon: const Icon(Icons.logout, size: 16),
                     label: const Text('Sign out'),
                   ),
@@ -1547,7 +1457,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
                   ],
                   if (narrow)
                     TextButton(
-                      onPressed: () => FirebaseAuth.instance.signOut(),
+                      onPressed: ManagedDeveloperService.signOut,
                       child: const Text('Sign out'),
                     ),
                 ],
@@ -1563,7 +1473,7 @@ class _DeveloperDashboardState extends State<_DeveloperDashboard> {
           },
         ),
       ),
-    ));
+    );
   }
 }
 

@@ -1,6 +1,7 @@
 'use strict';
 const { onRequest } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
+const {requireDeveloper} = require('./developer-login');
 const crypto = require('node:crypto');
 const { DAY, hash, safeEqual, schoolId, scriptUrl, licenseState, summary } = require('./domain');
 const db = () => admin.firestore();
@@ -13,7 +14,7 @@ async function developer(req) {
   const bearer = String(req.headers.authorization || '').match(/^Bearer (.+)$/)?.[1];
   if (!bearer) fail(401, 'Developer login required');
   const user = await admin.auth().verifyIdToken(bearer, true);
-  if (user.developer !== true && (user.admin !== true || user.schoolId)) fail(403, 'Only the website developer can perform this action');
+  await requireDeveloper(admin.auth(), db(), user);
   return user;
 }
 async function installation(body) {

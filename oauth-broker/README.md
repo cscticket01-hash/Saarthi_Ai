@@ -70,3 +70,28 @@ deleted and temporary workflow/transfer scripts removed. The Windows review
 build compiles the staging endpoint and verifies both public OAuth and central
 configuration. Real Google Sign-in + Drive consent/file checks still require
 Windows acceptance with two permitted OAuth test accounts.
+
+### Developer portal authentication
+
+The website, school-cloud broker, legacy developer API and platform Firestore
+rules use the same MFA session records. Roll them out together after testing in
+a staging Firebase project. Existing developer sign-ins will need to sign in
+again once the new rules apply.
+
+- Set `SAARTHI_DEVELOPER_FIREBASE_API_KEY` to an Identity Toolkit API key for
+  the same project as the broker's Firebase Admin credentials.
+- Set `SAARTHI_DEVELOPER_TOTP_SECRETS` to a protected JSON map keyed by Firebase
+  developer UID. Each value is a distinct 32-character uppercase Base32 secret
+  from 20 secure random bytes. Enroll each developer privately in a six-digit
+  authenticator using SHA-1 with a 30-second period. Developer emails must be
+  verified. Do not put the enrollment secrets in the website build.
+- Forgot Password uses the broker's existing Resend configuration
+  (`SAARTHI_DEVELOPER_OTP_RESEND_API_KEY`, `SAARTHI_DEVELOPER_OTP_FROM`).
+  Its limits are five password attempts per 15 minutes for login, and two
+  recovery requests per 24 hours with a ten-minute gap per normalized email.
+  These are limits for the broker endpoints. Firebase's native Auth endpoints
+  remain governed by the project's Firebase Auth policy.
+- Configure Firestore TTL on `purgeAt` in `developer_sessions`,
+  `developer_login_challenges`, and `developer_auth_limits` for storage cleanup.
+  Access and throttling decisions use timestamps directly and do not depend on
+  TTL deletion timing.
