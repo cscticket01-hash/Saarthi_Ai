@@ -6,8 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'document_pipeline.dart';
 import 'document_scan_editor.dart';
-import 'document_pdf_editor.dart';
-import 'fitted_document_preview.dart';
+import 'document_pdf_preview.dart';
 import 'student_inventory_policy.dart';
 
 class SelectedDocument {
@@ -175,7 +174,9 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
         return;
       }
       selected = file; // Original stays untouched, even when processing fails.
-      setState(() => stage = 'Processing pages, crop and compression…');
+      setState(() => stage = file.mime == 'application/pdf'
+          ? 'Checking PDF size and pages…'
+          : 'Processing image and compression…');
       final result = await widget.processor(
         file.bytes,
         file.mime,
@@ -215,13 +216,10 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
 
   Future<void> editScan([String tool = 'all']) async {
     final file = selected;
-    if (busy || file == null) return;
+    if (busy || file == null || file.mime == 'application/pdf') return;
     final requested = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => file.mime == 'application/pdf'
-        ? DocumentPdfEditor(bytes:file.bytes,scope:widget.scope,
-          initialEdits:file.edits,isCurrent:widget.isCurrent)
-        : DocumentScanEditor(bytes: file.bytes, mime: file.mime,
+      builder: (_) => DocumentScanEditor(bytes: file.bytes, mime: file.mime,
         scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent,
         initialTool: tool),
     );
@@ -285,13 +283,19 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 Text(error!, style: const TextStyle(color: Colors.red)),
               if (processed != null) ...[
                 Text(
-                  '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
+                  selected!.mime == 'application/pdf'
+                    ? '${selected!.name} • ${processed!['pageCount']} pages • ${(processed!['optimized'] as Uint8List).length} bytes'
+                    : '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
                   key: const ValueKey('document-preview-metrics'),
                 ),
-                Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
-                const Text(
-                  'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.',
-                ),
+                Text(selected!.mime == 'application/pdf'
+                  ? (processed!['sourceRetained'] == true
+                      ? 'Original PDF retained • compression not required'
+                      : 'PDF compressed • ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}% smaller')
+                  : 'Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
+                Text(selected!.mime == 'application/pdf'
+                  ? 'Maximum 8 pages and 500 KB per student. Original PDF is preserved when within the limit.'
+                  : 'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.'),
                 if (processed!['processingMillis'] is num)
                   Text(
                     'Processing time: ${((processed!['processingMillis'] as num) / 1000).toStringAsFixed(2)} s',
@@ -310,21 +314,10 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                   const Text('Quality check needs review. Inspect the text and seals before saving.',
                     style: TextStyle(color: Colors.orangeAccent)),
                 Expanded(
-                  child: processed!['mimeType'] == 'application/pdf'
-                      ? (processed!['previewPages'] is List<Uint8List>
-                          ? ListView(
-                              children: [
-                                for (final page in processed!['previewPages'] as List<Uint8List>)
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 6),
-                                    child: Image.memory(page, fit: BoxFit.contain,
-                                      gaplessPlayback: true),
-                                  ),
-                              ],
-                            )
-                          : FittedDocumentPreview(
-                              bytes: processed!['optimized'] as Uint8List,
-                            ))
+                  child: selected!.mime == 'application/pdf'
+                      ? DocumentPdfPreview(
+                          pages: processed!['previewPages'] as List<Uint8List>,
+                        )
                       : Image.memory(
                           processed!['optimized'] as Uint8List,
                           fit: BoxFit.contain,
@@ -338,16 +331,12 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     ),
                   ),
                 ),
-              if (selected != null &&
+              if (selected != null && selected!.mime != 'application/pdf' &&
                   widget.processor == DocumentPipeline.process)
                 Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(
                   alignment: WrapAlignment.center, spacing: 8, runSpacing: 4,
                   children: [
-                    if (selected!.mime == 'application/pdf')
-                      OutlinedButton.icon(key:const ValueKey('document-edit-pdf'),
-                        onPressed:busy?null:()=>editScan(),
-                        icon:const Icon(Icons.edit_document),label:const Text('Edit PDF pages'))
-                    else ...[
+
                     OutlinedButton.icon(key: const ValueKey('document-edit-scan'),
                       onPressed: busy ? null : () => editScan('crop'),
                       icon: const Icon(Icons.crop), label: const Text('Crop')),
@@ -357,7 +346,6 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                       icon: const Icon(Icons.filter), label: const Text('Filters')),
                     OutlinedButton.icon(onPressed: busy ? null : () => editScan('adjust'),
                       icon: const Icon(Icons.tune), label: const Text('Adjust')),
-                    ],
                   ],
                 )),
             ],
