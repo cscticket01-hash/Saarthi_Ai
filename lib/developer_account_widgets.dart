@@ -23,6 +23,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
       next=TextEditingController(),confirm=TextEditingController();
   Timer? ticker;
   bool busy=false,sent=false,verified=false;
+  bool _showCurrentPassword = false;
   int expiresAt=0,resendAfter=0;
   String? message, changeProof;
   int get remaining => ((expiresAt-DateTime.now().millisecondsSinceEpoch)/1000).ceil().clamp(0,300).toInt();
@@ -45,7 +46,7 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
   }
   Future<void> send() async {
     if(busy)return;
-    setState(() {busy=true;message=null;});
+    setState(() {busy=true;message=null;_showCurrentPassword=false;});
     try{
       final user=FirebaseAuth.instance.currentUser;
       if(user==null||user.email==null)throw StateError('Developer sign-in required');
@@ -122,6 +123,24 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
         prefixIcon:const Icon(Icons.lock_outline,size:18),
       ),
     );
+    final currentPasswordField = TextField(
+      key: const ValueKey('developer-security-current'),
+      controller: current,
+      obscureText: !_showCurrentPassword,
+      enableSuggestions: false,
+      autocorrect: false,
+      decoration: fieldDecoration.copyWith(
+        hintText: 'Current Password',
+        prefixIcon: const Icon(Icons.lock_outline),
+        suffixIcon: IconButton(
+          tooltip: _showCurrentPassword ? 'Hide password' : 'Show password',
+          onPressed: busy ? null : () => setState(() {
+            _showCurrentPassword = !_showCurrentPassword;
+          }),
+          icon: Icon(_showCurrentPassword ? Icons.visibility_off : Icons.visibility),
+        ),
+      ),
+    );
     final sendButton=FilledButton.icon(
       key:const ValueKey('developer-security-send-otp'),
       onPressed:busy||sent?null:send,icon:const Icon(Icons.mail_outline,size:17),
@@ -156,14 +175,10 @@ class _DeveloperAccountProfileState extends State<DeveloperAccountProfile> {
           ),
           child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
             if(small)...[
-              TextField(key:const ValueKey('developer-security-current'),controller:current,
-                obscureText:true,enableSuggestions:false,autocorrect:false,
-                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline))),
+              currentPasswordField,
               const SizedBox(height:8),sendButton,
             ] else Row(children:[
-              Expanded(child:TextField(key:const ValueKey('developer-security-current'),
-                controller:current,obscureText:true,enableSuggestions:false,autocorrect:false,
-                decoration:fieldDecoration.copyWith(hintText:'Current Password',prefixIcon:const Icon(Icons.lock_outline)))),
+              Expanded(child: currentPasswordField),
               const SizedBox(width:10),sendButton,
             ]),
             if(sent)...[
