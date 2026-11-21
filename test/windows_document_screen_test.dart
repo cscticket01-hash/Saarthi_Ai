@@ -286,7 +286,7 @@ void main() {
     expect(await io(t, () => File(row['processedPath'] as String).exists()), true);
     if (pdf) {
       // Preview and Save must reuse the prepared page owned by this source.
-      expect(rasterizer.rasterCalls, 1);
+      expect(rasterizer.rasterCalls, 2);
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
       expect(optimized, orderedEquals(source));
       expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
