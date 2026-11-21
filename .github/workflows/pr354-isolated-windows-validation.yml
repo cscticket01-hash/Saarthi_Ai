@@ -1,0 +1,61 @@
+name: PR 354 isolated Windows regression validation
+on:
+  push:
+    branches: [test/windows-smartscan-staff-pr354-20261121]
+    paths:
+      - '.github/workflows/pr354-isolated-windows-validation.yml'
+permissions:
+  contents: read
+concurrency:
+  group: pr354-isolated-windows-validation
+  cancel-in-progress: true
+env:
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  DART_SUPPRESS_ANALYTICS: 'true'
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2b5ccd10486270a3b5047142c019de927b036aad
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze changed code and staff payroll integration
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/document_processing_engine.dart lib/document_pipeline.dart lib/document_upload_dialog.dart lib/windows_other_staff.dart lib/windows_staff_payroll.dart test/windows_staff_category_policy_test.dart
+      - name: Smart Scan engine and uploads
+        if: always()
+        run: flutter test --concurrency=1 --timeout=120s test/document_processing_engine_test.dart test/document_image_worker_test.dart test/document_upload_flow_test.dart test/smart_media_compression_test.dart test/school_media_budgets_test.dart
+      - name: Staff category and person regressions
+        if: always()
+        run: flutter test --concurrency=1 --timeout=120s test/windows_staff_category_policy_test.dart test/windows_person_payment_fields_test.dart test/windows_startup_test.dart
+      - name: Inventory integration and queue regressions
+        if: always()
+        env:
+          APPDATA: ${{ runner.temp }}/pr354-synthetic-documents
+          LOCALAPPDATA: ${{ runner.temp }}/pr354-synthetic-documents
+        run: flutter test --concurrency=1 --timeout=120s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_document_review_owner_test.dart test/student_inventory_policy_test.dart
+  native-windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2b5ccd10486270a3b5047142c019de927b036aad
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Compile without signing, publishing or deployment
+        run: flutter build windows --release -t lib/main_windows.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true --dart-define=SAARTHI_MANAGED_ACCOUNTS=true
