@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'document_pipeline.dart';
 import 'document_scan_editor.dart';
+import 'document_pdf_editor.dart';
 import 'fitted_document_preview.dart';
 import 'student_inventory_policy.dart';
 
@@ -214,10 +215,13 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
 
   Future<void> editScan([String tool = 'all']) async {
     final file = selected;
-    if (busy || file == null || file.mime == 'application/pdf') return;
+    if (busy || file == null) return;
     final requested = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => DocumentScanEditor(bytes: file.bytes, mime: file.mime,
+      builder: (_) => file.mime == 'application/pdf'
+        ? DocumentPdfEditor(bytes:file.bytes,scope:widget.scope,
+          initialEdits:file.edits,isCurrent:widget.isCurrent)
+        : DocumentScanEditor(bytes: file.bytes, mime: file.mime,
         scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent,
         initialTool: tool),
     );
@@ -235,7 +239,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
       if (!widget.isCurrent()) throw StateError('School changed. Reopen documents.');
       final output = result['optimized'] as Uint8List;
       final problem = widget.inventoryUsage?.problem(
-        addingBytes: output.length, addingPages: 1);
+        addingBytes: output.length, addingPages: result['pageCount'] as int);
       if (problem != null) throw FormatException(problem);
       setState(() {
         selected = SelectedDocument(file.name, file.mime, file.bytes,
@@ -255,6 +259,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   void dispose() {
     generation++;
     DocumentPipeline.clearCombinedPreparation(widget.scope);
+    DocumentPipeline.clearPdfSource(widget.scope);
     super.dispose();
   }
 
@@ -333,11 +338,16 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     ),
                   ),
                 ),
-              if (selected != null && selected!.mime != 'application/pdf' &&
+              if (selected != null &&
                   widget.processor == DocumentPipeline.process)
                 Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(
                   alignment: WrapAlignment.center, spacing: 8, runSpacing: 4,
                   children: [
+                    if (selected!.mime == 'application/pdf')
+                      OutlinedButton.icon(key:const ValueKey('document-edit-pdf'),
+                        onPressed:busy?null:()=>editScan(),
+                        icon:const Icon(Icons.edit_document),label:const Text('Edit PDF pages'))
+                    else ...[
                     OutlinedButton.icon(key: const ValueKey('document-edit-scan'),
                       onPressed: busy ? null : () => editScan('crop'),
                       icon: const Icon(Icons.crop), label: const Text('Crop')),
@@ -347,6 +357,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                       icon: const Icon(Icons.filter), label: const Text('Filters')),
                     OutlinedButton.icon(onPressed: busy ? null : () => editScan('adjust'),
                       icon: const Icon(Icons.tune), label: const Text('Adjust')),
+                    ],
                   ],
                 )),
             ],
