@@ -752,6 +752,22 @@ class DocumentProcessingEngine {
     return split;
   }
 
+  /// Suggest four crop handles in the normalized EXIF-oriented editor raster.
+  /// A missing result means no confident border: the editor keeps all pixels.
+  static List<double>? suggestCrop(Uint8List thumbnail) {
+    SchoolImageInput.validate(thumbnail);
+    final raster = img.decodePng(thumbnail);
+    if (raster == null) return null;
+    final points = _paperCorners(raster);
+    if (points == null) return null;
+    return [
+      for (final point in points) ...[
+        (point.x / (raster.width - 1)).clamp(0.0, 1.0).toDouble(),
+        (point.y / (raster.height - 1)).clamp(0.0, 1.0).toDouble(),
+      ],
+    ];
+  }
+
   /// Conservative bright-paper detection against a darker surrounding surface.
   /// Ambiguous/background-free scans retain all content instead of guessing.
   static List<img.Point>? _paperCorners(img.Image source) {
