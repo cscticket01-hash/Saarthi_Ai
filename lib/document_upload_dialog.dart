@@ -218,7 +218,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 ),
                 Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
                 const Text(
-                  '80 KB per normal image is a target; PDF size scales with pages. Readability takes priority.',
+                  'Single image target: 80 KB. Up to 8 PDF/image pages: 500 KB total page-image budget. PDF size can be larger; readability takes priority.',
                 ),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
