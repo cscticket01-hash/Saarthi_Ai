@@ -155,8 +155,16 @@ class DocumentPipeline {
     String scope,
   ) async {
     if (mime != 'application/pdf') {
+      if (!{'image/jpeg', 'image/png'}.contains(mime)) {
+        throw const FormatException('Select JPG, JPEG, PNG or PDF.');
+      }
       final result = await _image({'bytes': bytes}, scope);
-      return result;
+      if ((result['optimized'] as Uint8List).length > scanPageImageBudget) {
+        throw const FormatException(
+          'The readable scan exceeds 500 KB. Original unchanged.',
+        );
+      }
+      return {...result, 'pageCount': 1};
     }
     _validatePdf(bytes);
     final pages = <Map<String, dynamic>>[];
