@@ -32,6 +32,14 @@ class DocumentFilePicker {
         'Smart Scan allows maximum 8 pages across PDFs and images.',
       );
     }
+    // Never rasterize or merge a user-supplied PDF merely because another
+    // file was selected. Upload PDFs individually; image batches may combine.
+    if (files.length > 1 && files.any((file) =>
+        file.name.toLowerCase().endsWith('.pdf'))) {
+      throw const FormatException(
+        'Upload PDF files separately. Multiple image scans can still be combined.',
+      );
+    }
     final sources = <Map<String, dynamic>>[];
     var originalTotal = 0;
     for (final file in files) {
