@@ -3120,6 +3120,8 @@ class WindowsBackendBridge {
           Uint8List.fromList(bytes),
           body['mimeType']?.toString() ?? '',
           scope: originProfile,
+          edits: body['scanEdits'] == null ? null :
+              Map<String, dynamic>.from(body['scanEdits'] as Map),
         );
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
