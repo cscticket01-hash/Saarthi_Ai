@@ -243,11 +243,19 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 const Text(
                   'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.',
                 ),
-                if (processed!['sourceRetained'] == true)
+                if (processed!['processingMillis'] is num)
                   Text(
-                    processed!['cleanupStatus']?.toString() ??
-                        'Original retained to protect readability.',
-                    style: const TextStyle(color: Colors.orangeAccent),
+                    'Processing time: ${((processed!['processingMillis'] as num) / 1000).toStringAsFixed(2)} s',
+                    key: const ValueKey('document-processing-time'),
+                  ),
+                if (processed!['cleanupStatus'] != null)
+                  Text(
+                    processed!['cleanupStatus'].toString(),
+                    style: TextStyle(
+                      color: processed!['sourceRetained'] == true
+                          ? Colors.orangeAccent : null,
+                    ),
+                    maxLines: 3,
                   ),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
