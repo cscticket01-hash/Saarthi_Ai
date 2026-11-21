@@ -177,8 +177,7 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
         OutlinedButton.icon(key: const ValueKey('scan-manual-crop'),
           onPressed: busy ? null : () => change(() => manual = !manual),
           icon: const Icon(Icons.crop), label: Text(manual ? 'Manual crop on' : 'Crop')),
-        OutlinedButton.icon(onPressed: busy ? null : () => render(apply: false),
-          icon: const Icon(Icons.straighten), label: const Text('Straighten')),
+
         OutlinedButton.icon(onPressed: busy ? null : () {
           change(() => rotation = (rotation + 90) % 360);
           render(apply: false);
