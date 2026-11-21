@@ -28,6 +28,23 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
   bool manual = false, busy = false;
   String? error;
   Uint8List? preview;
+  final undoStack = <Map<String,dynamic>>[], redoStack = <Map<String,dynamic>>[];
+  bool showOriginal = false;
+  void restore(Map<String,dynamic> e) {
+    final crop = e['manualCorners'] as List?;
+    manual = crop != null;
+    corners = crop == null ? full.toList() : [for(var i=0;i<8;i+=2)
+      Offset((crop[i] as num).toDouble(),(crop[i+1] as num).toDouble())];
+    rotation = ((e['manualEdit'] as List?)?[4] as num? ?? 0).toInt();
+    filter = e['scanFilter']?.toString() ?? 'auto';
+    brightness = (e['brightness'] as num? ?? 0).toDouble();
+    contrast = (e['contrast'] as num? ?? 0).toDouble();
+  }
+  void stepHistory(bool redo) {
+    final from = redo ? redoStack : undoStack, to = redo ? undoStack : redoStack;
+    if (busy || from.isEmpty) return;
+    setState(() { to.add(edits); restore(from.removeLast()); preview=null; error=null; showOriginal=false; });
+  }
   static const full = [Offset.zero, Offset(1, 0), Offset(1, 1), Offset(0, 1)];
   static const filters = {
     'original': 'Original color', 'auto': 'Auto-color',
@@ -69,7 +86,11 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
 
   void change(VoidCallback action) {
     setState(() {
+      undoStack.add(edits);
+      if (undoStack.length > 32) undoStack.removeAt(0);
+      redoStack.clear();
       action();
+      showOriginal = false;
       preview = null;
       error = null;
     });
@@ -82,6 +103,8 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
       final detected = await compute(DocumentProcessingEngine.suggestCrop, await source);
       if (!mounted) return;
       setState(() {
+        undoStack.add(edits);
+        redoStack.clear();
         manual = true;
         corners = detected == null ? full.toList() : [
           for (var i = 0; i < 8; i += 2) Offset(detected[i], detected[i + 1]),
@@ -101,14 +124,17 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
     setState(() { busy = true; error = null; });
     try {
       if (!widget.isCurrent()) throw StateError('School changed. Reopen the document.');
-      final result = await DocumentPipeline.process(widget.bytes, widget.mime,
-          scope: widget.scope, edits: requested);
+      // Preview uses the bounded original thumbnail, Apply uses full-size source.
+      final bytes = apply
+          ? (await DocumentPipeline.process(widget.bytes, widget.mime,
+              scope: widget.scope, edits: requested))['optimized'] as Uint8List
+          : await DocumentPipeline.editThumbnail(await source, requested, scope:widget.scope);
       if (!mounted) return;
       if (!widget.isCurrent()) throw StateError('School changed. Reopen the document.');
       if (apply) {
         Navigator.of(context).pop(requested);
       } else {
-        setState(() => preview = result['optimized'] as Uint8List);
+        setState(() {preview = bytes; showOriginal = false;});
       }
     } catch (e) {
       if (mounted) setState(() => error = e is FormatException ? e.message.toString() : e.toString());
@@ -130,8 +156,8 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
       Expanded(child: DecoratedBox(
         decoration: BoxDecoration(color: const Color(0xff24262b),
           borderRadius: BorderRadius.circular(8)),
-        child: preview != null
-          ? Center(child: Image.memory(preview!, fit: BoxFit.contain))
+        child: preview != null && !showOriginal
+          ? InteractiveViewer(minScale:1,maxScale:5,child: Center(child: Image.memory(preview!, fit: BoxFit.contain)))
           : FutureBuilder<Uint8List>(future: source, builder: (_, snapshot) {
             if (snapshot.hasError) return const Center(child: Text('Original preview unavailable.'));
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -151,6 +177,10 @@ class _DocumentScanEditorState extends State<DocumentScanEditor> {
           change(() => rotation = (rotation + 90) % 360);
           render(apply: false);
         }, icon: const Icon(Icons.rotate_right), label: Text('Rotate ${rotation}°')),
+        IconButton(tooltip:'Undo', onPressed: busy || undoStack.isEmpty ? null : () => stepHistory(false), icon:const Icon(Icons.undo)),
+        IconButton(tooltip:'Redo', onPressed: busy || redoStack.isEmpty ? null : () => stepHistory(true), icon:const Icon(Icons.redo)),
+        OutlinedButton.icon(onPressed: busy || preview == null ? null : () => setState(() => showOriginal = !showOriginal),
+          icon:const Icon(Icons.compare),label:Text(showOriginal ? 'After' : 'Before')),
         OutlinedButton.icon(onPressed: busy ? null : () => change(() {
           manual = false; corners = full.toList(); rotation = 0;
           brightness = 0; contrast = 0; filter = 'auto';
