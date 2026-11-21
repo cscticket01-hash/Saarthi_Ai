@@ -174,7 +174,10 @@ class DocumentPipeline {
     }
     if (pages.isEmpty)
       throw const FormatException('PDF has no readable pages.');
-    final optimized = pw.Document(), high = pw.Document();
+    final optimized = pw.Document();
+    // Keep the original PDF as the full-quality copy. A second PDF containing
+    // large 94-quality JPEG rasters doubles encoding/memory without improving
+    // fidelity over the original source.
     final perPageBudget = pageImageTargetFor(pages.length);
     var encodedImageBytes = 0;
     for (final page in pages) {
@@ -195,11 +198,33 @@ class DocumentPipeline {
         ),
       );
       add(optimized, result['optimized'] as Uint8List);
-      add(high, result['highQuality'] as Uint8List);
     }
-    // Do not sacrifice readable fine print just to claim a byte target.
+    // Never reject an already-small original PDF just because converting it
+    // to scan JPEGs increased its size. The untouched source remains readable.
+    // This is explicitly a no-crop fallback, not a successful optimization.
     if (encodedImageBytes > scanPageImageBudget) {
-      throw FormatException('Scan page images total $encodedImageBytes bytes, over the 500 KB safe limit. Original retained.');
+      if (bytes.length <= scanPageImageBudget) {
+        return {
+          'optimized': Uint8List.fromList(bytes),
+          'sourceRetained': true,
+          'highQuality': Uint8List.fromList(bytes),
+          'mimeType': 'application/pdf',
+          'actualBytes': bytes.length,
+          'originalBytes': bytes.length,
+          'targetBytes': scanPageImageBudget,
+          'optimizedPageImageBytes': encodedImageBytes,
+          'savingsPercent': 0.0,
+          'pageCount': pages.length,
+          'targetMet': false,
+          'cleanupStatus':
+              'Original PDF retained: processing could not meet the 500 KB scan budget without reducing readability; auto-crop not applied',
+        };
+      }
+      throw FormatException(
+        'The ${pages.length}-page scan needs $encodedImageBytes bytes after '
+        'quality-safe processing, above the 500 KB scan budget. '
+        'Your original is unchanged. Try a clearer scan or fewer pages.',
+      );
     }
     final processedOutput = await optimized.save();
     // Preserve the usable original PDF when rasterization expands its vector
@@ -209,7 +234,7 @@ class DocumentPipeline {
     return {
       'optimized': output,
       'sourceRetained': sourceRetained,
-      'highQuality': await high.save(),
+      'highQuality': Uint8List.fromList(bytes),
       'mimeType': 'application/pdf',
       'actualBytes': output.length,
       'originalBytes': bytes.length,
