@@ -295,9 +295,14 @@ class DocumentProcessingEngine {
     }
     // Photographic portraits already have a compact JPEG candidate. A full
     // lossless PNG encode costs time and is not the ID-photo size strategy.
-    final lossless = portrait ? null : Uint8List.fromList(
-      img.encodePng(neutral ? image.convert(numChannels: 1) : image, level: 9),
-    );
+    // Colour photographs almost always lose to JPEG; encoding them as
+    // maximum-compression PNG on every page is very expensive on Windows.
+    // Retain the lossless path for truly neutral text/line artwork only.
+    final lossless = portrait || !neutral
+        ? null
+        : Uint8List.fromList(
+            img.encodePng(image.convert(numChannels: 1), level: 6),
+          );
     var optimizedMime = 'image/jpeg';
     if (lossless != null && lossless.length < optimized.length) {
       optimized = lossless;
@@ -634,8 +639,10 @@ class DocumentProcessingEngine {
         final spread =
             math.max(pixel.r, math.max(pixel.g, pixel.b)) -
             math.min(pixel.r, math.min(pixel.g, pixel.b));
-        if (light(x * 2, y * 2) > math.max(205, background + 45) &&
-            spread < 32) {
+        // Allow softly lit / slightly tinted paper against patterned cloth,
+        // but keep colour contrast and largest-component geometry safeguards.
+        if (light(x * 2, y * 2) > math.max(185, background + 32) &&
+            spread < 45) {
           mask[y * gw + x] = 1;
         }
       }
