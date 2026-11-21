@@ -254,6 +254,8 @@ void main() {
     }
     expect(await io(t, count), 0);
     expect(find.byKey(const ValueKey('document-preview-metrics')), findsOneWidget);
+    if (pdf) {
+    }
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
     await waitFor(
         t,
