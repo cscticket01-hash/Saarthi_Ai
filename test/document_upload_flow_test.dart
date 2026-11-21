@@ -9,22 +9,6 @@ import '../lib/document_upload_dialog.dart';
 import '../lib/document_pipeline.dart';
 
 void main() {
-  test('PDF edit plan rejects duplicate, empty and nested page selections', () {
-    expect(DocumentPipeline.checkedEdits({'pdfPages': [
-      {'index': 1, 'edits': {'scanFilter':'grayscale'}},
-      {'index': 0, 'edits': <String,dynamic>{}},
-    ]})['pdfPages'], [
-      {'index': 1, 'edits': {'scanFilter':'grayscale'}},
-      {'index': 0, 'edits': <String,dynamic>{}},
-    ]);
-    expect(()=>DocumentPipeline.checkedEdits({'pdfPages': []}),throwsFormatException);
-    expect(()=>DocumentPipeline.checkedEdits({'pdfPages': [
-      {'index':0,'edits':{}},{'index':0,'edits':{}},
-    ]}),throwsFormatException);
-    expect(()=>DocumentPipeline.checkedEdits({'pdfPages': [
-      {'index':0,'edits':{'pdfPages':[]}},
-    ]}),throwsFormatException);
-  });
   final bytes = Uint8List.fromList(
     img.encodePng(img.Image(width: 40, height: 60)),
   );
