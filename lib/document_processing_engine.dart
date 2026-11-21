@@ -217,14 +217,45 @@ class DocumentProcessingEngine {
         height: image.height > image.width ? maxEdge : null,
         interpolation: img.Interpolation.average,
       );
-    final detected = portrait ? null : _paperCorners(image);
+    // Crop coordinates refer to the EXIF-oriented original, before rotation.
+    final edit = portrait ? null : input['manualEdit'];
+    var manualCrop = false;
+    var rotation = 0;
+    if (edit != null) {
+      if (edit is! List || edit.length != 5 ||
+          edit.any((v) => v is! num || !v.isFinite)) {
+        throw const FormatException('Invalid manual scan correction.');
+      }
+      final values = edit.cast<num>();
+      final left = values[0], top = values[1], right = values[2], bottom = values[3];
+      if (left < 0 || top < 0 || right > 1 || bottom > 1 ||
+          right - left < 0.1 || bottom - top < 0.1 ||
+          !{0, 90, 180, 270}.contains(values[4])) {
+        throw const FormatException('Invalid manual crop or rotation.');
+      }
+      final x = (left * image.width).floor();
+      final y = (top * image.height).floor();
+      final w = (right * image.width).ceil() - x;
+      final h = (bottom * image.height).ceil() - y;
+      if (w < 16 || h < 16) {
+        throw const FormatException('Manual crop is too small.');
+      }
+      manualCrop = x != 0 || y != 0 || w != image.width || h != image.height;
+      if (manualCrop) image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      rotation = values[4].toInt();
+    } else if (!portrait && {90, 180, 270}.contains(input['autoRotation']) &&
+        sourceOrientation == 1) {
+      rotation = input['autoRotation'] as int;
+    }
+    if (rotation != 0) image = img.copyRotate(image, angle: rotation);
+    final detected = portrait || edit != null ? null : _paperCorners(image);
     bool corrected = false;
     if (detected != null) {
       final rectified = _rectify(image, detected);
       corrected = !identical(image, rectified);
       image = rectified;
     }
-    final deskew = portrait ? 0.0 : _textAngle(image);
+    final deskew = portrait || edit != null ? 0.0 : _textAngle(image);
     if (deskew.abs() >= 0.5) {
       image.backgroundColor = img.ColorRgb8(255, 255, 255);
       image = img.copyRotate(
@@ -365,7 +396,7 @@ class DocumentProcessingEngine {
     // silently undoes the visible cleanup in Student Inventory.
     final retainedSource = sourceContainer != null &&
         optimized.length > sourceContainer.length &&
-        !corrected &&
+        !corrected && !manualCrop && rotation == 0 && edit == null &&
         deskew.abs() < 0.5;
     if (retainedSource) {
       optimized = sourceContainer!;
@@ -373,6 +404,13 @@ class DocumentProcessingEngine {
       optimizedWidth = orientedSource.width;
       optimizedHeight = orientedSource.height;
     }
+    // Compare decoded optimized pixels with the same processed reference,
+    // at a bounded common scale. This is an image-quality guard, not an OCR
+    // guarantee for every glyph. Never silently describe an uncertain result
+    // as text-verified.
+    final qualityGuard = portrait
+        ? <String, dynamic>{}
+        : _scanQualityGuard(retainedSource ? orientedSource : image, optimized);
     final targetMet = optimized.length <= target;
     return {
       'optimized': optimized,
@@ -395,14 +433,59 @@ class DocumentProcessingEngine {
       'targetBytes': target,
       'savingsPercent': 100 * (1 - optimized.length / bytes.length),
       'perspectiveCorrected': corrected,
+      'manualCrop': manualCrop,
+      'rotationDegrees': rotation,
       'deskewDegrees': deskew,
+      ...qualityGuard,
       'width': optimizedWidth,
       'height': optimizedHeight,
       'cleanupStatus': retainedSource
           ? 'Original container retained: cleanup encoding would enlarge upload'
+          : edit != null
+          ? 'Manual crop and rotation applied; original preserved'
           : corrected
           ? 'Detected paper boundary corrected'
+          : rotation != 0
+          ? 'Confident orientation corrected; full image preserved'
           : 'No confident boundary; full image preserved',
+    };
+  }
+
+  static Map<String, dynamic> _scanQualityGuard(img.Image reference, Uint8List encoded) {
+    final decoded = img.decodeImage(encoded);
+    if (decoded == null) throw const FormatException('Optimized scan cannot be decoded.');
+    final w = math.min(180, math.min(reference.width, decoded.width));
+    final h = math.min(180, math.min(reference.height, decoded.height));
+    final a = img.copyResize(reference, width: w, height: h,
+        interpolation: img.Interpolation.average);
+    final b = img.copyResize(decoded, width: w, height: h,
+        interpolation: img.Interpolation.average);
+    double lum(img.Pixel p) {
+      final alpha = p.aNormalized;
+      return (p.rNormalized * 0.299 + p.gNormalized * 0.587 +
+          p.bNormalized * 0.114) * 255 * alpha + (1 - alpha) * 255;
+    }
+    var error = 0.0, edges = 0, kept = 0;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final av = lum(a.getPixel(x, y)), bv = lum(b.getPixel(x, y));
+        error += (av - bv).abs();
+        if (x == 0) continue;
+        final da = (av - lum(a.getPixel(x - 1, y))).abs();
+        final db = (bv - lum(b.getPixel(x - 1, y))).abs();
+        if (da >= 40) {
+          edges++;
+          if (db >= da * 0.55) kept++;
+        }
+      }
+    }
+    final mae = error / (w * h);
+    final edgeRetention = edges == 0 ? 1.0 : kept / edges;
+    return {
+      'qualityGuard': mae <= 20 && (edges < 12 || edgeRetention >= 0.70)
+          ? 'pixel-check-passed' : 'review-required',
+      'meanLuminanceError': mae,
+      'contrastEdgeRetention': edgeRetention,
     };
   }
 
