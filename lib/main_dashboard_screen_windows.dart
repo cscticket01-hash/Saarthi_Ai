@@ -16,6 +16,7 @@ import 'windows_fee_structure.dart';
 import 'windows_fee_receipt_preview.dart';
 import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
+import 'document_processing_engine.dart';
 import 'qr_authentication_engine.dart';
 import 'windows_admin_avatar.dart';
 import 'windows_profile_image_policy.dart';
@@ -68,6 +69,7 @@ import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -16449,8 +16451,28 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     final picker = ImagePicker();
                     final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
                     if (image == null) return;
-                    final bytes = await image.readAsBytes();
-                    setDlgState(() => selectedPhotoBytes = bytes);
+                    try {
+                      // WIN-003: reuse the existing offline portrait engine.
+                      final bytes = await image.readAsBytes();
+                      final portrait = await compute(
+                        DocumentProcessingEngine.portraitUpload,
+                        <String, dynamic>{'bytes': Uint8List.fromList(bytes)},
+                      );
+                      if (!dialogContext.mounted) return;
+                      setDlgState(() => selectedPhotoBytes = portrait['optimized'] as Uint8List);
+                    } on FormatException catch (e) {
+                      if (!dialogContext.mounted) return;
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(
+                        backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                        content: Text(e.message),
+                      ));
+                    } catch (_) {
+                      if (!dialogContext.mounted) return;
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(
+                        backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                        content: const Text('Photo process nahi ho paaya. Doosra image select karein.'),
+                      ));
+                    }
                   },
                   icon: Icon(selectedPhotoBytes != null ? Icons.check_circle : Icons.add_a_photo_outlined, color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.foreground(Colors.white70)),
                   label: Text(selectedPhotoBytes != null ? 'Photo Ready' : 'Upload Photo', style: TextStyle(fontFamily: 'Segoe UI', color: selectedPhotoBytes != null ? const Color(0xFF00A884) : WindowsAppearance.foreground(Colors.white70))),
@@ -16472,12 +16494,15 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           final roll = rollCtrl.text.trim();
                           final contact = contactCtrl.text.trim();
 
-                          if (name.isEmpty || !RegExp(r'^[0-9]+$').hasMatch(roll) || contact.isEmpty) {
+                          final rollNumber = int.tryParse(roll);
+                          if (name.isEmpty ||
+                              !RegExp(r'^[0-9]+$').hasMatch(roll) ||
+                              rollNumber == null || rollNumber <= 0 || contact.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 backgroundColor: WindowsAppearance.background(Colors.redAccent),
                                 content: Text(
-                                  'Name, Roll No aur Contact bharna zaroori hai!',
+                                  'Name, Parent/Guardian, valid Roll No aur Contact zaroori hai!',
                                 ),
                               ),
                             );
@@ -16491,6 +16516,40 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                 content: Text('Contact number mein exactly 10 digits daalein.'),
                               ),
                             );
+                            return;
+                          }
+
+                          // Keep the existing contact-number error priority.
+                          if (parent.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                              content: const Text('Parent/Guardian Name bharna zaroori hai.'),
+                            ));
+                            return;
+                          }
+
+                          final pinCode = pinCtrl.text.trim();
+                          if (pinCode.isNotEmpty && !RegExp(r'^[0-9]{6}$').hasMatch(pinCode)) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                              content: const Text('PIN Code mein exactly 6 digits daalein.'),
+                            ));
+                            return;
+                          }
+
+                          // Validate a real Gregorian calendar date.
+                          final dateValue = admissionDateCtrl.text.trim();
+                          final parts = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(dateValue);
+                          final day = parts == null ? 0 : int.parse(parts[1]!);
+                          final month = parts == null ? 0 : int.parse(parts[2]!);
+                          final year = parts == null ? 0 : int.parse(parts[3]!);
+                          final parsedDate = parts == null ? null : DateTime.utc(year, month, day);
+                          if (parsedDate == null || parsedDate.year != year ||
+                              parsedDate.month != month || parsedDate.day != day || year < 1900) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: WindowsAppearance.background(Colors.redAccent),
+                              content: const Text('Valid Admission Date (DD/MM/YYYY) daalein.'),
+                            ));
                             return;
                           }
 
@@ -16509,8 +16568,10 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                           // One permanent student identity:
                           // Class 1 + Roll 1/01/001 all use the SAME document ID.
-                          final normalizedNewRoll = normalizeRoll(roll);
+                          final normalizedNewRoll = normalizeRoll(rollNumber.toString());
                           final docId = '${selectedClass}_Roll_$normalizedNewRoll';
+                          final studentRef = FirebaseFirestore.instance
+                              .collection('students_directory').doc(docId);
                           final localPhoto = selectedPhotoBytes == null ? '' : WindowsSchoolImageCache.dataUrl(selectedPhotoBytes!);
                           String finalPhotoUrl = localPhoto;
                           bool driveSaved = false;
@@ -16519,21 +16580,8 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                             // Duplicate protection:
                             // 1, 01, 001, 0001 ko same roll maana jayega.
 
-                            final existingStudents =
-                                await FirebaseFirestore.instance
-                                    .collection('students_directory')
-                                    .where('class', isEqualTo: selectedClass)
-                                    .get();
-
-                            final alreadyExists =
-                                existingStudents.docs.any((doc) {
-                              final data = doc.data();
-                              final existingRoll =
-                                  data['rollNo']?.toString() ?? '';
-
-                              return normalizeRoll(existingRoll) ==
-                                  normalizedNewRoll;
-                            });
+                            // Canonical ID lookup avoids a full-class scan.
+                            final alreadyExists = (await studentRef.get()).exists;
 
                             if (alreadyExists) {
                               setDlgState(() => isSaving = false);
@@ -16574,6 +16622,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                                   'roll': normalizedNewRoll,
                                   'contact': contact,
                                   'photoBase64': base64Image,
+                                  'photoMimeType': selectedPhotoBytes == null
+                                      ? 'image/jpeg'
+                                      : (selectedPhotoBytes!.first == 137 ? 'image/png' : 'image/jpeg'),
                                   'hostelFacility': hostelFacility,
                                   'address': addressCtrl.text.trim(),
                                   'country': countryCtrl.text.trim(),
@@ -16613,11 +16664,33 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                             }
 
                             if(FirebaseFirestore.instance.activeProfileId!=originProfile) throw StateError('School changed. Reopen student entry.');
-                            final studentRef = FirebaseFirestore.instance
-                                .collection('students_directory')
-                                .doc(docId);
-
-                            await studentRef.set({
+                            final uidConfigRef = _testStudentUidConfigRef();
+                            final uidConfigBefore = (await uidConfigRef.get()).data();
+                            final uidEnabled = uidConfigBefore?['masterEnabled'] == true;
+                            final uidNextNumber = (uidConfigBefore?['nextNumber'] as num?)?.toInt() ?? 1;
+                            final assignedTestUid = uidEnabled
+                                ? _formatTestStudentUid(
+                                    uidConfigBefore?['prefix']?.toString() ?? 'TEST-',
+                                    (uidConfigBefore?['padding'] as num?)?.toInt() ?? 6,
+                                    uidNextNumber)
+                                : null;
+                            final batch = FirebaseFirestore.instance.batch();
+                            // Atomic compare-and-insert: never overwrite Class+Roll.
+                            batch.requireUnchanged(studentRef, null);
+                            if (uidEnabled) {
+                              // Optional UID allocation commits with the student.
+                              batch.requireUnchanged(uidConfigRef, uidConfigBefore);
+                              batch.set(uidConfigRef, {
+                                'nextNumber': uidNextNumber + 1,
+                                'lastIssuedUid': assignedTestUid,
+                                'updatedAt': FieldValue.serverTimestamp(),
+                              }, const SetOptions(merge: true));
+                            }
+                            batch.set(studentRef, {
+                              if (assignedTestUid != null) ...{
+                                _testStudentUidField: assignedTestUid,
+                                'studentUidTestAssignedAt': FieldValue.serverTimestamp(),
+                              },
                               'mobileStableId': SchoolPersonIdentity.newGeneration(),
                               'name': name,
                               'parentName': parent,
@@ -16637,9 +16710,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                               'createdAt': FieldValue.serverTimestamp(),
                               'updatedAt': FieldValue.serverTimestamp(),
                             });
-
-                            final assignedTestUid =
-                                await _ensureTestStudentUid(studentRef);
+                            await batch.commit();
 
                             if (!mounted) return;
 

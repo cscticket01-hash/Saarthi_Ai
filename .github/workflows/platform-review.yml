@@ -323,7 +323,17 @@ jobs:
     - name: Format Windows reference document source
       run: dart format lib/windows_reference_documents.dart test/windows_reference_documents_test.dart lib/windows_managed_school_gate.dart lib/windows_connect/managed_school_session.dart lib/managed_developer_panel.dart lib/platform/managed_developer_service.dart
     - name: Verify Windows ID cards, licence date and startup
-      run: flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_contact_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_test_school_local_demo_seed_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_fee_collection_flow_test.dart test/windows_person_payment_fields_test.dart test/windows_receipt_print_dialog_test.dart test/windows_legacy_fee_receipt_test.dart test/windows_template_import_engine_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_fee_structure_test.dart
+      env:
+        APPDATA: ${{ runner.temp }}/win003-student-review
+        LOCALAPPDATA: ${{ runner.temp }}/win003-student-review
+      run: |
+        # Verify the actual Windows production storage engine for this
+        # WIN-003 test. The legacy JSON fallback may be held open by a
+        # Windows runner; do not weaken database sharing/rollback safety.
+        flutter test --concurrency=1 test/windows_student_contact_test.dart --dart-define=SAARTHI_WINDOWS_SQLITE=true
+        if ($LASTEXITCODE -ne 0) { throw 'WIN-003 Windows SQLite student contact regression failed' }
+        flutter test --concurrency=1 test/document_upload_flow_test.dart test/id_card_layout_test.dart test/windows_student_id_cards_test.dart test/windows_banner_date_test.dart test/windows_startup_test.dart test/windows_cloud_engine_test.dart test/windows_managed_school_gate_test.dart test/windows_save_pdf_test.dart test/windows_script_storage_test.dart test/windows_school_profile_restore_test.dart test/windows_local_first_save_test.dart test/windows_student_import_retry_test.dart test/windows_test_school_local_demo_seed_test.dart test/windows_sync_durable_admission_test.dart test/windows_financial_analytics_regression_test.dart test/windows_fee_collection_flow_test.dart test/windows_person_payment_fields_test.dart test/windows_receipt_print_dialog_test.dart test/windows_legacy_fee_receipt_test.dart test/windows_template_import_engine_test.dart test/windows_expense_intent_test.dart test/windows_sync_revision_test.dart test/qr_card_authorization_test.dart test/school_qr_login_test.dart test/windows_school_map_test.dart test/windows_reference_documents_test.dart test/windows_fee_structure_test.dart
+        if ($LASTEXITCODE -ne 0) { throw 'Windows ID card/startup regressions failed' }
     - name: Verify manifest IDs on Windows
       run: flutter test test/id_card_engine_test.dart
     - name: Verify production Documents screen and durable local queue on Windows
