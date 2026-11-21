@@ -283,7 +283,7 @@ class DocumentProcessingEngine {
         image = img.copyCrop(image, x: x, y: y, width: w, height: h);
       }
       rotation = values[4].toInt();
-    } else if (!portrait && {90, 180, 270}.contains(input['autoRotation']) &&
+    } else if (!portrait && !pdfCompression && {90, 180, 270}.contains(input['autoRotation']) &&
         sourceOrientation == 1) {
       rotation = input['autoRotation'] as int;
     }
