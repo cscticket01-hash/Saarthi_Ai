@@ -41,6 +41,7 @@ void main() {  test('multiple selection never rewrites source PDFs by merging th
     'highQuality': bytes,
     'mimeType': m,
     'pageCount': 1,
+    if(m == 'application/pdf') 'previewDpi': 150,
     if(m == 'application/pdf') 'previewPages': <Uint8List>[bytes],
     if(m == 'application/pdf') 'sourceRetained': true,
   };
