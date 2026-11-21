@@ -135,7 +135,14 @@ class DocumentPipeline {
     if (_key == key && _prepared != null) return _prepared!.then(_copy);
     _key = key;
     late final Future<Map<String, dynamic>> future;
-    future = _process(Uint8List.fromList(bytes), mime, scope).catchError((
+    final stopwatch = Stopwatch()..start();
+    future = _process(Uint8List.fromList(bytes), mime, scope).then((result) {
+      stopwatch.stop();
+      return <String, dynamic>{
+        ...result,
+        'processingMillis': stopwatch.elapsedMilliseconds,
+      };
+    }).catchError((
       Object error,
       StackTrace stack,
     ) {
