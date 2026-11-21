@@ -203,6 +203,12 @@ void main() {
             null);
     if (pdf) debugPrint('PDF regression: processed preview ready');
     expect(picker.calls, 1);
+    if (!pdf) {
+      expect(find.byKey(const ValueKey('document-edit-scan')), findsOneWidget);
+      expect(find.text('Rotate'), findsOneWidget);
+      expect(find.text('Filters'), findsOneWidget);
+      expect(find.text('Adjust'), findsOneWidget);
+    }
     expect(await io(t, count), 0);
     expect(find.textContaining('optimized'), findsWidgets);
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
@@ -240,7 +246,8 @@ void main() {
     expect(row['sizeBytes'], optimized!.length);
     expect(await io(t, () => File(row['processedPath'] as String).exists()), true);
     if (pdf) {
-      expect(rasterizer.rasterCalls, greaterThanOrEqualTo(2));
+      // Preview and Save must reuse the prepared page owned by this source.
+      expect(rasterizer.rasterCalls, 1);
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
       expect(optimized, isNot(source));
     }
