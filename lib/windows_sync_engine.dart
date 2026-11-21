@@ -19,6 +19,7 @@ import 'windows_sync_dependencies.dart';
 import 'student_lifecycle_policy.dart';
 import 'windows_sheet_recovery.dart';
 import 'windows_document_templates.dart';
+import 'windows_pdf_generation_policy.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'school_cloud_engine.dart';
 import 'windows_pending_school_sync.dart';
@@ -92,15 +93,67 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final history = await WindowsDriveDeliveryQueue.history(school);
     if (FirebaseFirestore.instance.activeProfileId != profile) return status;
     final combined = {for (final row in history) row['id']: row};
+    Map<String, dynamic>? verifiedHourSummary;
+    if (!isPaused && !_resetPaused) {
+      try {
+        // Covers all Cloudflare R2-staged lanes, deduplicating multipart file
+        // chunks and retries. A pre-R2 legacy row cannot silently become a
+        // school-wide verified transfer. The backend reports partial coverage.
+        final report = await ManagedSchoolSession.callForSchool(
+            school, 'managed/cloudflare/verified-hour', {});
+        if (FirebaseFirestore.instance.activeProfileId != profile ||
+            FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+          return status;
+        }
+        if (report['success'] == true && report['schoolId'] == school &&
+            report['version'] == 1 &&
+            report['scope'] == 'r2VerifiedDeliveries' &&
+            report['coverage'] == 'r2-staged-only' &&
+            report['partial'] == true &&
+            report['hourStart'] is int && report['hourEnd'] is int &&
+            report['verifiedCount'] is int &&
+            (report['verifiedCount'] as int) >= 0) {
+          verifiedHourSummary = Map<String, dynamic>.from(report);
+        }
+      } catch (_) {
+        // Previous broker versions have no R2 aggregate. No invented count.
+      }
+    }
     if (_liveRuntime != null && !isPaused && !_resetPaused) {
       try {
-        final response = await ManagedSchoolSession.callForSchool(school, 'managed/live/backupHistory', {'liveProtocol':1});
+        final response = await ManagedSchoolSession.callForSchool(school,
+            'managed/live/backupHistory', {'liveProtocol': 1});
         if (FirebaseFirestore.instance.activeProfileId != profile) return status;
-        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) combined[row['id']] = row;
+        for (final row in WindowsDriveDeliveryQueue.serverHistory(response, school)) {
+          combined[row['id']] = row;
+        }
       } catch (_) { /* The durable local receipt list survives a provider outage. */ }
+      if (verifiedHourSummary == null) {
+        try {
+          // Old Worker fallback: live records only, never all-school count.
+          final report = await ManagedSchoolSession.callForSchool(school,
+              'managed/live/verifiedHourSummary', {'liveProtocol': 1});
+          if (FirebaseFirestore.instance.activeProfileId != profile ||
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != school) {
+            return status;
+          }
+          if (report['success'] == true && report['schoolId'] == school &&
+              report['liveProtocol'] == 1 &&
+              report['scope'] == 'liveRecordBackups' &&
+              report['hourStart'] is int && report['hourEnd'] is int &&
+              report['verifiedCount'] is int &&
+              (report['verifiedCount'] as int) >= 0) {
+            verifiedHourSummary = Map<String, dynamic>.from(report);
+          }
+        } catch (_) {
+          // A missing/invalid authoritative report displays no count.
+        }
+      }
     }
     final rows = combined.values.toList()..sort((a,b)=>(b['acceptedAt'] as num? ?? 0).compareTo(a['acceptedAt'] as num? ?? 0));
-    return {...status, 'driveSaveHistory': rows.take(25).toList(), 'driveHistoryLocal': true};
+    return {...status, 'driveSaveHistory': rows.take(25).toList(),
+      'driveHistoryLocal': true,
+      if (verifiedHourSummary != null) 'driveHourSummary': verifiedHourSummary};
   }
   Future<Map<String, dynamic>?> refreshTransferStatus() async {
     final origin = FirebaseFirestore.instance.activeProfileId;
@@ -2431,7 +2484,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 if(collection=='teachers_directory')targets['teacherId']!.add(id);
               }
             }
-            if(targets.values.any((set)=>set.isNotEmpty)){
+            if(WindowsPdfGenerationPolicy.generateOnRecordSave && targets.values.any((set)=>set.isNotEmpty)){
               await WindowsDocumentTemplates.publishChangedIdCards(
                 affectedPeople:targets,onCardRepair:_recordActivity);
             }
@@ -2482,17 +2535,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         await WindowsBackendBridge.repairIdenticalDocumentConflicts(
           _activeSchoolSyncId,canAdmit:()=>!isPaused);
         // Cloud reads/rendering for a derived repair must not block other data.
-        unawaited(WindowsDocumentTemplates.repairQueuedIdCards(
-          _activeSchoolSyncId,canAdmit:()=>!isPaused).then<void>((_) {},
-            onError:(Object _,StackTrace __) {}));
+        if (WindowsPdfGenerationPolicy.generateOnRecordSave) {
+          unawaited(WindowsDocumentTemplates.repairQueuedIdCards(
+            _activeSchoolSyncId,canAdmit:()=>!isPaused).then<void>((_) {},
+              onError:(Object _,StackTrace __) {}));
+        }
         // Keep locally acknowledged people and their cards in the same priority
         // dependency job, ahead of unrelated cloud pulls and audits.
         final priorityCardFailure = await _measure('priorityCardStage', () => WindowsPersonCardSync.priorityPass(() async {
         await WindowsPersonCardSync.run(
           _activeSchoolSyncId,
           canAdmit: () => !isPaused,
-          prepare: (targets) => WindowsDocumentTemplates.publishChangedIdCards(
-            affectedPeople: targets, onCardRepair: _recordActivity),
+          prepare: (targets) => WindowsPdfGenerationPolicy.generateOnRecordSave
+            ? WindowsDocumentTemplates.publishChangedIdCards(
+                affectedPeople: targets, onCardRepair: _recordActivity)
+            : Future<void>.value(),
           pushParents: () => _pushManagedOutbox(),
           cardId: (collection, id, person) => WindowsBackendBridge.publishedIdCardOwnerIdForPerson(
             collection == 'students_directory' ? 'student' : 'teacher', id, person),
@@ -2639,7 +2696,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         final needsIdBootstrap =
             bootstrap?['schoolId'] != _activeSchoolSyncId ||
             bootstrap?['version'] != 2;
-        if (needsIdBootstrap) {
+        if (needsIdBootstrap && WindowsPdfGenerationPolicy.generateOnRecordSave) {
           final missing = await WindowsDocumentTemplates.missingIdCardTargets();
           for (final kind in missing.entries) {
             for (final id in kind.value) {
@@ -2657,7 +2714,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         final teacherLayoutRef = FirebaseFirestore.instance.collection('_windows_sync_status').doc('teacher-personal-card-layout-v2');
         final teacherLayout = (await teacherLayoutRef.get()).data();
         final needsTeacherLayout = teacherLayout?['schoolId'] != _activeSchoolSyncId;
-        if (needsTeacherLayout) {
+        if (needsTeacherLayout && WindowsPdfGenerationPolicy.generateOnRecordSave) {
           final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
           if (FirebaseFirestore.instance.activeProfileId != syncOrigin) throw StateError('School changed during teacher card upgrade.');
           for (final teacher in teachers.docs) {
@@ -2690,7 +2747,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         try {
           Object? preparationFailure;
           StackTrace? preparationStack;
-          if (publishIds) {
+          if (publishIds && WindowsPdfGenerationPolicy.generateOnRecordSave) {
             try {
               await WindowsDocumentTemplates.publishChangedIdCards(
                 affectedPeople: targets,

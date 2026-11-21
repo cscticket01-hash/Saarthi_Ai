@@ -35,7 +35,7 @@ void main() {
     final entries = await IdCardCatalog.load();
     expect(
       entries.where((e)=>e.kinds.contains('studentId')).map((e)=>e.id).toList(),
-      ['student-maroon-gold-v1'],
+      ['student-maroon-gold-v1', 'student-svn-navy-green-v1'],
     );
     for(final entry in entries) { expect((await entry.manifest()).id, entry.id); }
     for (final asset in [

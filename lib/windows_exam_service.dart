@@ -50,8 +50,11 @@ class WindowsExamService {
     final cloud=await CentralSchoolCloud.saved();
     _requireProfile(profile);
     Map<String,dynamic> local;
+    // Legacy atomic-PDF path remains available only to an explicit old caller.
+    // New Save requests carry marks metadata, never silently render a PDF.
     if(action=='save_exam_result' && cloud['managed']==true &&
-       AtomicBundlePilot.buildEnabled) {
+       AtomicBundlePilot.buildEnabled &&
+       (request['pdfBase64']?.toString().trim().isNotEmpty ?? false)) {
       final db=FirebaseFirestore.instance;
       final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
       final examId=request['examId']?.toString().trim()??'';

@@ -4,6 +4,7 @@ import 'windows_backend_bridge.dart';
 import 'windows_exam_history_records.dart';
 import 'windows_local_firestore.dart';
 import 'windows_document_templates.dart';
+import 'windows_save_pdf.dart';
 import 'school_media_budgets.dart';
 import 'package:crypto/crypto.dart' as crypto;
 
@@ -216,6 +217,68 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
     }
   }
 
+  /// The new record-only path creates a PDF only after a user chooses
+  /// Download PDF. It does not publish any PDF or append a cloud job.
+  Future<void> _downloadGeneratedMarksheet(
+    Map<String, dynamic> exam,
+    Map<String, dynamic> result,
+  ) async {
+    if (!_sameSchool) return;
+    try {
+      final studentId = result['studentId']?.toString() ?? '';
+      if (studentId.isEmpty ||
+          result['examId'] != exam['examId'] ||
+          (result['schoolId'] != null && result['schoolId'] != _school) ||
+          (exam['schoolId'] != null && exam['schoolId'] != _school))
+        throw StateError('Exam result does not match the current school.');
+
+      final student = (await FirebaseFirestore.instance
+          .collection('students_directory').doc(studentId).get()).data();
+      if (!_sameSchool) return;
+      if (student != null && student['schoolId'] != null &&
+          student['schoolId'] != _school)
+        throw StateError('Student belongs to another school.');
+      final data = <String, dynamic>{
+        ...exam,
+        ...?student,
+        ...result,
+        'schoolId': _school,
+      };
+      final pdf = await WindowsDocumentTemplates.selected('reportCard', data);
+      if (!_sameSchool) return;
+      if (pdf == null)
+        throw StateError('Marksheet template cannot render this saved result.');
+      SchoolMediaBudgets.verifyGeneratedPdf('marksheet', pdf);
+      final examName = (exam['examName']?.toString() ?? 'Exam')
+          .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final name = (result['studentName']?.toString() ?? studentId)
+          .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+      final saved = await WindowsSavePdf.save(
+        pdf,
+        'Marksheet_${examName}_${name}.pdf',
+      );
+      if (saved != null && mounted && _sameSchool)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Marksheet PDF downloaded: $saved')),
+        );
+    } catch (error) {
+      if (!mounted || !_sameSchool) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('PDF download unavailable'),
+          content: Text('$error'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   Widget _examCard(Map<String, dynamic> exam) {
     final results = windowsExamHistoryResults(
       _results,
@@ -254,7 +317,11 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
                     icon:const Icon(Icons.picture_as_pdf_outlined),
                     onPressed:()=>_showOriginalMarksheet(row),
                   )
-                : null,
+                : IconButton(
+                    tooltip:'Download PDF',
+                    icon:const Icon(Icons.download_outlined),
+                    onPressed:()=>_downloadGeneratedMarksheet(exam, row),
+                  ),
             ),
         ],
       ),

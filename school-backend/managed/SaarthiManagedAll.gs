@@ -3029,8 +3029,9 @@ function uploadTeacherPhoto(data) {
 // FEES
 // ============================================================
 
-// Saves every fee installment/payment in Google Sheet
-// and the generated receipt PDF in Google Drive.
+// Save the canonical fee payment RECORD only.
+// Receipt PDF rendering occurs only on a user-requested download/print.
+// Keep historical PDF URLs and sheet columns for old clients.
 function saveFeePayment(data) {
 
   const receiptNo = String(data.receiptNo || "").trim();
@@ -3040,7 +3041,8 @@ function saveFeePayment(data) {
   const studentClass = String(data.studentClass || data.class || "").trim();
   const rollNo = String(data.rollNo || data.roll || "").trim();
   const month = String(data.month || "").trim();
-  const pdfBase64 = String(data.pdfBase64 || "").trim();
+  // Legacy pdfBase64 inputs are intentionally ignored. Do not render, upload,
+  // publish or share a generated PDF during a fee save.
 
   if (!receiptNo) {
     throw new Error("Receipt No missing");
@@ -3058,105 +3060,10 @@ function saveFeePayment(data) {
     throw new Error("Roll No missing");
   }
 
-  if (!pdfBase64) {
-    throw new Error("Receipt PDF missing");
-  }
-
-
-  // ----------------------------------------------------------
-  // RECEIPT PDF -> GOOGLE DRIVE
-  // ----------------------------------------------------------
-
-  const receiptFolder =
-    getOrCreateFolder(
-      FEE_RECEIPT_FOLDER
-    );
-
-  const cleanBase64 =
-    pdfBase64.replace(
-      /^data:application\/pdf;base64,/i,
-      ""
-    );
-
-  let pdfBytes;
-
-  try {
-    pdfBytes =
-      Utilities.base64Decode(
-        cleanBase64
-      );
-  } catch (error) {
-    throw new Error(
-      "Invalid receipt PDF data"
-    );
-  }
-
-  const pdfFileName =
-    safeDriveFileName(receiptNo) +
-    "_" +
-    safeDriveFileName(studentName) +
-    "_" +
-    safeDriveFileName(studentClass) +
-    "_Roll_" +
-    safeDriveFileName(rollNo) +
-    ".pdf";
-
-
-  // Retry-safe: same receipt request dobara aaye to same file reuse hoga.
-  let pdfFile = null;
-
-  const sameNameFiles =
-    receiptFolder.getFilesByName(
-      pdfFileName
-    );
-
-  if (sameNameFiles.hasNext()) {
-
-    pdfFile =
-      sameNameFiles.next();
-
-  } else {
-
-    const pdfBlob =
-      Utilities.newBlob(
-        pdfBytes,
-        "application/pdf",
-        pdfFileName
-      );
-
-    pdfFile =
-      receiptFolder.createFile(
-        pdfBlob
-      );
-  }
-
-
-  // WhatsApp receipt link ke liye public-link sharing try karega.
-  // Google Workspace policy block kare to save operation phir bhi continue hoga.
-  try {
-
-    pdfFile.setSharing(
-      DriveApp.Access.ANYONE_WITH_LINK,
-      DriveApp.Permission.VIEW
-    );
-
-  } catch (error) {
-
-    console.log(
-      "Fee receipt sharing warning: " +
-      error
-    );
-  }
-
-
-  const fileId =
-    pdfFile.getId();
-
-  const fileUrl =
-    "https://drive.google.com/file/d/" +
-    fileId +
-    "/view?usp=sharing";
-
+  // New payment rows never depend on PDF bytes. Existing immutable
+  // document references, if any, remain available for legacy readback.
+  const fileId = "";
+  const fileUrl = "";
 
   // ----------------------------------------------------------
   // PAYMENT -> GOOGLE SHEET
@@ -3208,6 +3115,11 @@ function saveFeePayment(data) {
       receiptNo
     );
 
+  // Never erase an older verified receipt PDF link on a record-only edit.
+  // The on-demand renderer for new records uses the payment snapshot.
+  if (existingRow > 1) {
+    rowValues[18] = String(sheet.getRange(existingRow, 19).getValue() || "").trim();
+  }
 
   if (existingRow > 1) {
 
@@ -3240,10 +3152,10 @@ function saveFeePayment(data) {
     success: true,
     action: "save_fee_payment",
     message:
-      "Fee payment Google Sheet aur receipt Google Drive me save ho gaya",
+      "Fee payment record saved; receipt PDF is generated only when requested",
     receiptNo: receiptNo,
     fileId: fileId,
-    fileUrl: fileUrl,
+    fileUrl: rowValues[18],
     sheetUrl: sheetUrl
   });
 }
@@ -5432,10 +5344,8 @@ function saveExamResult(data) {
     updatedBy: String(data.updatedBy || "").trim()
   };
 
-  const reportCard = createExamReportCardPdf(
-    exam,
-    resultData
-  );
+  // DO NOT generate a marksheet PDF while saving marks. The separate
+  // explicit user Download PDF action invokes a renderer on demand.
 
   const resultSheet = getOrCreateDatabaseSheet(
     EXAM_RESULT_SHEET_NAME,
@@ -5455,7 +5365,7 @@ function saveExamResult(data) {
     percentage,
     grade,
     resultText,
-    reportCard.fileUrl,
+    "", // Historical report-card URL column retained for compatibility.
     resultData.updatedBy,
     new Date()
   ];
@@ -5477,6 +5387,7 @@ function saveExamResult(data) {
       ""
     ).trim();
 
+    rowValues[12] = oldUrl;
     resultSheet
       .getRange(
         existingRow,
@@ -5486,27 +5397,13 @@ function saveExamResult(data) {
       )
       .setValues([rowValues]);
 
-    if (oldUrl && oldUrl !== reportCard.fileUrl) {
-      try {
-        const oldId = extractDriveFileId(oldUrl);
-        if (oldId) {
-          DriveApp
-            .getFileById(oldId)
-            .setTrashed(true);
-        }
-      } catch (error) {
-        console.log(
-          "Old report card delete warning: " +
-          error
-        );
-      }
-    }
+    // Preserve the historical PDF without deleting or overwriting it.
   } else {
     resultSheet.appendRow(rowValues);
   }
 
   resultData.reportCardUrl =
-    reportCard.fileUrl;
+    rowValues[12];
   resultData.timestamp =
     new Date().getTime();
 
@@ -5514,7 +5411,7 @@ function saveExamResult(data) {
     success: true,
     action: "save_exam_result",
     message:
-      "Marks saved aur report card Google Drive me generate ho gaya",
+      "Marks saved; report card PDF will be generated only when requested",
     result: resultData,
     sheetUrl: resultSheet.getParent().getUrl()
   });

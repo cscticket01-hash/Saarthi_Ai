@@ -132,6 +132,59 @@ class WindowsDocumentTemplates {
         : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
   }
 
+  /// Resolve the existing school-scoped portrait without rendering a PDF.
+  static Future<Uint8List?> previewPersonPhoto(Map<String, dynamic> data) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (data['schoolId'] != null && data['schoolId'] != school) {
+      throw StateError('Another school portrait cannot be displayed.');
+    }
+    final image = await _personPhoto(data);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during ID preview.');
+    }
+    return image;
+  }
+
+  /// The same school-owned image slots used by the printable ID renderer,
+  /// resolved for a native record preview. Never renders a PDF or marks a
+  /// document/Drive transfer complete.
+  static Future<Map<String, Uint8List>> previewManifestImages(
+      Map<String, dynamic> person, Map<String, dynamic> profile) async {
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    if (person['schoolId'] != null && person['schoolId'] != school) {
+      throw StateError('Another school ID image is not accessible.');
+    }
+    final sources = <dynamic>[
+      person['schoolLogoUrl'] ?? profile['logoUrl'],
+      person['principalSignatureUrl'] ?? profile['principalSignatureUrl'],
+      profile['sealUrl'],
+    ];
+    final reads = await Future.wait<Uint8List?>([
+      _personPhoto(person),
+      for (final source in sources) _image(source),
+    ]);
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed while loading ID artwork.');
+    }
+    for (var i = 0; i < sources.length; i++) {
+      if ((sources[i]?.toString().trim() ?? '').isNotEmpty &&
+          (reads[i + 1] == null || reads[i + 1]!.isEmpty)) {
+        throw StateError('Configured school ID artwork is unavailable.');
+      }
+    }
+    return <String, Uint8List>{
+      for (var i = 0; i < reads.length; i++)
+        if (reads[i] != null && reads[i]!.isNotEmpty)
+          ['photo', 'logo', 'signature', 'seal'][i]: reads[i]!,
+    };
+  }
+
   static Future<Uint8List?> _personPhoto(Map<String, dynamic> data) async {
     final url = data['photoUrl']?.toString().trim() ?? '';
     if (url.isNotEmpty) {
@@ -232,7 +285,7 @@ class WindowsDocumentTemplates {
           final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
             'schoolId':school,'centralEndpoint':connection['endpoint'],'firebaseProjectId':connection['projectId'],
             'type':role,'personId':personId,'linkToken':person['mobileLinkToken']});
-          final localInputs=await inputRevisions(person,profile,kind=='studentId'?studentIdTemplateId:templates[kind],qr);
+          final localInputs=await inputRevisions(person,profile,kind=='studentId'?(templates['studentId']??studentIdTemplateId):templates[kind],qr);
           Future<Map<String,dynamic>?> read(String c,String id) async {
             final reply=await (readRecord?.call(c,id) ?? ManagedSchoolSession.callForSchool(school,'managed/records',{
               'operation':'read','collection':c,'id':id,'syncProtocol':2}));
@@ -255,7 +308,7 @@ class WindowsDocumentTemplates {
             remotePerson['mobileLinkToken']!=person['mobileLinkToken'] ||
             (remotePerson['mobileStableId']??personId)!=expected['personId'])continue;
           final remoteInputs=await inputRevisions(remotePerson,remoteProfile,
-            kind=='studentId'?studentIdTemplateId:remoteTemplates[kind],qr);
+            kind=='studentId'?(remoteTemplates['studentId']??studentIdTemplateId):remoteTemplates[kind],qr);
           if(remoteInputs.visual!=localInputs.visual)continue;
           final bytes=await selected(kind,personCardData(person,profile),qr:qr,publish:false);
           if(bytes==null)continue;
@@ -377,7 +430,7 @@ class WindowsDocumentTemplates {
       text=teacherCardText(effective,windowsReferenceDocumentIndex(kind,template));
       slots={'photo','logo','signature'};
     }
-    final visual=sha256.convert(utf8.encode(jsonEncode(clean(['id-visible-v1',student?studentIdTemplateId:template is String&&(template.startsWith('manifest:')||template.startsWith('reviewed:'))?template:windowsReferenceDocumentIndex(kind,template),qr,text,
+    final visual=sha256.convert(utf8.encode(jsonEncode(clean(['id-visible-v1',student?(template is String?template.replaceFirst('manifest:',''):studentIdTemplateId):template is String&&(template.startsWith('manifest:')||template.startsWith('reviewed:'))?template:windowsReferenceDocumentIndex(kind,template),qr,text,
       for(var i=0;i<images.length;i++)if(slots.contains(['photo','logo','signature','seal'][i]))imageIdentity(i)])))).toString();
     if(FirebaseFirestore.instance.activeProfileId!=origin)throw StateError('School changed while checking ID inputs.');
     return (visual:visual,legacy:legacy);
@@ -406,7 +459,7 @@ class WindowsDocumentTemplates {
     final revision = await _fingerprint(
       person,
       profile,
-      kind == 'studentId' ? studentIdTemplateId : (await selections())[kind],
+      kind == 'studentId' ? ((await selections())['studentId'] ?? studentIdTemplateId) : (await selections())[kind],
       qr,
     );
     await WindowsBackendBridge.publishIdCard(
@@ -523,7 +576,7 @@ class WindowsDocumentTemplates {
           'personId': doc.id,
           'linkToken': person['mobileLinkToken'],
         });
-        final revisions = await inputRevisions(person, profile, kind == 'studentId' ? studentIdTemplateId : templates[kind], qr);
+        final revisions = await inputRevisions(person, profile, kind == 'studentId' ? (templates['studentId'] ?? studentIdTemplateId) : templates[kind], qr);
         final revision = revisions.visual;
         final id = WindowsBackendBridge.publishedIdCardOwnerIdForPerson(kind == 'studentId' ? 'student' : 'teacher',doc.id,person);
         final existing =
@@ -543,7 +596,7 @@ class WindowsDocumentTemplates {
             final evidence=job.data();
             if(evidence['collection']!=collection||evidence['documentId']!=doc.id||evidence['revision']!=person['_syncRevision']||evidence['previousRecord'] is! Map)continue;
             final before=await inputRevisions(Map<String,dynamic>.from(evidence['previousRecord']),profile,
-              kind=='studentId'?studentIdTemplateId:templates[kind],qr);
+              kind=='studentId'?(templates['studentId']??studentIdTemplateId):templates[kind],qr);
             if(before.visual==revision&&before.legacy==existing['inputRevision'])verifiedLegacyMatch=true;
           }
         }
@@ -646,9 +699,8 @@ class WindowsDocumentTemplates {
       }
     }
     final templateSettings=await selections();
-    final v = kind == 'studentId'
-        ? 'manifest:$studentIdTemplateId'
-        : templateSettings[kind] ?? 0;
+    final v = templateSettings[kind] ??
+        (kind == 'studentId' ? 'manifest:$studentIdTemplateId' : 0);
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -968,8 +1020,8 @@ class _SchoolDocumentTemplatesScreenState
         : List<String>.from(windowsReferenceDocumentNames[kind]??const <String>[]);
 
   int _chosen() {
-    if (_kind == 'studentId') return 0;
-    final value = _selected[_kind];
+    final value = _selected[_kind] ??
+        (_kind == 'studentId' ? 'manifest:$studentIdTemplateId' : null);
     if(value is String && value.startsWith('imported:')){
       final templates=WindowsDocumentTemplates.availableImportedTemplates(
         _selected,_kind,
@@ -1134,7 +1186,7 @@ class _SchoolDocumentTemplatesScreenState
     if(_openingDesigner)return;
     setState(()=>_openingDesigner=true);
     try {
-      const value = 'manifest:$studentIdTemplateId';
+      final value = _selected['studentId'] ?? 'manifest:$studentIdTemplateId';
       final id = value is String && value.startsWith('manifest:')
           ? value.substring(9)
           : value is String && value.startsWith('reviewed:')
@@ -1330,9 +1382,17 @@ class _SchoolDocumentTemplatesScreenState
                 final i = n;
                 final chosen = _chosen();
                 final active = i == chosen;
-                final portrait =
-                    (_kind == 'studentId' || _kind == 'teacherId') &&
-                    (_kind == 'studentId' ? i < 2 : i != 2);
+                // The gallery contains legacy layouts before catalog layouts.
+                // During the asynchronous catalog load, the latter can be empty.
+                final catalogIndex = i - _legacyCount(_kind);
+                final catalogChoices = _choices(_kind);
+                final catalogEntry =
+                    catalogIndex >= 0 && catalogIndex < catalogChoices.length
+                        ? catalogChoices[catalogIndex]
+                        : null;
+                final portrait = _kind == 'studentId'
+                    ? catalogEntry?.id != 'student-svn-navy-green-v1'
+                    : _kind == 'teacherId' && catalogEntry == null;
                 return Card(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -1412,12 +1472,12 @@ class _SchoolDocumentTemplatesScreenState
                         Row(
                           children: [
                             OutlinedButton(
-                              onPressed: () => _preview(i),
+                              onPressed: _loading ? null : () => _preview(i),
                               child: const Text('Preview'),
                             ),
                             const SizedBox(width: 10),
                             FilledButton(
-                              onPressed: active || _catalogError != null
+                              onPressed: _loading || active || _catalogError != null
                                   ? null
                                   : () => _select(i),
                               child: Text(

@@ -217,3 +217,48 @@ test('atomic bundle original intent is private R2 durable before ACK and retaine
  }
  assert.ok(await bucket.head(path),'Verified bundle remains for minimum retention');
 });
+
+
+test('hourly Drive report counts distinct R2-verified receipts across five lanes, never chunks, pending, or foreign schools', async t => {
+ const {mf,rpc}=await harness(t);
+ const namespace=await mf.getDurableObjectNamespace('LANES');
+ const actor=namespace.get(namespace.idFromName('saarthi-account-r2-staging-budget-v1'));
+ const foreign='vs-'+'b'.repeat(32);
+ const entries=[
+  {lane:'records', id:'a'.repeat(64), verified:true},
+  {lane:'notices', id:'b'.repeat(64), verified:true},
+  {lane:'attendance-a1', id:'c'.repeat(64), verified:true},
+  {lane:'live', id:'d'.repeat(64), verified:true},
+  {lane:'file-'+'e'.repeat(64), id:'e'.repeat(64), verified:true, multipart:true},
+  {lane:'records', id:'f'.repeat(64), verified:false},
+ ];
+ for(const entry of entries){
+  await actor.stageR2Object(school,entry.lane,entry.id,0,new Uint8Array([1,2]).buffer);
+  if(entry.multipart) await actor.stageR2Object(school,entry.lane,entry.id,2,new Uint8Array([3,4]).buffer);
+  await actor.r2OriginalAccepted(school,entry.lane,entry.id);
+  if(entry.verified) await actor.r2OriginalVerified(school,entry.lane,entry.id);
+ }
+ // Other school's verified receipt must not appear in this school's report.
+ await actor.stageR2Object(foreign,'records','9'.repeat(64),0,new Uint8Array([9]).buffer);
+ await actor.r2OriginalAccepted(foreign,'records','9'.repeat(64));
+ await actor.r2OriginalVerified(foreign,'records','9'.repeat(64));
+ const afterHour=(Math.floor(Date.now()/3600000)+1)*3600000+1000;
+ const report=await actor.r2VerifiedHourSummary(school,afterHour);
+ assert.equal(report.schoolId,school);
+ assert.equal(report.scope,'r2VerifiedDeliveries');
+ assert.equal(report.verifiedCount,5);
+ assert.deepEqual(report.breakdown,{attendance:1,files:1,live:1,notices:1,records:1});
+ assert.equal(report.partial,true);
+ assert.equal(report.coverage,'r2-staged-only');
+ // A repeated verification and multiple file chunks cannot count twice.
+ await actor.r2OriginalVerified(school,'file-'+'e'.repeat(64),'e'.repeat(64));
+ assert.equal((await actor.r2VerifiedHourSummary(school,afterHour)).verifiedCount,5);
+ assert.equal((await actor.r2VerifiedHourSummary(foreign,afterHour)).verifiedCount,1);
+ assert.equal((await actor.r2VerifiedHourSummary(school,afterHour-3600000)).verifiedCount,0);
+ const signed=await rpc('verifiedHourSummary',{},'delivery');
+ assert.equal(signed.http,200);
+ assert.equal(signed.value.schoolId,school);
+ assert.equal(signed.value.scope,'r2VerifiedDeliveries');
+ assert.equal(signed.value.verifiedCount,0,
+   'A current-hour Drive receipt is not part of the previous closed hour');
+});

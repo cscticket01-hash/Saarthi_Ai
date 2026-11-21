@@ -1,0 +1,27 @@
+name: GS Record-Only Review
+on:
+  pull_request:
+    paths:
+      - 'school-backend/SaarthiSchool.gs'
+      - 'school-backend/managed/SaarthiManagedAll.gs'
+      - '.github/scripts/build_managed_script.py'
+      - '.github/scripts/test_record_only_gs.cjs'
+      - '.github/workflows/gs-record-only-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-record-only-school-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate script without divergence
+        run: |
+          python3 .github/scripts/build_managed_script.py
+          git diff --exit-code -- school-backend/managed/SaarthiManagedAll.gs
+      - name: Validate complete Apps Script syntax
+        run: |
+          cp school-backend/managed/SaarthiManagedAll.gs /tmp/SaarthiManagedAll.js
+          node --check /tmp/SaarthiManagedAll.js
+      - name: Test no PDF generation on fees and exam save
+        run: node .github/scripts/test_record_only_gs.cjs

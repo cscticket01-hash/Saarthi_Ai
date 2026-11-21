@@ -61,7 +61,8 @@ class WindowsBackendBridge {
 
   WindowsBackendBridge._();
 
-  /// Commit money, balance and immutable PDF/outbox in one durable local batch.
+  /// Commit fee payment and ledger atomically. PDF is optional for legacy
+  /// callers; current record-only Saves never create a PDF/outbox.
   /// Only the existing sync owners may acknowledge the cloud generations.
   static Future<void> collectFeePayment({
     required String profileId,
@@ -70,9 +71,9 @@ class WindowsBackendBridge {
     required String ledgerId,
     required Map<String, dynamic> ledger,
     required double previousPaid,
-    required Uint8List pdfBytes,
+    Uint8List? pdfBytes,
   }) => _documentWrite(() async {
-    SchoolMediaBudgets.enforcePdf('feeReceipt', pdfBytes);
+    if (pdfBytes != null) SchoolMediaBudgets.enforcePdf('feeReceipt', pdfBytes);
     final db = FirebaseFirestore.instance;
     void scope() {
       if (db.activeProfileId != profileId)
@@ -85,7 +86,9 @@ class WindowsBackendBridge {
     final school = db.activeProfileIdentity['schoolSyncId'];
     if (payment['schoolId'] != school ||
         payment['paymentId'] != paymentId ||
-        payment['receiptDocumentId'] != 'FEE-$paymentId' ||
+        (payment['receiptDocumentId'] != null &&
+          payment['receiptDocumentId'] != 'FEE-$paymentId') ||
+        (pdfBytes != null && payment['receiptDocumentId'] != 'FEE-$paymentId') ||
         payment['studentId'] is! String ||
         (payment['studentId'] as String).isEmpty)
       throw StateError('Receipt school or payment identity is invalid.');
@@ -137,12 +140,13 @@ class WindowsBackendBridge {
       throw StateError(
         'Fee balance changed. Refresh and check history before collecting.',
       );
-    final managed = (await CentralSchoolCloud.saved())['managed'] == true;
+    final managed = pdfBytes != null &&
+        (await CentralSchoolCloud.saved())['managed'] == true;
     scope();
     final batch = db.batch();
     batch.requireUnchanged(paymentRef, null);
     batch.requireUnchanged(ledgerRef, current);
-    await _saveLocalStudentDocument({
+    if (pdfBytes != null) await _saveLocalStudentDocument({
       'replaceDocumentId': 'FEE-$paymentId',
       'documentKind': 'feeReceipt',
       'studentId': payment['studentId'],

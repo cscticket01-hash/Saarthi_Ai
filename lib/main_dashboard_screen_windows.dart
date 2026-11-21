@@ -44,7 +44,9 @@ import 'windows_preferences_reset.dart';
 import 'windows_school_operations.dart';
 import 'windows_staff_payroll.dart';
 import 'windows_school_identity.dart';
+import 'windows_id_card_record_lookup.dart';
 import 'windows_document_templates.dart';
+import 'windows_record_only_id_preview.dart';
 import 'windows_save_pdf.dart';
 import 'windows_platform_client.dart';
 import 'dart:io';
@@ -5057,8 +5059,16 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   bool showStudentUid = false;
   String? photoUrl = _studentPhotoUrl;
 
+  final resolved = await WindowsIdCardRecordLookup.find(
+      schoolClass: _directoryClass, roll: roll);
+  if (resolved == null) {
+    throw StateError('Student record not found. Search Record again.');
+  }
+  final docId = resolved.id;
+  if (resolved.data['name']?.toString().trim() != name) {
+    throw StateError('Student record changed. Search Record again.');
+  }
   try {
-    final docId = '${_directoryClass}_Roll_$roll';
 
     final doc = await FirebaseFirestore.instance
         .collection('students_directory')
@@ -5145,8 +5155,6 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
   final studentId =
       'VS-${classNumber.isEmpty ? 'X' : classNumber}-$displayRoll';
 
-  final docId = '${_directoryClass}_Roll_$roll';
-
   final existingStudentDoc = await FirebaseFirestore.instance
       .collection('students_directory')
       .doc(docId)
@@ -5204,13 +5212,13 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
-    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString(), previewOnly: true);
-    if (mounted && bytes != null) {
-      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
-        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-        onDownload: _downloadIdCard, onPrint: _printIdCard);
-    }
+    if (!mounted) return;
+    // The visible ID is built directly from the current school/person record.
+    // The selected printable template is rendered only upon Download PDF.
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Student ID card • Front & back',
+      data: data,
+      onDownload: _downloadIdCard);
   } catch (e) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('ID card preview unavailable: $e')));
@@ -10911,7 +10919,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
     final paymentData = <String, dynamic>{
       'schoolId': FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
-      'receiptDocumentId': 'FEE-${paymentRef.id}',
       'paidAt': Timestamp.fromDate(now),
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
@@ -10945,7 +10952,6 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'timeText': '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
     };
 
-      final pdfBytes = await _buildReceiptPdf(paymentData);
       if (FirebaseFirestore.instance.activeProfileId != originProfile ||
           _activeStudentId != studentDoc.id || _selectedMonth != originMonth)
         throw StateError('School or student changed. Reopen fees before collecting.');
@@ -10961,7 +10967,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
       await WindowsBackendBridge.collectFeePayment(
         profileId: originProfile, paymentId: paymentRef.id, payment: paymentData,
-        ledgerId: ledgerRef.id, previousPaid: oldPaid, pdfBytes: pdfBytes,
+        ledgerId: ledgerRef.id, previousPaid: oldPaid,
         ledger: {
           'studentId': studentDoc.id,
           'personId': student['mobileStableId'] ?? studentDoc.id,
@@ -14499,28 +14505,41 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    final origin = FirebaseFirestore.instance.activeProfileId;
     final qrData = await _windowsBuildPersonQrPayload(
       type: 'teacher',
       collection: 'teachers_directory',
       documentId: docId,
       person: data,
     );
-    final bytes = await WindowsDocumentTemplates.selected('teacherId',
-        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData,
-        previewOnly: true);
-    if (bytes != null && mounted) {
-      await WindowsDocumentTemplates.preview(context, bytes,
-          title: 'Teacher ID card • Front & back',
-          notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-          onPrint: () async {
-            try { await WindowsBrowserPrint.open(bytes); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Print preview unavailable: $e'))); }
-          },
-          onDownload: () async {
-            try { await WindowsSavePdf.save(bytes,'teacher-id.pdf'); }
-            catch(e) { if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('PDF save failed: $e'))); }
-          });
-    }
+    final schoolProfile = await _loadSchoolProfileCache();
+    if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
+    await WindowsRecordOnlyIdPreview.show(context,
+      title: 'Teacher ID card • Front & back',
+      data: {
+        ...data,
+        'teacherId': data['teacherId'] ?? docId,
+        'qrData': qrData,
+        'schoolName': _schoolName(schoolProfile),
+      },
+      onDownload: () async {
+        try {
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed before teacher PDF export.');
+          }
+          final bytes = await WindowsDocumentTemplates.selected('teacherId',
+            {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData);
+          if (bytes == null) throw StateError('Unable to render teacher PDF.');
+          if (FirebaseFirestore.instance.activeProfileId != origin) {
+            throw StateError('School changed during teacher PDF export.');
+          }
+          await WindowsSavePdf.save(bytes, 'teacher-id.pdf');
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('PDF save failed: $e')));
+        }
+      },
+    );
   }
 
   @override
@@ -22681,7 +22700,7 @@ class _ExamMarksEntryScreenState
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save ke baad total, %, grade, PASS/FAIL aur Report Card PDF automatic generate hoga.',
+                      'Pass rule: har subject me minimum ${_passMarks.toStringAsFixed(0)} marks. Save par marks hi sync honge. Report Card PDF sirf Download PDF par banega.',
                       style:  TextStyle(fontFamily: 'Segoe UI', 
                           color: WindowsAppearance.foreground(Colors.white54),
                           fontSize: 10,
@@ -22739,12 +22758,9 @@ class _ExamMarksEntryScreenState
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
                         final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
-                        final reportBytes = await WindowsDocumentTemplates.selected('reportCard', {...widget.exam, ...student, ...resultData});
-                        if (reportBytes == null) throw StateError('Report card could not be generated.');
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({
                           'action': 'save_exam_result',
-                          'pdfBase64': base64Encode(reportBytes),
                           ...resultData,
                           'examId': _examId,
                           'studentId': doc.id,

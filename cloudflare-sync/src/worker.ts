@@ -1,6 +1,6 @@
 import {brokerRetryDelay} from './broker-retry.mjs';
 import {initSpool,spoolCommand,spoolLane,canonical} from './spool';
-import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus} from './r2-stage';
+import {stageR2,acceptR2Original,markR2Verified,sweepR2Verified,r2BudgetStatus,r2VerifiedHourSummary} from './r2-stage';
 import {r2StagingForSchool} from './r2-scoped-admission.mjs';
 import {Buffer} from 'node:buffer';
 import {mobileRequest} from './mobile';
@@ -45,6 +45,11 @@ export class SyncLane extends DurableObject<Env>{
   const result=await markR2Verified(this.ctx.storage,school,lane,id);
   if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
   return result;
+ }
+ async r2VerifiedHourSummary(school:string,at=Date.now()){
+  demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
+  this.setMeta('r2BudgetActor','v1');
+  return r2VerifiedHourSummary(this.ctx.storage,school,at);
  }
  async r2CapacityStatus(){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
@@ -378,6 +383,10 @@ export class SyncLane extends DurableObject<Env>{
    return {retired:true};
   }
   if(action==='schedule'){demand(lane==='delivery'&&typeof b.sourceLane==='string'&&(/^(?:attendance-[a-f0-9]{2}|notices)$/.test(b.sourceLane)||spoolLane(b.sourceLane)));this.ctx.storage.sql.exec('INSERT INTO lanes(name,due) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET due=min(lanes.due,excluded.due)',b.sourceLane,Date.now());await this.wake(Date.now()+250);return true;}
+  if(action==='verifiedHourSummary'){
+   demand(lane==='delivery','Verified hourly report requires school delivery lane',403);
+   return this.env.LANES.getByName('saarthi-account-r2-staging-budget-v1').r2VerifiedHourSummary(school);
+  }
   if(action==='stats'&&lane==='delivery')return this.ctx.storage.sql.exec<{pendingPartitions:number;needsAttention:number}>('SELECT count(*) AS pendingPartitions,coalesce(sum(attention),0) AS needsAttention FROM lanes').toArray()[0];
   if(action==='stats'){const stats=this.ctx.storage.sql.exec<{pending:number;due:number}>('SELECT count(*) AS pending,min(due) AS due FROM jobs WHERE state IN (\'pending\',\'retry\',\'processing\')').toArray()[0];const attention=this.ctx.storage.sql.exec<{needsAttention:number}>('SELECT count(*) AS needsAttention FROM jobs WHERE state=\'needsAttention\'').toArray()[0];return {...stats,...attention};}
   if(action==='get'){demand(operationPattern.test(id));return this.job(id)||null;}
