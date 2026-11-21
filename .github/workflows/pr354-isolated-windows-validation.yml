@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: e8a5178a8b285d2aafab11275a13c7cd9aacd57c
+          ref: 2e48814468574a1381ede15bd7447f620ac16450
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
@@ -31,7 +31,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze changed code and staff payroll integration
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/document_processing_engine.dart lib/document_pipeline.dart lib/document_upload_dialog.dart lib/windows_other_staff.dart lib/windows_staff_payroll.dart lib/student_inventory_policy.dart lib/main_dashboard_screen_windows.dart test/windows_staff_category_policy_test.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/document_processing_engine.dart lib/document_pipeline.dart lib/document_upload_dialog.dart lib/document_scan_editor.dart lib/document_image_worker.dart lib/windows_template_forge_ocr.dart lib/windows_backend_bridge.dart lib/windows_other_staff.dart lib/windows_staff_payroll.dart lib/student_inventory_policy.dart lib/main_dashboard_screen_windows.dart test/windows_staff_category_policy_test.dart
       - name: Smart Scan engine and uploads
         if: always()
         run: flutter test --concurrency=1 --timeout=120s test/document_processing_engine_test.dart test/document_image_worker_test.dart test/document_upload_flow_test.dart test/smart_media_compression_test.dart test/school_media_budgets_test.dart
@@ -44,13 +44,31 @@ jobs:
           APPDATA: ${{ runner.temp }}/pr354-synthetic-documents
           LOCALAPPDATA: ${{ runner.temp }}/pr354-synthetic-documents
         run: flutter test --concurrency=1 --timeout=120s test/windows_document_screen_test.dart test/windows_document_queue_test.dart test/windows_document_review_owner_test.dart test/student_inventory_policy_test.dart
+  canonical-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2e48814468574a1381ede15bd7447f620ac16450
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify generated Apps Script matches source
+        run: |
+          python .github/scripts/build_managed_script.py
+          git diff --exit-code -- school-backend/managed/SaarthiManagedAll.gs
+      - name: Run canonical inventory and existing document generation tests
+        working-directory: functions
+        run: node --test test/student-scan-quota.test.js test/managed-record-ack-lock.test.js test/managed-storage.test.js test/edge-document-independent-handoff.test.js test/edge-document-replacement-owner.test.js
   native-windows-build:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: e8a5178a8b285d2aafab11275a13c7cd9aacd57c
+          ref: 2e48814468574a1381ede15bd7447f620ac16450
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
