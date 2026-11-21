@@ -35,6 +35,7 @@ class ReviewRaster extends PdfRaster {
 
 class ReviewPrinting extends MethodChannelPrinting {
   int rasterCalls = 0;
+  int pagesToReturn = 1;
   @override
   Stream<PdfRaster> raster(Uint8List document, List<int>? pages, double dpi) async* {
     rasterCalls++;
@@ -42,7 +43,7 @@ class ReviewPrinting extends MethodChannelPrinting {
     img.fill(paper, color: img.ColorRgba8(255, 255, 255, 255));
     img.fillRect(paper, x1: 15, y1: 20, x2: 95, y2: 25,
       color: img.ColorRgba8(0, 0, 0, 255));
-    yield ReviewRaster(paper);
+    for(var i=0;i<pagesToReturn;i++) yield ReviewRaster(paper);
   }
 }
 
@@ -174,6 +175,16 @@ void main() {
     expect(picker.calls, beforeCalls + 1);
     expect(await io(t, count), existing);
   }
+
+  testWidgets('PDF over eight pages is rejected before a save can be offered',(t) async {
+    rasterizer.pagesToReturn=9;
+    final document=pw.Document()..addPage(pw.Page(build:(_)=>pw.Text('Nine page fixture')));
+    final source=(await io(t,document.save))!;
+    await expectLater(io(t,()=>DocumentPipeline.process(
+      source,'application/pdf',scope:'pdf-over-eight-pages')),throwsFormatException);
+    expect(rasterizer.rasterCalls,1);
+    expect(t.takeException(),isNull);
+  });
 
   testWidgets('PDF above 500 KB enters compression-only path and remains within quota',(t) async {
     final document=pw.Document()..addPage(pw.Page(build:(_)=>pw.Text('Original searchable school PDF')));
