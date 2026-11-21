@@ -20,23 +20,50 @@ class DocumentFilePicker {
     mimeTypes: ['image/jpeg', 'image/png', 'application/pdf'],
   );
   static Future<SelectedDocument?> pick() async {
-    final file = await openFile(acceptedTypeGroups: [types]);
-    if (file == null) return null;
-    if (await file.length() > 50 * 1024 * 1024) {
+    // The same button now accepts one or several documents, without a
+    // replacement screen. Any combination still counts toward eight pages.
+    final files = await openFiles(acceptedTypeGroups: [types]);
+    if (files.isEmpty) return null;
+    if (files.length > DocumentPipeline.maxScanPages) {
       throw const FormatException(
-        'Source exceeds 50 MB. Select a smaller file.',
+        'Smart Scan allows maximum 8 pages across PDFs and images.',
       );
     }
-    final extension = file.name.toLowerCase().split('.').last;
-    final mime = switch (extension) {
-      'jpg' || 'jpeg' => 'image/jpeg',
-      'png' => 'image/png',
-      'pdf' => 'application/pdf',
-      _ => throw const FormatException('Select JPG, JPEG, PNG or PDF.'),
-    };
-    final bytes = await file.readAsBytes();
-    if (bytes.isEmpty) throw const FormatException('Selected file is empty.');
-    return SelectedDocument(file.name, mime, bytes);
+    final sources = <Map<String, dynamic>>[];
+    var originalTotal = 0;
+    for (final file in files) {
+      final size = await file.length();
+      originalTotal += size;
+      if (size <= 0 || originalTotal > 50 * 1024 * 1024) {
+        throw const FormatException(
+          'Combined document source must be within 50 MB.',
+        );
+      }
+      final extension = file.name.toLowerCase().split('.').last;
+      final mime = switch (extension) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+        'pdf' => 'application/pdf',
+        _ => throw const FormatException('Select JPG, JPEG, PNG or PDF.'),
+      };
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty || bytes.length != size) {
+        throw const FormatException('Selected file is incomplete.');
+      }
+      sources.add({'mime': mime, 'bytes': bytes});
+    }
+    if (sources.length == 1) {
+      return SelectedDocument(
+        files.first.name,
+        sources.first['mime'] as String,
+        sources.first['bytes'] as Uint8List,
+      );
+    }
+    final combined = await DocumentPipeline.combineSources(sources);
+    final name = files.first.name;
+    final dot = name.lastIndexOf('.');
+    final stem = dot > 0 ? name.substring(0, dot) : name;
+    return SelectedDocument('$stem-scan.pdf', 'application/pdf', combined);
   }
 }
 
@@ -191,7 +218,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 ),
                 Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
                 const Text(
-                  '80 KB per normal image is a target; PDF size scales with pages. Readability takes priority.',
+                  'Single image target: 80 KB. Up to 8 PDF/image pages: 500 KB total page-image budget. PDF size can be larger; readability takes priority.',
                 ),
                 Expanded(
                   child: processed!['mimeType'] == 'application/pdf'
