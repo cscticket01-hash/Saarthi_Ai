@@ -171,6 +171,7 @@ class DocumentProcessingEngine {
 
   static Map<String, dynamic> _process(Map<String, dynamic> input) {
     final portrait = input['kind'] == 'portrait';
+    final pdfCompression = input['kind'] == 'pdfCompression';
     final bytes = input['bytes'] as Uint8List;
     if (bytes.length < 12 || bytes.length > sourceLimit)
       throw const FormatException('Source exceeds document safety limit.');
@@ -218,11 +219,11 @@ class DocumentProcessingEngine {
         interpolation: img.Interpolation.average,
       );
     // Crop coordinates refer to the EXIF-oriented original, before rotation.
-    final edit = portrait ? null : input['manualEdit'];
-    final quad = portrait ? null : input['manualCorners'];
-    final filter = portrait ? 'auto' : input['scanFilter'] ?? 'auto';
-    final brightness = portrait ? 0.0 : (input['brightness'] as num? ?? 0).toDouble();
-    final contrast = portrait ? 0.0 : (input['contrast'] as num? ?? 0).toDouble();
+    final edit = portrait || pdfCompression ? null : input['manualEdit'];
+    final quad = portrait || pdfCompression ? null : input['manualCorners'];
+    final filter = portrait ? 'auto' : pdfCompression ? 'original' : input['scanFilter'] ?? 'auto';
+    final brightness = portrait || pdfCompression ? 0.0 : (input['brightness'] as num? ?? 0).toDouble();
+    final contrast = portrait || pdfCompression ? 0.0 : (input['contrast'] as num? ?? 0).toDouble();
     if (!{'auto', 'original', 'lightText', 'grayscale', 'whiteboard'}.contains(filter) ||
         !brightness.isFinite || !contrast.isFinite ||
         brightness.abs() > 0.4 || contrast.abs() > 0.5) {
@@ -287,14 +288,14 @@ class DocumentProcessingEngine {
       rotation = input['autoRotation'] as int;
     }
     if (rotation != 0) image = img.copyRotate(image, angle: rotation);
-    final detected = portrait || edit != null ? null : _paperCorners(image);
+    final detected = portrait || pdfCompression || edit != null ? null : _paperCorners(image);
     bool corrected = false;
     if (detected != null) {
       final rectified = _rectify(image, detected);
       corrected = !identical(image, rectified);
       image = rectified;
     }
-    final deskew = portrait || edit != null ? 0.0 : _textAngle(image);
+    final deskew = portrait || pdfCompression || edit != null ? 0.0 : _textAngle(image);
     if (deskew.abs() >= 0.5) {
       image.backgroundColor = img.ColorRgb8(255, 255, 255);
       image = img.copyRotate(
