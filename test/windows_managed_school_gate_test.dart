@@ -217,4 +217,63 @@ void main(){
     expect(tester.widget<TextField>(email).enableSuggestions,false);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('WIN-001 school login keeps corrected text, caret and password visibility', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: WindowsManagedSchoolLogin()));
+    final emailField = find.widgetWithText(TextField, 'School login email');
+    final passwordField = find.widgetWithText(TextField, 'Password');
+
+    await tester.enterText(emailField, 'officee@school.com');
+    await tester.pump();
+    final emailController = tester.widget<TextField>(emailField).controller!;
+    await tester.showKeyboard(emailField);
+    tester.testTextInput.updateEditingValue(const TextEditingValue(
+      text: 'office@school.com',
+      selection: TextSelection.collapsed(offset: 6),
+    ));
+    await tester.pump();
+    expect(emailController.text, 'office@school.com');
+    expect(emailController.selection.baseOffset, 6);
+    expect(emailController.selection.extentOffset, 6);
+
+    // Verify a Windows IME composition stays attached to the same controller.
+    tester.testTextInput.updateEditingValue(const TextEditingValue(
+      text: 'office@school.com',
+      selection: TextSelection.collapsed(offset: 6),
+      composing: TextRange(start: 0, end: 6),
+    ));
+    await tester.pump();
+    expect(emailController.value.composing, const TextRange(start: 0, end: 6));
+
+    await tester.enterText(passwordField, 'abcXdef');
+    await tester.pump();
+    final passwordController = tester.widget<TextField>(passwordField).controller!;
+    await tester.showKeyboard(passwordField);
+    tester.testTextInput.updateEditingValue(const TextEditingValue(
+      text: 'abcdef',
+      selection: TextSelection.collapsed(offset: 3),
+    ));
+    await tester.pump();
+    expect(passwordController.text, 'abcdef');
+    expect(passwordController.selection.baseOffset, 3);
+
+    await tester.tap(find.byKey(const ValueKey('show-password')));
+    await tester.pump();
+    expect(tester.widget<TextField>(passwordField).obscureText, false);
+    expect(passwordController.text, 'abcdef');
+    await tester.showKeyboard(passwordField);
+    tester.testTextInput.updateEditingValue(const TextEditingValue(
+      text: 'abcZdef',
+      selection: TextSelection.collapsed(offset: 4),
+    ));
+    await tester.pump();
+    expect(passwordController.text, 'abcZdef');
+    expect(passwordController.selection.baseOffset, 4);
+
+    await tester.tap(find.byKey(const ValueKey('hide-password')));
+    await tester.pump();
+    expect(tester.widget<TextField>(passwordField).obscureText, true);
+    expect(passwordController.text, 'abcZdef');
+    await tester.pumpWidget(const SizedBox());
+  });
 }
