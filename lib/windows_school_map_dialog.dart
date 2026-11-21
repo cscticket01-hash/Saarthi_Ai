@@ -171,7 +171,7 @@ class _SchoolMapPinDialogState extends State<_SchoolMapPinDialog> {
                             ),
                             size: const Size.square(54),
                             offset: const Offset(0, -18),
-                            builder: (_) => const Icon(
+                            builder: (_, __, ___) => const Icon(
                               Icons.location_on,
                               color: Colors.red,
                               size: 52,
