@@ -1070,6 +1070,7 @@ class WindowsBackendBridge {
             'sizeBytes': record['sizeBytes'],
             'sourceBytes': record['sourceBytes'],
             if (record['pageCount'] is int) 'pageCount': record['pageCount'],
+            if (record['scanQuotaVersion'] == 1) 'scanQuotaVersion': 1,
             'contentHash': crypto.sha256.convert(bytes).toString(),
             'cleanupStatus': record['cleanupStatus'],
             'targetMet': record['targetMet'],
@@ -2144,7 +2145,7 @@ class WindowsBackendBridge {
               'studentId','studentName','studentClass','rollNo',
               'documentName','fileName','mimeType','uploadedBy',
               'documentKind','ownerRole','personId','inputRevision',
-              'documentRevision','uploadedAt','sizeBytes','sourceBytes','pageCount',
+              'documentRevision','uploadedAt','sizeBytes','sourceBytes','pageCount','scanQuotaVersion',
               'contentHash','cleanupStatus','targetMet',
             ])
               if (body[key] != null) key: body[key],
@@ -3253,8 +3254,10 @@ class WindowsBackendBridge {
       'mimeType': body['mimeType'] ?? '',
       'sizeBytes': optimized?.length ?? bytes.length,
       'sourceBytes': bytes.length,
-      if (StudentInventoryPolicy.isScan(body))
+      if (StudentInventoryPolicy.isScan(body)) ...{
         'pageCount': processing['pageCount'],
+        'scanQuotaVersion': 1,
+      },
       'documentRevision': secureSetupToken(24),
       'baseCloudRevision':
           previous?['cloudRevision'] ??
