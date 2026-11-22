@@ -3263,14 +3263,27 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     String? onlyOperationId,
     bool Function()? canAdmit,
   }) async {
+    final profile = _activeProfileId, school = _activeSchoolSyncId;
+    bool admit() => !isPaused && !_resetPaused && !_syncBlocked &&
+        _activeProfileId == profile && _activeSchoolSyncId == school &&
+        FirebaseFirestore.instance.activeProfileId == profile &&
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] == school &&
+        !WindowsDailyAccessGuard.blockedFor(school) &&
+        !(_quotaRetryAt?.isAfter(DateTime.now()) ?? false) &&
+        (canAdmit?.call() ?? true);
+    bool independent(Map<String, dynamic> item) =>
+        onlyOperationId == null && onlyQueueId == null &&
+        canParallelStageRecord(item, school,
+          edgeDeliverySupported: WindowsFirebaseRemote.edgeDeliverySupported);
+    if (!admit()) return;
     if (onlyOperationId == null) {
       await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
-        canAdmit: () => !isPaused && (canAdmit?.call() ?? true));
+        canAdmit: admit);
     }
     final batchReplies = onlyOperationId == null
         ? await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
-            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+            canAdmit: admit,
           )
         : <String, Object>{};
     if (batchReplies.isNotEmpty)
@@ -3282,8 +3295,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       onlyOperationId: onlyOperationId,
       respectBackoff: onlyOperationId == null,
       diagnoseUnclassified: _manualSync,
+      parallelAdmission: independent,
       onActivity: _recordActivity,
-      canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+      canAdmit: admit,
       send: (c, id, op, data) async {},
       prepareVersioned: (ref, item) =>
           WindowsFirebaseRemote.prepareQueuedRecord(
@@ -3296,6 +3310,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // Refill only after this bounded batch has been consumed. Dedicated
         // parent/file/delete paths retain the original serial admission rules.
         if (onlyOperationId == null &&
+            !independent(item) &&
             batchReplies.isEmpty &&
             WindowsFirebaseRemote.recordWriteBatchSupported &&
             item['operation'] == 'set' &&
@@ -3308,7 +3323,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }.contains(item['collection'])) {
           final next = await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
-            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+            canAdmit: admit,
           );
           if (next.isNotEmpty) {
             batchReplies.addAll(next);
@@ -3324,11 +3339,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             : queuedAt is num
             ? queuedAt.toInt()
             : null;
-        if (queuedMillis != null)
-          metrics['lastQueueWaitMillis'] =
-              (DateTime.now().millisecondsSinceEpoch - queuedMillis)
-                  .clamp(0, 1 << 53)
-                  .toInt();
+        final queueWait = queuedMillis == null ? null :
+            (DateTime.now().millisecondsSinceEpoch - queuedMillis)
+                .clamp(0, 1 << 53).toInt();
+        if (queueWait != null) metrics['lastQueueWaitMillis'] = queueWait;
         final origin = FirebaseFirestore.instance.activeProfileId;
         final school = _activeSchoolSyncId;
         final watch = Stopwatch()..start();
@@ -3347,8 +3361,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // Consuming an already-verified batch receipt is not another cloud RTT.
         if (batched == null)
           _sample('cloudAckMicros', watch.elapsedMicroseconds);
-        if (queuedMillis != null)
-          _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
+        if (queueWait != null) _sample('queueWaitMillis', queueWait);
         final clientTiming = reply['clientSyncTiming'];
         if (clientTiming is Map && clientTiming['version'] == 1) {
           for (final phase in ['preparationMicros', 'requestMicros', 'receiptProcessingMicros']) {
