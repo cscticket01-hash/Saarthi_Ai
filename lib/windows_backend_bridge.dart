@@ -53,6 +53,54 @@ bool samePendingDocumentGeneration(
   current['syncState']!='conflict' &&
   current['syncState']!='needsAttention';
 
+/// Bounded concurrency is only for already durable, standalone student
+/// scans with independent owners. Fee receipts, marksheets, ID publication,
+/// deletes, replacements and unfinished parent identities retain their
+/// established serialized provider + local CAS owners.
+bool canParallelStageOriginalScan(
+  Map row, String school, Iterable<Map<String,dynamic>> pendingRecords, {
+  required bool documentStageSupported,
+}) {
+  if(!documentStageSupported ||
+     row['schoolId']!=school ||
+     row['syncState']!='Pending' && row['syncState']!='retry' ||
+     row['deleted']!=false ||
+     row['atomicBundleId']!=null ||
+     row['priorDeletion']!=null ||
+     row['priorCloudWrite']!=null ||
+     row['parentDeletionOperationId']!=null ||
+     row['scanQuotaVersion']!=1 ||
+     row['baseCloudRevision']!='' ||
+     row['baseCloudUploadedAt']!=null ||
+     row['cloudTicketId']!=null ||
+     row['documentKind']=='feeReceipt' ||
+     row['documentKind']=='marksheet' ||
+     row['documentKind']=='idCard' ||
+     row['ownerRole']!='student' ||
+     row['studentId'] is! String || (row['studentId'] as String).isEmpty ||
+     row['personId'] is! String || (row['personId'] as String).isEmpty ||
+     row['documentRevision'] is! String ||
+     !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['documentRevision']) ||
+     row['localPath'] is! String || (row['localPath'] as String).isEmpty ||
+     row['contentHash'] is! String ||
+     !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash']))
+    return false;
+  for(final parent in pendingRecords) {
+    if(parent['schoolId']!=school || parent['atomicBundleId']!=null ||
+       {'school_config','school_settings'}.contains(parent['collection']))
+      return false;
+    if({'students_directory','teachers_directory'}.contains(parent['collection']) &&
+       parent['documentId']==row['studentId'])
+      return false;
+    if(parent['collection']=='fee_payments' &&
+       parent['data'] is Map &&
+       (parent['data'] as Map)['studentId']==row['studentId'] &&
+       parent['atomicBundleId']!=null)
+      return false;
+  }
+  return true;
+}
+
 class WindowsBackendBridge {
   /// The exam editor is available even before a school connects its backend.
   /// Uses durable school-scoped storage and never labels a local save as cloud ACK.
