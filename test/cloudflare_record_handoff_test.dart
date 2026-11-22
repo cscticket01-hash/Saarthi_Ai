@@ -92,6 +92,70 @@ void main() {
     expect((await ref.get()).exists,false);
   });
 
+  test('staged predecessor settles without deleting a newer local edit', () async {
+    final record=db.collection('school_calendar').doc('ordered-calendar');
+    await record.set({'title':'Original'});
+    final initial=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=initial.data(), ticket=exactTicket(original);
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'f').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':'ordered-calendar','operation':'write',
+      'originalOperationId':original['operationId'],'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    await db.recordOutboxCloudHandoff(initial.reference,original,ticketId:ticket);
+    await record.set({'title':'Newer'});
+    final newer=(await initial.reference.get()).data()!;
+    expect(newer['operationId'],isNot(original['operationId']));
+    expect(newer['priorCloudWrite']['operationId'],original['operationId']);
+    var sends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(_) async {sends++;return 'unexpected';});
+    expect(sends,0);
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'drive-ordered-revision',
+        'record':{'schoolId':school,'id':'ordered-calendar',
+          '_syncOperationId':original['operationId'],'_syncRevision':'drive-ordered-revision'}};
+    });
+    final retained=(await initial.reference.get()).data()!;
+    expect(retained['operationId'],newer['operationId']);
+    expect(retained['priorCloudWrite'],isNull);
+    expect(retained['baseCloudRevision'],'drive-ordered-revision');
+    expect((await record.get()).data()!['title'],'Newer');
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(item) async {
+        sends++;
+        expect(item['operationId'],newer['operationId']);
+        expect(item['baseCloudRevision'],'drive-ordered-revision');
+        return 'drive-newer-revision';
+      });
+    expect(sends,1);
+    expect((await initial.reference.get()).exists,false);
+  });
+
+  test('local save during in-flight record handoff preserves newer owner', () async {
+    final record=db.collection('school_calendar').doc('inflight-calendar');
+    await record.set({'title':'Original'});
+    final initial=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=initial.data(), ticket=exactTicket(original);
+    await record.set({'title':'Newer'});
+    final newer=(await initial.reference.get()).data()!;
+    expect(await db.recordOutboxCloudHandoff(initial.reference,original,ticketId:ticket),true);
+    final retained=(await initial.reference.get()).data()!;
+    expect(retained['operationId'],newer['operationId']);
+    expect(retained['priorCloudWrite']['operationId'],original['operationId']);
+    expect(retained['syncState'],'pending');
+    expect((await record.get()).data()!['title'],'Newer');
+  });
+
   test('restart journal cannot grant ownership for foreign ticket or operation', () {
     final row={'schoolId':school,'collection':'school_calendar',
       'documentId':'event-1','operation':'set','operationId':'restart-operation-002',
