@@ -15,6 +15,8 @@ class WindowsDriveDeliveryQueue {
   static bool _busy = false;
   static String _orphanScanScope = '';
   static int _nextOrphanScanAt = 0;
+  static String _orphanCursorScope = '';
+  static String? _orphanCursorKey;
   static Future<void> _edgeWriteTail = Future<void>.value();
   static void _scope(String school, String profile) {
     final db = FirebaseFirestore.instance;
@@ -317,6 +319,20 @@ class WindowsDriveDeliveryQueue {
       }
     }
     for(final row in documentRows)collect(row.data(),id:row.id);
+    // Rotate the bounded status-probe window. Otherwise three broken tickets
+    // at the beginning could permanently starve a later healthy original.
+    final cursorScope='$profile/$school';
+    if(_orphanCursorScope!=cursorScope) {
+      _orphanCursorScope=cursorScope;
+      _orphanCursorKey=null;
+    }
+    final index=originals.indexWhere((binding)=>
+        "${binding['lane']}/${binding['ticketId']}"==_orphanCursorKey);
+    if(index>=0 && index+1<originals.length) {
+      final head=originals.sublist(0,index+1);
+      originals.removeRange(0,index+1);
+      originals.addAll(head);
+    }
     final seen=<String>{};
     var repaired=false,reads=0;
     for(final binding in originals){
@@ -332,6 +348,7 @@ class WindowsDriveDeliveryQueue {
             j['lane']==lane && j['state']!='completed';
       }))continue;
       reads++;
+      _orphanCursorKey='$lane/$id';
       try {
         final proof=await call('managed/cloudflare/operation',{'lane':lane,'id':id});
         _scope(school,profile);
