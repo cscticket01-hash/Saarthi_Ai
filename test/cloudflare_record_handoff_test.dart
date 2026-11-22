@@ -482,6 +482,43 @@ void main() {
     expect(eligible({...row,'requireCanonicalDeleteReceipt':true}),false);
   });
 
+  test('standalone expense delete stops at Cloudflare ACK until both providers verify', () {
+    const op='expense-delete-original-000001',id='expense-delete-item';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_expenses',
+      'documentId':id,'operation':'delete','operationId':op,
+      'baseCloudRevision':'verified-expense-base-001'};
+    expect(eligibleForStagedDelete(original,school,edgeDeliverySupported:true),true);
+    final ticket=exactTicket(original);
+    final accepted={...original,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'collection':'school_expenses',
+      'id':id,'action':'managed/records','operation':'delete',
+      'originalOperationId':op,'ticketId':ticket};
+    final tombstone={'schoolId':school,'id':id,'_syncDeleted':true,
+      '_syncRevision':'verified-expense-deletion-001','_syncOperationId':op,
+      '_syncErasePlan':{'complete':true,'files':[]}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'verified-expense-deletion-001',
+      'deleteEverywhereVersion':1,
+      'driveDeletionComplete':true,'firebaseDeletionComplete':true,
+      'record':tombstone};
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...tombstone,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(eligibleForStagedDelete({...original,'priorDeletion':original},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForStagedDelete({...original,'atomicBundleId':'financial-owner'},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForStagedDelete({...original,'baseCloudRevision':''},
+      school,edgeDeliverySupported:true),false);
+  });
+
   test('calendar delete requires exact complete provider tombstone proof', () async {
     const id='calendar-delete-2',op='delete-original-operation-02';
     final original=<String,dynamic>{
