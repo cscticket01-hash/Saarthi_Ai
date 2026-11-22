@@ -1111,7 +1111,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   if (incomingCount > 0 && inbound.isEmpty) const Text(
                     'Incoming work is not detailed in this snapshot; refresh to check its source.'),
                   for (final raw
-                      in (details['liveQueue'] as List? ?? items).take(8))
+                      in (details['liveQueue'] as List? ?? items).take(3 - activityEvents.length))
                     if (raw is Map)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1560,10 +1560,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       ? (details['items'] as List? ?? [])
                       : <dynamic>[];
                   final active = busy || engine.isSyncing || syncCommandRunning;
-                  return ListView(
-                    key: _overviewKey,
-                    padding: const EdgeInsets.all(16),
-                    children: [
+                  final overview = !showDiagnostics && !showHistory;
+                  const inset = 16.0;
+                  final pageChildren = <Widget>[
                       if (!showDiagnostics && !showHistory) ...[
                         Row(
                           children: [
@@ -2167,7 +2166,30 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           ],
                         ],
                       ],
-                    ],
+                  ];
+                  return ListView(
+                    key: _overviewKey,
+                    padding: const EdgeInsets.all(inset),
+                    physics: overview ? const NeverScrollableScrollPhysics() : null,
+                    children: overview
+                        ? [
+                            SizedBox(
+                              height: (constraints.maxHeight - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                              child: FittedBox(
+                                alignment: Alignment.topCenter,
+                                fit: BoxFit.scaleDown,
+                                child: SizedBox(
+                                  width: (constraints.maxWidth - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: pageChildren,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ]
+                        : pageChildren,
                   );
                 },
               ),
