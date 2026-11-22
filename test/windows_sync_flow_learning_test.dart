@@ -188,6 +188,44 @@ void main(){
       expect(eligible({...row,'fieldPatch':{...patch,'remove':['address']}}),false);
     }
   });
+  test('unrelated person and financial backlog cannot starve standalone expenses', () {
+    final expense={'schoolId':school,'collection':'school_expenses',
+      'documentId':'expense-a','operationId':'expense-operation-0001',
+      'operation':'set','syncState':'pending','baseCloudRevision':'',
+      'data':{'title':'Supplies'}};
+    final rows=<Map<String,dynamic>>[
+      expense,
+      {'schoolId':school,'collection':'students_directory',
+       'documentId':'student-a','operationId':'student-create-0001',
+       'operation':'set','syncState':'cloudAccepted'},
+      {'schoolId':school,'collection':'fee_payments',
+       'documentId':'fee-a','operationId':'fee-operation-00001',
+       'operation':'set','syncState':'pending'},
+      {'schoolId':school,'collection':'documents',
+       'documentId':'file-a','operationId':'document-operation-1',
+       'operation':'set','syncState':'pending'},
+    ];
+    expect(canStageExpensePastUnrelatedOwners(expense,rows,school),true);
+    expect(canStageExpensePastUnrelatedOwners(expense,[
+      ...rows,{'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+       'collection':'school_notices','operation':'set'},
+    ],school),false);
+    expect(canStageExpensePastUnrelatedOwners(expense,[
+      ...rows,{'schoolId':school,'collection':'fee_payments',
+       'atomicBundleId':'reserved-transaction','operation':'set'},
+    ],school),false);
+    expect(canStageExpensePastUnrelatedOwners(expense,[
+      ...rows,{'schoolId':school,'collection':'students_directory',
+       'operation':'delete'},
+    ],school),false);
+    expect(canStageExpensePastUnrelatedOwners(expense,[
+      ...rows,{'schoolId':school,'collection':'school_expenses',
+       'documentId':'expense-a','operationId':'other-expense-op','operation':'set'},
+    ],school),false);
+    expect(canStageExpensePastUnrelatedOwners(
+      {...expense,'schoolId':'foreign'},rows,school),false);
+  });
+
   test('bounded admission drains in-flight records before admitting another window',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
