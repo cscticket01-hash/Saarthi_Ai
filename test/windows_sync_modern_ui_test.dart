@@ -86,6 +86,16 @@ void main() {
         matching: find.text('Needs Attention')), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Live Queue Activity'), findsOneWidget);
+      // Approved dashboard: three top summary cards, three vertical flow stages.
+      for (final label in ['Current Upload', 'Last Synced', 'System Health']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text("Today's Sync"), findsNothing);
+      for (final label in ['Local Save', 'School Server ACK', 'Google Drive']) {
+        expect(find.descendant(of: find.byType(WindowsSyncFlow),
+          matching: find.text(label)), findsOneWidget);
+      }
+      expect(find.text('Server ACK'), findsNothing);
       final viewport = find.byType(Scrollable).first;
       expect(tester.state<ScrollableState>(viewport).position.maxScrollExtent, 0);
       expect(find.text('Pending Uploads'), findsNothing);
