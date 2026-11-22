@@ -34,6 +34,92 @@ import 'windows_disaster_rehearsal.dart';
 import 'windows_binary_downloads.dart';
 import 'windows_clean_install_entry.dart';
 
+/// The overview shows only the latest, recent same-school verified event.
+/// History stays durable and is never deleted when the five-second notice hides.
+class _RecentVerifiedSyncActivity extends StatefulWidget {
+  const _RecentVerifiedSyncActivity({
+    required this.event,
+    required this.buildEvent,
+  });
+
+  final Map<String, dynamic>? event;
+  final Widget Function(Map<String, dynamic>) buildEvent;
+
+  @override
+  State<_RecentVerifiedSyncActivity> createState() =>
+      _RecentVerifiedSyncActivityState();
+}
+
+class _RecentVerifiedSyncActivityState
+    extends State<_RecentVerifiedSyncActivity> {
+  static const _visibility = Duration(seconds: 5);
+  Timer? _expiry;
+  String? _observedEventId;
+  Map<String, dynamic>? _visibleEvent;
+
+  String? _identity(Map<String, dynamic>? event) => event == null
+      ? null
+      : [
+          event['schoolId'],
+          event['at'],
+          event['operationId'],
+          event['collection'],
+          event['documentId'],
+        ].join('|');
+
+  void _observe() {
+    final event = widget.event;
+    final identity = _identity(event);
+    if (_observedEventId == identity) return;
+    _observedEventId = identity;
+    _expiry?.cancel();
+    _expiry = null;
+    _visibleEvent = null;
+    final at = event?['at'];
+    if (at is! int) return;
+
+    // Do not replay historical results on reopening or refreshing the page.
+    final elapsed = DateTime.now().millisecondsSinceEpoch - at;
+    if (elapsed < 0 || elapsed >= _visibility.inMilliseconds) return;
+    _visibleEvent = Map<String, dynamic>.from(event!);
+    _expiry = Timer(
+      Duration(milliseconds: _visibility.inMilliseconds - elapsed),
+      () {
+        if (mounted) setState(() => _visibleEvent = null);
+      },
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _observe();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecentVerifiedSyncActivity oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _observe();
+  }
+
+  @override
+  void dispose() {
+    _expiry?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visibleEvent;
+    return visible == null
+        ? const SizedBox.shrink()
+        : KeyedSubtree(
+            key: const ValueKey('recent-verified-sync'),
+            child: widget.buildEvent(visible),
+          );
+  }
+}
+
 /// Evidence-driven own-school controls. No guessed health, ACKs or conflict repair.
 class WindowsSyncControlCenter extends StatefulWidget {
   const WindowsSyncControlCenter({
@@ -999,12 +1085,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final lastSync = details['lastVerifiedTransferAt'];
     final today = details['todayVerifiedReceipts'];
     final activeSchool = db.activeProfileIdentity['schoolSyncId'];
+    final nowMillis = DateTime.now().millisecondsSinceEpoch;
     final activityEvents = (details['activity'] as List? ?? const [])
         .whereType<Map>().toList().reversed
         .where((row) => activeSchool is String &&
             activeSchool.isNotEmpty && row['schoolId'] == activeSchool &&
-            row['stage'] == 'verified')
-        .take(3);
+            row['stage'] == 'verified' && row['at'] is int &&
+            (row['at'] as int) <= nowMillis &&
+            nowMillis - (row['at'] as int) < 5000)
+        .take(1).toList();
     final retryCount = rows.where((row) => row['syncState'] == 'retry' ||
         row['state'] == 'retry' || row['retryAtMillis'] is int &&
         (row['retryAtMillis'] as int) > DateTime.now().millisecondsSinceEpoch).length;
@@ -1093,8 +1182,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  for (final event in activityEvents)
-                    _activityRow(Map<String, dynamic>.from(event), active),
+                  _RecentVerifiedSyncActivity(
+                    event: activityEvents.isEmpty
+                        ? null
+                        : Map<String, dynamic>.from(activityEvents.first),
+                    buildEvent: (event) => _activityRow(event, active),
+                  ),
                   if ((details['liveQueue'] as List? ?? items).isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),

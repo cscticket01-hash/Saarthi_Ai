@@ -112,6 +112,68 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('only latest verified sync shows for five seconds, never replays, and remains in history', (tester) async {
+    tester.view.physicalSize = const Size(1440, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(home: page()));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('recent-verified-sync')), findsOneWidget);
+    expect(find.text('Verified sync'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 6));
+    expect(find.byKey(const ValueKey('recent-verified-sync')), findsNothing);
+    expect(find.text('Verified sync'), findsNothing);
+
+    // A refresh must not replay the previous successful event.
+    engine.details.value = {...engine.details.value};
+    await tester.pump();
+    expect(find.text('Verified sync'), findsNothing);
+
+    // A genuinely new, same-school verified result replaces the hidden one.
+    engine.details.value = {
+      ...engine.details.value,
+      'activity': [
+        ...(engine.details.value['activity'] as List? ?? const []),
+        {
+          'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'stage': 'verified',
+          'collection': 'teachers_directory',
+          'documentId': 'teacher-two',
+          'at': DateTime.now().millisecondsSinceEpoch,
+        },
+      ],
+    };
+    await tester.pump();
+    expect(find.byKey(const ValueKey('recent-verified-sync')), findsOneWidget);
+    expect(find.text('Verified sync'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 6));
+    expect(find.text('Verified sync'), findsNothing);
+
+    // Hiding the transient notice must not delete durable history.
+    await tester.tap(find.text('View full sync history').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('Verified sync'), findsNWidgets(2));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('old verified events are never shown again on opening the overview', (tester) async {
+    engine.details.value = {
+      ...engine.details.value,
+      'activity': [{
+        'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'stage': 'verified',
+        'at': DateTime.now().subtract(const Duration(minutes: 1)).millisecondsSinceEpoch,
+      }],
+    };
+    await tester.pumpWidget(MaterialApp(home: page()));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('recent-verified-sync')), findsNothing);
+    expect(find.text('Verified sync'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('zero uploads and one cloud hint show separate honest queue states', (tester) async {
     engine.details.value = {
       'pending':0,
