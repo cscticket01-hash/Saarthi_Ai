@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import '../windows_sync_evidence.dart';
 
 /// Offset ownership is the authenticated Script's durable provider session.
 /// Reopening the existing queue with the same key discovers the committed prefix.
@@ -63,30 +64,47 @@ Future<Map<String, dynamic>> uploadManagedChunks({
     }
     return out;
   }
-  final first = await request({...metadata, 'operation': 'begin'});
-  final alreadyAccepted = cloudAccepted(first);
-  if (alreadyAccepted != null) return alreadyAccepted;
-  var result = verify(first);
-  // 20 MiB / 512 KiB plus a bounded allowance for provider partial progress.
-  for (var step = 0; step < 160 && result['committed'] != true; step++) {
-    final offset = result['offset'] as int;
-    final end = (offset + 512 * 1024).clamp(0, bytes.length).toInt();
-    final chunk = Uint8List.sublistView(bytes, offset, end);
-    final reply = await request({...metadata, 'operation': 'part',
-      'offset': offset, 'base64': base64Encode(chunk),
-      'chunkSha256': sha256.convert(chunk).toString(),
-    });
-    final completedCloudflare = cloudAccepted(reply);
-    if (completedCloudflare != null) return completedCloudflare;
-    final next = verify(reply);
-    if (next['committed'] != true && next['offset'] <= offset) {
-      throw TimeoutException('School upload has not advanced; retain the same upload key.');
+  final tracked = acceptDurableCloudflareHandoff;
+  final transfer = Object();
+  void report(Map<String, dynamic> receipt) {
+    if (tracked && receipt['committed'] == false) {
+      WindowsSyncEvidence.reportUpload(
+        transfer, schoolId, receipt['offset'] as int, bytes.length,
+      );
     }
-    result = next;
   }
-  if (result['committed'] != true) {
-    throw TimeoutException('School upload needs another owner attempt; pending retained.');
+
+  try {
+    final first = await request({...metadata, 'operation': 'begin'});
+    final alreadyAccepted = cloudAccepted(first);
+    if (alreadyAccepted != null) return alreadyAccepted;
+    var result = verify(first);
+    report(result);
+    // 20 MiB / 512 KiB plus a bounded allowance for provider partial progress.
+    for (var step = 0; step < 160 && result['committed'] != true; step++) {
+      final offset = result['offset'] as int;
+      final end = (offset + 512 * 1024).clamp(0, bytes.length).toInt();
+      final chunk = Uint8List.sublistView(bytes, offset, end);
+      final reply = await request({...metadata, 'operation': 'part',
+        'offset': offset, 'base64': base64Encode(chunk),
+        'chunkSha256': sha256.convert(chunk).toString(),
+      });
+      final completedCloudflare = cloudAccepted(reply);
+      if (completedCloudflare != null) return completedCloudflare;
+      final next = verify(reply);
+      if (next['committed'] != true && next['offset'] <= offset) {
+        throw TimeoutException('School upload has not advanced; retain the same upload key.');
+      }
+      result = next;
+      report(result);
+    }
+    if (result['committed'] != true) {
+      throw TimeoutException('School upload needs another owner attempt; pending retained.');
+    }
+    return {'fileId': result['fileId'],
+      'fileUrl': 'https://drive.google.com/file/d/${result['fileId']}/view'};
+  } finally {
+    if (tracked) WindowsSyncEvidence.endUpload(transfer);
   }
-  return {'fileId': result['fileId'],
-    'fileUrl': 'https://drive.google.com/file/d/${result['fileId']}/view'};
+
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:saarthi_ai/windows_sync_evidence.dart';
 import 'package:saarthi_ai/windows_connect/managed_resumable_upload.dart';
 
 void main() {
@@ -95,6 +96,25 @@ void main() {
       await expectLater(uploadManagedChunks(schoolId:school,uploadKey:'original-key',name:'file.pdf',mime:'application/pdf',bytes:bytes,request:(_)async=>{...reply(0),...changed}),throwsStateError);
     }
   });
+  test('dashboard uses verified partial offsets and clears them on error', () async {
+    await expectLater(uploadManagedChunks(
+      schoolId: school,
+      uploadKey: 'original-key',
+      name: 'file.pdf',
+      mime: 'application/pdf',
+      bytes: bytes,
+      acceptDurableCloudflareHandoff: true,
+      request: (body) async {
+        if (body['operation'] == 'begin') return reply(123);
+        expect(WindowsSyncEvidence.measuredUpload(school),
+            (offset: 123, total: bytes.length));
+        expect(WindowsSyncEvidence.measuredUpload('another-school'), isNull);
+        throw StateError('Interrupted');
+      },
+    ), throwsStateError);
+    expect(WindowsSyncEvidence.measuredUpload(school), isNull);
+  });
+
   test('no-progress provider response stops this attempt without replay loop', () async {
     var sends=0;
     await expectLater(uploadManagedChunks(schoolId:school,uploadKey:'original-key',name:'file.pdf',mime:'application/pdf',bytes:bytes,request:(_)async{ sends++;return reply(0);}),throwsA(isA<Exception>()));

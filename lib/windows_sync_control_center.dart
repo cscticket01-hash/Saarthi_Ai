@@ -1051,6 +1051,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     cloud:checking?'Checking cloud changes':transferActive?'Uploading · verifying':'Primary sync',
                     serverAck:ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
                     drive:hasStaged?'$staged staged · Google Drive pending':'Automatic server-side backup',
+                    uploadProgress: engine.isPaused ? null : WindowsSyncEvidence.measuredUpload(
+                      db.activeProfileIdentity['schoolSyncId']?.toString() ?? '',
+                    ),
                     pending:uploadCount,
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
@@ -1182,6 +1185,38 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         )),
       ],
     );
+  }
+
+  Future<void> _chooseAutoSyncInterval() async {
+    final profile = db.activeProfileId;
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Auto Sync (Interval)'),
+        children: [
+          for (final minutes in WindowsSyncEngine.autoSyncIntervals)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, minutes),
+              child: Row(children: [
+                Icon(minutes == engine.autoSyncIntervalMinutes
+                  ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                const SizedBox(width: 12),
+                Text(switch (minutes) {
+                  0 => 'Off',
+                  60 => 'Every 1 Hour',
+                  _ => 'Every $minutes Minutes',
+                }),
+              ]),
+            ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+            child: Text('Controls periodic cloud checks. Saves still sync automatically.'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null || db.activeProfileId != profile) return;
+    await _run(() => engine.setAutoSyncInterval(selected));
   }
 
   Future<void> _tool(Future<void> Function() action) async {
@@ -1422,7 +1457,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         title: const Text('Sync Engine 4.0 — Live Sync'),
         actions: [
           AnimatedBuilder(
-            animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
+            animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active,WindowsSyncEvidence.uploads]),
             builder: (context, _) { WindowsAppearance.watch(context); return  Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: FilledButton.icon(
@@ -1464,6 +1499,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               } else if (choice == -2) {
                 Navigator.of(context).push(MaterialPageRoute<void>(
                   builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return const WindowsRecycleBin(); }));
+              } else if (choice == -3) {
+                unawaited(_chooseAutoSyncInterval());
               } else if (choice == 0) {
                 _run(engine.resumeAutomaticSync);
               } else {
@@ -1477,6 +1514,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               PopupMenuItem(value:30,child:Text('30 minutes')),
               PopupMenuItem(value:60,child:Text('1 hour')),
               PopupMenuDivider(),
+              PopupMenuItem(value:-3,child:Text('Auto Sync (Interval)')),
               PopupMenuItem(value:-1,child:Text('Troubleshoot')),
               PopupMenuItem(value:-2,child:Text('Recycle Bin')),
             ],
@@ -1489,7 +1527,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           children: [
             Expanded(
               child: AnimatedBuilder(
-                animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
+                animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active,WindowsSyncEvidence.uploads]),
                 builder: (context, _) {WindowsAppearance.watch(context);
                   final details = engine.details.value;
                   final ownSchool = db.activeProfileId == origin;
