@@ -945,7 +945,8 @@ class WindowsPendingSchoolSync {
           sendVersioned != null && onlyQueueId == null &&
           onlyOperationId == null &&
           (!dependentBarrier ||
-            canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school as String) ||
+            (school is String &&
+             canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school)) ||
             (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
              !independentExistingPersonPatch(row.data()))) &&
           (parallelAdmission?.call(row.data()) ?? false);
