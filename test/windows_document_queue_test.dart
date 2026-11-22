@@ -70,6 +70,39 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('only exact same-school, still-pending document generation may be uploaded', () {
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':'document-generation-001',
+      'localPath':'/synthetic/owner-original.pdf',
+      'contentHash':List.filled(64,'a').join(),
+      'deleted':false,'parentDeletionOperationId':null,
+      'syncState':'Pending',
+    };
+    bool eligible(Map current)=>samePendingDocumentGeneration(original,current,school);
+    expect(eligible({...original}),true);
+    expect(eligible({...original,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}),false);
+    expect(eligible({...original,'documentRevision':'document-generation-002'}),false);
+    expect(eligible({...original,'localPath':'/synthetic/replacement.pdf'}),false);
+    expect(eligible({...original,'contentHash':List.filled(64,'b').join()}),false);
+    expect(eligible({...original,'deleted':true}),false);
+    expect(eligible({...original,'parentDeletionOperationId':'parent-delete-op'}),false);
+    expect(eligible({...original,'syncState':'cloudAccepted'}),false);
+    expect(eligible({...original,'syncState':'needsAttention'}),false);
+    expect(eligible({...original,'syncState':'conflict'}),false);
+  });
+  test('foreign document outbox blocks before any upload or receipt', () async {
+    const id='foreign-document-pending';
+    await db.collection('_windows_document_outbox').doc(id).set({
+      'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'documentRevision':'document-operation-001',
+      'syncState':'cloudAccepted','contentHash':List.filled(64,'a').join(),
+    });
+    var sends=0;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(
+      send:(_)async{sends++;return {'success':true};}),throwsStateError);
+    expect(sends,0);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+  });
   test('actual bundle absent, existing and replay tombstones settle only matching queued deletions', () async {
     final cases=jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
     for(final c in cases){
