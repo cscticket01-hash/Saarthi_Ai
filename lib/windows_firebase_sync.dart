@@ -638,6 +638,7 @@ class WindowsFirebaseRemote {
           }.contains(item['collection']) ||
           (edgeDeliverySupported && item['collection'] == 'school_notices') ||
           item['priorDeletion'] != null ||
+          item['priorCloudWrite'] != null ||
           item['data'] is! Map ||
           item['operationId'] is! String ||
           (item['retryAtMillis'] as num? ?? 0) >
