@@ -830,6 +830,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         row['cloudTicketId'] is String &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
         (row['cloudTicketLane']=='records' &&
+         (eligibleForRecordHandoff(row,school,edgeDeliverySupported:true) ||
+          eligibleForStagedDelete(row,school,edgeDeliverySupported:true)) &&
          exactStagedRecordTicket(row,school)==row['cloudTicketId'] ||
          // Original photo identity was revalidated by the serialized SQLite
          // owner before the original record outbox became cloudAccepted.
@@ -846,22 +848,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
            ]))).toString(),
          ]))).toString());
 
-  bool _hasExactCloudflareDocumentHandoff(Map<String,dynamic> row, String school) {
-      if (row['syncState'] != 'cloudAccepted' ||
-          row['schoolId'] != school ||
-          row['documentRevision'] is! String ||
-          !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
-              .hasMatch(row['documentRevision']) ||
-          row['contentHash'] is! String ||
-          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash']) ||
-          row['cloudContentHash'] != row['contentHash'] ||
-          row['cloudTicketId'] is! String ||
-          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) ||
-          row['cloudTicketLane'] != 'file-${row['cloudTicketId']}' ||
-          row['deleted'] == true ||
-          row['atomicBundleId'] != null) return false;
-      return true;
-    }
+  bool _hasExactCloudflareDocumentHandoff(
+    Map<String,dynamic> row, String school, {required String queueId}) {
+    // The document queue normally omits collection/documentId: its durable
+    // reference ID is the immutable file ticket owner. Compare the complete
+    // original ticket, not merely a 64-character hash-shaped string.
+    return acceptedCloudflareTicketBinding(row,school,queueId:queueId)!=null;
+  }
 
   Future<void> refreshDetails() async {
     _pruneRepairHistory();
@@ -917,9 +910,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // separate Cloudflare owner. A school-scoped, exact staged ticket means
     // no more OUTGOING device upload; it does not mean Drive was verified.
     final cloudOwnedDocuments=documents.docs.where(
-      (d)=>_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId)).toList();
+      (d)=>_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId,queueId:d.id)).toList();
     final foregroundDocuments=documents.docs.where(
-      (d)=>!_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId)).toList();
+      (d)=>!_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId,queueId:d.id)).toList();
     final items = [
       ...foregroundRecords,
       ...foregroundDocuments,
@@ -1287,7 +1280,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         }
         final cloudOwned = queue == 'records'
             ? _hasExactCloudflareHandoff(item, verifiedSchool)
-            : _hasExactCloudflareDocumentHandoff(item, verifiedSchool);
+            : _hasExactCloudflareDocumentHandoff(item, verifiedSchool,queueId:entry.id);
         if (cloudOwned) cloudOwnedCount++;
         final collection = item['collection'];
         final queuedAt = item['queuedAt'];
