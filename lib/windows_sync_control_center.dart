@@ -940,9 +940,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final rows = details['liveQueue'] is List
         ? (details['liveQueue'] as List).whereType<Map>().map((r) => Map<String,dynamic>.from(r)).toList()
         : <Map<String,dynamic>>[];
-    final lanes = details['lanes'] is Map ? details['lanes'] as Map
-        : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
-    final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
     final uploadCount = (details['pending'] as num? ?? 0).toInt();
     final incomingCount = (details['incomingPending'] as num? ?? 0).toInt();
     final inbound = details['incomingBreakdown'] is Map
@@ -1172,64 +1169,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           _syncSummary('Failed', '$failedCount', Icons.error_outline, Colors.redAccent),
           _syncSummary('Engine Status', phaseLabel, Icons.bolt, phaseColor),
         ]),
-        const SizedBox(height: 12),
-        _panelBox(const Text(
-          'After School Server ACK, Google Drive backup runs in the background.',
-        )),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 14,
-          runSpacing: 14,
-          children: [
-            InkWell(
-              onTap: () => _jump(_queueKey),
-              child: metric(
-                'Pending Uploads',
-                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
-              ),
-            ),
-            metric('Adaptive Sync', adaptiveSyncCard(details['batchTransport'] is Map
-                ? details['batchTransport'] as Map : null)),
-            if (other['pending'] is num && other['pending'] > 0)
-              metric('Restore & legacy work',
-                "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
-          ],
-        ),
-        const SizedBox(height: 10),
+
       ],
     );
-  }
-
-  Future<void> _chooseAutoSyncInterval() async {
-    final profile = db.activeProfileId;
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('Auto Sync (Interval)'),
-        children: [
-          for (final minutes in WindowsSyncEngine.autoSyncIntervals)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, minutes),
-              child: Row(children: [
-                Icon(minutes == engine.autoSyncIntervalMinutes
-                  ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                const SizedBox(width: 12),
-                Text(switch (minutes) {
-                  0 => 'Off',
-                  60 => 'Every 1 Hour',
-                  _ => 'Every $minutes Minutes',
-                }),
-              ]),
-            ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
-            child: Text('Controls periodic cloud checks. Saves still sync automatically.'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || selected == null || db.activeProfileId != profile) return;
-    await _run(() => engine.setAutoSyncInterval(selected));
   }
 
   Future<void> _tool(Future<void> Function() action) async {
@@ -1517,31 +1459,69 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           ),
           PopupMenuButton<int>(
             tooltip: 'Sync options',
+            offset: const Offset(0, 8),
+            position: PopupMenuPosition.under,
             enabled: !busy && db.activeProfileId == origin,
             onSelected: (choice) {
               if (choice == -1) {
-                setState((){showDiagnostics=true;showHistory=false;showQueue=false;});
+                setState(() { showDiagnostics = true; showHistory = false; showQueue = false; });
               } else if (choice == -2) {
                 Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return const WindowsRecycleBin(); }));
-              } else if (choice == -3) {
-                unawaited(_chooseAutoSyncInterval());
+                  builder: (appearanceContext) {
+                    WindowsAppearance.watch(appearanceContext);
+                    return const WindowsRecycleBin();
+                  },
+                ));
+              } else if (choice >= 100) {
+                _run(() => engine.setAutoSyncInterval(choice - 100));
               } else if (choice == 0) {
                 _run(engine.resumeAutomaticSync);
               } else {
-                _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(minutes:choice)));
+                _run(() => (widget.pauseRequest ?? engine.pauseSync)(
+                  const Duration(minutes: 5),
+                ));
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem<int>(enabled:false,child:Text('Sync Pause')),
-              PopupMenuItem(value:0,child:Text('Off — resume auto sync')),
-              PopupMenuItem(value:5,child:Text('5 minutes')),
-              PopupMenuItem(value:30,child:Text('30 minutes')),
-              PopupMenuItem(value:60,child:Text('1 hour')),
-              PopupMenuDivider(),
-              PopupMenuItem(value:-3,child:Text('Auto Sync (Interval)')),
-              PopupMenuItem(value:-1,child:Text('Troubleshoot')),
-              PopupMenuItem(value:-2,child:Text('Recycle Bin')),
+            itemBuilder: (menuContext) => [
+              PopupMenuItem<int>(
+                enabled: false,
+                child: Row(children: [
+                  const Icon(Icons.pause),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Sync Pause')),
+                  Switch(
+                    value: engine.isPaused,
+                    onChanged: (paused) => Navigator.pop(menuContext, paused ? 1 : 0),
+                  ),
+                ]),
+              ),
+              PopupMenuItem<int>(
+                enabled: false,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: SubmenuButton(
+                  leadingIcon: const Icon(Icons.sync),
+                  menuChildren: [
+                    for (final minutes in WindowsSyncEngine.autoSyncIntervals)
+                      MenuItemButton(
+                        leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
+                            ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                        onPressed: () => Navigator.pop(menuContext, 100 + minutes),
+                        child: Text(switch (minutes) {
+                          0 => 'Off',
+                          60 => 'Every 1 Hour',
+                          _ => 'Every $minutes Minutes',
+                        }),
+                      ),
+                  ],
+                  child: const Text('Auto Sync (Interval)'),
+                ),
+              ),
+              const PopupMenuItem(value: -1, child: Row(children: [
+                Icon(Icons.build_outlined), SizedBox(width: 10), Text('Troubleshoot'),
+              ])),
+              const PopupMenuItem(value: -2, child: Row(children: [
+                Icon(Icons.delete_outline), SizedBox(width: 10), Text('Recycle Bin'),
+              ])),
             ],
           ),
           const SizedBox(width: 20),
@@ -1595,7 +1575,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           ),
                         ),
                       if (ownSchool) ...[
-                        if (showDiagnostics || showHistory || constraints.maxWidth < 1000) ...[
+                        if (showDiagnostics || showHistory) ...[
                           _navigation(active),
                           const SizedBox(height: 12),
                         ],
@@ -1650,11 +1630,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ],
                         if (!showDiagnostics && !showHistory) ...[
                           _hero(details, items, active),
-                          if (constraints.maxWidth >= 1000) ...[
-                            const SizedBox(height: 12),
-                            _navigation(active),
-                          ],
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 8),
                           if (engine.isPaused)
                             Text(
                               'Paused on this PC: ${engine.pausedUntil?.difference(DateTime.now()).inMinutes ?? 0} minutes remaining (until ${engine.pausedUntil?.toLocal()})${engine.isSyncing ? ' — finishing the accepted operation' : ''}',
