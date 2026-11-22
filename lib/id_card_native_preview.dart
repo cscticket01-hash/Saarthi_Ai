@@ -102,7 +102,7 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   Future<void> printCards(String qr) async {
     final template = widget.template;
     final ratio = template.printWidth * 300 / 25.4 / template.width;
-    final sides = both ? const ['front', 'back'] : const ['front'];
+    final sides = both && template.hasBack ? const ['front', 'back'] : const ['front'];
     final pages = <({Uint8List png, int width, int height})>[];
     for (final side in sides) {
       final boundary = printBoundaries[side]?.currentContext?.findRenderObject();
@@ -130,12 +130,12 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final data = IdCardEngine.normalizedInput(widget.template, widget.data);
     final qr = IdCardEngine.compactQr(widget.qr);
     final missing = widget.template.regions.where((r) => r.isRequired &&
-      (both || r.side == 'front') &&
+      ((both && widget.template.hasBack) || r.side == 'front') &&
       (r.kind == 'image' ? widget.images[r.key] == null :
         r.kind == 'qr' ? qr.isEmpty : (data[r.key]?.toString().trim().isEmpty ?? true)));
     return Scaffold(appBar: AppBar(title: const Text('ID Card • Native preview')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        SegmentedButton<bool>(segments: const [
+        if (widget.template.hasBack) SegmentedButton<bool>(segments: const [
           ButtonSegment(value: false, label: Text('Front only')),
           ButtonSegment(value: true, label: Text('Front + back')),
         ], selected: {both}, onSelectionChanged: busy ? null : (v) => setState(() => both = v.single)),
@@ -144,7 +144,7 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
         Column(children: [
           side('front', data, qr),
-          if (both) ...[const SizedBox(height: 12), side('back', data, qr)],
+          if (both && widget.template.hasBack) ...[const SizedBox(height: 12), side('back', data, qr)],
         ]),
         const SizedBox(height: 12),
         const Text('Native visual preview. PDF export uses the verified print renderer.'),

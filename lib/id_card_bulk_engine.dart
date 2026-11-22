@@ -207,6 +207,9 @@ class IdCardBulkPlan {
        _printHeightMm = template.printHeight,
        _templateJson = jsonEncode(_canonical(_serializeTemplate(template))),
        students = List.unmodifiable(students) {
+    if (!template.hasBack) {
+      throw const FormatException('Duplex bulk printing requires a front and back template.');
+    }
     if (students.isEmpty ||
         students.length > 500 ||
         !gapMm.isFinite ||

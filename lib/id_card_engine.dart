@@ -246,13 +246,12 @@ class IdCardEngine {
     );
     pdf.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat(2 * width + gap, height),
+        pageFormat: PdfPageFormat(template.hasBack ? 2 * width + gap : width, height),
         margin: pw.EdgeInsets.zero,
         build: (_) => pw.Row(
           children: [
             card('front'),
-            pw.SizedBox(width: gap),
-            card('back'),
+            if (template.hasBack) ...[pw.SizedBox(width: gap), card('back')],
           ],
         ),
       ),

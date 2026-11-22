@@ -68,4 +68,21 @@ void main() {
     expect(downloads, 0);
   });
 
+  testWidgets('a front-only manifest renders without a back-side selector', (tester) async {
+    final frontOnly = IdCardManifest.fromJson({
+      'id': 'test-front-only', 'version': 1, 'canvasWidth': 100, 'canvasHeight': 60,
+      'printWidthMm': 85.6, 'printHeightMm': 51.36,
+      'regions': [
+        {'key': 'name', 'side': 'front', 'kind': 'text',
+         'x': 2, 'y': 2, 'width': 90, 'height': 20, 'fontSize': 12},
+      ],
+    });
+    await tester.pumpWidget(MaterialApp(home: NativeIdCardPreview(
+      template: frontOnly, data: const {'name': 'Synthetic student'},
+    )));
+    expect(frontOnly.hasBack, isFalse);
+    expect(find.text('Synthetic student'), findsOneWidget);
+    expect(find.text('Front + back'), findsNothing);
+  });
+
 }

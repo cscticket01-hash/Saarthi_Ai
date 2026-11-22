@@ -89,12 +89,13 @@ class IdCardManifest {
         }
       }
     }
-    if (!regions.any((r) => r.side == 'front') ||
-        !regions.any((r) => r.side == 'back')) {
-      throw const FormatException('ID template must expose front and back.');
+    if (!regions.any((r) => r.side == 'front')) {
+      throw const FormatException('ID template must expose a front side.');
     }
   }
   final String id;
+  bool get hasBack => regions.any((region) => region.side == 'back');
+
   final double width, height, printWidth, printHeight;
   final List<IdCardRegion> regions;
 }
