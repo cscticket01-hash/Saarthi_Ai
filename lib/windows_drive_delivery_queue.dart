@@ -210,313 +210,346 @@ class WindowsDriveDeliveryQueue {
     try {
       final rows = (await db.collection(collection).get()).docs;
       _scope(school, profile);
-      final due =
-          rows.where((row) {
-            final item = row.data();
-            return item['schoolId'] == school &&
-                item['liveProtocol'] == 1 &&
-                item['state'] == 'pending' &&
-                (item['nextPollAt'] as num? ?? 0) <=
-                    now().millisecondsSinceEpoch;
-          }).toList()..sort(
-            (a, b) => (a.data()['nextPollAt'] as num? ?? 0).compareTo(
-              b.data()['nextPollAt'] as num? ?? 0,
-            ),
-          );
-      for (final row in due.take(10)) {
-        if (canAdmit?.call() == false) break;
-        _scope(school, profile);
-        final item = row.data();
-        if (item['operationId'] is! String ||
-            !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
-                .hasMatch(item['operationId'] as String)) {
-          throw StateError('Invalid retained Drive operation receipt.');
-        }
-        var values = <String, dynamic>{};
-        var quota = false;
-        try {
-          final proof = await call('managed/live/operationReceipt', {
-            'liveProtocol': 1,
-            'operationId': item['operationId'],
-          });
+      Future<void> pollLive() async {
+        final due =
+            rows.where((row) {
+              final item = row.data();
+              return item['schoolId'] == school &&
+                  item['liveProtocol'] == 1 && item['edgeDeliveryVersion'] != 1 &&
+                  item['state'] == 'pending' &&
+                  (item['nextPollAt'] as num? ?? 0) <=
+                      now().millisecondsSinceEpoch;
+            }).toList()..sort(
+              (a, b) => (a.data()['nextPollAt'] as num? ?? 0).compareTo(
+                b.data()['nextPollAt'] as num? ?? 0,
+              ),
+            );
+        for (final row in due.take(10)) {
+          if (canAdmit?.call() == false) break;
           _scope(school, profile);
-          final receipt = proof['receipt'];
-          if (proof['success'] != true ||
-              proof['liveProtocol'] != 1 ||
-              proof['schoolId'] != school ||
-              proof['operationId'] != item['operationId'] ||
-              proof['found'] != true ||
-              receipt is! Map ||
-              receipt['schoolId'] != school ||
-              receipt['operationId'] != item['operationId'] ||
-              receipt['recordRevision'] != item['recordRevision']) {
-            throw StateError('Unverified Drive operation status.');
+          final item = row.data();
+          if (item['operationId'] is! String ||
+              !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
+                  .hasMatch(item['operationId'] as String)) {
+            throw StateError('Invalid retained Drive operation receipt.');
           }
-          if (verifiedBackupReceipt(item, receipt)) {
-            values = {
-              'state': 'completed',
-              'completedAt': now().millisecondsSinceEpoch,
-              'nextPollAt': 0,
-              'failureCode': null,
-              'driveRevision': receipt['driveRevision'],
-            };
-          } else if (receipt['backupState'] == 'verified' ||
-              proof['deliveryState'] == 'review' ||
-              receipt['backupState'] == 'review') {
-            values = {
-              'state': 'needsAttention',
-              'failureCode': 'DRIVE_ACK_REVIEW_REQUIRED',
-            };
-          } else {
-            final retryAt = proof['retryAtMillis'];
-            values = {
-              'nextPollAt':
-                  retryAt is int &&
-                      retryAt > now().millisecondsSinceEpoch + 15000
-                  ? retryAt
-                  : now().millisecondsSinceEpoch + 15000,
-            };
-          }
-        } catch (error) {
-          _scope(school, profile);
-          final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
-          // Authentication/licence and transient status failures can recover.
-          // Only an invalid retained request or an authenticated review state
-          // requires review; a temporary403 never strands the receipt forever.
-          final review = error is CentralCloudException && error.status == 400;
-          quota = error is CentralCloudException && error.status == 429;
-          final backoff = (15000 * (1 << attempts.clamp(0, 8).toInt()))
-              .clamp(15000, 3600000)
-              .toInt();
-          final floor = error is CentralCloudException ? error.retryAfterMs : 0;
-          values = {
-            'state': review ? 'needsAttention' : 'pending',
-            'attempts': attempts,
-            'failureCode': review
-                ? 'DRIVE_DELIVERY_REVIEW_REQUIRED'
-                : 'DRIVE_DELIVERY_RETRY',
-            'nextPollAt':
-                now().millisecondsSinceEpoch +
-                (floor > backoff ? floor : backoff),
-          };
-        }
-        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-          () => row.reference.set(values, const SetOptions(merge: true)),
-        );
-        _scope(school, profile);
-        if (quota) break;
-      }
-      // Read-only status on the original, school-bound Cloudflare ticket.
-      // Never re-submit a mutation or clear the original business outbox.
-      final edgeDue = rows.where((row) {
-        final v = row.data();
-        return v['schoolId'] == school && v['edgeDeliveryVersion'] == 1 &&
-            v['state'] == 'pending' &&
-            (v['nextPollAt'] as num? ?? 0) <= now().millisecondsSinceEpoch;
-      }).toList()..sort((a,b) =>
-          (a.data()['nextPollAt'] as num? ?? 0)
-              .compareTo(b.data()['nextPollAt'] as num? ?? 0));
-      for (final row in edgeDue.take(3)) {
-        if (canAdmit?.call() == false) break;
-        _scope(school, profile);
-        final item = row.data(), id = item['ticketId'], lane = item['lane'];
-        if (id is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(id) ||
-            lane is! String ||
-            !(lane == 'records' || lane == 'file-$id')) continue;
-        Map<String,dynamic> values;
-        var quota = false;
-        try {
-          final proof = await call('managed/cloudflare/operation', {
-            'lane': lane, 'id': id,
-          });
-          _scope(school, profile);
-          if (proof['success'] != true || proof['schoolId'] != school ||
-              proof['cloudflareAccepted'] != true ||
-              !const ['pending', 'verified'].contains(proof['driveState'])) {
-            throw StateError('Unverified school Drive delivery progress.');
-          }
-          final ticket = proof['delivery'];
-          if (proof['driveState'] == 'pending' &&
-              (ticket is! Map || ticket['id'] != id || ticket['lane'] != lane)) {
-            throw StateError('Drive delivery ticket changed.');
-          }
-          values = {'nextPollAt': now().millisecondsSinceEpoch + 5000};
-          final progress = proof['driveProgress'];
-          if (lane == 'file-$id' && proof['driveState'] == 'pending' &&
-              progress is Map && progress['version'] == 1 &&
-              progress['acknowledgedBytes'] is int &&
-              progress['totalBytes'] is int &&
-              progress['totalBytes'] > 0 &&
-              progress['acknowledgedBytes'] >= 0 &&
-              progress['acknowledgedBytes'] < progress['totalBytes']) {
-            final old = item['driveProgress'];
-            if (old is! Map || old['totalBytes'] == progress['totalBytes'] &&
-                (old['acknowledgedBytes'] as num? ?? 0) <=
-                    progress['acknowledgedBytes']) {
-              values['driveProgress'] = Map<String,dynamic>.from(progress);
+          var values = <String, dynamic>{};
+          var quota = false;
+          try {
+            final proof = await call('managed/live/operationReceipt', {
+              'liveProtocol': 1,
+              'operationId': item['operationId'],
+            });
+            _scope(school, profile);
+            final receipt = proof['receipt'];
+            if (proof['success'] != true ||
+                proof['liveProtocol'] != 1 ||
+                proof['schoolId'] != school ||
+                proof['operationId'] != item['operationId'] ||
+                proof['found'] != true ||
+                receipt is! Map ||
+                receipt['schoolId'] != school ||
+                receipt['operationId'] != item['operationId'] ||
+                receipt['recordRevision'] != item['recordRevision']) {
+              throw StateError('Unverified Drive operation status.');
             }
+            if (verifiedBackupReceipt(item, receipt)) {
+              values = {
+                'state': 'completed',
+                'completedAt': now().millisecondsSinceEpoch,
+                'nextPollAt': 0,
+                'failureCode': null,
+                'driveRevision': receipt['driveRevision'],
+              };
+            } else if (receipt['backupState'] == 'verified' ||
+                proof['deliveryState'] == 'review' ||
+                receipt['backupState'] == 'review') {
+              values = {
+                'state': 'needsAttention',
+                'failureCode': 'DRIVE_ACK_REVIEW_REQUIRED',
+              };
+            } else {
+              final retryAt = proof['retryAtMillis'];
+              values = {
+                'nextPollAt':
+                    retryAt is int &&
+                        retryAt > now().millisecondsSinceEpoch + 15000
+                    ? retryAt
+                    : now().millisecondsSinceEpoch + 15000,
+              };
+            }
+          } catch (error) {
+            _scope(school, profile);
+            final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
+            // Authentication/licence and transient status failures can recover.
+            // Only an invalid retained request or an authenticated review state
+            // requires review; a temporary403 never strands the receipt forever.
+            final review = error is CentralCloudException && error.status == 400;
+            quota = error is CentralCloudException && error.status == 429;
+            final backoff = (15000 * (1 << attempts.clamp(0, 8).toInt()))
+                .clamp(15000, 3600000)
+                .toInt();
+            final floor = error is CentralCloudException ? error.retryAfterMs : 0;
+            values = {
+              'state': review ? 'needsAttention' : 'pending',
+              'attempts': attempts,
+              'failureCode': review
+                  ? 'DRIVE_DELIVERY_REVIEW_REQUIRED'
+                  : 'DRIVE_DELIVERY_RETRY',
+              'nextPollAt':
+                  now().millisecondsSinceEpoch +
+                  (floor > backoff ? floor : backoff),
+            };
           }
-          if (proof['driveState'] == 'verified') {
-            // The original staged mutation stays in durable local CAS outbox
-            // until this exact broker-owned ticket proves its final revision.
-            if (lane=='records'&&item['originalOperationId'] is String) {
-              final originals=(await db.collection('_windows_firebase_outbox').get()).docs
-                  .where((row)=>row.data()['operationId']==item['originalOperationId'] &&
-                      row.data()['schoolId']==school).toList();
-              _scope(school, profile);
-              if(originals.length==1) {
-                final original=originals.single.data();
-                // Journal persistence and original CAS marking are distinct
-                // durable writes. If the broker finishes unusually fast,
-                // retry the final receipt rather than lose that race or
-                // declare the local original completed.
-                if(original['syncState']!='cloudAccepted' &&
-                    original['cloudTicketId']==null &&
-                    original['operationId']==item['originalOperationId'] &&
-                    original['schoolId']==school)
-                  throw StateError('Original Cloudflare handoff CAS is not yet committed.');
-                if(original['syncState']=='cloudAccepted') {
-                  if(!verifiedStagedRecordFinal(original,item,proof,school))
-                    throw StateError('Canonical staged record revision unverified; original retained.');
-                  await db.acknowledgeOutbox(originals.single.reference,original,
-                      revision:proof['recordRevision']);
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+            () => row.reference.set(values, const SetOptions(merge: true)),
+          );
+          _scope(school, profile);
+          if (quota) break;
+        }
+      }
+      Future<void> pollEdge() async {
+        // Read-only status on the original, school-bound Cloudflare ticket.
+        // Never re-submit a mutation or clear the original business outbox.
+        final edgeDue = rows.where((row) {
+          final v = row.data();
+          return v['schoolId'] == school && v['edgeDeliveryVersion'] == 1 &&
+              v['state'] == 'pending' &&
+              (v['nextPollAt'] as num? ?? 0) <= now().millisecondsSinceEpoch;
+        }).toList()..sort((a,b) =>
+            (a.data()['nextPollAt'] as num? ?? 0)
+                .compareTo(b.data()['nextPollAt'] as num? ?? 0));
+        for (final row in edgeDue.take(3)) {
+          if (canAdmit?.call() == false) break;
+          _scope(school, profile);
+          final item = row.data(), id = item['ticketId'], lane = item['lane'];
+          if (id is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(id) ||
+              lane is! String ||
+              !(lane == 'records' || lane == 'file-$id')) continue;
+          Map<String,dynamic> values;
+          var quota = false;
+          try {
+            final proof = await call('managed/cloudflare/operation', {
+              'lane': lane, 'id': id,
+            });
+            _scope(school, profile);
+            if (proof['success'] != true || proof['schoolId'] != school ||
+                proof['cloudflareAccepted'] != true ||
+                !const ['pending', 'verified'].contains(proof['driveState'])) {
+              throw StateError('Unverified school Drive delivery progress.');
+            }
+            final ticket = proof['delivery'];
+            if (proof['driveState'] == 'pending' &&
+                (ticket is! Map || ticket['id'] != id || ticket['lane'] != lane)) {
+              throw StateError('Drive delivery ticket changed.');
+            }
+            final deliveryStatus = proof['deliveryStatus'];
+            final retryAt = deliveryStatus is Map ? deliveryStatus['retryAtMillis'] : null;
+            final earliest = now().millisecondsSinceEpoch + 5000;
+            values = {
+              'attempts': 0,
+              'failureCode': null,
+              'nextPollAt': retryAt is int && retryAt > earliest
+                  ? retryAt : earliest,
+            };
+            final progress = proof['driveProgress'];
+            if (lane == 'file-$id' && proof['driveState'] == 'pending' &&
+                progress is Map && progress['version'] == 1 &&
+                progress['acknowledgedBytes'] is int &&
+                progress['totalBytes'] is int &&
+                progress['totalBytes'] > 0 &&
+                progress['acknowledgedBytes'] >= 0 &&
+                progress['acknowledgedBytes'] < progress['totalBytes']) {
+              final old = item['driveProgress'];
+              if (old is! Map || old['totalBytes'] == progress['totalBytes'] &&
+                  (old['acknowledgedBytes'] as num? ?? 0) <=
+                      progress['acknowledgedBytes']) {
+                values['driveProgress'] = Map<String,dynamic>.from(progress);
+              }
+            }
+            if (proof['driveState'] == 'verified') {
+              // The original staged mutation stays in durable local CAS outbox
+              // until this exact broker-owned ticket proves its final revision.
+              if (lane=='records'&&item['originalOperationId'] is String) {
+                final originals=(await db.collection('_windows_firebase_outbox').get()).docs
+                    .where((row)=>row.data()['operationId']==item['originalOperationId'] &&
+                        row.data()['schoolId']==school).toList();
+                _scope(school, profile);
+                if(originals.length>1) {
+                  throw StateError('Multiple original record owners detected.');
+                }
+                if(originals.length==1) {
+                  final original=originals.single.data();
+                  // Journal persistence and original CAS marking are distinct
+                  // durable writes. If the broker finishes unusually fast,
+                  // retry the final receipt rather than lose that race or
+                  // declare the local original completed.
+                  if(original['syncState']!='cloudAccepted' &&
+                      original['cloudTicketId']==null &&
+                      original['operationId']==item['originalOperationId'] &&
+                      original['schoolId']==school)
+                    throw StateError('Original Cloudflare handoff CAS is not yet committed.');
+                  if(original['syncState']=='cloudAccepted') {
+                    if(!verifiedStagedRecordFinal(original,item,proof,school))
+                      throw StateError('Canonical staged record revision unverified; original retained.');
+                    await db.acknowledgeOutbox(originals.single.reference,original,
+                        revision:proof['recordRevision']);
+                    _scope(school, profile);
+                  }
+                }
+              }
+              if (lane == 'file-$id' &&
+                  (proof['committed'] != true ||
+                   proof['fileId'] is! String ||
+                   (proof['fileId'] as String).isEmpty)) {
+                throw StateError('Drive file completion unverified.');
+              }
+              if (lane == 'file-$id' &&
+                  item['action'] == 'managed/record/media/stage/resumable') {
+                final media=proof['mediaRecord'];
+                if (media is! Map ||
+                    media['collection'] != item['collection'] ||
+                    media['id'] != item['id'] ||
+                    media['operationId'] != item['originalOperationId'] ||
+                    media['fileId'] != proof['fileId'] ||
+                    media['fileSha256'] != proof['sha256'] ||
+                    media['recordRevision'] is! String ||
+                    (media['recordRevision'] as String).isEmpty) {
+                  throw StateError('Original photo record has no verified Google proof.');
+                }
+                final matches=(await db.collection('_windows_firebase_outbox').get())
+                    .docs.where((entry)=>
+                      entry.data()['operationId']==item['originalOperationId'] &&
+                      entry.data()['collection']==item['collection'] &&
+                      entry.data()['documentId']==item['id'] &&
+                      entry.data()['schoolId']==school).toList();
+                _scope(school, profile);
+                if(matches.length>1) {
+                  throw StateError('Multiple original photo record owners detected.');
+                }
+                if(matches.length==1) {
+                  final original=matches.single.data();
+                  if(original['syncState']!='cloudAccepted' &&
+                      original['cloudTicketId']==null) {
+                    throw StateError('Original portrait Cloudflare CAS not yet committed.');
+                  }
+                  if(!verifiedStagedPhotoRecordFinal(original,item,proof,school)) {
+                    throw StateError('Photo record Drive and original CAS proof mismatch.');
+                  }
+                  await db.acknowledgeOutbox(matches.single.reference,original,
+                    revision:media['recordRevision'] as String);
                   _scope(school, profile);
                 }
               }
-            }
-            if (lane == 'file-$id' &&
-                (proof['committed'] != true ||
-                 proof['fileId'] is! String ||
-                 (proof['fileId'] as String).isEmpty)) {
-              throw StateError('Drive file completion unverified.');
-            }
-            if (lane == 'file-$id' &&
-                item['action'] == 'managed/record/media/stage/resumable') {
-              final media=proof['mediaRecord'];
-              if (media is! Map ||
-                  media['collection'] != item['collection'] ||
-                  media['id'] != item['id'] ||
-                  media['operationId'] != item['originalOperationId'] ||
-                  media['fileId'] != proof['fileId'] ||
-                  media['fileSha256'] != proof['sha256'] ||
-                  media['recordRevision'] is! String ||
-                  (media['recordRevision'] as String).isEmpty) {
-                throw StateError('Original photo record has no verified Google proof.');
-              }
-              final matches=(await db.collection('_windows_firebase_outbox').get())
-                  .docs.where((entry)=>
-                    entry.data()['operationId']==item['originalOperationId'] &&
-                    entry.data()['collection']==item['collection'] &&
-                    entry.data()['documentId']==item['id'] &&
-                    entry.data()['schoolId']==school).toList();
-              _scope(school, profile);
-              if(matches.length>1) {
-                throw StateError('Multiple original photo record owners detected.');
-              }
-              if(matches.length==1) {
-                final original=matches.single.data();
-                if(original['syncState']!='cloudAccepted' &&
-                    original['cloudTicketId']==null) {
-                  throw StateError('Original portrait Cloudflare CAS not yet committed.');
+              if (lane == 'file-$id' &&
+                  item['action'] == 'managed/document/stage/resumable') {
+                final document = proof['documentRecord'];
+                final docId = item['id'], opId = item['originalOperationId'];
+                if (docId is! String || docId.isEmpty ||
+                    opId is! String ||
+                    document is! Map ||
+                    document['id'] != docId ||
+                    document['operationId'] != opId ||
+                    document['fileId'] != proof['fileId'] ||
+                    document['recordRevision'] is! String ||
+                    (document['recordRevision'] as String).isEmpty ||
+                    document['contentHash'] is! String ||
+                    !RegExp(r'^[a-f0-9]{64}$')
+                        .hasMatch(document['contentHash'] as String)) {
+                  throw StateError('Document metadata requires exact Google record proof.');
                 }
-                if(!verifiedStagedPhotoRecordFinal(original,item,proof,school)) {
-                  throw StateError('Photo record Drive and original CAS proof mismatch.');
-                }
-                await db.acknowledgeOutbox(matches.single.reference,original,
-                  revision:media['recordRevision'] as String);
+                final ref = db.collection('_windows_document_outbox').doc(docId);
+                final snapshot = await ref.get();
                 _scope(school, profile);
-              }
-            }
-            if (lane == 'file-$id' &&
-                item['action'] == 'managed/document/stage/resumable') {
-              final document = proof['documentRecord'];
-              final docId = item['id'], opId = item['originalOperationId'];
-              if (docId is! String || docId.isEmpty ||
-                  opId is! String ||
-                  document is! Map ||
-                  document['id'] != docId ||
-                  document['operationId'] != opId ||
-                  document['fileId'] != proof['fileId'] ||
-                  document['recordRevision'] is! String ||
-                  (document['recordRevision'] as String).isEmpty ||
-                  document['contentHash'] is! String ||
-                  !RegExp(r'^[a-f0-9]{64}$')
-                      .hasMatch(document['contentHash'] as String)) {
-                throw StateError('Document metadata requires exact Google record proof.');
-              }
-              final ref = db.collection('_windows_document_outbox').doc(docId);
-              final snapshot = await ref.get();
-              _scope(school, profile);
-              final original = snapshot.data();
-              if (original != null && original['schoolId'] == school &&
-                  original['documentRevision'] == opId) {
-                if (original['syncState'] != 'cloudAccepted' ||
-                    original['cloudTicketId'] != id ||
-                    original['cloudTicketLane'] != lane ||
-                    original['contentHash'] != document['contentHash'] ||
-                    original['cloudContentHash'] != document['contentHash']) {
-                  throw StateError('Original document handoff has not yet committed.');
+                final original = snapshot.data();
+                if (original != null && original['schoolId'] == school &&
+                    original['documentRevision'] == opId) {
+                  if (original['syncState'] != 'cloudAccepted' ||
+                      original['cloudTicketId'] != id ||
+                      original['cloudTicketLane'] != lane ||
+                      original['contentHash'] != document['contentHash'] ||
+                      original['cloudContentHash'] != document['contentHash']) {
+                    throw StateError('Original document handoff has not yet committed.');
+                  }
+                  final local = db.collection('_local_student_documents').doc(docId);
+                  final localSnapshot = await local.get();
+                  _scope(school, profile);
+                  final localRow = localSnapshot.data();
+                  if (localRow?['schoolId'] != school ||
+                      localRow?['documentRevision'] != opId ||
+                      localRow?['contentHash'] != document['contentHash']) {
+                    throw StateError('Document local generation changed; retain exact original.');
+                  }
+                  await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+                    () async {
+                      _scope(school, profile);
+                      final batch = db.batch();
+                      // Exact local generation compare-and-swap inside the
+                      // SQLite writer. A concurrent replacement must survive.
+                      batch.requireUnchanged(ref, original);
+                      batch.requireUnchanged(local, localRow);
+                      batch.set(local, {
+                        'syncState': 'Synced',
+                        'cloudFileUrl': proof['fileUrl'],
+                        'cloudRevision': opId,
+                        'cloudRecordRevision': document['recordRevision'],
+                        'cloudUploadedAt': localRow?['uploadedAt'],
+                      }, const SetOptions(merge: true));
+                      batch.delete(ref);
+                      await batch.commit();
+                    },
+                  );
+                  _scope(school, profile);
                 }
-                final local = db.collection('_local_student_documents').doc(docId);
-                final localSnapshot = await local.get();
-                _scope(school, profile);
-                final localRow = localSnapshot.data();
-                if (localRow?['schoolId'] != school ||
-                    localRow?['documentRevision'] != opId ||
-                    localRow?['contentHash'] != document['contentHash']) {
-                  throw StateError('Document local generation changed; retain exact original.');
-                }
-                await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-                  () async {
-                    _scope(school, profile);
-                    final batch = db.batch();
-                    // Exact local generation compare-and-swap inside the
-                    // SQLite writer. A concurrent replacement must survive.
-                    batch.requireUnchanged(ref, original);
-                    batch.requireUnchanged(local, localRow);
-                    batch.set(local, {
-                      'syncState': 'Synced',
-                      'cloudFileUrl': proof['fileUrl'],
-                      'cloudRevision': opId,
-                      'cloudRecordRevision': document['recordRevision'],
-                      'cloudUploadedAt': localRow?['uploadedAt'],
-                    }, const SetOptions(merge: true));
-                    batch.delete(ref);
-                    await batch.commit();
-                  },
-                );
-                _scope(school, profile);
               }
+              values = {
+                'state': 'completed',
+                'completedAt': now().millisecondsSinceEpoch,
+                'nextPollAt': 0,
+                'attempts': 0,
+                'failureCode': null,
+                if (proof['driveDurationMillis'] is int &&
+                    proof['driveDurationMillis'] >= 0)
+                  'driveDurationMillis': proof['driveDurationMillis'],
+                'driveProgress': null,
+              };
             }
+          } catch (error) {
+            _scope(school, profile);
+            final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
+            quota = error is CentralCloudException && error.status == 429;
+            final backoff = (5000 * (1 << attempts.clamp(0, 8).toInt()))
+                .clamp(5000, 3600000).toInt();
+            final floor = error is CentralCloudException ? error.retryAfterMs : 0;
+            // Only an authenticated, explicit owner-review state is terminal
+            // to automatic polling. An unverified/malformed response remains
+            // eligible for bounded readback; neither case clears original data.
+            final review = error is CentralCloudException &&
+                error.status == 409 &&
+                error.diagnosticCode == 'EDGE_DELIVERY_REVIEW_REQUIRED';
             values = {
-              'state': 'completed',
-              'completedAt': now().millisecondsSinceEpoch,
-              'nextPollAt': 0,
-              if (proof['driveDurationMillis'] is int &&
-                  proof['driveDurationMillis'] >= 0)
-                'driveDurationMillis': proof['driveDurationMillis'],
-              'driveProgress': null,
+              'state': review ? 'needsAttention' : 'pending',
+              'attempts': attempts,
+              'failureCode': review
+                  ? 'EDGE_DELIVERY_REVIEW_REQUIRED'
+                  : quota ? 'SCRIPT_QUOTA_EXCEEDED' : 'DRIVE_DELIVERY_RETRY',
+              'nextPollAt': now().millisecondsSinceEpoch +
+                  (floor > backoff ? floor : backoff),
             };
           }
-        } catch (error) {
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+            () => row.reference.set(values, const SetOptions(merge:true)),
+          );
           _scope(school, profile);
-          final attempts = (item['attempts'] as num? ?? 0).toInt() + 1;
-          quota = error is CentralCloudException && error.status == 429;
-          final backoff = (5000 * (1 << attempts.clamp(0, 8).toInt()))
-              .clamp(5000, 3600000).toInt();
-          final floor = error is CentralCloudException ? error.retryAfterMs : 0;
-          values = {
-            'attempts': attempts,
-            'nextPollAt': now().millisecondsSinceEpoch +
-                (floor > backoff ? floor : backoff),
-          };
+          if (quota) break;
         }
-        await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-          () => row.reference.set(values, const SetOptions(merge:true)),
-        );
-        _scope(school, profile);
-        if (quota) break;
       }
+      // Each lane is serial and bounded internally, but a slow live receipt
+      // cannot block edge receipt reconciliation (or vice versa). No business
+      // mutation is submitted by either lane. Drain both before releasing busy.
+      await Future.wait<void>([pollLive(), pollEdge()], eagerError: false);
+      _scope(school, profile);
+      changed.value++;
     } finally {
       _busy = false;
     }
