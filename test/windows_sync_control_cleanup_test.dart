@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -69,6 +71,33 @@ void main() {
     expect(report.toString(), isNot(contains('not for diagnostic export')));
     expect((await queue.get()).docs.length, 4,
         reason: 'Diagnosis never deletes or acknowledges original queue work');
+  });
+
+  test('document Cloudflare-owned Idle classification requires exact original sidecar ticket', () async {
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const revision='document-original-operation-0001';
+    final digest=List.filled(64,'a').join();
+    String ticket(String id) {
+      final key=sha256.convert(utf8.encode('$id:$revision')).toString();
+      return sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    }
+    Map<String,dynamic> row(String id,String key)=> {
+      'schoolId':school,'documentRevision':revision,
+      'contentHash':digest,'cloudContentHash':digest,
+      'syncState':'cloudAccepted','cloudTicketLane':'file-$key',
+      'cloudTicketId':key,'deleted':false,
+    };
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await db.collection('_windows_document_outbox')
+          .doc('exact-document').set(row('exact-document',ticket('exact-document')));
+      await db.collection('_windows_document_outbox')
+          .doc('wrong-ticket').set(row('wrong-ticket',List.filled(64,'b').join()));
+    });
+    final report=await engine.safeQueueDiagnostics();
+    expect(report['cloudflareOwnedPendingDriveCount'],1);
+    expect(report['foregroundQueueCount'],1);
+    expect(report['unscopedQueueCount'],0);
+    expect((await db.collection('_windows_document_outbox').get()).docs.length,2);
   });
 
   testWidgets('overview keeps real queue activity and combined pending counts; queue opens without adding attention twice', (tester) async {
