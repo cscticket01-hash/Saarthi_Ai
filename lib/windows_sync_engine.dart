@@ -353,6 +353,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   DateTime? lastVerifiedCheckpoint;
   SyncRecoveryDecision? recoveryDecision;
   bool automaticSyncEnabled = true;
+  int autoSyncIntervalMinutes = 0;
+  static const autoSyncIntervals = [0, 5, 30, 60];
   final recoveryHistory = <Map<String, dynamic>>[];
   final repairMemory = WindowsRepairMemory();
   final learnedSyncRules = WindowsLearnedSyncRules();
@@ -612,7 +614,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       );
       // Healthy server notifications already report remote changes. Keep heads
       // polling only as a fallback; normal reconciliation remains hourly.
-      if (_remoteFeed.isHealthy && _changeWatch.hasVerifiedDiscovery) return;
+      if (autoSyncIntervalMinutes == 0 &&
+          _remoteFeed.isHealthy && _changeWatch.hasVerifiedDiscovery) return;
     }
     if (!automaticScheduleExpected ||
         _syncing ||
@@ -653,7 +656,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       // A listener reset/change during this request may post-date a cached
       // head response. Keep one catch-up pending instead of trusting that read.
       if (discoveryGeneration == _remoteChangeGeneration) {
-        _changeWatch.succeeded(DateTime.now());
+        _changeWatch.succeeded(
+          DateTime.now(),
+          interval: Duration(minutes: autoSyncIntervalMinutes == 0 ? 60 : autoSyncIntervalMinutes),
+        );
       } else {
         _changeWatch.reset(
           notBefore: DateTime.now().add(const Duration(seconds: 6)),
@@ -1075,6 +1081,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int
           ? backup.data()!['createdAt']
           : 0,
+      'todayVerifiedReceipts': receipts.docs.where((row) {
+        final receipt = row.data();
+        final acknowledged = receipt['acknowledgedAt'];
+        final now = DateTime.fromMillisecondsSinceEpoch(nowMillis);
+        return school is String && validSchoolId(school) &&
+            receipt['schoolId'] == school && acknowledged is int &&
+            acknowledged >= DateTime(now.year, now.month, now.day).millisecondsSinceEpoch &&
+            acknowledged <= nowMillis;
+      }).length,
       'verifiedReceiptCount': receipts.docs.where((row) =>
           school is String && validSchoolId(school) && row.data()['schoolId'] == school).length,
       // Device ACK time includes the exact durable staged receipt even before
@@ -1944,6 +1959,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                 .get())
             .data();
     automaticSyncEnabled = preferences?['automaticSync'] != false;
+    final configuredInterval = preferences?['autoSyncIntervalMinutes'];
+    autoSyncIntervalMinutes = autoSyncIntervals.contains(configuredInterval)
+        ? configuredInterval as int
+        : 0;
     final storedPause =
         (await FirebaseFirestore.instance
                 .collection('_windows_sync_status')
@@ -3135,6 +3154,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     // No immediate sync, backoff reset, pause override or business submission.
     // Subsequent timer ticks still enter scheduleSoon's owner admission policy.
     _schedule.repairReconciliationTimer(reconciliationInterval);
+  }
+
+  Future<void> setAutoSyncInterval(int minutes) async {
+    if (!autoSyncIntervals.contains(minutes)) {
+      throw ArgumentError.value(minutes, 'minutes');
+    }
+    final origin = _activeProfileId;
+    final db = FirebaseFirestore.instance;
+    if (db.activeProfileId != origin) return;
+    await db.collection('_windows_sync_status').doc('settings').set(
+      {'autoSyncIntervalMinutes': minutes}, const SetOptions(merge: true),
+    );
+    if (_activeProfileId != origin || db.activeProfileId != origin) return;
+    autoSyncIntervalMinutes = minutes;
+    _changeWatch.updateInterval(Duration(minutes: minutes == 0 ? 60 : minutes));
+    await refreshDetails();
   }
 
   Future<void> setAutomaticSync(bool enabled) async {

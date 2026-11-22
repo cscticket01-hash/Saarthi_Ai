@@ -5,10 +5,11 @@ import 'windows_ui_localization.dart';
 class WindowsSyncFlow extends StatefulWidget {
   const WindowsSyncFlow({super.key, required this.phase, required this.label,
     required this.local, required this.cloud, required this.drive,
-    required this.pending, this.pendingText, this.lastMicros, this.active = const {}});
-  final String phase, label, local, cloud, drive;
+    required this.pending, this.serverAck = 'Waiting for verified ACK', this.pendingText, this.uploadProgress, this.lastMicros, this.active = const {}});
+  final String phase, label, local, cloud, drive, serverAck;
   final int pending;
   final String? pendingText;
+  final ({int offset, int total})? uploadProgress;
   final int? lastMicros;
   final Set<String> active;
   @override State<WindowsSyncFlow> createState() => _WindowsSyncFlowState();
@@ -26,20 +27,27 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
     final small=space.maxWidth<500;
     final scale=MediaQuery.textScalerOf(context).scale(1);
     final circle=(small?96.0:144.0)*scale.clamp(1.0,1.35);
-    final rowHeight=94.0*scale.clamp(1.0,2.0), height=rowHeight*3+24;
+    final rowHeight=94.0*scale.clamp(1.0,2.0), height=rowHeight*4+24;
     final gap=small?32.0:70.0;
     final color=Theme.of(context).colorScheme.primary;
-    Widget card(String title,String text,IconData icon) => Container(
+    final bytes = widget.uploadProgress;
+    final fraction = bytes == null ? null : bytes.offset / bytes.total;
+    Widget card(String title,String text,IconData icon, {bool progress = false}) => Container(
       height:rowHeight, padding:const EdgeInsets.all(10),
-      decoration:BoxDecoration(border:Border.all(color:color.withValues(alpha:.5)),borderRadius:BorderRadius.circular(14)),
+      decoration:BoxDecoration(color:color.withValues(alpha:.05),border:Border.all(color:color.withValues(alpha:.5)),borderRadius:BorderRadius.circular(14)),
       child:Row(children:[Icon(icon,color:color,size:small?18:24),const SizedBox(width:10),Expanded(child:Column(
         mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,
         children:[Text(title,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.bold)),const SizedBox(height:5),
-          Text(text,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12))]))]));
+          Text(text,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12)),
+          if (progress && bytes != null) ...[
+            const SizedBox(height: 4),
+            LinearProgressIndicator(value: fraction),
+            Text('${(bytes.offset * 100 ~/ bytes.total)}% · ${bytes.offset} / ${bytes.total} bytes', style: const TextStyle(fontSize: 11)),
+          ]]))]));
     return SizedBox(height:height,child:Row(children:[
       SizedBox(width:circle,height:circle,child:Stack(alignment:Alignment.center,children:[
         SizedBox(width:circle-4,height:circle-4,child:CircularProgressIndicator(
-          value:widget.phase!='paused'&&widget.active.isNotEmpty?null:widget.phase=='idle'&&widget.lastMicros!=null?1:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
+          value:widget.phase!='paused'&&widget.active.isNotEmpty?fraction:widget.phase=='idle'&&widget.lastMicros!=null?1:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
         SizedBox(width:circle-20,height:circle-20,child:FittedBox(fit:BoxFit.scaleDown,child:SizedBox(width:circle-20,child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.phase=='idle'?Icons.check_circle_outline:Icons.sync,color:color),
           Text(widget.label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:small?12:15,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
           if(widget.phase=='idle') Text(widget.lastMicros==null?'Last sync: —':'Last sync: ${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
@@ -49,7 +57,8 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
         painter:_TransferLinks(color,widget.phase=='paused'?const {}:widget.active,clock.value,rowHeight)))),
       Expanded(child:Column(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
         card('Local Save',widget.local,Icons.storage_outlined),
-        card('School Server',widget.cloud,Icons.cloud_outlined),
+        card('School Server',widget.cloud,Icons.cloud_outlined,progress:true),
+        card('Server ACK',widget.serverAck,Icons.verified_outlined),
         card('Google Drive',widget.drive,Icons.folder_outlined),
       ])),
     ]));
@@ -59,8 +68,9 @@ class _TransferLinks extends CustomPainter {
   _TransferLinks(this.color,this.active,this.position,this.rowHeight);
   final Color color; final Set<String> active; final double position,rowHeight;
   @override void paint(Canvas canvas,Size size){
-    for(var i=0;i<3;i++){
-      final lane=['local','cloud','drive'][i]; final y=[rowHeight/2,size.height/2,size.height-rowHeight/2][i];
+    for(var i=0;i<4;i++){
+      final lane=['local','cloud','ack','drive'][i];
+      final y=rowHeight/2+i*(size.height-rowHeight)/3;
       final path=Path()..moveTo(0,size.height/2)..cubicTo(size.width*.5,size.height/2,size.width*.5,y,size.width,y);
       canvas.drawPath(path,Paint()..color=color.withValues(alpha:active.contains(lane)?1:.25)..strokeWidth=2..style=PaintingStyle.stroke);
       if(active.contains(lane)){

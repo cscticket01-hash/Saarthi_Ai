@@ -184,12 +184,19 @@ class WindowsCloudChangeWatch {
   DateTime? nextCheck;
   int failures = 0;
   bool _verified = false;
+  DateTime? _lastVerifiedAt;
   bool get hasVerifiedDiscovery => _verified;
   bool due(DateTime now) => nextCheck == null || !now.isBefore(nextCheck!);
-  void succeeded(DateTime now) {
+  void succeeded(DateTime now, {Duration interval = const Duration(hours: 1)}) {
     _verified = true;
+    _lastVerifiedAt = now;
     failures = 0;
-    nextCheck = now.add(const Duration(hours: 1));
+    nextCheck = now.add(interval);
+  }
+
+  void updateInterval(Duration interval) {
+    final last = _lastVerifiedAt;
+    if (_verified && last != null) nextCheck = last.add(interval);
   }
 
   void failed(DateTime now) {

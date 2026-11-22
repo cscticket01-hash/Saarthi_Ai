@@ -434,6 +434,8 @@ void main(){
           phase:'idle',label:'Idle',local:'D:\\ 10 GB / 100 GB',cloud:'No verified ACK yet',drive:'Unknown',pending:0,lastMicros:2400000))))));
       await tester.pumpAndSettle();
       expect(find.text('Local Save'),findsOneWidget);expect(find.text('Last sync: 2.40 sec'),findsOneWidget);
+      expect(find.text('Server ACK'), findsOneWidget);
+      expect(find.text('Waiting for verified ACK'), findsOneWidget);
       expect(find.text('Open Folder'),findsNothing);
       ui.WindowsUiLanguage.change('bn');await tester.pumpAndSettle();
       expect(find.text('ডিভাইসে সংরক্ষণ'),findsOneWidget);expect(find.text('শেষ সিঙ্ক: 2.40 সেকেন্ড'),findsOneWidget);

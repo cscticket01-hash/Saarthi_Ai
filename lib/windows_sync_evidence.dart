@@ -3,6 +3,24 @@ import 'package:flutter/foundation.dart';
 /// Network activity is scoped to the actual school and excludes metadata polls.
 class WindowsSyncEvidence {
   static final active=ValueNotifier<Map<String,int>>({});
+  static final uploads = ValueNotifier<Map<Object, ({String school, int offset, int total})>>({});
+  static void reportUpload(Object key, String school, int offset, int total) {
+    uploads.value = {...uploads.value, key: (school: school, offset: offset, total: total)};
+  }
+
+  static void endUpload(Object key) {
+    if (uploads.value.containsKey(key)) {
+      uploads.value = {...uploads.value}..remove(key);
+    }
+  }
+
+  static ({int offset, int total})? measuredUpload(String school) {
+    final matches = uploads.value.values.where((upload) => upload.school == school);
+    if (matches.length != 1) return null;
+    final upload = matches.single;
+    return (offset: upload.offset, total: upload.total);
+  }
+
   static bool dataAction(String action)=>action.startsWith('managed/file/')||
       {'managed/records','managed/records/batch','managed/document/stage/resumable',
        'managed/record/media/stage/resumable'}.contains(action);
