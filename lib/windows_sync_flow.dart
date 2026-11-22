@@ -42,7 +42,7 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
           if (progress && bytes != null) ...[
             const SizedBox(height: 4),
             LinearProgressIndicator(value: fraction),
-            Text('${bytes.offset} / ${bytes.total} bytes', style: const TextStyle(fontSize: 11)),
+            Text('${(bytes.offset * 100 ~/ bytes.total)}% · ${bytes.offset} / ${bytes.total} bytes', style: const TextStyle(fontSize: 11)),
           ]]))]));
     return SizedBox(height:height,child:Row(children:[
       SizedBox(width:circle,height:circle,child:Stack(alignment:Alignment.center,children:[

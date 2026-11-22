@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
+import '../lib/windows_sync_flow.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_sync_engine.dart';
 
@@ -83,7 +84,8 @@ void main() {
       ]) {
         expect(find.text(text), findsOneWidget);
       }
-      expect(find.text('Needs Attention'), findsOneWidget);
+      expect(find.descendant(of: find.byType(WindowsSyncFlow),
+        matching: find.text('Needs Attention')), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Verified sync'), findsNothing);
       expect(find.text('School records'),findsNothing);
@@ -110,7 +112,8 @@ void main() {
     };
     await tester.pumpWidget(MaterialApp(home:page()));
     await tester.pumpAndSettle();
-    expect(find.text('Idle'),findsOneWidget);
+    expect(find.descendant(of: find.byType(WindowsSyncFlow),
+      matching: find.text('Idle')), findsOneWidget);
     expect(find.text('Preparing changed data'),findsNothing);
     expect(find.text('Syncing'),findsNothing);
     expect(find.text('0 pending'),findsOneWidget);
