@@ -562,6 +562,8 @@ class CentralSchoolCloud {
       await observer({
         'source': source, 'schoolId': body['schoolId'], 'action': action,
         'profileId': receiptProfile,
+        if (action == 'managed/records' && returnAfterDurableCloudflareHandoff &&
+            proof['driveState'] == 'pending') 'handoffAuthorized': true,
         if (documentStage) ...{
           'collection': 'documents',
           'id': (body['document'] as Map)['id'],
