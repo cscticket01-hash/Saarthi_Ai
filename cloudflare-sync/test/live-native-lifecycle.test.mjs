@@ -239,3 +239,20 @@ test('concurrent teacher mobile claims conflict and edits preserve identity',asy
  assert.equal(edited.record.teacherId,winner.teacherId);
  accepted(await f.commit(collection,loser.id,'teacher-phone-create-after-edit',loser));
 });
+
+test('teacher phone backfill accepts current school proof and rejects changed records',async t=>{
+ const f=await setup(t,'teacher-phone-backfill',['teachers_directory']);
+ const collection='teachers_directory',id='legacy-teacher';
+ const saved=accepted(await f.commit(collection,id,'teacher-backfill-create-proof',
+  {schoolId:school,id,teacherId:'legacy-proof-id',phone:'9876543210'}));
+ const pending=await f.rpc({command:'teacherPhoneBackfillList',collection});
+ assert.equal(pending.status,200);
+ assert.deepEqual(pending.value.ids,[]);
+ const proof={command:'teacherPhoneBackfillApply',collection,id,expectedRevision:saved.recordRevision};
+ assert.equal((await f.rpc({...proof,record:{...saved.record,phone:'9876543211'}})).status,409);
+ assert.equal((await f.rpc({...proof,record:saved.record})).value.indexed,true);
+ const changed=accepted(await f.commit(collection,id,'teacher-backfill-change-proof',
+  {schoolId:school,id,teacherId:'legacy-proof-id',phone:'9876543211'},saved.recordRevision));
+ assert.equal(changed.record.teacherId,'legacy-proof-id');
+ assert.equal((await f.rpc({...proof,record:saved.record})).status,409);
+});

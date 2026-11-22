@@ -129,6 +129,8 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  const head=()=>sql.exec<{n:number}>("SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='live_events'),0) AS n").toArray()[0].n;
  const state=()=>sql.exec<{state:string;fingerprint:string;expected_count:number;source_revision:string}>('SELECT * FROM live_collections WHERE collection=?',col).toArray()[0];
  const row=(id:string)=>sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',col,id).toArray()[0];
+ const missingTeacherPhones=(limit:number)=>sql.exec<{id:string}>(
+  "SELECT r.id FROM live_records r LEFT JOIN live_record_owners o ON o.collection=r.collection AND o.id=r.id WHERE r.collection='teachers_directory' AND json_type(o.body,'$.teacherPhoneKey') IS NULL ORDER BY r.id LIMIT ?",limit).toArray();
  // A permanent UID uses the same live authority and backup queue. The
  // original person data, canonical ACK hashes and legacy history stay intact.
  if(['uidStatus','uidSeedTest','uidReservePerson'].includes(String(command))){
@@ -226,10 +228,24 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    sql.exec("UPDATE live_records SET body='' WHERE collection=?",col);return {state:'active'};
   });
  }
+ if(command==='teacherPhoneBackfillList'||command==='teacherPhoneBackfillApply'){
+  demand(col==='teachers_directory'&&state()?.state==='active','Verified teacher authority required',412);
+  if(command==='teacherPhoneBackfillList')return {liveProtocol:1,schoolId:school,ids:missingTeacherPhones(12).map(item=>item.id)};
+  demand(validId(b.id)&&b.record&&typeof b.record==='object'&&!Array.isArray(b.record),'Verified teacher record required');
+  const record=b.record as Json;
+  return storage.transactionSync(()=>{
+   const current=row(String(b.id));
+   demand(current&&current.revision===b.expectedRevision&&record.schoolId===school&&
+    (record.id===undefined||record.id===b.id)&&record._syncRevision===(current.body?current.revision:current.drive_revision)&&
+    payloadHash(record)===current.payload_hash,'Teacher phone backfill proof changed',409);
+   saveOwner(storage,col,String(b.id),record);
+   return {liveProtocol:1,schoolId:school,id:b.id,indexed:true};
+  });
+ }
  if(command==='read'){
   demand(col!=='school_settings'||b.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   collection();demand(state()?.state==='active','Verified baseline required',412);demand(validId(b.id),'Invalid record ID');
-  const r=row(b.id);return {liveProtocol:1,schoolId:school,record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
+  const r=row(b.id);return {liveProtocol:1,schoolId:school,...(col==='teachers_directory'?{teacherPhoneBackfillPending:missingTeacherPhones(1).length>0}:{}),record:r&&r.body?JSON.parse(r.body):null,cursor:head(),...(r?{recordRevision:r.revision,driveRevision:r.drive_revision,payloadHash:r.payload_hash,source:r.body?'cloudflare':'drive'}:{source:'missing'})};
  }
  // A published file capability is valid only while its exact document
  // revision remains the current non-deleted school record. A later delete or
@@ -608,6 +624,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    if(col==='teachers_directory'&&b.operation!=='delete'){
     const phone=teacherPhoneKey(data);
     if(phone&&phone!==teacherPhoneKey(old)){
+     demand(missingTeacherPhones(1).length===0,'Teacher mobile index requires verified historical records',428);
      const duplicate=sql.exec<{id:string}>("SELECT id FROM live_record_owners WHERE collection='teachers_directory' AND json_extract(body,'$.teacherPhoneKey')=? AND id<>? LIMIT 1",phone,String(b.id)).toArray()[0];
      demand(!duplicate,'Teacher mobile number already belongs to another teacher',409);
     }
