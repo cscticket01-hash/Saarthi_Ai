@@ -178,7 +178,7 @@ void main() {
         'mobileLinkToken':'x'*48,'mobileStableId':'S1','name':'Synthetic Student','class':'Class 1','rollNo':'12'};
       final profile=<String,dynamic>{'schoolId':school,'_syncRevision':'profile-r1',
         'schoolName':'Synthetic School','principalName':'Principal','schoolContactNo':'0000000000'};
-      final templates=<String,dynamic>{'schoolId':school,'_syncRevision':'templates-r1','studentId':'manifest:school-id-v1'};
+      final templates=<String,dynamic>{'schoolId':school,'_syncRevision':'templates-r1','studentId':'manifest:student-maroon-gold-v1'};
       await db.collection('students_directory').doc('S1').set(person);
       await db.collection('school_config').doc('school_profile_cache').set(profile);
       await db.collection('school_settings').doc('document_templates').set(templates);
@@ -302,7 +302,7 @@ void main() {
       'photoUrl': 'data:image/png;base64,%%%'});
     await db.collection('students_directory').doc('ready').set(person);
     await db.collection('school_config').doc('school_profile_cache').set({'schoolName': 'Synthetic School'});
-    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:school-id-v1'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:student-maroon-gold-v1'});
     final qr = SchoolLink.encodeCompact({'app': 'VIDYA_SAARTHI', 'v': 2, 'managed': true,
       'schoolId': school, 'centralEndpoint': 'https://saarthi-oauth-staging.onrender.com/school-cloud',
       'firebaseProjectId': platformProjectId, 'type': 'student', 'personId': 'ready',
@@ -353,7 +353,7 @@ void main() {
     await db.collection('students_directory').doc('S1').set(person);
     await db.collection('school_config').doc('school_profile_cache').set({
       'schoolName': 'Synthetic School', 'principalName': 'Principal', 'schoolContactNo': '0000000000'});
-    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:school-id-v1'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId': 'manifest:student-maroon-gold-v1'});
     var reads = 0;
     Future<Map<String, dynamic>> inventory() async { reads++; return {'schoolId': school, 'syncProtocol': 2, 'records': <String,dynamic>{}}; }
     final printing = PrintingPlatform.instance;
@@ -426,7 +426,7 @@ void main() {
     expect((await db.collection('documents').doc(legacy).get()).data()?['_syncDeleted'],true);
     await CentralSchoolCloud.updateSession(school, {'endpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud'});
     await db.collection('school_config').doc('school_profile_cache').set({'schoolName':'Synthetic School'});
-    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:school-id-v1'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:student-maroon-gold-v1'});
     final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud','firebaseProjectId':platformProjectId,'type':'student','personId':'reused-slot','linkToken':person['mobileLinkToken']});
     final printing=PrintingPlatform.instance;PrintingPlatform.instance=OwnerReviewPrinting(qr);
     try{
@@ -472,7 +472,7 @@ void main() {
       'mobileIdentityVersion':1,'name':'Same Student','class':'1','rollNo':'1',
       'photoUrl':WindowsSchoolImageCache.dataUrl(original)};
     final profile={'schoolName':'Same School','principalName':'Principal'};
-    final template={'studentId':'manifest:school-id-v1'};
+    final template={'studentId':'manifest:student-maroon-gold-v1'};
     final qr=SchoolLink.encodeCompact({'app':'VIDYA_SAARTHI','v':2,'managed':true,
       'schoolId':school,'centralEndpoint':'https://saarthi-oauth-staging.onrender.com/school-cloud',
       'firebaseProjectId':platformProjectId,'type':'student','personId':'S1','linkToken':person['mobileLinkToken']});
@@ -595,7 +595,7 @@ void main() {
     final queue = db.collection('_windows_document_outbox').doc(cardId);
     await queue.set({...local,'documentId':cardId});
     final before = (await queue.get()).data();
-    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:school-id-v1'});
+    await db.collection('school_settings').doc('document_templates').set({'studentId':'manifest:student-maroon-gold-v1'});
     final printing = PrintingPlatform.instance;
     PrintingPlatform.instance = OwnerReviewPrinting(qr);
     try {

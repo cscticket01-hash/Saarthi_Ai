@@ -45,7 +45,10 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
       check();
       final batch=db.batch();
       batch.requireUnchanged(row.reference,expected);
-      batch.requireUnchanged(db.collection('_windows_local_deletions').doc(deletionId),evidence);
+      final deletion = db.collection('_windows_local_deletions').doc(deletionId);
+      batch.requireUnchanged(deletion,evidence);
+      // Keep the original tombstone in the same guarded local transaction.
+      batch.set(deletion, evidence);
       batch.set(row.reference,values,const SetOptions(merge:true));
       await batch.commit();
       expected={...expected,...values};
