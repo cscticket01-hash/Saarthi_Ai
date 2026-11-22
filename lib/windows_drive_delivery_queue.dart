@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'cloudflare_record_handoff.dart';
 import 'live_sync_protocol.dart';
 import 'windows_connect/central_school_cloud.dart';
@@ -124,7 +126,10 @@ class WindowsDriveDeliveryQueue {
     final authorized = notice['handoffAuthorized'] == true;
     final authorizedFile = authorized &&
         {'managed/document/stage/resumable','managed/record/media/stage/resumable'}.contains(notice['action']);
-    final completed = providerVerified && !authorizedFile;
+    final authorizedRecord = authorized && notice['action']=='managed/records';
+    // An authenticated already-verified replay can still arrive before this
+    // PC has committed its local CAS. Keep that journal pollable.
+    final completed = providerVerified && !authorizedFile && !authorizedRecord;
     if (authorizedFile && (!{'pending','verified'}.contains(proof['driveState']) ||
         !authorizedPendingSidecar({...notice,'cloudflareAccepted':true,
           'edgeDeliveryVersion':1,'state':'pending',
@@ -134,7 +139,7 @@ class WindowsDriveDeliveryQueue {
     }
     if (authorized && !authorizedFile && (notice['action'] != 'managed/records' ||
         !{'write','delete'}.contains(notice['operation']) ||
-        proof['driveState'] != 'pending' || ticket is! Map ||
+        !{'pending','verified'}.contains(proof['driveState']) || ticket is! Map ||
         ticket['lane'] != 'records' ||
         exactStagedRecordTicket({
           'schoolId':school,'collection':notice['collection'],
@@ -147,7 +152,8 @@ class WindowsDriveDeliveryQueue {
         (proof['committed'] != true || proof['fileId'] is! String || (proof['fileId'] as String).isEmpty)) {
       throw StateError('File bytes have no verified Drive completion.');
     }
-    if (!completed && (!(proof['driveState'] == 'pending' || authorizedFile && providerVerified) || ticket is! Map ||
+    if (!completed && (!(proof['driveState'] == 'pending' ||
+        (authorizedFile || authorizedRecord) && providerVerified) || ticket is! Map ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(ticket['id']?.toString() ?? '') ||
         !(ticket['lane'] == 'records' || ticket['lane'] == 'file-${ticket['id']}'))) {
       throw StateError('Unverified Cloudflare staging ticket.');
@@ -179,7 +185,8 @@ class WindowsDriveDeliveryQueue {
         if (authorized || old?['handoffAuthorized'] == true)
           'handoffAuthorized': true,
         if (authorizedFile) 'fileSha256': notice['fileSha256'],
-        if (authorizedFile && providerVerified) 'providerVerifiedAwaitingLocalCas': true,
+        if ((authorizedFile || authorizedRecord) && providerVerified)
+          'providerVerifiedAwaitingLocalCas': true,
         if (authorizedFile && notice['mediaSourceHash'] is String)
           'mediaSourceHash': notice['mediaSourceHash'],
         if(notice['originalOperationId'] is String)
@@ -258,6 +265,82 @@ class WindowsDriveDeliveryQueue {
         isDriveRecoveryRevision(revision);
   }
 
+  /// Recreate only an absent *poll journal*, not a record, file or Cloudflare
+  /// upload. An exact persisted handoff CAS plus an authenticated ticket-status
+  /// read is required before inserting a new reviewable receipt.
+  static Future<bool> recoverMissingReceiptJournals(
+    String school, {
+    required LiveSyncCall call,
+    bool Function()? canAdmit,
+    int limit=3,
+  }) async {
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    _scope(school,profile);
+    if(limit<1 || limit>3)throw ArgumentError('Bounded recovery required');
+    final journal=(await db.collection(collection).get()).docs;
+    _scope(school,profile);
+    final recordRows=(await db.collection('_windows_firebase_outbox').get()).docs;
+    _scope(school,profile);
+    final documentRows=(await db.collection('_windows_document_outbox').get()).docs;
+    _scope(school,profile);
+    final originals=<Map<String,dynamic>>[
+      for(final row in recordRows)
+        if(acceptedCloudflareTicketBinding(row.data(),school)!=null)
+          acceptedCloudflareTicketBinding(row.data(),school)!,
+      for(final row in documentRows)
+        if(acceptedCloudflareTicketBinding(row.data(),school,queueId:row.id)!=null)
+          acceptedCloudflareTicketBinding(row.data(),school,queueId:row.id)!,
+    ];
+    final seen=<String>{};
+    var repaired=false,reads=0;
+    for(final binding in originals){
+      if(canAdmit?.call()==false||reads>=limit)break;
+      _scope(school,profile);
+      final id=binding['ticketId'] as String,lane=binding['lane'] as String;
+      if(!seen.add('$lane/$id'))continue;
+      // A pending or reviewable journal belongs to the original receipt
+      // owner. Do not clear, reset or duplicate its backoff/review state.
+      if(journal.any((row) {
+        final j=row.data();
+        return j['schoolId']==school && j['ticketId']==id &&
+            j['lane']==lane && j['state']!='completed';
+      }))continue;
+      reads++;
+      try {
+        final proof=await call('managed/cloudflare/operation',{'lane':lane,'id':id});
+        _scope(school,profile);
+        if(proof['success']!=true || proof['schoolId']!=school ||
+            proof['cloudflareAccepted']!=true ||
+            !{'pending','verified'}.contains(proof['driveState']))
+          continue;
+        final remoteTicket=proof['delivery'];
+        if(proof['driveState']=='pending' &&
+            (remoteTicket is! Map ||
+             remoteTicket['id']!=id || remoteTicket['lane']!=lane))continue;
+        if(remoteTicket is Map &&
+            (remoteTicket['id']!=id || remoteTicket['lane']!=lane))continue;
+        final source=sha256.convert(utf8.encode(jsonEncode([
+          school,'missing-receipt-v1',lane,id,binding['originalOperationId'],
+        ]))).toString();
+        await retainEdge({
+          ...binding,
+          'source':source,'profileId':profile,'handoffAuthorized':true,
+          'proof':{'success':true,'schoolId':school,
+            'edgeDeliveryVersion':1,'cloudflareAccepted':true,
+            'driveState':proof['driveState'],
+            'delivery':{'lane':lane,'id':id}},
+        });
+        _scope(school,profile);
+        repaired=true;
+      } catch (_) {
+        _scope(school,profile);
+        // No local marker changes on an unverified status response. The
+        // original cloud-owned outbox is still durable for a later read.
+      }
+    }
+    return repaired;
+  }
+
   /// Original-operation status reads only. At most ten due receipts per pass;
   /// errors/backoff survive restart and never re-send a business mutation.
   static Future<void> poll(
@@ -274,6 +357,10 @@ class WindowsDriveDeliveryQueue {
     _scope(school, profile);
     _busy = true;
     try {
+      // Recover a missing read-only receipt from the already persisted local
+      // Cloudflare ticket; never generate a second business upload.
+      await recoverMissingReceiptJournals(school,call:call,canAdmit:canAdmit);
+      _scope(school,profile);
       final rows = (await db.collection(collection).get()).docs;
       _scope(school, profile);
       Future<void> pollLive() async {
