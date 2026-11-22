@@ -3531,11 +3531,15 @@ function uploadStudentDocument(data) {
       .getValues();
 
     for (let i = 0; i < rows.length; i++) {
-      if (String(rows[i][1] || "").trim() !== studentId) {
-        continue;
-      }
-
       const rowDocumentId = String(rows[i][0] || "").trim();
+      const rowOwner = String(rows[i][1] || "").trim();
+      // A replacement ID is not permission to create a new generation for
+      // another pupil. Refuse ambiguous IDs before allocating any file.
+      if (replaceDocumentId && rowDocumentId === replaceDocumentId &&
+          (rowOwner !== studentId || replaceRow > 1)) {
+        throw new Error("Document owner or identity mismatch");
+      }
+      if (rowOwner !== studentId) continue;
 
       if (
         replaceDocumentId &&
@@ -3550,6 +3554,10 @@ function uploadStudentDocument(data) {
     }
   }
 
+  if (replaceDocumentId && replaceRow < 2) {
+    throw new Error("Document replacement requires an existing owner record");
+  }
+  if (oldFileId) VS_schoolFile(oldFileId);
   if (
     currentTotal + fileSize >
     STUDENT_DOCUMENT_MAX_BYTES
@@ -3657,9 +3665,7 @@ function uploadStudentDocument(data) {
       oldFileId !== fileId
     ) {
       try {
-        DriveApp
-          .getFileById(oldFileId)
-          .setTrashed(true);
+        VS_schoolFile(oldFileId).setTrashed(true);
       } catch (error) {
         console.log(
           "Old student document delete warning: " +
@@ -3719,9 +3725,9 @@ function deleteStudentDocument(data) {
       String(rows[i][0] || "").trim() === documentId &&
       String(rows[i][1] || "").trim() === studentId
     ) {
+      if (rowNumber > 1) throw new Error("Duplicate document identity requires review");
       rowNumber = i + 2;
       fileId = String(rows[i][9] || "").trim();
-      break;
     }
   }
 
@@ -3730,16 +3736,12 @@ function deleteStudentDocument(data) {
   }
 
   if (fileId) {
-    try {
-      DriveApp
-        .getFileById(fileId)
-        .setTrashed(true);
-    } catch (error) {
-      console.log(
-        "Student document delete warning: " +
-        error
-      );
-    }
+    // Retain the index if ownership or Drive deletion cannot be verified.
+    // Managed protocol uses its separate revision-bound tombstone owner.
+    const file = VS_schoolFile(fileId);
+    file.setTrashed(true);
+    if (file.isTrashed() !== true)
+      throw new Error("Document file cleanup unverified; record retained");
   }
 
   sheet.deleteRow(rowNumber);
