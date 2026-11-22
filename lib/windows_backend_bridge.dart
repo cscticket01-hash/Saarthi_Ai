@@ -3282,17 +3282,23 @@ class WindowsBackendBridge {
     // explicit retention policy removes them; a failed metadata write rolls back.
     final metadata = <String, dynamic>{
       'documentId': documentId,
+      // Persist the exact upload-file digest for every document kind. An
+      // original scanned document without this hash could never finish its
+      // Cloudflare-to-local CAS handoff after the broker accepted the bytes.
+      'contentHash': crypto.sha256.convert(
+        optimized != null && optimizedFile.path != file.path ? optimized : bytes,
+      ).toString(),
       if (body['documentKind'] == 'feeReceipt') ...{
         'documentKind': 'feeReceipt',
         'inventoryCategory': 'feeReceipt',
-        'contentHash': crypto.sha256.convert(bytes).toString(),
+
       },
       if (body['documentKind'] == 'marksheet') ...{
         'documentKind': 'marksheet',
         'inventoryCategory': 'examMarksheet',
         'examId': body['examId'],
         'examResultId': body['examResultId'],
-        'contentHash': crypto.sha256.convert(bytes).toString(),
+
       },
       if (ownerRecord?['mobileStableId'] is String) ...{
         'personId':ownerRecord!['mobileStableId'], 'ownerRole':'student',
