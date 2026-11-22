@@ -568,15 +568,19 @@ void main() {
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
   });
 
-  test('staged delete is limited to independently safe calendar operations', () {
+  test('staged delete is limited to independent calendar, expense and attendance owners', () {
     final row={'schoolId':school,'collection':'school_calendar',
       'documentId':'calendar-delete-1','operation':'delete',
       'operationId':'delete-original-operation-01','baseCloudRevision':'old-revision-1'};
     bool eligible(Map item) => eligibleForStagedDelete(item,school,edgeDeliverySupported:true);
     expect(eligible(row),true);
+    for(final collection in ['school_expenses','attendance_records',
+      'attendance_logs','teacher_attendance']){
+      expect(eligible({...row,'collection':collection}),true);
+    }
     expect(eligibleForStagedDelete(row,school,edgeDeliverySupported:false),false);
     for(final c in ['students_directory','teachers_directory','documents',
-        'fee_payments','attendance_records','school_notices']) {
+        'fee_payments','fee_ledger','teacher_schedules','school_notices']) {
       expect(eligible({...row,'collection':c}),false);
     }
     expect(eligible({...row,'schoolId':other}),false);
@@ -584,6 +588,35 @@ void main() {
     expect(eligible({...row,'priorDeletion':row}),false);
     expect(eligible({...row,'atomicBundleId':'owner'}),false);
     expect(eligible({...row,'requireCanonicalDeleteReceipt':true}),false);
+  });
+
+  test('independent attendance delete requires fully verified provider cleanup',(){
+    const op='attendance-delete-original-001',id='attendance-item-001';
+    final intent={'schoolId':school,'collection':'attendance_records',
+      'documentId':id,'operation':'delete','operationId':op,
+      'baseCloudRevision':'verified-attendance-revision'};
+    final ticket=exactTicket(intent);
+    final accepted={...intent,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'collection':'attendance_records',
+      'id':id,'action':'managed/records','operation':'delete',
+      'originalOperationId':op,'ticketId':ticket};
+    final row={'schoolId':school,'id':id,'_syncDeleted':true,
+      '_syncOperationId':op,'_syncRevision':'provider-delete-revision',
+      '_syncErasePlan':{'complete':true,'files':[]}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'provider-delete-revision',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,'record':row};
+    expect(eligibleForStagedDelete(intent,school,edgeDeliverySupported:true),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...row,'_syncOperationId':'other-delete-operation'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...row,'_syncErasePlan':{'complete':false}}},school),false);
   });
 
   test('standalone expense delete stops at Cloudflare ACK until both providers verify', () {
