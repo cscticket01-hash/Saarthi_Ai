@@ -220,3 +220,22 @@ test('isolated UID authority binds reservations to the current person and queues
  assert.deepEqual(counts.counters,{STU:2,TCH:2,STF:1});
  assert.equal(counts.assignments,2);
 });
+
+test('concurrent teacher mobile claims conflict and edits preserve identity',async t=>{
+ const f=await setup(t,'teacher-phone',['teachers_directory']);
+ const collection='teachers_directory';
+ const first={schoolId:school,id:'phone-a',teacherId:'teacher-phone-a',phone:'9876543210'};
+ const second={schoolId:school,id:'phone-b',teacherId:'teacher-phone-b',phone:'+91 98765 43210'};
+ const results=await Promise.all([
+  f.commit(collection,first.id,'teacher-phone-create-first',first),
+  f.commit(collection,second.id,'teacher-phone-create-second',second),
+ ]);
+ assert.deepEqual(results.map(result=>result.status).sort(),[200,409]);
+ const winner=results[0].status===200?first:second;
+ const loser=winner===first?second:first;
+ const committed=results.find(result=>result.status===200).value;
+ const edited=accepted(await f.commit(collection,winner.id,'teacher-phone-edit-winner',
+  {...winner,phone:'9876543211'},committed.recordRevision));
+ assert.equal(edited.record.teacherId,winner.teacherId);
+ accepted(await f.commit(collection,loser.id,'teacher-phone-create-after-edit',loser));
+});

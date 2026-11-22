@@ -48,6 +48,14 @@ export function initLive(storage:DurableObjectStorage){
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='accepted_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN accepted_at INTEGER NOT NULL DEFAULT 0');
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='verified_at'))storage.sql.exec('ALTER TABLE live_backup ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0');
  storage.sql.exec("CREATE TABLE IF NOT EXISTS live_record_owners(collection TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(collection,id))");
+ if(!storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type='index' AND name='live_teacher_phone'").toArray().length){
+  storage.transactionSync(()=>{
+   for(const row of storage.sql.exec<{id:string;body:string}>("SELECT id,body FROM live_records WHERE collection='teachers_directory' AND body!=''")){
+    saveOwner(storage,'teachers_directory',row.id,JSON.parse(row.body));
+   }
+   storage.sql.exec("CREATE INDEX IF NOT EXISTS live_teacher_phone ON live_record_owners(json_extract(body,'$.teacherPhoneKey')) WHERE collection='teachers_directory'");
+  });
+ }
  if(!storage.sql.exec<{name:string}>('PRAGMA table_info(live_backup)').toArray().some(c=>c.name==='request_metadata'))storage.sql.exec("ALTER TABLE live_backup ADD COLUMN request_metadata TEXT NOT NULL DEFAULT '{}'");
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_backup_dependencies(sequence INTEGER NOT NULL,predecessor INTEGER NOT NULL,PRIMARY KEY(sequence,predecessor))');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_device_receipts(device TEXT PRIMARY KEY,cursor INTEGER NOT NULL,observed_at INTEGER NOT NULL)');
@@ -58,7 +66,17 @@ export function initLive(storage:DurableObjectStorage){
 }
 const ownerFields=new Set(['schoolId','id','mobileStableId','teacherId','personId','studentId','studentDocId','studentDocumentId','teacherDocId','teacherDocumentId','documentId','oldStudentId','previousStudentId','previousStudentIds','employeeId','staffId','role','ownerRole','active','inactive','status','class','studentClass','section','rollNo','roll','replacesStudentGeneration','_syncDeleted','_syncDeletedOwner','_syncRetiredTeacherId','_syncRetiredStudentGenerations','_syncRetiredTeacherGenerations']);
 function ownerMetadata(data:Json,id:string):Json {return {...Object.fromEntries(Object.entries(data).filter(([key])=>ownerFields.has(key))),id};}
-function saveOwner(storage:DurableObjectStorage,col:string,id:string,data:Json){storage.sql.exec('INSERT INTO live_record_owners VALUES(?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body',col,id,canonical(ownerMetadata(data,id)));}
+function teacherPhoneKey(data:Json):string|null {
+ if(data._syncDeleted===true||data.deleted===true)return null;
+ let digits=String(data.phone??'').replace(/\D/g,'');
+ if(digits.length===12&&digits.startsWith('91'))digits=digits.slice(2);
+ return digits.length===10?hash([data.schoolId,digits]):null;
+}
+function saveOwner(storage:DurableObjectStorage,col:string,id:string,data:Json){
+ const owner=ownerMetadata(data,id);
+ if(col==='teachers_directory')owner.teacherPhoneKey=teacherPhoneKey(data);
+ storage.sql.exec('INSERT INTO live_record_owners VALUES(?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body',col,id,canonical(owner));
+}
 function findOwner(storage:DurableObjectStorage,col:string,id:string):Json|null {
  const exact=storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=? AND id=?',col,id).toArray()[0];if(exact)return JSON.parse(exact.body) as Json;
  const matches=storage.sql.exec<{body:string}>("SELECT body FROM live_record_owners WHERE collection=? AND (json_extract(body,'$.mobileStableId')=? OR json_extract(body,'$.teacherId')=? OR json_extract(body,'$._syncDeletedOwner')=?) LIMIT 2",col,id,id,id).toArray();
@@ -182,7 +200,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    demand(old.state==='seeding'&&b.replaceSeeding===true,'Seed identity changed; retain existing state',409);
    return storage.transactionSync(()=>{
     demand(sql.exec<{n:number}>('SELECT count(*) AS n FROM live_events WHERE collection=?',col).toArray()[0].n===0&&sql.exec<{n:number}>('SELECT count(*) AS n FROM live_backup WHERE collection=?',col).toArray()[0].n===0,'Committed collection cannot reseed',409);
-    sql.exec('DELETE FROM live_records WHERE collection=?',col);sql.exec('UPDATE live_collections SET fingerprint=?,expected_count=?,source_revision=? WHERE collection=?',b.fingerprint,Number(b.count),b.sourceRevision,col);return {state:'seeding'};
+    sql.exec('DELETE FROM live_records WHERE collection=?',col);if(col==='teachers_directory')sql.exec('DELETE FROM live_record_owners WHERE collection=?',col);sql.exec('UPDATE live_collections SET fingerprint=?,expected_count=?,source_revision=? WHERE collection=?',b.fingerprint,Number(b.count),b.sourceRevision,col);return {state:'seeding'};
    });
   }
   sql.exec("INSERT INTO live_collections VALUES(?,'seeding',?,?,?)",col,b.fingerprint,Number(b.count),b.sourceRevision);return {state:'seeding'};
@@ -587,6 +605,13 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
    if(domainCollections.has(col))validateDomainCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readOwner});
    if(personCollections.has(col))validatePersonCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readPeers});
+   if(col==='teachers_directory'&&b.operation!=='delete'){
+    const phone=teacherPhoneKey(data);
+    if(phone&&phone!==teacherPhoneKey(old)){
+     const duplicate=sql.exec<{id:string}>("SELECT id FROM live_record_owners WHERE collection='teachers_directory' AND json_extract(body,'$.teacherPhoneKey')=? AND id<>? LIMIT 1",phone,String(b.id)).toArray()[0];
+     demand(!duplicate,'Teacher mobile number already belongs to another teacher',409);
+    }
+   }
    if(current&&(b.operation==='delete'&&old._syncDeleted===true||b.operation!=='delete'&&old._syncDeleted!==true&&canonical(business(old))===canonical(business(data)))){
     const backup=sql.exec<{state:string}>('SELECT state FROM live_backup WHERE collection=? AND id=? ORDER BY seq DESC LIMIT 1',col,String(b.id)).toArray()[0];
     const backedUp=!backup||backup.state==='verified';
