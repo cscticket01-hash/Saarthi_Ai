@@ -66,7 +66,7 @@ void main() {
     expect(tester.widget<FilledButton>(pause).onPressed, isNotNull);
     await tester.tap(pause);
     await tester.pumpAndSettle();
-    expect(pauses, [const Duration(hours: 24)]);
+    expect(pauses, [const Duration(minutes: 5)]);
     expect(completion.isCompleted, false);
     expect(engine.details.value['pending'], 3);
     completion.complete();
@@ -100,7 +100,7 @@ void main() {
       expect(find.text('Diagnostics and recovery tools'),findsNothing);
       await tester.tap(find.byType(PopupMenuButton<int>));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Advanced checks'));
+      await tester.tap(find.text('Troubleshoot'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Export Sanitized Report'),

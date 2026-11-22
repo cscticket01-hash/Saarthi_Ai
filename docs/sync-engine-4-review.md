@@ -1,0 +1,3 @@
+# Sync Engine 4 review (stage 1)
+
+Existing owners retained. This branch starts from 2c98da0133794dc29d1414873e05d89c5679868d; Work Mode branch remains independent. School identity checks, serialized profile activation, stale dispatch cancellation, UI label/pause menu and foreground Drive status separation are first-stage changes. No school data deleted or production deployment. The approved overall scope is not yet complete: direct authorized Worker fast path, canonical all-collection ACK, parallel admission, independent provider retry, native recovery, cross-school repair rollout, Android delta feed, complete graphical evidence projection, Apps Script optimization and provider acceptance remain. Tests are source changes until the exact commit CI passes.

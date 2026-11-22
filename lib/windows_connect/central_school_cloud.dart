@@ -508,9 +508,13 @@ class CentralSchoolCloud {
     bool returnAfterDurableCloudflareHandoff = false,
   }) async {
     final receiptProfile = edgeDeliveryProfile?.call();
+    final origin = expectedSchoolId != null ? await saved() : null;
     if (expectedSchoolId != null &&
-        (await saved())['schoolId'] != expectedSchoolId)
-      throw StateError('School changed during operation.');
+        (origin?['schoolId'] != expectedSchoolId ||
+         (body['schoolId'] != null && body['schoolId'] != expectedSchoolId) ||
+         (receiptProfile != null && edgeDeliveryProfile?.call() != receiptProfile))) {
+      throw StateError('School changed or foreign operation blocked.');
+    }
     if (!validEndpoint(endpoint))
       throw StateError(
         'Developer must configure the central school cloud service. Schools do not need Firebase configuration.',
@@ -525,7 +529,6 @@ class CentralSchoolCloud {
         || action=='managed/records/batch'
         || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String
         || fileSidecarStage;
-    final origin = expectedSchoolId != null ? await saved() : null;
     Object? ordered(Object? value) {
       if (value is Map) {
         final keys = value.keys.map((key) => key.toString()).toList()..sort();

@@ -1542,6 +1542,7 @@ class _LocalSchoolDatabase {
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
   String _activeProfileId = 'unbound';
+  bool _profileSwitching = false;
   Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
 
   // Legacy standalone Local Storage OFF uses RAM only. Verified managed
@@ -1613,8 +1614,18 @@ class _LocalSchoolDatabase {
       return;
     }
 
+    final school = nextIdentity['schoolSyncId'];
+    if (clean.startsWith('central_') &&
+        (!validSchoolId(school?.toString() ?? '') || clean != 'central_$school' ||
+         (nextIdentity['schoolId'] != null && nextIdentity['schoolId'] != school))) {
+      throw StateError('Invalid managed school profile binding.');
+    }
+    final previousProfile = _activeProfileId;
+    final previousIdentity = _activeIdentity;
+    _profileSwitching = true;
     _activeProfileId = clean;
     _activeIdentity = nextIdentity;
+    try {
 
     // Persist only profile metadata. Existing school data is never copied
     // between profiles. This is the core cross-school isolation guarantee.
@@ -1624,6 +1635,12 @@ class _LocalSchoolDatabase {
     final profile = rawProfile is Map
         ? Map<String, dynamic>.from(rawProfile)
         : <String, dynamic>{};
+    final oldIdentity = profile['identity'];
+    if (clean.startsWith('central_') && oldIdentity is Map &&
+        ((oldIdentity['schoolSyncId'] != null && oldIdentity['schoolSyncId'] != school) ||
+         (oldIdentity['schoolId'] != null && oldIdentity['schoolId'] != school))) {
+      throw StateError('Stored school profile belongs to another school; retained for review.');
+    }
     profile.putIfAbsent('collections', () => <String, dynamic>{});
     profile['identity'] = _encodeMap(nextIdentity);
     profile['lastOpenedAt'] = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -1631,6 +1648,13 @@ class _LocalSchoolDatabase {
     root['profiles'] = profiles;
     root['activeProfileHint'] = clean;
     await _writeRoot(root);
+    } catch (_) {
+      _activeProfileId = previousProfile;
+      _activeIdentity = previousIdentity;
+      rethrow;
+    } finally {
+      _profileSwitching = false;
+    }
 
     // Every existing StreamBuilder must immediately reload from the new
     // profile, otherwise the previous school's cards could stay on screen.
@@ -1668,15 +1692,41 @@ class _LocalSchoolDatabase {
     return result;
   }
 
+  void _requireReadSchool(String origin, Object? school) {
+    if (_profileSwitching || _activeProfileId != origin || _activeIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during local storage read. Reopen this view.');
+    }
+  }
+
+  // Do not relabel a foreign row to the active school. Preserve original evidence.
+  void _requireRecordSchool(Map? row) {
+    if (!_activeProfileId.startsWith('central_') || row == null) return;
+    final school = _activeIdentity['schoolSyncId'];
+    final payload = row['data'];
+    if ((row['schoolId'] != null && row['schoolId'] != school) ||
+        (payload is Map && payload['schoolId'] != null && payload['schoolId'] != school)) {
+      throw StateError('Foreign school record blocked; original retained.');
+    }
+  }
+
   Future<Map<String, dynamic>?> readDocument(
     String collection,
     String documentId,
   ) async {
+    final origin = _activeProfileId, school = _activeIdentity['schoolSyncId'];
+    _requireReadSchool(origin, school);
     if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
       final sqlite=await _sqliteStore();
-      if(sqlite!=null)return sqlite.readDocument(_activeProfileId,collection,documentId);
+      _requireReadSchool(origin, school);
+      if(sqlite!=null) {
+        final result = await sqlite.readDocument(origin,collection,documentId);
+        _requireReadSchool(origin, school);
+        _requireRecordSchool(result);
+        return result;
+      }
     }
     final root = await _readRoot();
+    _requireReadSchool(origin, school);
 
     final collections =
         _collections(root);
@@ -1693,6 +1743,7 @@ class _LocalSchoolDatabase {
       return null;
     }
 
+    _requireRecordSchool(value);
     return Map<String, dynamic>.from(value);
   }
 
@@ -1700,11 +1751,20 @@ class _LocalSchoolDatabase {
       readCollection(
     String collection,
   ) async {
+    final origin = _activeProfileId, school = _activeIdentity['schoolSyncId'];
+    _requireReadSchool(origin, school);
     if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
       final sqlite=await _sqliteStore();
-      if(sqlite!=null)return sqlite.readCollection(_activeProfileId,collection);
+      _requireReadSchool(origin, school);
+      if(sqlite!=null) {
+        final result = await sqlite.readCollection(origin,collection);
+        _requireReadSchool(origin, school);
+        for (final row in result.values) { _requireRecordSchool(row); }
+        return result;
+      }
     }
     final root = await _readRoot();
+    _requireReadSchool(origin, school);
 
     final raw =
         _collections(root)[collection];
@@ -1718,6 +1778,7 @@ class _LocalSchoolDatabase {
 
     for (final entry in raw.entries) {
       if (entry.value is Map) {
+        _requireRecordSchool(entry.value as Map);
         output[entry.key.toString()] =
             Map<String, dynamic>.from(
           entry.value as Map,
@@ -1888,6 +1949,10 @@ class _LocalSchoolDatabase {
         var trackedMutation = false;
 
         for (final operation in operations) {
+          _requireRecordSchool(operation.data);
+          final currentRows = collections[operation.collection];
+          final existingRow = currentRows is Map ? currentRows[operation.documentId] : null;
+          if (existingRow is Map) _requireRecordSchool(existingRow);
           final restores = collections['_windows_recycle_requests'];
           final protected = restores is Map ? restores.values.where((r)=>r is Map &&
               r['localRestore'] == true && r['schoolId'] == _activeIdentity['schoolSyncId'] &&
@@ -2842,6 +2907,7 @@ class _LocalSchoolDatabase {
           completer.complete(null);
           return;
         }
+        _requireRecordSchool(current);
         if (current['schoolId'] != null && current['schoolId'] != schoolId) {
           throw StateError('Pending operation belongs to another school.');
         }
@@ -3042,6 +3108,7 @@ class _LocalSchoolDatabase {
         operation.type == _WriteType.delete;
 
     final previous = queue[key];
+    if (previous is Map) _requireRecordSchool(previous);
     if(operation.collection=='students_directory' && !isDelete && finalDocs[operation.documentId] is Map) {
       final data=finalDocs[operation.documentId] as Map;
       final deletions=collections['_windows_local_deletions'];

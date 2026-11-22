@@ -1409,12 +1409,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _syncBlocked ||
         _resetPaused ||
         isPaused ||
-        !automaticSyncEnabled)
+        !automaticSyncEnabled ||
+        FirebaseFirestore.instance.activeProfileId != _activeProfileId ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != _activeSchoolSyncId)
       return;
     if (localMutation) {
       _automaticMutationPending = true;
       _liveRuntime?.markPending();
     }
+    // Profile activation owns the admission boundary; its finally block re-arms pending work.
+    if (_activating > 0) return;
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
       if (!canScheduleAfterSyncFailure(
@@ -1545,9 +1549,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     scheduleSoon(delay: const Duration(milliseconds: 250));
   }
 
-  Future<void> activateCurrentConnections({required bool allowPairing}) async {
-    if (_resetPaused) return;
+  Future<void> _activationTail = Future<void>.value();
+  Future<void> activateCurrentConnections({required bool allowPairing}) {
+    if (_resetPaused) return Future<void>.value();
     _activating++;
+    final work = _activationTail.then((_) async {
     try {
       while (_syncing) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1557,15 +1563,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
       await _applyProfile(profile, seedGoogleConfig: !profile.blocked);
 
-      if (!profile.blocked) {
-        scheduleSoon(delay: const Duration(milliseconds: 350));
-      }
     } finally {
       _activating--;
       if (_activating == 0 && automaticScheduleExpected) {
-        scheduleSoon(delay: const Duration(milliseconds: 350));
+        scheduleSoon(delay: Duration.zero);
       }
     }
+    });
+    _activationTail = work.catchError((Object _) {});
+    return work;
   }
 
   Future<void> pauseForAppReset() async {
@@ -1785,7 +1791,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _ResolvedSyncProfile profile, {
     required bool seedGoogleConfig,
   }) async {
-    if (_activeProfileId != profile.profileId) {
+    if (_activeProfileId != profile.profileId || _activeSchoolSyncId != profile.schoolSyncId) {
+      _dispatch.cancel();
+      _pauseTimer?.cancel();
+      _transferProfile = null;
+      _transferStatus = null;
+      _transferReadAfter = null;
+      details.value = <String,dynamic>{'displayState':'checking'};
       _closeLiveRuntime();
       _lastPull = null;
       _remoteResetPending = false;
@@ -2174,7 +2186,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       state.value = SchoolCloudState.offline;
       return;
     }
-    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused ||
+        FirebaseFirestore.instance.activeProfileId != _activeProfileId ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != _activeSchoolSyncId)
       return;
 
     if (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) {
@@ -3053,6 +3067,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   bool _rerunRequested = false;
+  /// Turn off the temporary pause without resetting provider backoff or forcing a full audit.
+  Future<void> resumeAutomaticSync() async {
+    final origin = _activeProfileId;
+    final generation = ++_pauseGeneration;
+    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    final write = _pauseWrite.catchError((Object _) {}).then((_) =>
+      ref.set({'pausedUntilMillis':0,'startedAtMillis':0}));
+    _pauseWrite = write;
+    await write;
+    if (_activeProfileId != origin || generation != _pauseGeneration) return;
+    _pause.resume();
+    _pauseTimer?.cancel();
+    await refreshDetails();
+    scheduleSoon(delay:Duration.zero);
+  }
+
   Future<void> requestSync() async {
     final generation = ++_pauseGeneration;
     final origin = _activeProfileId;

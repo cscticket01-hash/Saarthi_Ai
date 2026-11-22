@@ -762,7 +762,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     };
     return CloudflareTransferStatus(
       messages: messages.toList(),
-      showTransfers: ownSchool,
+      showTransfers: false,
       panelBuilder: (messages, progress) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: _panelBox(
@@ -892,7 +892,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Sync Progress',
+                    'Live Sync Flow',
                     style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
@@ -902,7 +902,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       ? '${diskEvidence!['volume']}\n${bytesLabel(diskEvidence!['usedBytes'] as int)} / ${bytesLabel(diskEvidence!['totalBytes'] as int)}'
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
                     cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
-                    drive:driveLabel,
+                    drive:'Automatic server-side backup',
                     pending:uploadCount,
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
@@ -911,7 +911,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     active:engine.isPaused || deviceIdle
                       ? const {}
                       : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
-                        .where((lane)=>lane=='local'||hasUploads).toSet(),
+                        .where((lane)=>lane=='local'||lane=='cloud'&&hasUploads).toSet(),
                   ),
                   if (incomingCount > 0) Padding(
                     padding: const EdgeInsets.only(top: 10),
@@ -1241,7 +1241,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
-        title: const Text('Sync Engine 3.0'),
+        title: const Text('Sync Engine 4 — Live Sync'),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
@@ -1256,7 +1256,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               !engine.isPaused
                           ? _run(
                               () => (widget.pauseRequest ?? engine.pauseSync)(
-                                const Duration(hours: 24),
+                                const Duration(minutes: 5),
                               ),
                             )
                           : _startManualSync(),
@@ -1278,20 +1278,29 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ); },
           ),
           PopupMenuButton<int>(
-            tooltip: 'Schedule sync pause',
+            tooltip: 'Sync options',
             enabled: !busy && db.activeProfileId == origin,
-            onSelected: (hours) {
-              if(hours==0){setState((){showDiagnostics=true;showHistory=false;showQueue=false;});return;}
-              _run(
-              () => (widget.pauseRequest ?? engine.pauseSync)(
-                Duration(hours: hours),
-              ),
-            );},
+            onSelected: (choice) {
+              if (choice == -1) {
+                setState((){showDiagnostics=true;showHistory=false;showQueue=false;});
+              } else if (choice == -2) {
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return const WindowsRecycleBin(); }));
+              } else if (choice == 0) {
+                _run(engine.resumeAutomaticSync);
+              } else {
+                _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(minutes:choice)));
+              }
+            },
             itemBuilder: (_) => const [
-              PopupMenuItem(value:0,child:Text('Advanced checks')),
-              PopupMenuItem(value: 1, child: Text('Pause Sync for 1 Hour')),
-              PopupMenuItem(value: 12, child: Text('Pause Sync for 12 Hours')),
-              PopupMenuItem(value: 24, child: Text('Pause Sync for 1 Day')),
+              PopupMenuItem<int>(enabled:false,child:Text('Sync Pause')),
+              PopupMenuItem(value:0,child:Text('Off — resume auto sync')),
+              PopupMenuItem(value:5,child:Text('5 minutes')),
+              PopupMenuItem(value:30,child:Text('30 minutes')),
+              PopupMenuItem(value:60,child:Text('1 hour')),
+              PopupMenuDivider(),
+              PopupMenuItem(value:-1,child:Text('Troubleshoot')),
+              PopupMenuItem(value:-2,child:Text('Recycle Bin')),
             ],
           ),
           const SizedBox(width: 20),
@@ -1315,7 +1324,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       const Text(
-                        'Sync & Backup Control Center',
+                        'Live Sync',
                         style: TextStyle(fontFamily: 'Segoe UI', 
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
