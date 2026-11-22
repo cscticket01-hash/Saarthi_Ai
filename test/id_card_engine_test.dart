@@ -35,9 +35,12 @@ void main() {
     final entries = await IdCardCatalog.load();
     expect(
       entries.where((e)=>e.kinds.contains('studentId')).map((e)=>e.id).toList(),
-      ['student-maroon-gold-v1'],
+      ['student-maroon-gold-v1', 'student-svn-navy-green-v1'],
     );
     for(final entry in entries) { expect((await entry.manifest()).id, entry.id); }
+    final svn = await IdCardCatalog.find('student-svn-navy-green-v1');
+    expect((await svn.manifest()).hasBack, isTrue);
+    expect((await svn.backgrounds()).keys, unorderedEquals(['front', 'back']));
     for (final asset in [
       'https://evil.example/card.json',
       'assets/../private.json',
