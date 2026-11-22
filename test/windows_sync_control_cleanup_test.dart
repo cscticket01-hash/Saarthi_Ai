@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_local_firestore.dart';
+import '../lib/cloudflare_record_handoff.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_sync_engine.dart';
@@ -33,19 +34,21 @@ void main() {
     const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const foreign = 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     final queue = db.collection('_windows_firebase_outbox');
-    final ticket = List.filled(64, 'a').join();
     Map<String, dynamic> row(String op, String owner) => {
       'schoolId': owner, 'collection': 'school_notices',
       'documentId': op, 'operationId': op, 'operation': 'set',
       'baseCloudRevision': '', 'syncState': 'cloudAccepted',
-      'cloudTicketId': ticket, 'cloudTicketLane': 'records',
+      'cloudTicketId': exactStagedRecordTicket({
+        'schoolId':owner,'collection':'school_notices',
+        'documentId':op,'operationId':op,
+      },owner), 'cloudTicketLane': 'records',
       'data': {'privateText': 'not for diagnostic export'},
     };
     await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
       await queue.doc('accepted').set(row('accepted-operation-0001', school));
       await queue.doc('unverified').set({
         ...row('unverified-operation-0001', school),
-        'cloudTicketId': 'invalid',
+        'cloudTicketId': List.filled(64, 'b').join(),
       });
       await queue.doc('foreign').set(row('foreign-operation-0001', foreign));
       await queue.doc('pending').set({
