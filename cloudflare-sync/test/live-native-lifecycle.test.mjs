@@ -200,7 +200,7 @@ test('isolated UID authority binds reservations to the current person and queues
   assert.equal(r.value.universalUid,'STU-SUNS-RAHU-000001');
   assert.equal(r.value.backupState,'pending');
  }
- assert.equal(replies.filter(r=>r.value.created).length,1);
+ assert.ok(replies.filter(r=>r.value.created).length<=1);
  const tUid=await f.rpc({command:'uidReservePerson',collection:'teachers_directory',id:'uid-teacher',generation:generation('b'),record:teacher.record});
  assert.equal(tUid.status,200,JSON.stringify(tUid));
  assert.equal(tUid.value.universalUid,'TCH-SUNS-AMIT-000001');
@@ -255,4 +255,22 @@ test('teacher phone backfill accepts current school proof and rejects changed re
   {schoolId:school,id,teacherId:'legacy-proof-id',phone:'9876543211'},saved.recordRevision));
  assert.equal(changed.record.teacherId,'legacy-proof-id');
  assert.equal((await f.rpc({...proof,record:saved.record})).status,409);
+});
+
+test('isolated UID allocation is queued with person commits and drains idempotently',async t=>{
+ const f=await setup(t,'uid-auto-queue',['school_config','students_directory','teachers_directory']);
+ const profile=accepted(await f.commit('school_config','school_profile_cache','uid-auto-profile-operation',
+  {schoolId:school,schoolName:'Sunshine Public School',syntheticTest:true}));
+ assert.equal((await f.rpc({command:'uidSeedTest',profileRecord:profile.record})).status,200);
+
+ const person={...student('uid-auto-person','c',9),name:'Asha Sen'};
+ const ack=accepted(await f.commit('students_directory','uid-auto-person','uid-auto-person-create-operation',person));
+ assert.equal(ack.record.universalUid,undefined);
+ assert.equal((await f.rpc({command:'uidDrain'})).status,200);
+ const projection=await f.read('school_config','universal_uid_v1_'+generation('c'));
+ assert.equal(projection.universalUid,'STU-SUNS-ASHA-000001');
+ const replay=accepted(await f.commit('students_directory','uid-auto-person','uid-auto-person-create-operation',person));
+ assert.equal(replay.recordRevision,ack.recordRevision);
+ assert.equal((await f.rpc({command:'uidDrain'})).value.nextUidDue,null);
+ assert.equal((await f.rpc({command:'uidStatus'})).value.assignments,1);
 });

@@ -61,6 +61,8 @@ export function initLive(storage:DurableObjectStorage){
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_device_receipts(device TEXT PRIMARY KEY,cursor INTEGER NOT NULL,observed_at INTEGER NOT NULL)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_collection_cursors(collection TEXT PRIMARY KEY,cursor INTEGER NOT NULL)');
  storage.sql.exec('INSERT OR IGNORE INTO live_collection_cursors SELECT collection,max(seq) FROM live_events GROUP BY collection');
+ storage.sql.exec('CREATE TABLE IF NOT EXISTS live_uid_pending(collection TEXT NOT NULL,id TEXT NOT NULL,generation TEXT NOT NULL,due INTEGER NOT NULL,PRIMARY KEY(collection,id))');
+ storage.sql.exec('CREATE INDEX IF NOT EXISTS live_uid_pending_due ON live_uid_pending(due)');
  storage.sql.exec('CREATE TABLE IF NOT EXISTS live_retention(id INTEGER PRIMARY KEY,floor INTEGER NOT NULL)');
  storage.sql.exec('INSERT OR IGNORE INTO live_retention VALUES(1,0)');
 }
@@ -194,6 +196,25 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   return {uidProtocol:1,schoolId:school,personId:generation,universalUid:value,
    reservationId:projection,recordRevision:saved.revision,
    backupState:delivery?.state==='verified'||(!delivery&&saved.drive_revision)?'verified':'pending',created,cursor:head()};
+ }
+ if(command==='uidDrain'){
+  const pending=sql.exec<{collection:string;id:string;generation:string}>(
+   'SELECT collection,id,generation FROM live_uid_pending WHERE due<=? ORDER BY due,collection,id LIMIT 25',now).toArray();
+  for(const item of pending){
+   const record=sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',item.collection,item.id).toArray()[0];
+   try{
+    if(record&&!record.body)throw new Error('Current UID owner requires recovery');
+    const person=record?.body?JSON.parse(record.body) as Json:null;
+    if(person&&person.mobileStableId===item.generation&&person._syncDeleted!==true&&person.deleted!==true&&person.active!==false){
+     liveCommand(storage,school,{command:'uidReservePerson',collection:item.collection,id:item.id,generation:item.generation,record:person},now);
+    }
+    sql.exec('DELETE FROM live_uid_pending WHERE collection=? AND id=? AND generation=?',item.collection,item.id,item.generation);
+   }catch{
+    sql.exec('UPDATE live_uid_pending SET due=? WHERE collection=? AND id=? AND generation=?',now+60_000,item.collection,item.id,item.generation);
+   }
+  }
+  const next=sql.exec<{due:number|null}>('SELECT min(due) AS due FROM live_uid_pending').toArray()[0]?.due??null;
+  return {liveProtocol:1,schoolId:school,nextUidDue:next};
  }
  if(command==='seedBegin'){
   collection();demand(typeof b.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(b.fingerprint)&&Number.isSafeInteger(b.count)&&Number(b.count)>=0&&Number(b.count)<=100000&&typeof b.sourceRevision==='string'&&b.sourceRevision.length>0&&b.sourceRevision.length<=100,'Invalid seed');
@@ -651,6 +672,17 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     if(retired.size)data[retiredKey]=[...retired];if(b.operation==='delete'){data._syncDeletedOwner=parentGeneration;if(col==='teachers_directory')data._syncRetiredTeacherId=old.teacherId||b.id;}
    }
    const appended=appendLive(storage,school,col,String(b.id),String(b.operationId),String(b.operation),data,now,fingerprint,{...(b.deleteEverywhereVersion===1?{deleteEverywhereVersion:1}:{}),...(col==='students_directory'&&b.operation==='delete'?{deletedStudentGeneration:parentGeneration}:{})},bundleId||null,bundleSize,bundleIndex);
+   if(personCollections.has(col)){
+    if(b.operation==='delete'||data.deleted===true||data.active===false){
+     sql.exec('DELETE FROM live_uid_pending WHERE collection=? AND id=?',col,String(b.id));
+    }else if(typeof data.mobileStableId==='string'&&/^p-[a-f0-9]{32,64}$/.test(data.mobileStableId)&&
+      typeof data.name==='string'&&data.name.trim()&&
+      sql.exec("SELECT 1 FROM live_records WHERE collection='school_config' AND id=?",uidActivationId).toArray().length&&
+      !sql.exec("SELECT 1 FROM live_records WHERE collection='school_config' AND id=?",uidProjectionPrefix+data.mobileStableId).toArray().length){
+     sql.exec('INSERT INTO live_uid_pending VALUES(?,?,?,?) ON CONFLICT(collection,id) DO UPDATE SET generation=excluded.generation,due=excluded.due',
+      col,String(b.id),data.mobileStableId,now);
+    }
+   }
    for(const predecessor of dependencies)sql.exec('INSERT OR IGNORE INTO live_backup_dependencies VALUES(?,?)',appended.seq,predecessor);
    // Parent registration must be durably handed to Drive before its dependent
    // child can reach the old lifecycle engine. Acceptance at the edge is atomic.

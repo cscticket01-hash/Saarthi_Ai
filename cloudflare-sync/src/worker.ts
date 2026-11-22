@@ -505,6 +505,7 @@ export class SyncLane extends DurableObject<Env>{
   }
   const identity=this.meta('identity');if(!identity)return;const [school,lane]=identity.split('/');
   if(lane==='live'){
+   const allocation=liveCommand(this.ctx.storage,school,{command:'uidDrain'}) as {nextUidDue:number|null};
    const raw=JSON.stringify({action:'managed/live/drain',schoolId:school}),time=String(Date.now());
    try{const response=await fetch(this.env.BROKER_URL,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer cloudflare-delivery','X-Vidya-Time':time,'X-Vidya-Signature':await signature(this.env.EDGE_KEY,time+'\n'+raw)},body:raw,signal:AbortSignal.timeout(110000)});await response.body?.cancel();}catch{}
    // Reuse the Durable Object alarm for age-based cleanup. Never delete
@@ -517,7 +518,8 @@ export class SyncLane extends DurableObject<Env>{
    }catch{cleanupDue=Date.now()+60_000;} // Keep payloads, retry safe sweep.
    const rows=this.ctx.storage.sql.exec<{due:number}>("SELECT min(b.due) AS due FROM live_backup b WHERE b.state IN ('pending','retry','processing') AND NOT EXISTS(SELECT 1 FROM live_backup earlier WHERE earlier.collection=b.collection AND earlier.id=b.id AND earlier.seq<b.seq AND earlier.state!='verified')").toArray();
    const pendingDue=rows[0]?.due??null;
-   const due=pendingDue===null?cleanupDue:cleanupDue===null?pendingDue:Math.min(pendingDue,cleanupDue);
+   const deadlines=[pendingDue,cleanupDue,allocation.nextUidDue].filter((value):value is number=>value!==null);
+   const due=deadlines.length?Math.min(...deadlines):null;
    if(due!==null)await this.ctx.storage.setAlarm(Math.max(Date.now()+1000,due));return;
   }
   if(lane!=='delivery'){
