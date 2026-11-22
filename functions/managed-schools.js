@@ -985,6 +985,39 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(!liveSync.enabled(m.schoolId))fail(412,'Live sync is not enabled for this school','LIVE_SYNC_DISABLED');
   if(b.liveProtocol!==1)fail(412,'Live sync protocol negotiation required','LIVE_PROTOCOL_REQUIRED');
   const operation=action.slice('managed/live/'.length);
+  if(operation==='uid-status'){
+   const result=await liveSync.command(m.schoolId,{command:'uidStatus'});
+   if(result?.schoolId!==m.schoolId||result.uidProtocol!==1||
+      !['test_ready','migration_required','recovery_required'].includes(result.state))
+    fail(502,'School UID status could not be verified','UID_STATUS_UNVERIFIED');
+   return {success:true,...result};
+  }
+  if(operation==='uid-reserve'){
+   // The school administrator's session and licence are verified above.
+   // A client supplies an immutable owner binding, never a UID/name/serial.
+   if(!['students_directory','teachers_directory'].includes(b.collection)||
+      typeof b.id!=='string'||!/^[^/]{1,200}$/.test(b.id)||
+      ['.','..','__proto__','constructor','prototype'].includes(b.id)||
+      !/^p-[a-f0-9]{32,64}$/.test(b.generation||''))
+    fail(400,'Verified person identity required','UID_OWNER_INVALID');
+   await liveMigration.assertCohortAdmission(m.schoolId,b.collection);
+   await liveMigration.assertCohortAdmission(m.schoolId,'school_config');
+   const current=await liveSync.read(m.schoolId,b.collection,b.id,record=>signedRequest(m,record));
+   const record=current?.record;
+   if(current?.schoolId!==m.schoolId||current.liveProtocol!==1||
+      !record||record.schoolId!==m.schoolId||
+      record._syncRevision!==current.recordRevision||record.mobileStableId!==b.generation||
+      record._syncDeleted===true||record.active===false)
+    fail(409,'Person changed or pending cloud save','UID_OWNER_CHANGED');
+   const result=await liveSync.command(m.schoolId,{command:'uidReservePerson',
+     collection:b.collection,id:b.id,generation:b.generation,record});
+   if(result?.schoolId!==m.schoolId||result.uidProtocol!==1||result.personId!==b.generation||
+      typeof result.universalUid!=='string'||result.reservationId!=='universal_uid_v1_'+b.generation||
+      !['pending','verified'].includes(result.backupState))
+    fail(502,'School UID reservation could not be verified','UID_RESERVATION_UNVERIFIED');
+   if(result.created===true)await changeHint(m.schoolId,'school_config',result.reservationId);
+   return {success:true,...result};
+  }
   if(operation==='settle-test-student-slot-review'){
    if(!atomicBundleTestSchools.includes(m.schoolId))fail(412,'Atomic bundle pilot is disabled','ATOMIC_BUNDLE_TEST_DISABLED');
    if(!/^[a-f0-9]{64}$/.test(b.id||'')||!/^[a-f0-9]{64}$/.test(b.successorId||'')||
@@ -1539,6 +1572,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   return cardAuthority({request:{...b,operation},identity:m,readPerson});
  }
  if(action==='managed/records/batch'){
+  if(Array.isArray(b.operations)&&b.operations.some(op=>op?.collection==='school_config'&&typeof op.id==='string'&&op.id.startsWith('universal_uid_v1_')))fail(403,'UID reservations are server-owned','UID_OWNER_REQUIRED');
   if(!Array.isArray(b.operations)||b.operations.length<1||b.operations.length>10||JSON.stringify(b.operations).length>256000)fail(400,'Invalid record batch');
   const seen=new Set(),operationIds=new Set();
   const operations=b.operations.map(op=>{
@@ -1579,6 +1613,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   invalidate(m.schoolId);return result;
  }
  if(action==='managed/records'){
+  if(b.collection==='school_config'&&b.operation!=='read'&&typeof b.id==='string'&&b.id.startsWith('universal_uid_v1_'))fail(403,'UID reservations are server-owned','UID_OWNER_REQUIRED');
   if(!COLLECTIONS.has(b.collection)||!['read','write','delete','recover'].includes(b.operation))fail(400,'Invalid school collection operation');if(b.operation!=='read'&&(!/^[^/]{1,200}$/.test(b.id||'')||['.','..'].includes(b.id)))fail(400,'Invalid record ID');const data=['write','recover'].includes(b.operation)?{...clean(b.data),schoolId:m.schoolId}:undefined;
   if(b.expectedRevision!==undefined&&(b.collection!=='documents'||typeof b.expectedRevision!=='string'||b.expectedRevision.length>100))fail(400,'Invalid document version');if(b.syncProtocol!==undefined&&b.syncProtocol!==2)fail(400,'Invalid sync protocol');
   if(b.syncProtocol===2&&b.operation!=='read'&&(!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||'')||typeof b.expectedRecordRevision!=='string'||b.expectedRecordRevision.length>100))fail(400,'Invalid sync operation');

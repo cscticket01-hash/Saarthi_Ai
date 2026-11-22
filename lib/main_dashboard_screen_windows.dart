@@ -19122,11 +19122,14 @@ class _AdvancedStudentUidSettingsPanelState
   int _uidNextNumber = 1;
   String _uidLastIssued = '';
   String _universalSchoolName = '';
+  Map<String,dynamic>? _universalStatus;
+  bool _universalStatusLoading = false;
 
   @override
   void initState() {
     super.initState();
     _fetchUidTestSettings();
+    _fetchUniversalUidStatus();
   }
 
   @override
@@ -19172,6 +19175,33 @@ class _AdvancedStudentUidSettingsPanelState
       debugPrint('Test UID settings load error: $e');
       if (!mounted) return;
       setState(() => _uidSettingsLoading = false);
+    }
+  }
+
+  Future<void> _fetchUniversalUidStatus() async {
+    if (_universalStatusLoading) return;
+    final db=FirebaseFirestore.instance,origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    if(mounted)setState(()=>_universalStatusLoading=true);
+    CentralSchoolCloud? cloud;
+    try {
+      final saved=await CentralSchoolCloud.saved();
+      if(saved['managed']!=true||saved['schoolId']!=school||db.activeProfileId!=origin)return;
+      cloud=CentralSchoolCloud(expectedSchoolId:school,endpoint:saved['endpoint'].toString());
+      final token=await CentralSchoolCloud.firebaseToken();
+      final status=await cloud.api({'action':'managed/live/uid-status',
+        'schoolId':school,'liveProtocol':1},token:token);
+      if(status['success']!=true||status['schoolId']!=school||status['uidProtocol']!=1||
+         !['test_ready','migration_required','recovery_required'].contains(status['state'])) {
+        throw StateError('UID status was not verified.');
+      }
+      if(mounted&&db.activeProfileId==origin&&db.activeProfileIdentity['schoolSyncId']==school)
+        setState(()=>_universalStatus=status);
+    } catch (_) {
+      if(mounted&&db.activeProfileId==origin)setState(()=>_universalStatus=null);
+    } finally {
+      cloud?.close();
+      if(mounted&&db.activeProfileId==origin)setState(()=>_universalStatusLoading=false);
     }
   }
 
@@ -19750,9 +19780,20 @@ class _AdvancedStudentUidSettingsPanelState
               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 11),
             ),
             Text(
-              'Universal allocation is not active until the verified cloud migration is available. Existing TEST values and settings remain unchanged.',
+              _universalStatusLoading ? 'Checking Cloudflare UID authority…'
+                : _universalStatus == null ? 'Cloudflare UID authority not verified. Existing TEST values remain unchanged.'
+                : _universalStatus!['state']=='test_ready'
+                  ? 'Isolated UID TEST authority ready. Production activation remains gated.'
+                  : _universalStatus!['state']=='recovery_required'
+                    ? 'UID recovery proof required. New reservations are blocked.'
+                    : 'Verified migration required before Universal UID activation.',
               style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent), fontSize: 11),
             ),
+            if (_universalStatus?['counters'] is Map)
+              Text('Cloudflare next serials: STU ${(_universalStatus!['counters'] as Map)['STU']} · TCH ${(_universalStatus!['counters'] as Map)['TCH']} · STF ${(_universalStatus!['counters'] as Map)['STF']}',
+                style: TextStyle(color: WindowsAppearance.foreground(Colors.white70),fontSize:11)),
+            TextButton.icon(onPressed: _universalStatusLoading ? null : _fetchUniversalUidStatus,
+              icon: const Icon(Icons.refresh),label: const Text('Refresh Cloudflare UID status')),
             const SizedBox(height: 14),
             TextField(
               controller: _uidStartController,
