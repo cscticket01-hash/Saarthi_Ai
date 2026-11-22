@@ -2334,6 +2334,81 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
+        try {
+          _admitBatch();
+          _setCheckingCloud(false);
+          if(AtomicBundlePilot.buildEnabled) {
+            // Isolated TEST builds only: prepare the same QR/ID card generator
+            // before any legacy Person outbox row is independently submitted.
+            // Production and unpaired records retain the existing path.
+            await SchoolPersonIdentity.preparePendingCreates(
+              _activeSchoolSyncId,canAdmit:()=>!isPaused);
+            final pendingParents=(await FirebaseFirestore.instance
+                .collection('_windows_firebase_outbox').get()).docs;
+            final targets=<String,Set<String>>{
+              'studentId':<String>{},'teacherId':<String>{}};
+            for(final row in pendingParents){
+              final item=row.data(),collection=item['collection'],
+                    id=item['documentId'];
+              if(item['schoolId']==_activeSchoolSyncId &&
+                 item['operation']=='set' && item['baseCloudRevision']=='' &&
+                 id is String && id.isNotEmpty &&
+                 !{'conflict','needsAttention'}.contains(item['syncState'])) {
+                if(collection=='students_directory')targets['studentId']!.add(id);
+                if(collection=='teachers_directory')targets['teacherId']!.add(id);
+              }
+            }
+            if(targets.values.any((set)=>set.isNotEmpty)){
+              await WindowsDocumentTemplates.publishChangedIdCards(
+                affectedPeople:targets,onCardRepair:_recordActivity);
+            }
+            _admitBatch();
+            await _measure('atomicPersonCardStage',()=>
+              WindowsAtomicPersonCardCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Reuse the same saved fee/ledger/receipt outboxes; only the
+            // isolated TEST owner can reserve or retire a complete triple.
+            _admitBatch();
+            await _measure('atomicFinancialStage',()=>
+              WindowsAtomicFinancialCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Actual Windows Exam Center Save uses exam_center_results.
+            // Pair that original row with its existing immutable PDF outbox.
+            _admitBatch();
+            await _measure('atomicExamMarksheetStage',()=>
+              WindowsAtomicFinancialCoordinator.runExam(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+          }
+          await _measure('recordUploadStage', () => _pushManagedOutbox());
+          // Publish the durable queue/ACK state as soon as upload returns;
+          // incoming reconciliation and read-only Drive receipt polling are
+          // independent, so they must not prolong the outgoing sync display.
+          await refreshDetails();
+          unawaited(_refreshDriveDeliveries());
+        } catch (e) {
+          if (!windowsSyncRecovery(e).independentRecords &&
+              !isRecordSyncConflict(e))
+            rethrow;
+          // A rejected write can concern an unchanged cloud head already in
+          // our manifest. Admit one bounded record delta for these conflicts;
+          // otherwise the normal unchanged-head shortcut would hide readback.
+          final pending = await FirebaseFirestore.instance
+              .collection('_windows_firebase_outbox')
+              .get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+            throw StateError('School changed before duplicate readback.');
+          for (final row in pending.docs) {
+            final item = row.data();
+            if (item['syncState'] == 'conflict' &&
+                item['schoolId'] == _activeSchoolSyncId &&
+                _firebaseCollections.contains(item['collection'])) {
+              _remoteCollections.add(item['collection'] as String);
+            }
+          }
+        }
+        // Admit outgoing durable work before optional integrity audits and
+        // inbound recovery. These remain in the same school-scoped cycle but
+        // no longer sit in front of the first record request.
         if (_sheetAuditSupported && (scheduledCheck || integrityAudit) && !isPaused) {
           final audit = await WindowsSheetIntegrity.audit(
             profile: syncOrigin,
@@ -2420,78 +2495,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               allowed: _firebaseCollections.toSet(),
             ),
           );
-        }
-        try {
-          _admitBatch();
-          _setCheckingCloud(false);
-          if(AtomicBundlePilot.buildEnabled) {
-            // Isolated TEST builds only: prepare the same QR/ID card generator
-            // before any legacy Person outbox row is independently submitted.
-            // Production and unpaired records retain the existing path.
-            await SchoolPersonIdentity.preparePendingCreates(
-              _activeSchoolSyncId,canAdmit:()=>!isPaused);
-            final pendingParents=(await FirebaseFirestore.instance
-                .collection('_windows_firebase_outbox').get()).docs;
-            final targets=<String,Set<String>>{
-              'studentId':<String>{},'teacherId':<String>{}};
-            for(final row in pendingParents){
-              final item=row.data(),collection=item['collection'],
-                    id=item['documentId'];
-              if(item['schoolId']==_activeSchoolSyncId &&
-                 item['operation']=='set' && item['baseCloudRevision']=='' &&
-                 id is String && id.isNotEmpty &&
-                 !{'conflict','needsAttention'}.contains(item['syncState'])) {
-                if(collection=='students_directory')targets['studentId']!.add(id);
-                if(collection=='teachers_directory')targets['teacherId']!.add(id);
-              }
-            }
-            if(targets.values.any((set)=>set.isNotEmpty)){
-              await WindowsDocumentTemplates.publishChangedIdCards(
-                affectedPeople:targets,onCardRepair:_recordActivity);
-            }
-            _admitBatch();
-            await _measure('atomicPersonCardStage',()=>
-              WindowsAtomicPersonCardCoordinator.run(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-            // Reuse the same saved fee/ledger/receipt outboxes; only the
-            // isolated TEST owner can reserve or retire a complete triple.
-            _admitBatch();
-            await _measure('atomicFinancialStage',()=>
-              WindowsAtomicFinancialCoordinator.run(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-            // Actual Windows Exam Center Save uses exam_center_results.
-            // Pair that original row with its existing immutable PDF outbox.
-            _admitBatch();
-            await _measure('atomicExamMarksheetStage',()=>
-              WindowsAtomicFinancialCoordinator.runExam(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-          }
-          await _measure('recordUploadStage', () => _pushManagedOutbox());
-          // Publish the durable queue/ACK state as soon as upload returns;
-          // incoming reconciliation and read-only Drive receipt polling are
-          // independent, so they must not prolong the outgoing sync display.
-          await refreshDetails();
-          unawaited(_refreshDriveDeliveries());
-        } catch (e) {
-          if (!windowsSyncRecovery(e).independentRecords &&
-              !isRecordSyncConflict(e))
-            rethrow;
-          // A rejected write can concern an unchanged cloud head already in
-          // our manifest. Admit one bounded record delta for these conflicts;
-          // otherwise the normal unchanged-head shortcut would hide readback.
-          final pending = await FirebaseFirestore.instance
-              .collection('_windows_firebase_outbox')
-              .get();
-          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
-            throw StateError('School changed before duplicate readback.');
-          for (final row in pending.docs) {
-            final item = row.data();
-            if (item['syncState'] == 'conflict' &&
-                item['schoolId'] == _activeSchoolSyncId &&
-                _firebaseCollections.contains(item['collection'])) {
-              _remoteCollections.add(item['collection'] as String);
-            }
-          }
         }
         await WindowsBackendBridge.repairIdenticalDocumentConflicts(
           _activeSchoolSyncId,canAdmit:()=>!isPaused);
@@ -2962,7 +2965,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         } catch (_) { /* Optional timing evidence never changes queue completion. */ }
         if(_activeProfileId==syncOrigin)await refreshDetails();
       }
-      if ((lastError != null &&
+      if (_activeProfileId == syncOrigin &&
+          FirebaseFirestore.instance.activeProfileId == syncOrigin &&
+          ((lastError != null &&
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
           _rerunRequested ||
@@ -2970,15 +2975,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               (_remoteCollections.isNotEmpty ||
                   _remoteRecordIds.isNotEmpty ||
                   _remoteResetPending ||
-                  _pendingIdInputs.isNotEmpty))) {
-        final independentMutation =
-            _rerunRequested && recoveryDecision?.independentRecords == true;
+                  _pendingIdInputs.isNotEmpty)))) {
+        // A durable mutation arriving during this pass is not an ordinary
+        // reconciliation poll. Re-admit it immediately when the prior pass
+        // succeeded or the existing recovery policy permits independent work.
+        // scheduleSoon still enforces school identity, pause, quota and retry.
+        final immediateMutation = _rerunRequested &&
+            (lastError == null ||
+                recoveryDecision?.independentRecords == true);
         _rerunRequested = false;
         scheduleSoon(
-          localMutation: independentMutation,
-          delay: lastError == null
-              ? const Duration(milliseconds: 250)
-              : schoolRetryDelay(_failures),
+          localMutation: immediateMutation,
+          delay: immediateMutation
+              ? Duration.zero
+              : lastError == null
+                  ? const Duration(milliseconds: 250)
+                  : schoolRetryDelay(_failures),
         );
       }
     }
