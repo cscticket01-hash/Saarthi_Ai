@@ -60,6 +60,20 @@ bool verifiedUnknownNoticeDeleteReadback(
           remote['_syncOperationId'] == item['operationId'];
 }
 
+/// Only independent, immutable text/calendar operations may share an admission
+/// window. Person, fee, attendance, file and deletion dependencies stay serial
+/// until their owner explicitly proves independence.
+bool canParallelStageRecord(Map item, String school, {
+  required bool edgeDeliverySupported,
+}) =>
+    eligibleForRecordHandoff(item, school,
+        edgeDeliverySupported: edgeDeliverySupported) &&
+    {'school_notices', 'school_calendar'}.contains(item['collection']) &&
+    {'pending', 'retry'}.contains(item['syncState']) &&
+    item['documentId'] is String &&
+    (item['documentId'] as String).isNotEmpty &&
+    pendingRecordBackoffDue(Map<String, dynamic>.from(item), DateTime.now());
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -414,9 +428,11 @@ class WindowsPendingSchoolSync {
     String? onlyOperationId,
     bool respectBackoff = false,
     bool diagnoseUnclassified = false,
+    bool Function(Map<String, dynamic>)? parallelAdmission,
     void Function(Map<String, dynamic>)? onActivity,
   }) async {
     final db = FirebaseFirestore.instance;
+    final school = db.activeProfileIdentity['schoolSyncId'];
     void report(
       String stage,
       String queueId,
@@ -452,7 +468,8 @@ class WindowsPendingSchoolSync {
     }
 
     void unchanged() {
-      if (db.activeProfileId != profileId)
+      if (db.activeProfileId != profileId ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
         throw StateError('School changed during sync.');
     }
 
@@ -493,16 +510,16 @@ class WindowsPendingSchoolSync {
         return order != 0 ? order : time(a.data()).compareTo(time(b.data()));
       });
     Object? firstDeferred;
-    for (final queued in docs) {
+    Future<void> process(QueryDocumentSnapshot<Map<String, dynamic>> queued) async {
       unchanged();
       queued.reference.requireOriginProfile();
-      if (onlyQueueId != null && queued.id != onlyQueueId) continue;
-      if (canAdmit?.call() == false) break;
+      if (onlyQueueId != null && queued.id != onlyQueueId) return;
+      if (canAdmit?.call() == false) return;
       var item = queued.data();
       // Cloudflare owns this immutable original. The device never submits a
       // second mutation merely to poll Google Drive; the receipt journal can
       // settle it when the authenticated provider proof eventually arrives.
-      if(item['syncState']=='cloudAccepted')continue;
+      if(item['syncState']=='cloudAccepted')return;
       // This exact original operation belongs to the isolated atomic
       // Person/Card recovery owner. Never issue a second independent upload.
       if(item['atomicBundleId']!=null) {
@@ -511,7 +528,7 @@ class WindowsPendingSchoolSync {
             !{'reserved','committed'}.contains(item['atomicState']) ||
             item['schoolId']!=db.activeProfileIdentity['schoolSyncId'])
           throw StateError('Atomic outbox reservation requires school review.');
-        continue;
+        return;
       }
       if (sendVersioned != null &&
           item['schoolId'] != null &&
@@ -522,7 +539,7 @@ class WindowsPendingSchoolSync {
         );
       }
       if (onlyOperationId != null && item['operationId'] != onlyOperationId)
-        continue;
+        return;
       // A manual Sync Now can bypass a local transport backoff, but cannot
       // override a provider quota minimum. Keep the immutable pending request
       // until the saved deadline even when the caller disables normal backoff.
@@ -532,7 +549,7 @@ class WindowsPendingSchoolSync {
             DateTime.now(),
             explicitRetry: onlyOperationId != null,
           ))
-        continue;
+        return;
       final collection = item['collection']?.toString() ?? '';
       final id = item['documentId']?.toString() ?? '';
       final operation = item['operation']?.toString() ?? '';
@@ -549,7 +566,7 @@ class WindowsPendingSchoolSync {
           error: 'Invalid pending sync record retained for recovery.',
         );
         report('needsAttention', queued.id, item, category: 'configuration');
-        continue;
+        return;
       }
       if (sendVersioned != null &&
           (item['operationId'] == null || item['schoolId'] == null)) {
@@ -564,7 +581,7 @@ class WindowsPendingSchoolSync {
         );
         unchanged();
         if (migrated == null)
-          continue; // A newer durable edit owns this row now.
+          return; // A newer durable edit owns this row now.
         item = migrated;
       }
       // Older clients called every filesystem error a missing attachment.
@@ -587,9 +604,9 @@ class WindowsPendingSchoolSync {
               error:'Text notice has no local attachment. Original request retained for bounded storage retry.',
               diagnostic:{'failureStage':'recordRequestAndAck','failureCode':'RECORD_LOCAL_STORAGE_IO'});
             unchanged();
-            if(!admitted)continue;
+            if(!admitted)return;
             final current=(await queued.reference.get()).data();unchanged();
-            if(current==null||current['operationId']!=item['operationId'])continue;
+            if(current==null||current['operationId']!=item['operationId'])return;
             item=current;
             report('automaticRepair',queued.id,item,category:'localStorage');
           }
@@ -610,11 +627,11 @@ class WindowsPendingSchoolSync {
           error: 'Known transport failure safely reopened; original operation retained.',
         );
         unchanged();
-        if (!repaired) continue;
+        if (!repaired) return;
         final current = (await queued.reference.get()).data();
         unchanged();
         if (current == null || current['operationId'] != item['operationId'])
-          continue;
+          return;
         item = current;
         report(
           'automaticRepair',
@@ -639,8 +656,8 @@ class WindowsPendingSchoolSync {
           item['baseCloudRevision'] is String;
       if (item['syncState'] == 'conflict' ||
           item['syncState'] == 'needsAttention' && !diagnoseLegacy)
-        continue;
-      if (canAdmit?.call() == false) break;
+        return;
+      if (canAdmit?.call() == false) return;
       String? revision;
       final watch = Stopwatch()..start();
       report('cloudRequest', queued.id, item);
@@ -672,7 +689,7 @@ class WindowsPendingSchoolSync {
             unchanged();
             if (current == null ||
                 current['operationId'] != item['operationId'])
-              continue;
+              return;
             item = current;
             if (item['priorDeletion'] != null)
               throw StateError('Deletion acknowledgement not durable.');
@@ -680,7 +697,7 @@ class WindowsPendingSchoolSync {
           if (prepareVersioned != null && item['operation'] != 'delete') {
             final bound = await prepareVersioned(queued.reference, item);
             unchanged();
-            if (bound == null) continue;
+            if (bound == null) return;
             item = bound;
           }
           final response = sendVersioned(item);
@@ -712,7 +729,7 @@ class WindowsPendingSchoolSync {
           mediaFileSha256:accepted.mediaFileSha256);
         unchanged();
         if(saved)report('cloudflareAccepted',queued.id,item);
-        continue; // No canonical revision / no outbox deletion.
+        return; // No canonical revision / no outbox deletion.
       } catch (caught, stack) {
         unchanged();
         final e = caught is FileSystemException && caught is! PendingDocumentFileFailure &&
@@ -773,7 +790,7 @@ class WindowsPendingSchoolSync {
               'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
             }.contains(code)) {
           firstDeferred ??= e;
-          continue; // Independent rows must not be starved by a conflict.
+          return; // Independent rows must not be starved by a conflict.
         }
         Error.throwWithStackTrace(e,stack);
       }
@@ -791,6 +808,36 @@ class WindowsPendingSchoolSync {
         item,
         elapsedMicros: watch.elapsedMicroseconds,
       );
+    }
+    // A bounded window is drained before newer or dependent operations are
+    // admitted. The existing CAS, receipt journal, and row retry paths remain
+    // the sole ACK owners. A fatal error drains in-flight work and stops admission.
+    var offset = 0;
+    while (offset < docs.length) {
+      unchanged();
+      if (canAdmit?.call() == false) break;
+      final first = docs[offset++];
+      bool independent(QueryDocumentSnapshot<Map<String, dynamic>> row) =>
+          sendVersioned != null && onlyQueueId == null &&
+          onlyOperationId == null &&
+          (parallelAdmission?.call(row.data()) ?? false);
+      if (!independent(first)) {
+        await process(first);
+        continue;
+      }
+      final window = [first];
+      final keys = <String>{};
+      String key(QueryDocumentSnapshot<Map<String, dynamic>> row) {
+        final data = row.data();
+        return "${data['collection']}/${data['documentId']}";
+      }
+      keys.add(key(first));
+      while (offset < docs.length && window.length < 3 &&
+          canAdmit?.call() != false && independent(docs[offset]) &&
+          keys.add(key(docs[offset]))) {
+        window.add(docs[offset++]);
+      }
+      await Future.wait<void>(window.map(process), eagerError: false);
     }
     if (firstDeferred != null) throw firstDeferred;
   }
