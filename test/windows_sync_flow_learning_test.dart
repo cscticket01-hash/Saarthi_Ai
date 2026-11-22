@@ -291,30 +291,32 @@ void main(){
     }
   });
 
-  test('two independently prepared new students enter the same bounded stage window',() async {
+  test('prepared person staging admits at most two creates at a time',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
     final db=FirebaseFirestore.instance;
     await db.switchProfile('parallel-person-${DateTime.now().microsecondsSinceEpoch}',
-      identity:{'schoolSyncId':school});
-    final stable='p-${List.filled(64,'b').join()}';
-    for(var i=0;i<2;i++){
-      await db.collection('students_directory').doc('fresh-$i').set({
+      identity:{'schoolSyncId':school,'schoolId':school});
+    for(var i=0;i<3;i++){
+      await db.collection(i==1?'teachers_directory':'students_directory').doc('fresh-$i').set({
         'schoolId':school,'name':'Synthetic pupil $i',
-        'mobileStableId':i==0?stable:'p-${List.filled(64,'c').join()}',
-        'mobileLinkToken':List.filled(32,i==0?'x':'y').join(),
+        'mobileStableId':'p-${List.filled(64,'abc'[i]).join()}',
+        'mobileLinkToken':List.filled(32,'xyz'[i]).join(),
         'mobileIdentityVersion':1,
       });
     }
     final entered=Completer<void>(),release=Completer<void>();
-    var submitted=0;
+    var submitted=0,active=0,peak=0;
     final work=WindowsPendingSchoolSync.flush(
       profileId:db.activeProfileId,
       send:(a,b,c,d)async{},
       sendVersioned:(row)async{
         submitted++;
+        active++;
+        if(active>peak)peak=active;
         if(submitted==2 && !entered.isCompleted)entered.complete();
         await release.future;
+        active--;
         return 'provider-person-revision';
       },
       parallelAdmission:(item)=>canParallelStageRecord(item,school,
@@ -325,7 +327,8 @@ void main(){
       if(!release.isCompleted)release.complete();
       await work;
     }
-    expect(submitted,2);
+    expect(submitted,3);
+    expect(peak,2);
     expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
   });
 

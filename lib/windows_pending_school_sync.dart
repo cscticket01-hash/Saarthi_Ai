@@ -1039,15 +1039,22 @@ class WindowsPendingSchoolSync {
       }
       final window = [first];
       final keys = <String>{};
+      var preparedCreates = independentPreparedPersonCreate(first.data()) ? 1 : 0;
       String key(QueryDocumentSnapshot<Map<String, dynamic>> row) {
         final data = row.data();
         return "${data['collection']}/${data['documentId']}";
       }
       keys.add(key(first));
       while (offset < docs.length && window.length < 3 &&
-          canAdmit?.call() != false && independent(docs[offset]) &&
-          keys.add(key(docs[offset]))) {
-        window.add(docs[offset++]);
+          canAdmit?.call() != false && independent(docs[offset])) {
+        final next = docs[offset];
+        final isPreparedCreate = independentPreparedPersonCreate(next.data());
+        if ((isPreparedCreate && preparedCreates == 2) || !keys.add(key(next))) {
+          break;
+        }
+        window.add(next);
+        offset++;
+        if (isPreparedCreate) preparedCreates++;
       }
       await Future.wait<void>(window.map(process), eagerError: false);
     }
