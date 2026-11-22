@@ -538,13 +538,18 @@ class WindowsPendingSchoolSync {
       if(item['priorCloudWrite']!=null)return; // Existing receipt owner releases predecessor.
       if (school is String && sendVersioned != null) {
         final bound = stagedJournals.where((journal) =>
-            recoverableStagedRecordJournal(item,journal,school)).toList();
+            recoverableStagedRecordJournal(item,journal,school) ||
+            recoverableStagedPhotoJournal(item,journal,school)).toList();
         if (bound.isNotEmpty) {
           final identities = bound.map((row) => row['ticketId']).toSet();
           if (identities.length != 1)
             throw StateError('Multiple staged operation identities retained for review.');
+          final journal=bound.first;
           final saved = await db.recordOutboxCloudHandoff(queued.reference,
-              item,ticketId:identities.single as String);
+              item,ticketId:identities.single as String,
+              lane:journal['lane'] as String,
+              mediaSourceHash:journal['mediaSourceHash'] as String?,
+              mediaFileSha256:journal['fileSha256'] as String?);
           unchanged();
           if (saved) report('cloudflareAccepted',queued.id,item);
           // A failed CAS means an edit or another recovery owner won. Never
