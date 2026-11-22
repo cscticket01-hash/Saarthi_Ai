@@ -27,6 +27,24 @@ void main() {
           isEmpty);
     });
   }
+  test('native manifest preparation reads student and staff designs without writing a PDF or queue', () async {
+    for (final kind in ['studentId','otherStaffId']) {
+      final card=await WindowsDocumentTemplates.nativePersonCard(kind,{
+        'schoolId':school, 'name':'Synthetic TEST', 'class':'1',
+        'rollNo':'1','schoolName':'TEST Sync V2',
+      });
+      expect(card,isNotNull);
+      expect(card!.data['name'],'Synthetic TEST');
+      expect(card.template.regions.any((r)=>r.side=='front'),isTrue);
+      expect(card.template.regions.any((r)=>r.side=='back'),isTrue);
+    }
+    expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+  });
+  test('native manifest preparation rejects foreign school', () async {
+    await expectLater(WindowsDocumentTemplates.nativePersonCard('studentId',{
+      'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }),throwsStateError);
+  });
   test('preview rejects a foreign school before looking for its photo', () async {
     await expectLater(WindowsDocumentTemplates.selected('studentId',
         {'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},

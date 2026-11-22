@@ -26,6 +26,10 @@ class SchoolPersonIdentity {
   }
 
   static String newGeneration() => 'p-${sha256.convert(List.generate(32, (_) => Random.secure().nextInt(256)))}';
+
+  /// New managed teacher document and payroll keys share the same random,
+  /// immutable identity. The user's mobile number is only a contact field.
+  static String newTeacherId() => 'T-${newGeneration().substring(2)}';
   static Future<Map<String, dynamic>> ensure(String collection, String id) async {
     final ref = FirebaseFirestore.instance.collection(collection).doc(id);
     final origin=FirebaseFirestore.instance.activeProfileId;

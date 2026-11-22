@@ -1,4 +1,5 @@
 import 'windows_person_fields.dart';
+import 'windows_school_identity.dart';
 import 'windows_appearance.dart';
 import 'india_address_fields.dart';
 import 'windows_document_templates.dart';
@@ -66,7 +67,10 @@ class OtherStaffDirectory {
       if (categoryFor(person) == 'Other staff' && designation.isEmpty) {
         throw ArgumentError('Enter a designation for Other Staff.');
       }
-      final people = await load(profile);
+      final directoryRef = FirebaseFirestore.instance.collection('school_settings').doc('staff_payroll_directory');
+      final originalDirectory = (await directoryRef.get()).data();
+      final people = (originalDirectory?['staff'] as List? ?? []).whereType<Map>()
+          .map((s) => Map<String, dynamic>.from(s)).toList();
       final teachers = await FirebaseFirestore.instance
           .collection('teachers_directory')
           .get();
@@ -85,10 +89,18 @@ class OtherStaffDirectory {
         throw StateError('This Employee ID is already assigned.');
       final id =
           person['id']?.toString() ??
-          'staff:${DateTime.now().microsecondsSinceEpoch}';
+          'staff:${SchoolPersonIdentity.newGeneration()}';
       final index = people.indexWhere((p) => p['id'] == id);
+      final previous = index < 0 ? null : people[index];
+      if (previous != null && (previous['employeeId']?.toString().trim() ?? '').isNotEmpty &&
+          previous['employeeId'] != employee) {
+        throw StateError('Existing Employee ID is permanent. Retain the original payroll identity.');
+      }
       final record = {
+        ...?previous,
         ...person,
+        if (previous?['mobileStableId'] != null) 'mobileStableId': previous!['mobileStableId']
+        else if (index < 0) 'mobileStableId': SchoolPersonIdentity.newGeneration(),
         'id': id,
         'name': name,
         'employeeId': employee,
@@ -100,10 +112,11 @@ class OtherStaffDirectory {
         people.add(record);
       else
         people[index] = record;
-      await FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('staff_payroll_directory')
-          .set({'staff': people}, SetOptions(merge: true));
+      requireSchool(profile);
+      final batch = FirebaseFirestore.instance.batch();
+      batch.requireUnchanged(directoryRef, originalDirectory);
+      batch.set(directoryRef, {'staff': people}, SetOptions(merge: true));
+      await batch.commit();
     });
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
     return next;
@@ -145,18 +158,13 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
   Future<void> _idCard(Map<String, dynamic> person) async {
     try {
       OtherStaffDirectory.requireSchool(profile);
-      final bytes = await WindowsDocumentTemplates.selected('otherStaffId', {
+      if (!mounted) return;
+      await WindowsDocumentTemplates.previewNativePerson(context,'otherStaffId', {
         ...person,
         'contact': person['mobile'] ?? '',
         'rollNo': person['employeeId'] ?? '',
-      }, previewOnly: true);
+      },filename:'staff-id.pdf');
       OtherStaffDirectory.requireSchool(profile);
-      if (mounted && bytes != null)
-        await WindowsDocumentTemplates.preview(
-          context,
-          bytes,
-          title: 'Other Staff ID • Front + Back',
-        );
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)

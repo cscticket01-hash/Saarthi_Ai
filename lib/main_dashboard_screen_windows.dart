@@ -5163,13 +5163,9 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
 Future<void> _showIdCardPreview() async {
   try {
     final data = await _getIdCardStudentData();
-    final bytes = await WindowsDocumentTemplates.selected('studentId', data,
-        qr: data['qrData'].toString(), previewOnly: true);
-    if (mounted && bytes != null) {
-      await WindowsDocumentTemplates.preview(context, bytes, title: 'Student ID card • Front & back',
-        notice: 'Android login needs this ID card record synced to the school backend and the matching Android app update.',
-        onDownload: _downloadIdCard, onPrint: _printIdCard);
-    }
+    if (!mounted) return;
+    await WindowsDocumentTemplates.previewNativePerson(context,'studentId',data,
+      qr:data['qrData'].toString(),filename:'student-id.pdf');
   } catch (e) {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('ID card preview unavailable: $e')));
@@ -14462,8 +14458,14 @@ errorBuilder: (_, __, ___) => _teacherFallback(
       documentId: docId,
       person: data,
     );
+    final person = {...data, 'teacherId': data['teacherId'] ?? docId};
+    if (!mounted) return;
+    if (await WindowsDocumentTemplates.previewNativePerson(context,'teacherId',person,
+        qr:qrData,filename:'teacher-id.pdf')) return;
+    // Keep legacy numeric teacher templates intact until their native
+    // renderer is migrated and visual/QR equivalence verified.
     final bytes = await WindowsDocumentTemplates.selected('teacherId',
-        {...data, 'teacherId': data['teacherId'] ?? docId}, qr: qrData,
+        person, qr: qrData,
         previewOnly: true);
     if (bytes != null && mounted) {
       await WindowsDocumentTemplates.preview(context, bytes,
@@ -15529,11 +15531,19 @@ class _AddTeacherScreenState
           entry.key: entry.value.text.trim(),
       };
 
-      // FIRST:
-      // Google Sheet + Drive
+      // The managed adapter prepares local data only. Give every new managed
+      // teacher an immutable identity before that call; no phone-keyed record.
+      final managed = await CentralSchoolCloud.saved();
+      if (FirebaseFirestore.instance.activeProfileId != _directoryProfile ||
+          managed['managed'] == true && FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != managed['schoolId']) {
+        throw StateError('School changed. Reopen teacher entry.');
+      }
+      final requestedTeacherId = managed['managed'] == true ? SchoolPersonIdentity.newTeacherId() : null;
+      final generation = managed['managed'] == true ? SchoolPersonIdentity.newGeneration() : null;
       final result =
           await _callTeacherApi({
         'action': 'add_teacher',
+        if (requestedTeacherId != null) 'teacherId': requestedTeacherId,
         'name': name,
         'fatherName': _fatherCtrl.text.trim(),
         'designation':
@@ -15598,10 +15608,8 @@ class _AddTeacherScreenState
                   .trim() ??
               '';
 
-      if (createdTeacherId.isEmpty) {
-        throw Exception(
-          'Teacher ID backend se nahi mila.',
-        );
+      if (createdTeacherId.isEmpty || requestedTeacherId != null && createdTeacherId != requestedTeacherId) {
+        throw StateError('Teacher ID backend acknowledgement did not match the requested identity.');
       }
 
       if(FirebaseFirestore.instance.activeProfileId!=_directoryProfile) throw StateError('School changed. Reopen teacher entry.');
@@ -15612,9 +15620,12 @@ class _AddTeacherScreenState
               .collection(
                 'teachers_directory',
               )
-              .doc('Teacher_$normalizedPhone');
+              .doc(requestedTeacherId ?? 'Teacher_$normalizedPhone');
 
-      await ref.set({
+      final batch = FirebaseFirestore.instance.batch();
+      batch.requireUnchanged(ref, null);
+      batch.set(ref, {
+        if (generation != null) 'mobileStableId': generation,
         'teacherId':
             createdTeacherId,
         'name': name,
@@ -15666,6 +15677,7 @@ class _AddTeacherScreenState
             FieldValue
                 .serverTimestamp(),
       });
+      await batch.commit();
 
       if (!mounted) return;
 

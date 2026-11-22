@@ -21,6 +21,9 @@ import 'id_card_catalog.dart';
 import 'school_media_budgets.dart';
 import 'id_card_engine.dart';
 import 'id_card_manifest.dart';
+import 'id_card_native_preview.dart';
+import 'windows_browser_print.dart';
+import 'windows_save_pdf.dart';
 import 'windows_id_card_designer_entry.dart';
 import 'fitted_document_preview.dart';
 import 'windows_connect/school_drive_images.dart';
@@ -68,6 +71,116 @@ class WindowsDocumentTemplates {
         if (seal != null) 'seal': seal,
       },
     );
+  }
+
+  /// A native card can be prepared entirely without the PDF or print engine.
+  /// Legacy teacher layouts remain selected as before: never substitute a
+  /// different school design silently. Return false for those legacy layouts.
+  static Future<({IdCardManifest template, Map<String,dynamic> data,
+      Map<String,Uint8List> images, Map<String,Uint8List> backgrounds})?>
+      nativePersonCard(String kind, Map<String,dynamic> data) async {
+    if (!{'studentId','teacherId','otherStaffId'}.contains(kind)) {
+      throw ArgumentError('Person card kind required.');
+    }
+    final db = FirebaseFirestore.instance;
+    final origin = db.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    void checkSchool() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school ||
+          (data['schoolId'] != null && data['schoolId'] != school)) {
+        throw StateError('School changed during native ID card preview.');
+      }
+    }
+    checkSchool();
+    final settings = await selections();
+    final v = kind == 'studentId'
+        ? 'manifest:$studentIdTemplateId'
+        : settings[kind] ?? 0;
+    if (!(v is String && (v.startsWith('manifest:') || v.startsWith('reviewed:'))) &&
+        kind != 'otherStaffId') return null;
+    final profile = (await db.collection('school_config').doc('school_profile_cache').get()).data() ?? {};
+    checkSchool();
+    if (profile['schoolId'] != null && profile['schoolId'] != school) {
+      throw StateError('Foreign school branding cannot be used.');
+    }
+    final schoolName = [profile['schoolName'],profile['name'],data['schoolName']]
+      .map((value) => value?.toString().trim() ?? '')
+      .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    final brandingSources = [data['schoolLogoUrl'] ?? profile['logoUrl'],
+      data['principalSignatureUrl'] ?? profile['principalSignatureUrl'],profile['sealUrl']];
+    final assets = await Future.wait<Uint8List?>([
+      _personPhoto(data), _image(brandingSources[0]), _image(brandingSources[1]),
+      _image(brandingSources[2]),
+    ]);
+    checkSchool();
+    for (var i=0;i<brandingSources.length;i++) {
+      if ((brandingSources[i]?.toString().trim() ?? '').isNotEmpty &&
+          (assets[i+1] == null || assets[i+1]!.isEmpty)) {
+        throw StateError('Configured school logo, signature or seal is unavailable. Existing ID retained.');
+      }
+    }
+    final reviewed = kind == 'studentId' && v is String && v.startsWith('reviewed:')
+        ? await WindowsIdCardDesignerEntry.reviewed(v,school?.toString() ?? 'local:$origin')
+        : null;
+    final templateId = reviewed?.id ?? (v is String && v.startsWith('manifest:')
+        ? v.substring(9) : (await IdCardCatalog.load()).firstWhere((e) => e.kinds.contains(kind)).id);
+    final entry = await IdCardCatalog.find(templateId);
+    if (!entry.kinds.contains(kind)) throw StateError('Selected template is not for this person category.');
+    final manifest = reviewed ?? await entry.manifest();
+    final backgrounds = await entry.backgrounds();
+    checkSchool();
+    return (
+      template: manifest,
+      data: <String,dynamic>{...profile,...data,'schoolName':schoolName,
+        'schoolAddress':profile['address'] ?? '',
+        'designation':data['designation'] ?? data['role'] ?? (kind == 'studentId' ? 'Student' : 'Teacher'),
+        'rollNo':data['rollNo'] ?? data['employeeId'] ?? data['teacherId'] ?? '',
+        'parentName':data['parentName'] ?? data['fatherName'] ?? '',
+      },
+      images: <String,Uint8List>{
+        if (assets[0] != null) 'photo':assets[0]!,
+        if (assets[1] != null) 'logo':assets[1]!,
+        if (assets[2] != null) 'signature':assets[2]!,
+        if (assets[3] != null) 'seal':assets[3]!,
+      },
+      backgrounds: backgrounds,
+    );
+  }
+
+  static Future<bool> previewNativePerson(BuildContext context, String kind,
+      Map<String,dynamic> data, {String qr = '', required String filename}) async {
+    final db=FirebaseFirestore.instance, origin=db.activeProfileId;
+    final school=db.activeProfileIdentity['schoolSyncId'];
+    void checkSchool() {
+      if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school) {
+        throw StateError('School changed. Reopen the ID card.');
+      }
+    }
+    final card=await nativePersonCard(kind,data);
+    checkSchool();
+    if (card == null) return false;
+    // Preserve the existing missing-photo admission rule. Show no interactive
+    // card rather than printing an incomplete or different person's portrait.
+    if (!context.mounted || card.images['photo']?.isNotEmpty != true) return true;
+    final compact=IdCardEngine.compactQr(qr);
+    await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+      NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
+        backgrounds:card.backgrounds,qr:compact,
+        onPrint:(pages) async {
+          checkSchool();
+          await WindowsBrowserPrint.openImages(pages);
+        },
+        onDownload:() async {
+          checkSchool();
+          final bytes=await IdCardEngine.render(card.template,card.data,
+            images:card.images,backgrounds:card.backgrounds,qr:compact);
+          checkSchool();
+          if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
+          checkSchool();
+          await WindowsSavePdf.save(bytes,filename);
+        })));
+    return true;
   }
 
   static Future<Map<String, dynamic>> selections() async =>
