@@ -108,12 +108,14 @@ void main() {
     expect(find.text('LIVE UI'), findsNothing);
     expect(find.text('Detailed status & safe controls'), findsNothing);
     expect(find.text('Needs attention'), findsNothing);
+    await tester.scrollUntilVisible(find.text('Pending Uploads'), 180,
+        scrollable: find.byType(Scrollable).first);
     expect(find.text('Pending Uploads'), findsOneWidget);
     expect(find.text('3 Pending · 2 Need Attention\n1 Conflicts · 1 Failed\n0 file cleanup operations included'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Live Queue Activity'), 200,
+    await tester.scrollUntilVisible(find.text('Live Queue Activity'), -200,
         scrollable: find.byType(Scrollable).first);
     expect(find.text('Live Queue Activity'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Pending Uploads'), -200,
+    await tester.scrollUntilVisible(find.text('Pending Uploads'), 200,
         scrollable: find.byType(Scrollable).first);
     await tester.tap(find.text('Pending Uploads').hitTestable());
     await tester.pumpAndSettle();
