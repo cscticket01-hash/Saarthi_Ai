@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'student_lifecycle_policy.dart';
 import 'live_sync_protocol.dart';
 import 'deleted_owner_document_policy.dart';
@@ -2504,11 +2505,13 @@ class _LocalSchoolDatabase {
             original['collection']=='documents' ||
             original['documentId'] is! String ||
             (original['documentId'] as String).isEmpty ||
-            !{'set','update'}.contains(original['operation']) ||
+            (!{'set','update'}.contains(original['operation']) &&
+              !(school is String && lane=='records' &&
+                eligibleForStagedDelete(original,school,edgeDeliverySupported:true))) ||
             original['atomicBundleId']!=null ||
             original['priorDeletion']!=null ||
             original['baseCloudRevision'] is! String ||
-            original['data'] is! Map ||
+            (original['operation']!='delete' && original['data'] is! Map) ||
             original['operationId'] is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
             !(lane=='records'&&ticketId==sha256.convert(utf8.encode(jsonEncode([
