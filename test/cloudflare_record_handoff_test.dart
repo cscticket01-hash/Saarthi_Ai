@@ -51,6 +51,63 @@ void main() {
       edgeDeliverySupported:true),false);
   });
 
+  test('authorized journal restores interrupted local handoff without another mutation', () async {
+    const id='restart-calendar';
+    const op='restart-original-operation-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'pending','data':{'title':'Retained original'},
+    };
+    final ref=db.collection('_windows_firebase_outbox').doc('restart-calendar-row');
+    final ticket=exactTicket(original);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'e').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':id,'operation':'write',
+      'originalOperationId':op,'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    var sends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(_) async {sends++;return 'unexpected';});
+    expect(sends,0);
+    final retained=(await ref.get()).data()!;
+    expect(retained['operationId'],op);
+    expect(retained['syncState'],'cloudAccepted');
+    expect(retained['cloudTicketId'],ticket);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'drive-restart-revision',
+        'record':{'schoolId':school,'id':id,'_syncOperationId':op,
+          '_syncRevision':'drive-restart-revision'}};
+    });
+    expect((await ref.get()).exists,false);
+  });
+
+  test('restart journal cannot grant ownership for foreign ticket or operation', () {
+    final row={'schoolId':school,'collection':'school_calendar',
+      'documentId':'event-1','operation':'set','operationId':'restart-operation-002',
+      'baseCloudRevision':'','syncState':'pending','data':{'title':'Original'}};
+    final journal={'schoolId':school,'edgeDeliveryVersion':1,
+      'cloudflareAccepted':true,'handoffAuthorized':true,
+      'action':'managed/records','state':'pending','lane':'records',
+      'ticketId':exactTicket(row),'originalOperationId':row['operationId'],
+      'collection':'school_calendar','id':'event-1','operation':'write'};
+    expect(recoverableStagedRecordJournal(row,journal,school),true);
+    expect(recoverableStagedRecordJournal(row,{...journal,'ticketId':foreignTicket},school),false);
+    expect(recoverableStagedRecordJournal(row,{...journal,'handoffAuthorized':false},school),false);
+    expect(recoverableStagedRecordJournal({...row,'operationId':'new-operation-0000003'},journal,school),false);
+    expect(recoverableStagedRecordJournal({...row,'atomicBundleId':'owner'},journal,school),false);
+  });
+
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
     await db.collection('students_directory').doc('real-student')
       .set({'schoolId':school,'name':'Real school record'});
