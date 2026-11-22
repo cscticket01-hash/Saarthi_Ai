@@ -51,6 +51,73 @@ void main() {
       edgeDeliverySupported:true),false);
   });
 
+  test('staged record requires a canonical provider row, never just an ACK flag', () {
+    const op='proof-bound-record-original-001',id='proof-bound-event';
+    final pending=<String,dynamic>{'schoolId':school,
+      'collection':'school_calendar','documentId':id,'operation':'set',
+      'operationId':op,'baseCloudRevision':'','data':{'title':'Proof'}};
+    final ticket=exactTicket(pending);
+    final accepted={...pending,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'action':'managed/records',
+      'originalOperationId':op,'collection':'school_calendar',
+      'id':id,'operation':'write','ticketId':ticket};
+    final provider={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'canonical-revision-001',
+      'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001','_syncOperationId':op}};
+    expect(verifiedStagedRecordFinal(accepted,journal,provider,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':null},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':{'schoolId':school,'id':id,
+        '_syncDeleted':true,'_syncRevision':'canonical-revision-001',
+        '_syncOperationId':op}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':{'schoolId':other,'id':id,
+        '_syncRevision':'canonical-revision-001','_syncOperationId':op}},school),false);
+    final fakeDocument={...accepted,'collection':'documents',
+      'cloudTicketId':exactTicket({...pending,'collection':'documents'})};
+    expect(acceptedCloudflareTicketBinding(fakeDocument,school),isNull);
+  });
+
+  test('missing journal for staged predecessor unblocks only the newer edit', () async {
+    const id='nested-accepted-calendar';
+    final record=db.collection('school_calendar').doc(id);
+    await record.set({'title':'Original'});
+    final first=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=first.data(),ticket=exactTicket(original);
+    expect(await db.recordOutboxCloudHandoff(first.reference,original,ticketId:ticket),true);
+    await record.set({'title':'Newer'});
+    final newest=(await first.reference.get()).data()!;
+    expect(newest['priorCloudWrite']['operationId'],original['operationId']);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    var reads=0,settled=0;
+    await WindowsDriveDeliveryQueue.poll(school,
+      onLocalSettlement:()=>settled++,
+      call:(action,body) async {
+        reads++;
+        expect(action,'managed/cloudflare/operation');
+        expect(body['lane'],'records');
+        expect(body['id'],ticket);
+        return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+          'driveState':'verified','syncProtocol':2,
+          'recordRevision':'provider-canonical-base-001',
+          'record':{'schoolId':school,'id':id,
+            '_syncRevision':'provider-canonical-base-001',
+            '_syncOperationId':original['operationId']}};
+      });
+    expect(reads,2);
+    expect(settled,1);
+    final saved=(await first.reference.get()).data()!;
+    expect(saved['operationId'],newest['operationId']);
+    expect(saved['baseCloudRevision'],'provider-canonical-base-001');
+    expect(saved['priorCloudWrite'],isNull);
+    expect((await record.get()).data()!['title'],'Newer');
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
   test('missing journal binding requires exact already accepted school ticket', () {
     const operation='journal-recovery-original-001';
     final original=<String,dynamic>{
