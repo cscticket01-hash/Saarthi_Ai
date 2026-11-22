@@ -153,6 +153,10 @@ void main(){
     bool eligible(Map row) => canParallelStageRecord(row,school,edgeDeliverySupported:true);
     expect(eligible(item),true);
     expect(eligible({...item,'collection':'school_calendar'}),true);
+    for(final collection in ['school_expenses','attendance_records',
+      'attendance_logs','teacher_attendance']) {
+      expect(eligible({...item,'collection':collection}),true);
+    }
     expect(eligible({...item,'collection':'fee_payments'}),false);
     expect(eligible({...item,'collection':'students_directory'}),false);
     expect(eligible({...item,'schoolId':'foreign'}),false);
@@ -201,6 +205,41 @@ void main(){
     }
     expect(started,3);
     expect((await db.collection('_windows_firebase_outbox').get()).docs.length,1);
+  });
+  test('unresolved parent keeps attendance and expense admission serial',() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    final db=FirebaseFirestore.instance;
+    await db.switchProfile('parallel-barrier-${DateTime.now().microsecondsSinceEpoch}',
+        identity:{'schoolSyncId':school,'schoolId':school});
+    final queue=db.collection('_windows_firebase_outbox');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await queue.doc('parent').set({
+        'schoolId':school,'collection':'students_directory','documentId':'parent-a',
+        'operation':'set','operationId':'parent-operation-0001','baseCloudRevision':'',
+        'syncState':'needsAttention','data':{'name':'Retained parent'},
+      });
+      for(var i=0;i<3;i++) {
+        await queue.doc('att-$i').set({
+          'schoolId':school,'collection':'attendance_records','documentId':'att-$i',
+          'operation':'set','operationId':'attendance-operation-000$i','baseCloudRevision':'',
+          'syncState':'pending','data':{'status':'present'},
+        });
+      }
+    });
+    var active=0,peak=0,sends=0;
+    await WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      parallelAdmission:(item)=>canParallelStageRecord(item,school,edgeDeliverySupported:true),
+      send:(_,__,___,____) async {},
+      sendVersioned:(item)async{
+        sends++;active++;if(active>peak)peak=active;
+        await Future<void>.delayed(Duration.zero);active--;
+        return 'revision-${item['operationId']}';
+      });
+    expect(sends,3);
+    expect(peak,1);
+    expect((await queue.doc('parent').get()).data()?['syncState'],'needsAttention');
   });
   test('learned retry retains the exact operation and cannot manufacture an ACK',()async{
     FlutterSecureStorage.setMockInitialValues({});
