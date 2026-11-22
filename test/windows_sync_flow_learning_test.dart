@@ -168,6 +168,26 @@ void main(){
       'retryAtMillis':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch}),false);
     expect(canParallelStageRecord(item,school,edgeDeliverySupported:false),false);
   });
+  test('existing person concurrency is restricted to identity-bound contact patches', () {
+    for(final collection in ['students_directory','teachers_directory']) {
+      final key=collection=='students_directory'?'mobileStableId':'teacherId';
+      final patch={'version':1,'identity':{key:'established-owner'},
+        'set':{'phone':'synthetic-contact'},'remove':[]};
+      final row={'schoolId':school,'collection':collection,'documentId':'person-a',
+        'operation':'set','operationId':'contact-operation-001',
+        'baseCloudRevision':'provider-revision','syncState':'pending','updateIntent':true,
+        'data':{key:'established-owner','phone':'synthetic-contact'},'fieldPatch':patch};
+      bool eligible(Map item)=>canParallelStageRecord(item,school,edgeDeliverySupported:true);
+      expect(eligible(row),true);
+      expect(eligible({...row,'createIntent':true}),false);
+      expect(eligible({...row,'baseCloudRevision':'cf-temporary'}),false);
+      expect(eligible({...row,'fieldPatch':{...patch,'set':{'active':false}}}),false);
+      expect(eligible({...row,'data':{key:'different-owner'}}),false);
+      expect(eligible({...row,'data':{...row['data'] as Map,'photoUrl':'data:image/jpeg;base64,AA=='}}),false);
+      expect(eligible({...row,'wireMode':'snapshot2','wireData':row['data']}),false);
+      expect(eligible({...row,'fieldPatch':{...patch,'remove':['address']}}),false);
+    }
+  });
   test('bounded admission drains in-flight records before admitting another window',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
