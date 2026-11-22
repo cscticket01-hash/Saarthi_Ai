@@ -868,6 +868,45 @@ void main() {
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
   });
 
+  test('lost photo receipt journal can be restored from nested exact original CAS', () async {
+    const id='lost-photo-journal-person';
+    const optimized='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final raw='data:image/png;base64,${base64Encode(utf8.encode('unchanged raw portrait'))}';
+    final hash=sha256.convert(utf8.encode('unchanged raw portrait')).toString();
+    final record=db.collection('teachers_directory').doc(id);
+    await record.set({'teacherId':id,'photoUrl':raw,'name':'Previous'});
+    final ref=(await db.collection('_windows_firebase_outbox').get()).docs.single.reference;
+    final original=(await ref.get()).data()!,op=original['operationId'] as String;
+    final key=sha256.convert(utf8.encode(jsonEncode([
+      school,'teachers_directory',id,op,optimized,
+    ]))).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    expect(await db.recordOutboxCloudHandoff(ref,original,ticketId:ticket,
+      lane:'file-$ticket',mediaSourceHash:hash,mediaFileSha256:optimized),true);
+    await record.set({'teacherId':id,'photoUrl':raw,'name':'Latest'});
+    final newOperation=(await ref.get()).data()!['operationId'];
+    expect((await ref.get()).data()!['priorCloudWrite']['operationId'],op);
+    var reads=0;
+    final recovered=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async{
+        reads++;
+        expect(action,'managed/cloudflare/operation');
+        expect(body['lane'],'file-$ticket');
+        expect(body['id'],ticket);
+        return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+          'driveState':'pending','delivery':{'id':ticket,'lane':'file-$ticket'}};
+      });
+    expect(recovered,true);
+    expect(reads,1);
+    final journal=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(journal['ticketId'],ticket);
+    expect(journal['fileSha256'],optimized);
+    expect(journal['mediaSourceHash'],hash);
+    expect(journal['state'],'pending');
+    expect((await ref.get()).data()!['operationId'],newOperation);
+    expect((await ref.get()).data()!['priorCloudWrite']['operationId'],op);
+  });
+
   test('immutable original photo outbox is never cleared before exact file and record proof', () async {
     final raw='data:image/jpeg;base64,${base64Encode(utf8.encode('original portrait'))}';
     const op='photo-original-operation-00000001',docId='school-photo-person-01';
