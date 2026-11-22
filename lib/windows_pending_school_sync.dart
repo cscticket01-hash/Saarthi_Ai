@@ -139,6 +139,30 @@ bool canStageExpensePastUnrelatedOwners(
   return true;
 }
 
+/// Attendance can be admitted alongside unrelated fee, file and notice
+/// backlog, but never ahead of an unresolved person/school-settings owner.
+bool canStageAttendancePastUnrelatedOwners(
+  Map candidate, Iterable<Map<String,dynamic>> outbox, String school,
+) {
+  if(!{'attendance_records','attendance_logs','teacher_attendance'}
+      .contains(candidate['collection']) ||
+      candidate['schoolId']!=school || candidate['operation']!='set')
+    return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school ||
+        row['atomicBundleId']!=null ||
+        row['priorDeletion']!=null ||
+        row['priorCloudWrite']!=null ||
+        row['operation']=='delete' ||
+        {'students_directory','teachers_directory','school_config','school_settings'}
+            .contains(row['collection']))return false;
+    if(row['collection']==candidate['collection'] &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])return false;
+  }
+  return true;
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -946,7 +970,8 @@ class WindowsPendingSchoolSync {
           onlyOperationId == null &&
           (!dependentBarrier ||
             (school is String &&
-             canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school)) ||
+             (canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school) ||
+              canStageAttendancePastUnrelatedOwners(row.data(),scopedRows,school))) ||
             (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
              !independentExistingPersonPatch(row.data()))) &&
           (parallelAdmission?.call(row.data()) ?? false);
