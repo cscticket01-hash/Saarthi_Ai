@@ -1,7 +1,8 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/painting.dart';
+import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'id_card_engine.dart';
@@ -13,13 +14,16 @@ class NativeIdCardPreview extends StatefulWidget {
   const NativeIdCardPreview({
     super.key, required this.template, required this.data,
     this.images = const {}, this.backgrounds = const {}, this.qr = '',
-    this.onDownload,
+    this.onDownload, this.onPrint,
   });
   final IdCardManifest template;
   final Map<String, dynamic> data;
   final Map<String, Uint8List> images, backgrounds;
   final String qr;
   final Future<void> Function()? onDownload;
+  final Future<void> Function(
+    List<({Uint8List png, int width, int height})> pages,
+  )? onPrint;
   @override
   State<NativeIdCardPreview> createState() => _NativeIdCardPreviewState();
 }
@@ -27,6 +31,7 @@ class NativeIdCardPreview extends StatefulWidget {
 class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
   bool both = true, busy = false;
   String? error;
+  final printBoundaries = {'front': GlobalKey(), 'back': GlobalKey()};
 
   Widget content(IdCardRegion r, Map<String, dynamic> data, String qr) {
     if (r.kind == 'image') {
@@ -67,7 +72,9 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
     final m = widget.template;
     return SizedBox(
       height: 380, child: FittedBox(fit: BoxFit.contain,
-        child: SizedBox(width: m.width, height: m.height, child: ColoredBox(
+        child: RepaintBoundary(
+          key: printBoundaries[name],
+          child: SizedBox(width: m.width, height: m.height, child: ColoredBox(
           color: Colors.white, child: Stack(clipBehavior: Clip.hardEdge, children: [
             if (widget.backgrounds[name] != null)
               Positioned.fill(child: Image.memory(widget.backgrounds[name]!, fit: BoxFit.contain)),
@@ -76,16 +83,47 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
                 child: Padding(padding: EdgeInsets.all(r.padding),
                   child: ClipRect(child: content(r, data, qr)))),
           ]),
-        )),
+        ))),
       ),
     );
   }
-  Future<void> download() async {
-    if (busy || widget.onDownload == null) return;
+  Future<void> runAction(Future<void> Function() action, String failure) async {
+    if (busy) return;
     setState(() { busy = true; error = null; });
-    try { await widget.onDownload!(); }
-    catch (e) { if (mounted) setState(() => error = 'PDF export failed: $e'); }
-    finally { if (mounted) setState(() => busy = false); }
+    try {
+      await action();
+    } catch (e) {
+      if (mounted) setState(() => error = '$failure: $e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> printCards(String qr) async {
+    final template = widget.template;
+    final ratio = template.printWidth * 300 / 25.4 / template.width;
+    final sides = both ? const ['front', 'back'] : const ['front'];
+    final pages = <({Uint8List png, int width, int height})>[];
+    for (final side in sides) {
+      final boundary = printBoundaries[side]?.currentContext?.findRenderObject();
+      if (boundary is! RenderRepaintBoundary) {
+        throw StateError('Card side is unavailable.');
+      }
+      final image = await boundary.toImage(pixelRatio: ratio);
+      try {
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        if (bytes == null) throw StateError('Could not render the card.');
+        final png = bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes);
+        if (qr.isNotEmpty && template.regions.any((r) => r.side == side && r.kind == 'qr') &&
+            IdCardEngine.decodeFinalRaster(png) != qr) {
+          throw const FormatException('Printed ID QR did not match the card.');
+        }
+        pages.add((png: png, width: image.width, height: image.height));
+      } finally {
+        image.dispose();
+      }
+    }
+    if (mounted) await widget.onPrint!(pages);
   }
   @override
   Widget build(BuildContext context) {
@@ -100,19 +138,31 @@ class _NativeIdCardPreviewState extends State<NativeIdCardPreview> {
         SegmentedButton<bool>(segments: const [
           ButtonSegment(value: false, label: Text('Front only')),
           ButtonSegment(value: true, label: Text('Front + back')),
-        ], selected: {both}, onSelectionChanged: (v) => setState(() => both = v.single)),
+        ], selected: {both}, onSelectionChanged: busy ? null : (v) => setState(() => both = v.single)),
         const SizedBox(height: 12),
         if (missing.isNotEmpty) Text('Missing template fields: ' + missing.map((r) => r.key).join(', '),
           style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        side('front', data, qr),
-        if (both) ...[const SizedBox(height: 12), side('back', data, qr)],
+        Column(children: [
+          side('front', data, qr),
+          if (both) ...[const SizedBox(height: 12), side('back', data, qr)],
+        ]),
         const SizedBox(height: 12),
         const Text('Native visual preview. PDF export uses the verified print renderer.'),
         if (error != null) Text(error!),
+        if (widget.onPrint != null)
+          OutlinedButton.icon(
+            onPressed: busy || missing.isNotEmpty ? null :
+              () => runAction(() => printCards(qr), 'Print failed'),
+            icon: const Icon(Icons.print),
+            label: const Text('Print'),
+          ),
         if (widget.onDownload != null)
-          FilledButton.icon(onPressed: busy || missing.isNotEmpty ? null : download,
+          FilledButton.icon(
+            onPressed: busy || missing.isNotEmpty ? null :
+              () => runAction(widget.onDownload!, 'PDF export failed'),
             icon: const Icon(Icons.download),
-            label: Text(busy ? 'Generating…' : 'Download full PDF')),
+            label: const Text('Download full PDF'),
+          ),
       ]));
   }
 }

@@ -11,6 +11,12 @@ class WindowsBrowserPrint {
     await for (final page in Printing.raster(pdf, dpi: 300)) {
       pages.add((png:await page.toPng(),width:page.width,height:page.height));
     }
+    await openImages(pages);
+  }
+
+  static Future<void> openImages(
+    List<({Uint8List png, int width, int height})> pages,
+  ) async {
     if (pages.isEmpty) throw StateError('No printable pages.');
     final directory = await Directory.systemTemp.createTemp('vidya-print-');
     final file = File('${directory.path}${Platform.pathSeparator}print.html');

@@ -6,6 +6,7 @@ import 'id_card_local_cipher.dart';
 import 'id_card_manifest.dart';
 import 'id_card_engine.dart';
 import 'id_card_native_preview.dart';
+import 'windows_browser_print.dart';
 import 'windows_save_pdf.dart';
 import 'id_card_bulk_screen.dart';
 import 'id_card_bulk_job_store.dart';
@@ -139,7 +140,12 @@ class WindowsIdCardDesignerEntry {
       if (!context.mounted) return;
       await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
         NativeIdCardPreview(template:manifest,data:data,images:images,
-          backgrounds:backgrounds,qr:qr,onDownload:() async {
+          backgrounds:backgrounds,qr:qr,
+          onPrint:(pages) async {
+            checkSchool();
+            await WindowsBrowserPrint.openImages(pages);
+          },
+          onDownload:() async {
             checkSchool();
             final bytes=await IdCardEngine.render(manifest,data,backgrounds:backgrounds,images:images,qr:qr);
             checkSchool();

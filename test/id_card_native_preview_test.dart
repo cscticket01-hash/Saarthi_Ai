@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/id_card_manifest.dart';
@@ -29,4 +31,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(count,1);
   });
+  testWidgets('front-only print uses a 300 DPI image without requesting PDF', (tester) async {
+    var downloads = 0;
+    final printed = Completer<List<int>>();
+    await tester.pumpWidget(MaterialApp(home: NativeIdCardPreview(
+      template: template,
+      data: const {'name': 'Synthetic person', 'backText': 'Back details'},
+      onDownload: () async { downloads++; },
+      onPrint: (pages) async {
+        printed.complete([pages.length, pages.single.width, pages.single.height]);
+      },
+    )));
+    await tester.tap(find.text('Front only'));
+    await tester.pumpAndSettle();
+    expect(printed.isCompleted, isFalse);
+    await tester.ensureVisible(find.text('Print'));
+    await tester.pumpAndSettle();
+    final result = await tester.runAsync(() async {
+      await tester.tap(find.text('Print'));
+      return printed.future.timeout(const Duration(seconds: 5));
+    });
+    expect(result, [1, 1012, 607]);
+    expect(downloads, 0);
+  });
+
 }
