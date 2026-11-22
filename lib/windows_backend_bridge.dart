@@ -1208,7 +1208,7 @@ class WindowsBackendBridge {
           if (!verifiedDocumentAcknowledgement(payload, result))
             throw const MissingSyncAcknowledgement();
           failureStage = 'commitLocalReceipt';
-          await _documentWrite(() async {
+          final settled=await _documentWrite<bool>(() async {
             if (FirebaseFirestore.instance.activeProfileId != origin)
               throw StateError('School changed during document sync.');
             final ref = FirebaseFirestore.instance
@@ -1249,7 +1249,7 @@ class WindowsBackendBridge {
                   await batch.commit();
                 }
               }
-              return;
+              return false;
             }
             final batch = FirebaseFirestore.instance.batch();
             batch.set(ref, {
@@ -1268,8 +1268,11 @@ class WindowsBackendBridge {
                   .doc(queued.id),
             );
             await batch.commit();
+            return true;
           });
-          report('verified');
+          // Verified provider delivery of a superseded generation does not
+          // ACK or delete the current newer local document operation.
+          if(settled)report('verified');
         } catch (error, stack) {
           final decision = windowsSyncRecovery(error);
           final attempts = (record['retryCount'] as num? ?? 0).toInt() + 1;
