@@ -279,6 +279,7 @@ void main(){
       expect(eligible({...original,'createIntent':false}),false);
       expect(eligible({...original,'data':{...original['data'] as Map,'mobileIdentityVersion':0}}),false);
       expect(eligible({...original,'data':{...original['data'] as Map,'photoBase64':'data:image/jpeg;base64,AQ=='}}),false);
+      expect(eligible({...original,'data':{...original['data'] as Map,'photoFileId':'already-uploaded-owner-file'}}),false);
       expect(eligible({...original,'data':{...original['data'] as Map,'replacesStudentGeneration':'prior'}}),false);
       expect(eligible({...original,'priorDeletion':{'id':'delete'}}),false);
       expect(eligible({...original,'atomicBundleId':'reserved'}),false);
