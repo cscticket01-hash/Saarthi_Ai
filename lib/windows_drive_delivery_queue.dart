@@ -385,14 +385,23 @@ class WindowsDriveDeliveryQueue {
               // until this exact broker-owned ticket proves its final revision.
               if (lane=='records'&&item['originalOperationId'] is String) {
                 final originals=(await db.collection('_windows_firebase_outbox').get()).docs
-                    .where((row)=>row.data()['operationId']==item['originalOperationId'] &&
-                        row.data()['schoolId']==school).toList();
+                    .where((row) {
+                      final data=row.data(), prior=data['priorCloudWrite'];
+                      return data['schoolId']==school &&
+                          (data['operationId']==item['originalOperationId'] ||
+                           prior is Map && prior['operationId']==item['originalOperationId'] &&
+                           prior['schoolId']==school && prior['collection']==data['collection'] &&
+                           prior['documentId']==data['documentId']);
+                    }).toList();
                 _scope(school, profile);
                 if(originals.length>1) {
                   throw StateError('Multiple original record owners detected.');
                 }
                 if(originals.length==1) {
-                  var original=originals.single.data();
+                  final current=originals.single.data();
+                  final nested=current['priorCloudWrite'];
+                  var original=current['operationId']==item['originalOperationId']
+                      ? current : Map<String,dynamic>.from(nested as Map);
                   // Recover a crash between journal and local CAS only if
                   // that exact first-phase admission was explicitly authorized.
                   if (recoverableStagedRecordJournal(original,item,school)) {
