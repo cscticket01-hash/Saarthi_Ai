@@ -86,3 +86,17 @@ test('failed monitoring persistence does not suppress the next verified response
  await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence,null);
  await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.protocol,2);
 });
+
+test('handoff monitor separates device-owned work from cloud-owned pending backup',async()=>{
+ const f=fixture();const base={pending:0,needsAttention:0,verifiedReceiptCount:7,lastCloudAckMillis:time-1000};
+ const report={...base,cloudflareOwnedPendingDrive:4,lastCloudflareHandoffMicros:2499000};
+ const saved=await f.call({action:'managed/sync/status',report});
+ assert.equal(saved.latestWindowsReport.pending,0);
+ assert.equal(saved.latestWindowsReport.cloudflareOwnedPendingDrive,4);
+ assert.equal(saved.latestWindowsReport.lastCloudflareHandoffMicros,2499000);
+ const developer=await f.call({action:'developer/managed/sync/status',schoolId:A},'developer');
+ assert.equal(developer.latestWindowsReport.cloudflareOwnedPendingDrive,4);
+ for(const extra of [{cloudflareOwnedPendingDrive:-1},{cloudflareOwnedPendingDrive:100001},{lastCloudflareHandoffMicros:86400000001},{lastCloudflareHandoffMicros:'2499000'}])
+  await assert.rejects(f.call({action:'managed/sync/status',report:{...base,...extra}}),e=>e.status===400);
+ assert.equal(f.docs.get('platform_schools/'+B).syncWindowsReport,undefined);
+});
