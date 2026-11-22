@@ -498,6 +498,56 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     }
   }
 
+  Future<void> _runSystemDiagnosis() async {
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed. Reopen this page.');
+    }
+    guard();
+    if (!mounted) return;
+    setState(() {
+      diagnostics = null;
+      localHealth = 'Checking local database';
+      cloudHealth = 'Not checked yet';
+      cloudEvidence = null;
+    });
+    try {
+      final ok = await WindowsLocalStorage.healthCheck()
+          .timeout(const Duration(seconds: 15));
+      guard();
+      if (mounted) setState(() => localHealth = ok
+          ? 'Integrity/read-write check passed'
+          : 'Check failed — retained for diagnosis');
+    } catch (_) {
+      guard();
+      if (mounted) setState(() => localHealth =
+          'Local health unverified — check failed or timed out');
+    }
+    // Capture the durable queue even when the cloud is unreachable.
+    try {
+      final report = await engine.safeQueueDiagnostics();
+      guard();
+      if (mounted) setState(() => diagnostics = report);
+    } catch (_) {
+      guard();
+      if (mounted) setState(() => diagnostics = {
+        'cloudVerification': 'Not performed',
+        'queueStatus': 'Unverified — local report unavailable',
+      });
+    }
+    try {
+      await _checkCloudHealth();
+    } catch (_) {
+      // The individual health check has already recorded the failed result.
+      // Do not erase local evidence or present a failure as a successful repair.
+    }
+    guard();
+    if (mounted) setState(() => notice =
+        'Diagnosis finished. Review measured results; no queue item was acknowledged or repaired by this check.');
+  }
+
   Future<void> _checkCloudHealth() async {
     if (mounted)
       setState(() {
@@ -1035,6 +1085,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     spacing: 12,
     runSpacing: 12,
     children: [
+      FilledButton.icon(
+        onPressed: active || busy ? null : () => _tool(_runSystemDiagnosis),
+        icon: const Icon(Icons.health_and_safety_outlined),
+        label: const Text('Run System Diagnosis'),
+      ),
       OutlinedButton(
         onPressed: () => _jump(_backupKey),
         child: const Text('Measured Status'),
@@ -1413,6 +1468,28 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ],
                         if (showDiagnostics) ...[
                           _controls(active),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              metric('Local database health', localHealth),
+                              metric('School cloud health', cloudHealth),
+                              if (diagnostics?['foregroundQueueCount'] is int)
+                                metric('Device queue',
+                                    '${diagnostics!['foregroundQueueCount']} outstanding'),
+                              if (diagnostics?['cloudflareOwnedPendingDriveCount'] is int)
+                                metric('School Server handoff',
+                                    '${diagnostics!['cloudflareOwnedPendingDriveCount']} awaiting Drive verification'),
+                              if (diagnostics?['unscopedQueueCount'] is int &&
+                                  (diagnostics!['unscopedQueueCount'] as int) > 0)
+                                metric('Unscoped entries',
+                                    '${diagnostics!['unscopedQueueCount']} retained — review required'),
+                              if (diagnostics?['queueStatus'] != null)
+                                metric('Queue diagnosis', diagnostics!['queueStatus'].toString()),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                           if (showQueue) ...[
                             SizedBox(key: _queueKey),
                             const Text(
