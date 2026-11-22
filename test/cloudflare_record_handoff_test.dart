@@ -119,6 +119,80 @@ void main() {
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
   });
 
+  test('staged delete is limited to independently safe calendar operations', () {
+    final row={'schoolId':school,'collection':'school_calendar',
+      'documentId':'calendar-delete-1','operation':'delete',
+      'operationId':'delete-original-operation-01','baseCloudRevision':'old-revision-1'};
+    bool eligible(Map item) => eligibleForStagedDelete(item,school,edgeDeliverySupported:true);
+    expect(eligible(row),true);
+    expect(eligibleForStagedDelete(row,school,edgeDeliverySupported:false),false);
+    for(final c in ['students_directory','teachers_directory','documents',
+        'fee_payments','attendance_records','school_notices']) {
+      expect(eligible({...row,'collection':c}),false);
+    }
+    expect(eligible({...row,'schoolId':other}),false);
+    expect(eligible({...row,'baseCloudRevision':''}),false);
+    expect(eligible({...row,'priorDeletion':row}),false);
+    expect(eligible({...row,'atomicBundleId':'owner'}),false);
+    expect(eligible({...row,'requireCanonicalDeleteReceipt':true}),false);
+  });
+
+  test('calendar delete requires exact complete provider tombstone proof', () async {
+    const id='calendar-delete-2',op='delete-original-operation-02';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'delete','operationId':op,'baseCloudRevision':'base-01',
+      'syncState':'pending',
+    };
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('calendar-delete-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    final journal={
+      'source':'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/records','collection':'school_calendar','id':id,
+      'operation':'delete','originalOperationId':op,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    };
+    await WindowsDriveDeliveryQueue.retainEdge(journal);
+    final live=(await ref.get()).data()!;
+    expect(await db.recordOutboxCloudHandoff(ref,live,ticketId:ticket),true);
+    final accepted=(await ref.get()).data()!;
+    final proof=<String,dynamic>{
+      'success':true,'schoolId':school,'cloudflareAccepted':true,
+      'driveState':'verified','syncProtocol':2,'recordRevision':'delete-revision-02',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,
+      'record':{'schoolId':school,'id':id,'_syncDeleted':true,
+        '_syncRevision':'delete-revision-02','_syncOperationId':op,
+        '_syncErasePlan':{'complete':true}},
+    };
+    final binding={...journal,'ticketId':ticket};
+    expect(verifiedStagedRecordFinal(accepted,binding,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'record':{...proof['record'] as Map,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'record':{...proof['record'] as Map,'_syncOperationId':'wrong-operation'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'recordRevision':'cf-stage-only'},school),false);
+    // Only canonical provider proof may retire the pending delete through the
+    // existing receipt journal. Staging alone leaves the original intact.
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return proof;
+    });
+    expect((await ref.get()).exists,false);
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
   test('invalid final revision does not retire accepted original', () async {
     await db.collection('school_calendar').doc('event-2')
       .set({'schoolId':school,'syntheticTest':true,'title':'Synthetic test'});
