@@ -19,6 +19,30 @@ void main() {
     'person': {'name': 'Synthetic'}, 'schoolName': 'Own school',
   });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  test('only a complete same-school Cloudflare notice page can supersede delayed Script rows', () {
+    Map<String,dynamic> edge(List notices,{String? source})=> {
+      'success':true,'schoolId':source??school,'revision':'worker-notice-revision',
+      'notices':notices,
+    };
+    final rows=[{'id':'notice-1','title':'Fresh',
+      '_noticeRevision':'canonical-revision','schoolId':school}];
+    final accepted=verifiedCompleteCloudflareNotices(edge(rows),school,200);
+    expect(accepted,hasLength(1));
+    expect(accepted!.first['title'],'Fresh');
+    expect(verifiedCompleteCloudflareNotices(edge(rows,source:
+      'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(edge([rows.first,rows.first]),school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(edge([{'id':'missing-revision'}]),school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(edge([
+      {'id':'notice-2','schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+       '_noticeRevision':'r2'},
+    ]),school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(edge(List.generate(100,
+      (n)=>{'id':'notice-$n','_noticeRevision':'rev'})),school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(
+      {...edge(rows),'revision':''},school,200),isNull);
+    expect(verifiedCompleteCloudflareNotices(edge(rows),school,503),isNull);
+  });
   test('1000-row delta preserves provider order and unchanged baseline, rejects duplicate/foreign IDs', () async {
     var stage = 0;
     final baseline = [for (var n = 0; n < 1000; n++) {
