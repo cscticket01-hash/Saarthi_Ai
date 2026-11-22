@@ -14753,7 +14753,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           qualification
                               .contains(
                             query,
-                          );
+                          ) ||
+                          (data['teacherId']?.toString().toLowerCase() ?? '').contains(query) ||
+                          (data['universalUid']?.toString().toLowerCase() ?? '').contains(query);
 
                   final statusMatch =
                       _statusFilter ==
@@ -19084,6 +19086,7 @@ class _AdvancedStudentUidSettingsPanelState
   int _uidPadding = 6;
   int _uidNextNumber = 1;
   String _uidLastIssued = '';
+  String _universalSchoolName = '';
 
   @override
   void initState() {
@@ -19099,8 +19102,11 @@ class _AdvancedStudentUidSettingsPanelState
 
   Future<void> _fetchUidTestSettings() async {
     try {
+      final origin = FirebaseFirestore.instance.activeProfileId;
       final data = await _loadTestStudentUidConfig();
-      if (!mounted) return;
+      final school = (await FirebaseFirestore.instance.collection('school_config')
+          .doc('school_profile_cache').get()).data();
+      if (!mounted || FirebaseFirestore.instance.activeProfileId != origin) return;
 
       final prefix = data['prefix']?.toString() ?? 'TEST-';
       final padding = (data['padding'] as num?)?.toInt() ?? 6;
@@ -19108,6 +19114,7 @@ class _AdvancedStudentUidSettingsPanelState
       final everActivated = data['everActivated'] == true;
 
       setState(() {
+        _universalSchoolName = school?['schoolName']?.toString().trim() ?? '';
         _uidMasterEnabled = data['masterEnabled'] == true;
         _uidFeesEnabled = data['feesEnabled'] == true;
         _uidIdCardEnabled = data['idCardEnabled'] == true;
@@ -19632,7 +19639,7 @@ class _AdvancedStudentUidSettingsPanelState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Student UID — TEST MODE',
+                      'Universal UID • Legacy TEST settings',
                       style: TextStyle(fontFamily: 'Segoe UI', 
                         color: WindowsAppearance.foreground(Colors.white),
                         fontSize: 15,
@@ -19687,6 +19694,29 @@ class _AdvancedStudentUidSettingsPanelState
                 'Abhi TEST mode hai. Default example TEST-000001 hai. Assigned TEST UID delete hone ke baad reuse nahi hoga.',
                 style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60), fontSize: 11, height: 1.45),
               ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Universal UID format (preview only)',
+              style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800,
+                color: WindowsAppearance.foreground(Colors.white)),
+            ),
+            Text(
+              _universalSchoolName.isEmpty
+                ? 'Save your school name in School Profile first.'
+                : 'School: $_universalSchoolName',
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white60)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'STU-SCHOOL4-NAME4-000001  •  Students\n'
+              'TCH-SCHOOL4-NAME4-000001  •  Teachers\n'
+              'STF-SCHOOL4-NAME4-000001  •  Office & Other Staff (shared counter)',
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 11),
+            ),
+            Text(
+              'Universal allocation is not active until the verified cloud migration is available. Existing TEST values and settings remain unchanged.',
+              style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.orangeAccent), fontSize: 11),
             ),
             const SizedBox(height: 14),
             TextField(

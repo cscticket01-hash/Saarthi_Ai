@@ -19,3 +19,5 @@ No changes to existing QR credentials or UID values. No deployment or publicatio
 
 Single branch-scoped CI tests SQLite registry, Cloudflare type check and Flutter
 regressions. Existing workflows are not modified.
+
+Second stage: existing Advanced Settings shows the proposed universal format without enabling unverified allocation. Teacher search accepts existing teacher/public UID. The existing manifest designer preview no longer renders PDF; its explicit export retains the print renderer. The school-wide apply review gate remains unchanged; other card paths and actual allocation remain pending. The consolidated CI moved runner.temp into step-level environment.

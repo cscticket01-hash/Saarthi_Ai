@@ -96,7 +96,7 @@ class _DesignerState extends State<IdCardDesignerScreen> {
             },
           ),
           if (widget.onPreview != null) IconButton(
-            tooltip: 'Preview exact front/back PDF', icon: const Icon(Icons.preview),
+            tooltip: 'Open native ID card preview', icon: const Icon(Icons.preview),
             onPressed: saving ? null : () async {
               try { await widget.onPreview!(editor.exportDraft(templateVersion: widget.templateVersion)); }
               catch (e) { if (mounted) setState(() => error = 'Preview failed: $e'); }

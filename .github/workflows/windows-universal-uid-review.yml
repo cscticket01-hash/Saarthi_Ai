@@ -35,9 +35,6 @@ jobs:
     if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
     runs-on: windows-2022
     timeout-minutes: 35
-    env:
-      APPDATA: ${{ runner.temp }}/win005-007-appdata
-      LOCALAPPDATA: ${{ runner.temp }}/win005-007-localappdata
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -46,6 +43,9 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze changed Windows source
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_person_fields.dart lib/main_dashboard_screen_windows.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_person_fields.dart lib/main_dashboard_screen_windows.dart lib/id_card_native_preview.dart lib/windows_id_card_designer_entry.dart lib/id_card_designer_screen.dart
       - name: Consolidated teacher, payroll, student and ID-card regression suite
-        run: flutter test --concurrency=1 test/windows_teacher_validation_test.dart test/windows_person_payment_fields_test.dart test/windows_operations_test.dart test/windows_id_card_preview_test.dart test/student_inventory_policy_test.dart test/windows_staff_category_policy_test.dart
+        env:
+          APPDATA: ${{ runner.temp }}/win005-007-appdata
+          LOCALAPPDATA: ${{ runner.temp }}/win005-007-localappdata
+        run: flutter test --concurrency=1 test/windows_teacher_validation_test.dart test/windows_person_payment_fields_test.dart test/windows_operations_test.dart test/windows_id_card_preview_test.dart test/student_inventory_policy_test.dart test/windows_staff_category_policy_test.dart test/id_card_native_preview_test.dart

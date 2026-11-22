@@ -5,6 +5,8 @@ import 'package:printing/printing.dart';
 import 'id_card_local_cipher.dart';
 import 'id_card_manifest.dart';
 import 'id_card_engine.dart';
+import 'id_card_native_preview.dart';
+import 'windows_save_pdf.dart';
 import 'id_card_bulk_screen.dart';
 import 'id_card_bulk_job_store.dart';
 import 'id_card_school_source.dart';
@@ -132,7 +134,27 @@ class WindowsIdCardDesignerEntry {
       try{final source=await IdCardSchoolSource.capture();checkSchool();final record=source.records.where((r)=>r['_recordId']==first['_recordId']).toList();if(record.isNotEmpty)qr=source.existingQr(record.first);}catch(_){checkSchool();/* Missing existing QR remains visibly absent; never mint credentials. */}
     }
     Future<void> preview(Map<String,dynamic> draft) async {
-      checkSchool();final bytes=await IdCardEngine.render(IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map)),data,backgrounds:backgrounds,images:images,qr:qr);checkSchool();await pdfPreview(context,bytes);
+      checkSchool();
+      final manifest=IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map));
+      if (!context.mounted) return;
+      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+        NativeIdCardPreview(template:manifest,data:data,images:images,
+          backgrounds:backgrounds,qr:qr,onDownload:() async {
+            checkSchool();
+            final bytes=await IdCardEngine.render(manifest,data,backgrounds:backgrounds,images:images,qr:qr);
+            checkSchool();
+            if(qr.isNotEmpty)await IdCardEngine.verifyExport(bytes,qr);
+            checkSchool();
+            await WindowsSavePdf.save(bytes,'school-id-preview.pdf');
+          })));
+    }
+    // Applying a school-wide layout still uses the original explicit print-proof
+    // review gate. Native preview alone is not a final print QR verification.
+    Future<void> reviewBeforeApply(Map<String,dynamic> draft) async {
+      checkSchool();
+      final bytes=await IdCardEngine.render(IdCardManifest.fromJson(Map<String,dynamic>.from(draft['manifest'] as Map)),data,backgrounds:backgrounds,images:images,qr:qr);
+      checkSchool();
+      await pdfPreview(context,bytes);
     }
     if (!context.mounted) return;
     await Navigator.of(context).push<void>(
@@ -147,7 +169,7 @@ class WindowsIdCardDesignerEntry {
             checkSchool();final previous=await store.readPreviousRevision();checkSchool();return previous;
           },
           onApply: enabled ? (draft) async {
-            checkSchool();await store.saveDraft(draft);await preview(draft);
+            checkSchool();await store.saveDraft(draft);await reviewBeforeApply(draft);
             if(!context.mounted||!await confirm(context,'Apply reviewed student layout','Apply this exact saved manifest to student IDs for this school. Teacher layouts and QR credentials remain unchanged.'))return;
             checkSchool();final hash=IdCardDraftStorageIo.manifestHash(draft);
             await store.applyReviewedDraft(draft,reviewedManifestHash:hash,confirmed:true);checkSchool();
