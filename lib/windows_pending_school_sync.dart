@@ -115,6 +115,30 @@ bool canParallelStageRecord(Map item, String school, {
     (item['documentId'] as String).isNotEmpty &&
     pendingRecordBackoffDue(Map<String, dynamic>.from(item), DateTime.now());
 
+/// Existing Worker treats school expenses as independent resources. A
+/// non-atomic fee/person/document row in this device's outbox is not a parent
+/// of an expense. Let the broker durably accept independent expenses without
+/// waiting for unrelated provider work, while retaining explicit local
+/// deletion, reservation, supersession and school isolation barriers.
+bool canStageExpensePastUnrelatedOwners(
+  Map candidate, Iterable<Map<String,dynamic>> outbox, String school,
+) {
+  if(candidate['collection']!='school_expenses' ||
+      candidate['schoolId']!=school ||
+      candidate['operation']!='set')return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school ||
+       row['atomicBundleId']!=null ||
+       row['priorDeletion']!=null ||
+       row['priorCloudWrite']!=null ||
+       row['operation']=='delete')return false;
+    if(row['collection']=='school_expenses' &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])return false;
+  }
+  return true;
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -899,6 +923,7 @@ class WindowsPendingSchoolSync {
     // Never parallelize attendance/expenses while a person lifecycle, atomic
     // reservation, delete or foreign/unbound record is unresolved locally.
     // The Worker still independently enforces its resource barriers.
+    final scopedRows=docs.map((row)=>row.data()).toList(growable:false);
     final dependentBarrier = docs.any((row) {
       final item = row.data();
       return item['schoolId'] != school ||
@@ -920,6 +945,7 @@ class WindowsPendingSchoolSync {
           sendVersioned != null && onlyQueueId == null &&
           onlyOperationId == null &&
           (!dependentBarrier ||
+            canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school as String) ||
             (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
              !independentExistingPersonPatch(row.data()))) &&
           (parallelAdmission?.call(row.data()) ?? false);
