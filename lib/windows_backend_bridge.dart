@@ -1007,7 +1007,7 @@ class WindowsBackendBridge {
       for (final queued in queue.docs) {
         if (canAdmit?.call() == false) break;
         requireDocumentScope();
-        final record = queued.data();
+        var record = queued.data();
         if(record['schoolId']!=school)
           throw StateError('Pending document belongs to another school.');
         // Stage, publish and Drive readback are handled by the SAME original
@@ -1085,8 +1085,43 @@ class WindowsBackendBridge {
               : await File(path).readAsBytes();
           if (FirebaseFirestore.instance.activeProfileId != origin)
             throw StateError('School changed before upload.');
-          if (record['documentKind'] == 'feeReceipt' && record['contentHash'] != crypto.sha256.convert(bytes).toString())
-            throw StateError('Original receipt hash mismatch. Upload retained for review.');
+          final measuredHash=crypto.sha256.convert(bytes).toString();
+          // Older local scans did not persist contentHash. Bind that exact
+          // on-disk generation to both durable local owners before staging.
+          // No remote upload, receipt or success is inferred by this repair.
+          if(record['deleted']!=true && record['contentHash']==null) {
+            final adopted=await _documentWrite<bool>(() async {
+              requireDocumentScope();
+              final current=(await queued.reference.get()).data();
+              final localRef=db.collection('_local_student_documents').doc(queued.id);
+              final local=(await localRef.get()).data();
+              requireDocumentScope();
+              if(current==null || local==null ||
+                 current['schoolId']!=school || local['schoolId']!=school ||
+                 current['documentRevision']!=record['documentRevision'] ||
+                 local['documentRevision']!=record['documentRevision'] ||
+                 current['localPath']!=record['localPath'] ||
+                 local['localPath']!=record['localPath'] ||
+                 current['optimizedPath']!=record['optimizedPath'] ||
+                 local['optimizedPath']!=record['optimizedPath'] ||
+                 current['deleted']!=record['deleted'] ||
+                 current['contentHash']!=null ||
+                 (local['contentHash']!=null && local['contentHash']!=measuredHash))
+                return false;
+              final batch=db.batch();
+              batch.requireUnchanged(queued.reference,current);
+              batch.requireUnchanged(localRef,local);
+              batch.set(queued.reference,{'contentHash':measuredHash},const SetOptions(merge:true));
+              batch.set(localRef,{'contentHash':measuredHash},const SetOptions(merge:true));
+              await batch.commit();
+              requireDocumentScope();
+              return true;
+            });
+            if(!adopted)continue; // A newer document generation won the CAS.
+            record={...record,'contentHash':measuredHash};
+          }
+          if(record['deleted']!=true && record['contentHash']!=measuredHash)
+            throw StateError('Original document file digest mismatch. Upload retained for review.');
           final payload = <String, dynamic>{
             for (final key in [
               'studentId',
