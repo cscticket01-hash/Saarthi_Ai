@@ -122,7 +122,16 @@ class WindowsDriveDeliveryQueue {
     }
     final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
     final authorized = notice['handoffAuthorized'] == true;
-    if (authorized && (notice['action'] != 'managed/records' ||
+    final authorizedFile = authorized &&
+        {'managed/document/stage/resumable','managed/record/media/stage/resumable'}.contains(notice['action']);
+    if (authorizedFile && (proof['driveState']!='pending' ||
+        !authorizedPendingSidecar({...notice,'cloudflareAccepted':true,
+          'edgeDeliveryVersion':1,'state':'pending',
+          'ticketId':ticket is Map?ticket['id']:null,
+          'lane':ticket is Map?ticket['lane']:null},school))) {
+      throw StateError('Unverified original file handoff journal.');
+    }
+    if (authorized && !authorizedFile && (notice['action'] != 'managed/records' ||
         !{'write','delete'}.contains(notice['operation']) ||
         proof['driveState'] != 'pending' || ticket is! Map ||
         ticket['lane'] != 'records' ||
@@ -168,6 +177,9 @@ class WindowsDriveDeliveryQueue {
         'action': notice['action'], 'cloudflareAccepted': true,
         if (authorized || old?['handoffAuthorized'] == true)
           'handoffAuthorized': true,
+        if (authorizedFile) 'fileSha256': notice['fileSha256'],
+        if (authorizedFile && notice['mediaSourceHash'] is String)
+          'mediaSourceHash': notice['mediaSourceHash'],
         if(notice['originalOperationId'] is String)
           'originalOperationId':notice['originalOperationId'],
         if(notice['originalOperationId'] is! String &&
@@ -190,6 +202,44 @@ class WindowsDriveDeliveryQueue {
     );
     _scope(school, profile);
     changed.value++;
+  }
+
+  /// Restore a document's local handoff CAS without reading or uploading
+  /// the file again. Both existing local generation rows must agree.
+  static Future<bool> recoverDocumentHandoff(
+      DocumentReference<Map<String,dynamic>> ref,
+      Map<String,dynamic> original,Map journal,String school) async {
+    final db=FirebaseFirestore.instance,profile=db.activeProfileId;
+    ref.requireOriginProfile();
+    _scope(school,profile);
+    if(ref.collectionPath!='_windows_document_outbox' ||
+        !recoverableStagedDocumentJournal(original,journal,school,ref.id))return false;
+    final local=db.collection('_local_student_documents').doc(ref.id);
+    final row=(await local.get()).data();
+    _scope(school,profile);
+    if(row==null || row['schoolId']!=school ||
+       row['documentRevision']!=original['documentRevision'] ||
+       row['contentHash']!=original['contentHash'] ||
+       row['localPath']!=original['localPath'] ||
+       row['deleted']==true)return false;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      _scope(school,profile);
+      final batch=db.batch();
+      batch.requireUnchanged(ref,original);
+      batch.requireUnchanged(local,row);
+      batch.set(ref,{
+        'syncState':'cloudAccepted',
+        'cloudTicketId':journal['ticketId'],
+        'cloudTicketLane':journal['lane'],
+        'cloudContentHash':journal['fileSha256'],
+        'cloudAcceptedAt':journal['acceptedAt'] is int
+            ? journal['acceptedAt']:DateTime.now().millisecondsSinceEpoch,
+      },const SetOptions(merge:true));
+      batch.set(local,{'syncState':'CloudflareSaved'},const SetOptions(merge:true));
+      await batch.commit();
+    });
+    _scope(school,profile);
+    return true;
   }
 
   /// Bind the separate Drive proof to the exact accepted cloud operation.
@@ -451,7 +501,19 @@ class WindowsDriveDeliveryQueue {
                   throw StateError('Multiple original photo record owners detected.');
                 }
                 if(matches.length==1) {
-                  final original=matches.single.data();
+                  var original=matches.single.data();
+                  if(recoverableStagedPhotoJournal(original,item,school)) {
+                    await db.recordOutboxCloudHandoff(matches.single.reference,
+                      original,ticketId:id,lane:lane,
+                      mediaSourceHash:item['mediaSourceHash'] as String,
+                      mediaFileSha256:item['fileSha256'] as String);
+                    _scope(school,profile);
+                    final reread=(await matches.single.reference.get()).data();
+                    _scope(school,profile);
+                    if(reread==null||reread['operationId']!=item['originalOperationId'])
+                      throw StateError('Portrait generation changed during recovery.');
+                    original=reread;
+                  }
                   if(original['syncState']!='cloudAccepted' &&
                       original['cloudTicketId']==null) {
                     throw StateError('Original portrait Cloudflare CAS not yet committed.');
@@ -484,9 +546,17 @@ class WindowsDriveDeliveryQueue {
                 final ref = db.collection('_windows_document_outbox').doc(docId);
                 final snapshot = await ref.get();
                 _scope(school, profile);
-                final original = snapshot.data();
+                var original = snapshot.data();
                 if (original != null && original['schoolId'] == school &&
                     original['documentRevision'] == opId) {
+                  if(recoverableStagedDocumentJournal(original,item,school,docId)) {
+                    await recoverDocumentHandoff(ref,original,item,school);
+                    _scope(school,profile);
+                    original=(await ref.get()).data();
+                    _scope(school,profile);
+                    if(original==null || original['documentRevision']!=opId)
+                      throw StateError('Document generation changed during recovery.');
+                  }
                   if (original['syncState'] != 'cloudAccepted' ||
                       original['cloudTicketId'] != id ||
                       original['cloudTicketLane'] != lane ||
