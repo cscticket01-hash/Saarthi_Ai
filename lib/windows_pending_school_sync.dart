@@ -944,9 +944,11 @@ class WindowsPendingSchoolSync {
     // A bounded window is drained before newer or dependent operations are
     // admitted. The existing CAS, receipt journal, and row retry paths remain
     // the sole ACK owners. A fatal error drains in-flight work and stops admission.
-    // Never parallelize attendance/expenses while a person lifecycle, atomic
-    // reservation, delete or foreign/unbound record is unresolved locally.
-    // The Worker still independently enforces its resource barriers.
+    // Person and school-policy parents block dependent attendance. Standalone
+    // expenses and independent attendance may bypass only unrelated same-school
+    // non-atomic rows; delete, reservation, supersession and foreign bindings
+    // still prevent their concurrent admission. The Worker independently
+    // enforces final Google provider resource barriers.
     final scopedRows=docs.map((row)=>row.data()).toList(growable:false);
     final dependentBarrier = docs.any((row) {
       final item = row.data();
