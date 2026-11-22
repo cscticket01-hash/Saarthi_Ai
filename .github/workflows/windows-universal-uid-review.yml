@@ -6,6 +6,12 @@ on:
       - 'lib/**'
       - 'test/**'
       - 'cloudflare-sync/**'
+      - 'functions/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'windows/**'
+      - 'android/**'
+      - 'web/**'
       - '.github/workflows/windows-universal-uid-review.yml'
   workflow_dispatch:
 permissions:
@@ -30,11 +36,25 @@ jobs:
         working-directory: cloudflare-sync
         run: |
           npm ci
+          npm run types
           npm run check
+      - name: Run isolated Cloudflare Worker regressions
+        working-directory: cloudflare-sync
+        run: |
+          npm run build
+          npm test
+      - name: Run backend lifecycle, migration, reconciliation and QR regressions
+        working-directory: functions
+        run: >-
+          node --test
+          test/live-person-lifecycle.test.js
+          test/live-sync-migration.test.js
+          test/live-sync-reconciliation.test.js
+          test/managed-card-issue-authority.test.js
   windows-regressions:
     if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -48,4 +68,46 @@ jobs:
         env:
           APPDATA: ${{ runner.temp }}/win005-007-appdata
           LOCALAPPDATA: ${{ runner.temp }}/win005-007-localappdata
-        run: flutter test --concurrency=1 test/windows_teacher_validation_test.dart test/windows_person_payment_fields_test.dart test/windows_operations_test.dart test/windows_id_card_preview_test.dart test/student_inventory_policy_test.dart test/windows_staff_category_policy_test.dart test/id_card_native_preview_test.dart
+        run: >-
+          flutter test --concurrency=1
+          test/windows_teacher_validation_test.dart
+          test/windows_person_payment_fields_test.dart
+          test/windows_operations_test.dart
+          test/windows_id_card_preview_test.dart
+          test/student_inventory_policy_test.dart
+          test/windows_staff_category_policy_test.dart
+          test/id_card_native_preview_test.dart
+          test/windows_student_id_cards_test.dart
+          test/id_card_engine_test.dart
+          test/id_card_layout_test.dart
+          test/windows_fee_collection_flow_test.dart
+          test/windows_atomic_exam_local_save_test.dart
+          test/document_processing_engine_test.dart
+          test/qr_card_authorization_test.dart
+          test/school_qr_login_test.dart
+      - name: Compile the Windows application
+        run: >-
+          flutter build windows --release -t lib/main_windows.dart
+          --dart-define=SAARTHI_WINDOWS_SQLITE=true
+          --dart-define=SAARTHI_MANAGED_ACCOUNTS=true
+  android-web-regressions:
+    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Exercise Android and Web compatibility
+        run: >-
+          flutter test --concurrency=1
+          test/android_startup_test.dart
+          test/mobile_attendance_history_test.dart
+          test/mobile_attendance_outbox_test.dart
+          test/published_id_card_test.dart
+          test/web_atomic_bundle_review_test.dart
+      - name: Compile the Web application
+        run: flutter build web --release
