@@ -593,6 +593,30 @@ class CentralSchoolCloud {
 
     var result=await send('POST', Uri.parse(endpoint), token: token,
         body: {...negotiateLiveSync(body), if(staged) 'edgeDeliveryVersion': 1});
+    // The independent receipt owner already controls polling schedules.
+    // An explicit authenticated status request is a single read, not a
+    // foreground mutation that needs an implicit long-poll to completion.
+    if (action == 'managed/cloudflare/operation') {
+      final ticket = result['delivery'];
+      if (result['success'] != true ||
+          result['schoolId'] != body['schoolId'] ||
+          result['cloudflareAccepted'] != true ||
+          !{'pending','verified'}.contains(result['driveState']) ||
+          (result['driveState'] == 'pending' &&
+            (result['edgeDeliveryVersion'] != 1 || ticket is! Map ||
+             ticket['lane'] != body['lane'] || ticket['id'] != body['id']))) {
+        throw StateError('Unverified Cloudflare delivery status; original retained.');
+      }
+      check();
+      if (origin != null) {
+        final current = await saved();
+        if (current['schoolId'] != origin['schoolId'] ||
+            current['uid'] != origin['uid']) {
+          throw StateError('School changed during delivery status.');
+        }
+      }
+      return result;
+    }
     final deadline=DateTime.now().add(const Duration(seconds: 90));
     Map<String, dynamic>? acceptedTicket;
     var receiptRetained = false;
