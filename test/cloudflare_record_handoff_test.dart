@@ -272,6 +272,67 @@ void main() {
     expect((await ref.get()).exists,true);
   });
 
+  test('already verified record ticket remains pollable until original local CAS settles', () async {
+    const op='instant-record-operation-001',id='instant-calendar';
+    final record={'schoolId':school,'collection':'school_calendar',
+      'documentId':id,'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'pending','data':{'title':'Original'}};
+    final ticket=exactTicket(record);
+    final row=db.collection('_windows_firebase_outbox').doc('instant-calendar-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>row.set(record));
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'c').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':id,
+      'originalOperationId':op,'operation':'write',
+      'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'verified',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    final journal=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(journal['state'],'pending');
+    expect(journal['providerVerifiedAwaitingLocalCas'],true);
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,
+        'recordRevision':'canonical-instant-revision-001',
+        'record':{'schoolId':school,'id':id,
+          '_syncOperationId':op,'_syncRevision':'canonical-instant-revision-001'}};
+    });
+    expect(reads,1);
+    expect((await row.get()).exists,false);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data()['state'],'completed');
+  });
+
+  test('stale receipt status cannot overwrite administrator review',() async {
+    const op='concurrent-review-operation-001',id='review-calendar';
+    final ticket=exactTicket({'schoolId':school,'collection':'school_calendar',
+      'documentId':id,'operationId':op});
+    final journal=db.collection(WindowsDriveDeliveryQueue.collection).doc('review-status-race');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>journal.set({
+      'schoolId':school,'edgeDeliveryVersion':1,
+      'action':'managed/records','collection':'school_calendar','id':id,
+      'operation':'write','originalOperationId':op,
+      'ticketId':ticket,'lane':'records','state':'pending',
+      'nextPollAt':0,'attempts':0,'handoffAuthorized':true,
+    }));
+    await expectLater(WindowsDriveDeliveryQueue.poll(school,call:(action,body)async {
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        ()=>journal.set({'state':'needsAttention','failureCode':'MANUAL_REVIEW'},
+          const SetOptions(merge:true)));
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'pending','delivery':{'lane':'records','id':ticket}};
+    }),throwsStateError);
+    final protected=(await journal.get()).data()!;
+    expect(protected['state'],'needsAttention');
+    expect(protected['failureCode'],'MANUAL_REVIEW');
+  });
+
   test('authorized journal restores interrupted local handoff without another mutation', () async {
     const id='restart-calendar';
     const op='restart-original-operation-001';
