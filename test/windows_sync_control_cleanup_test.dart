@@ -108,16 +108,9 @@ void main() {
     expect(find.text('LIVE UI'), findsNothing);
     expect(find.text('Detailed status & safe controls'), findsNothing);
     expect(find.text('Needs attention'), findsNothing);
-    await tester.scrollUntilVisible(find.text('Pending Uploads'), 180,
-        scrollable: find.byType(Scrollable).first);
-    expect(find.text('Pending Uploads'), findsOneWidget);
-    expect(find.text('3 Pending · 2 Need Attention\n1 Conflicts · 1 Failed\n0 file cleanup operations included'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Live Queue Activity'), -200,
-        scrollable: find.byType(Scrollable).first);
+    expect(find.text('Pending Uploads'), findsNothing);
     expect(find.text('Live Queue Activity'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Pending Uploads'), 200,
-        scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Pending Uploads').hitTestable());
+    await tester.tap(find.text('View full queue').hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Pending Queue & Conflict Review'), findsOneWidget);
     expect(find.text('students_directory • conflict'), findsOneWidget);
@@ -163,14 +156,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(Drawer), findsNothing);
       expect(find.byTooltip('Back'), findsOneWidget);
-      for (final label in [
-        'Overview',
-        'Smart Repair History',
-        'Recycle Bin',
-        'Backup School Data',
-      ]) {
-        expect(find.text(label), findsOneWidget);
-      }
+      expect(find.text('Backup School Data'), findsNothing);
       expect(find.text('Export Sanitized Report'), findsNothing);
       expect(find.text('Diagnostics and recovery tools'),findsNothing);
       await tester.tap(find.byType(PopupMenuButton<int>));
@@ -204,7 +190,7 @@ void main() {
     };
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pump(); await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Smart Repair History'));
+    await tester.tap(find.text('View full sync history').hitTestable());
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Smart Repair — Safe Retry'), 200,
         scrollable: find.byType(Scrollable).first);
