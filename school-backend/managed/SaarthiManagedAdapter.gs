@@ -127,7 +127,7 @@ function VS_managedVerify(e, onAuthenticated) {
     Object.keys(all).filter(k=>k.indexOf('VS_NONCE_')===0).forEach(k=>{if(Number(all[k])<Date.now()-240000)p.deleteProperty(k);else count++;});
     if(count>=1000)throw new Error('Retry storage shortly');p.setProperty(key,String(b.timestamp));
   } finally {lock.releaseLock();}
-  return JSON.parse(b.payload);
+  return payload; // HMAC-verified original payload, parsed once.
 }
 function VS_validateManagedCollection(name) {
   if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
@@ -382,6 +382,8 @@ function VS_managedRecycle(b) {
       VS_managedCollection(b.collection);
       if(typeof b.after!=='string'||b.after.length>200)throw new Error('Invalid record ID');
       const store=VS_managedSheet(b.collection),records=VS_sheetRecords(store),now=Date.now();
+      // A missing tombstone is not evidence that an approved restore has no snapshot.
+      if(VS_missingRecordHeads(store,records).length)throw new Error('Recycle inventory requires verified local Sheet recovery');
       const ids=Object.keys(records).filter(id=>id>b.after&&records[id]._syncDeleted===true&&records[id]._syncRecycleFileId).sort();
       const entries=ids.slice(0,25).map(id=>{
         const row=records[id],base={id:id,collection:b.collection,fileId:row._syncRecycleFileId,deletedRevision:row._syncRevision};
@@ -400,8 +402,12 @@ function VS_managedRecycle(b) {
     const item=VS_recycleRead(b.fileId),snap=item.snapshot,store=VS_managedSheet(snap.collection),current=VS_sheetItem(store,snap.id);
     if(!current||current.schoolId!==snap.schoolId)throw new Error('Record revision conflict');
     const data=current.data;
-    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision)
+    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision){
+      if(data._syncDeleted===true||typeof data._syncRevision!=='string'||!data._syncRevision||
+         data._syncRevision===snap.deletedRevision||/^(cf-|live-)/.test(data._syncRevision))
+        throw new Error('Record revision conflict');
       return {recordRevision:data._syncRevision,syncProtocol:2,restored:true};
+    }
     if(b.expectedRecordRevision!==data._syncRevision||data._syncRevision!==snap.deletedRevision||
         data._syncDeleted!==true||data._syncRecycleFileId!==b.fileId)throw new Error('Record revision conflict');
     if(b.operation==='restore') {
