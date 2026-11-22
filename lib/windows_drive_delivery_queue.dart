@@ -487,9 +487,15 @@ class WindowsDriveDeliveryQueue {
                   (floor > backoff ? floor : backoff),
             };
           }
-          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-            () => row.reference.set(values, const SetOptions(merge: true)),
-          );
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+            // An administrator review or newer receipt can land during
+            // a slow remote poll. Never overwrite it with stale progress.
+            _scope(school, profile);
+            final batch=db.batch();
+            batch.requireUnchanged(row.reference,item);
+            batch.set(row.reference,values,const SetOptions(merge:true));
+            await batch.commit();
+          });
           _scope(school, profile);
           if (quota) break;
         }
@@ -756,9 +762,15 @@ class WindowsDriveDeliveryQueue {
                   (floor > backoff ? floor : backoff),
             };
           }
-          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
-            () => row.reference.set(values, const SetOptions(merge:true)),
-          );
+          await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+            // An administrator review or newer receipt can land during
+            // a slow remote poll. Never overwrite it with stale progress.
+            _scope(school, profile);
+            final batch=db.batch();
+            batch.requireUnchanged(row.reference,item);
+            batch.set(row.reference,values,const SetOptions(merge:true));
+            await batch.commit();
+          });
           _scope(school, profile);
           // Notify the original scheduler only after durable local settlement.
           // An old receipt or status-only poll never wakes a mutation pass.
