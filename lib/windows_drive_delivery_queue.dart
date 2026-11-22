@@ -305,16 +305,18 @@ class WindowsDriveDeliveryQueue {
     for(final row in recordRows) {
       final current=row.data();
       collect(current);
-      // The original staged Calendar/Notice owner can be nested under a
-      // newer local edit. That newer operation cannot start until the old
-      // Google revision is confirmed, even if its receipt journal was lost.
+      // The original staged Calendar/Notice or person-photo owner can be
+      // nested under a newer local edit. The newer generation cannot start
+      // until the old Google revision is confirmed. File-stage reconstruction
+      // still independently checks the original raw photo digest and ticket.
       final prior=current['priorCloudWrite'];
       if(prior is Map && current['schoolId']==school &&
          current['collection']==prior['collection'] &&
          current['documentId']==prior['documentId'] &&
          current['operationId']!=prior['operationId'] &&
          current['baseCloudRevision']==prior['baseCloudRevision'] &&
-         {'school_calendar','school_notices'}.contains(prior['collection'])) {
+         {'school_calendar','school_notices',
+          'students_directory','teachers_directory'}.contains(prior['collection'])) {
         collect(Map<String,dynamic>.from(prior));
       }
     }
