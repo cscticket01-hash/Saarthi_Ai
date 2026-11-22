@@ -120,11 +120,12 @@ class WindowsDriveDeliveryQueue {
            !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(notice['originalOperationId'])))) {
       throw StateError('Unverified Cloudflare staging receipt.');
     }
-    final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
+    final providerVerified = proof['driveState'] == 'verified', ticket = proof['delivery'];
     final authorized = notice['handoffAuthorized'] == true;
     final authorizedFile = authorized &&
         {'managed/document/stage/resumable','managed/record/media/stage/resumable'}.contains(notice['action']);
-    if (authorizedFile && (proof['driveState']!='pending' ||
+    final completed = providerVerified && !authorizedFile;
+    if (authorizedFile && (!{'pending','verified'}.contains(proof['driveState']) ||
         !authorizedPendingSidecar({...notice,'cloudflareAccepted':true,
           'edgeDeliveryVersion':1,'state':'pending',
           'ticketId':ticket is Map?ticket['id']:null,
@@ -146,7 +147,7 @@ class WindowsDriveDeliveryQueue {
         (proof['committed'] != true || proof['fileId'] is! String || (proof['fileId'] as String).isEmpty)) {
       throw StateError('File bytes have no verified Drive completion.');
     }
-    if (!completed && (proof['driveState'] != 'pending' || ticket is! Map ||
+    if (!completed && (!(proof['driveState'] == 'pending' || authorizedFile && providerVerified) || ticket is! Map ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(ticket['id']?.toString() ?? '') ||
         !(ticket['lane'] == 'records' || ticket['lane'] == 'file-${ticket['id']}'))) {
       throw StateError('Unverified Cloudflare staging ticket.');
@@ -178,6 +179,7 @@ class WindowsDriveDeliveryQueue {
         if (authorized || old?['handoffAuthorized'] == true)
           'handoffAuthorized': true,
         if (authorizedFile) 'fileSha256': notice['fileSha256'],
+        if (authorizedFile && providerVerified) 'providerVerifiedAwaitingLocalCas': true,
         if (authorizedFile && notice['mediaSourceHash'] is String)
           'mediaSourceHash': notice['mediaSourceHash'],
         if(notice['originalOperationId'] is String)
