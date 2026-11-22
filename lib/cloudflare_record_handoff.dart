@@ -185,8 +185,12 @@ Map<String,dynamic>? acceptedCloudflareTicketBinding(
   final ticket=original['cloudTicketId'] as String;
   final lane=original['cloudTicketLane'];
   if(lane=='records') {
-    if(original['operationId'] is! String ||
-       !{'set','update','delete'}.contains(original['operation']) ||
+    // Ticket-shaped metadata cannot turn a non-stagable (e.g. document)
+    // operation into an authorized Cloudflare-owned record on restart.
+    final eligible=eligibleForRecordHandoff(
+        original,school,edgeDeliverySupported:true) ||
+        eligibleForStagedDelete(original,school,edgeDeliverySupported:true);
+    if(!eligible || original['operationId'] is! String ||
        exactStagedRecordTicket(original,school)!=ticket)return null;
     return {'schoolId':school,'action':'managed/records',
       'collection':original['collection'],'id':original['documentId'],
@@ -275,18 +279,17 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
         record['_syncErasePlan'] is Map &&
         record['_syncErasePlan']['complete'] == true;
   }
-  if(record is Map) {
-    // A verified Script projection sometimes omits wrapper metadata. Its
-    // signed broker owner still binds the immutable original operation ID
-    // through the stored ticket. Reject any *present* contradictory identity.
-    if(record['schoolId']!=school||
-        (record['_syncRevision']!=null&&
-         record['_syncRevision']!=proof['recordRevision'])||
-        (record['_syncOperationId']!=null&&
-         record['_syncOperationId']!=original['operationId'])||
-        (record['id']!=null&&record['id']!=original['documentId']))
-      return false;
-  }
+  // An R2/DO status saying "verified" without its original canonical
+  // record cannot retire a durable local mutation. Some signed Script rows
+  // omit wrapper metadata, but the record itself must always be present.
+  if(record is! Map || record['schoolId']!=school ||
+      record['_syncDeleted']==true ||
+      (record['_syncRevision']!=null &&
+       record['_syncRevision']!=proof['recordRevision']) ||
+      (record['_syncOperationId']!=null &&
+       record['_syncOperationId']!=original['operationId']) ||
+      (record['id']!=null && record['id']!=original['documentId']))
+    return false;
   return true;
 }
 
