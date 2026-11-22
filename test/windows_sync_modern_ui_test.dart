@@ -93,6 +93,14 @@ void main() {
         matching: find.text('Needs Attention')), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Live Queue Activity'), findsOneWidget);
+      final viewport = find.byType(Scrollable).first;
+      expect(tester.state<ScrollableState>(viewport).position.maxScrollExtent, 0);
+      final backupNote = find.text(
+        'After School Server ACK, Google Drive backup runs in the background.',
+      );
+      expect(tester.getRect(backupNote).bottom,
+        lessThanOrEqualTo(tester.getRect(viewport).bottom));
+      expect(find.text('View full queue').hitTestable(), findsOneWidget);
       expect(find.text('Verified sync'), findsOneWidget);
       expect(find.text('School records'),findsNothing);
       expect(find.text('Documents & ID cards'),findsNothing);
