@@ -112,6 +112,64 @@ bool recoverableStagedRecordJournal(Map original, Map journal, String school) {
       journal['operation'] == (original['operation']=='delete'?'delete':'write');
 }
 
+/// Existing file-lane ticket identity, independently derived from the
+/// immutable document generation or the optimized portrait hash.
+String? exactSidecarTicket(Map journal, String school) {
+  final id=journal['id'], op=journal['originalOperationId'], hash=journal['fileSha256'];
+  if (!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) ||
+      journal['schoolId']!=school || id is! String || id.isEmpty ||
+      op is! String || !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(op) ||
+      hash is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) return null;
+  String key;
+  if(journal['action']=='managed/document/stage/resumable' &&
+      journal['collection']=='documents') {
+    key=sha256.convert(utf8.encode('$id:$op')).toString();
+  } else if(journal['action']=='managed/record/media/stage/resumable' &&
+      {'students_directory','teachers_directory'}.contains(journal['collection']) &&
+      journal['mediaSourceHash'] is String &&
+      RegExp(r'^[a-f0-9]{64}$').hasMatch(journal['mediaSourceHash'])) {
+    key=sha256.convert(utf8.encode(jsonEncode([
+      school,journal['collection'],id,op,hash,
+    ]))).toString();
+  } else {return null;}
+  return sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+}
+
+bool authorizedPendingSidecar(Map journal,String school) {
+  final ticket=exactSidecarTicket(journal,school);
+  return ticket!=null && journal['edgeDeliveryVersion']==1 &&
+      journal['cloudflareAccepted']==true && journal['handoffAuthorized']==true &&
+      journal['state']=='pending' && journal['operation']=='write' &&
+      journal['ticketId']==ticket && journal['lane']=='file-$ticket';
+}
+
+bool recoverableStagedDocumentJournal(Map original,Map journal,String school,String id) =>
+    authorizedPendingSidecar(journal,school) &&
+    journal['action']=='managed/document/stage/resumable' &&
+    original['schoolId']==school && journal['id']==id &&
+    original['documentRevision']==journal['originalOperationId'] &&
+    original['contentHash']==journal['fileSha256'] &&
+    {null,'pending','retry'}.contains(original['syncState']) &&
+    original['deleted']!=true && original['atomicBundleId']==null &&
+    original['parentDeletionOperationId']==null;
+
+bool recoverableStagedPhotoJournal(Map original,Map journal,String school) {
+  if(!authorizedPendingSidecar(journal,school) ||
+     journal['action']!='managed/record/media/stage/resumable' ||
+     !eligibleForRecordHandoff(original,school,edgeDeliverySupported:true) ||
+     !{null,'pending','retry'}.contains(original['syncState']) ||
+     original['collection']!=journal['collection'] ||
+     original['documentId']!=journal['id'] ||
+     original['operationId']!=journal['originalOperationId'] ||
+     original['wireData'] is Map || original['wireMode']=='fieldPatch1')return false;
+  final data=original['data'] as Map;
+  final photo=data['photoBase64'], raw=photo is String && photo.startsWith('data:image/')
+      ? photo : data['photoUrl'];
+  if(raw is! String||!raw.startsWith('data:image/'))return false;
+  try{return sha256.convert(UriData.parse(raw).contentAsBytes()).toString()==journal['mediaSourceHash'];}
+  catch(_){return false;}
+}
+
 /// A staged ticket is not a final result. It may retire the original
 /// locally retained operation only after the authenticated owner separately
 /// proves a canonical revision for that exact same-school ticket.
