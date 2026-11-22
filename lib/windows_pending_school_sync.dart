@@ -60,15 +60,19 @@ bool verifiedUnknownNoticeDeleteReadback(
           remote['_syncOperationId'] == item['operationId'];
 }
 
-/// Only independent, immutable text/calendar operations may share an admission
-/// window. Person, fee, attendance, file and deletion dependencies stay serial
-/// until their owner explicitly proves independence.
+/// Match the existing Worker's independent record-resource policy for expense
+/// and attendance mutations, in addition to text/calendar device admissions.
+/// Parent, fee, file, delete and atomic bundle dependencies remain barriers.
+const parallelAttendanceExpenseCollections = {
+  'school_expenses', 'attendance_records', 'attendance_logs', 'teacher_attendance',
+};
 bool canParallelStageRecord(Map item, String school, {
   required bool edgeDeliverySupported,
 }) =>
     eligibleForRecordHandoff(item, school,
         edgeDeliverySupported: edgeDeliverySupported) &&
-    {'school_notices', 'school_calendar'}.contains(item['collection']) &&
+    ({'school_notices', 'school_calendar'}.contains(item['collection']) ||
+      parallelAttendanceExpenseCollections.contains(item['collection'])) &&
     {'pending', 'retry'}.contains(item['syncState']) &&
     item['documentId'] is String &&
     (item['documentId'] as String).isNotEmpty &&
@@ -820,6 +824,19 @@ class WindowsPendingSchoolSync {
     // A bounded window is drained before newer or dependent operations are
     // admitted. The existing CAS, receipt journal, and row retry paths remain
     // the sole ACK owners. A fatal error drains in-flight work and stops admission.
+    // Never parallelize attendance/expenses while a person lifecycle, atomic
+    // reservation, delete or foreign/unbound record is unresolved locally.
+    // The Worker still independently enforces its resource barriers.
+    final dependentBarrier = docs.any((row) {
+      final item = row.data();
+      return item['schoolId'] != school ||
+          item['atomicBundleId'] != null ||
+          item['operation'] == 'delete' ||
+          item['priorDeletion'] != null ||
+          {'students_directory','teachers_directory','school_config',
+            'school_settings','fee_payments','fee_ledger','teacher_salary',
+            'documents'}.contains(item['collection']);
+    });
     var offset = 0;
     while (offset < docs.length) {
       unchanged();
@@ -828,6 +845,8 @@ class WindowsPendingSchoolSync {
       bool independent(QueryDocumentSnapshot<Map<String, dynamic>> row) =>
           sendVersioned != null && onlyQueueId == null &&
           onlyOperationId == null &&
+          (!dependentBarrier ||
+            !parallelAttendanceExpenseCollections.contains(row.data()['collection'])) &&
           (parallelAdmission?.call(row.data()) ?? false);
       if (!independent(first)) {
         await process(first);
