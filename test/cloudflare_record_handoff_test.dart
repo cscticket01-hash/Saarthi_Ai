@@ -926,10 +926,11 @@ void main() {
       school,'teachers_directory',id,op,optimized,
     ]))).toString();
     final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
-    expect(await db.recordOutboxCloudHandoff(ref,original,ticketId:ticket,
-      lane:'file-$ticket',mediaSourceHash:hash,mediaFileSha256:optimized),true);
     await record.set({'teacherId':id,'photoUrl':raw,'name':'Latest'});
     final newOperation=(await ref.get()).data()!['operationId'];
+    expect(newOperation,isNot(op));
+    expect(await db.recordOutboxCloudHandoff(ref,original,ticketId:ticket,
+      lane:'file-$ticket',mediaSourceHash:hash,mediaFileSha256:optimized),true);
     expect((await ref.get()).data()!['priorCloudWrite']['operationId'],op);
     var reads=0;
     final recovered=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(

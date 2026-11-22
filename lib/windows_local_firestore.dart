@@ -2562,10 +2562,10 @@ class _LocalSchoolDatabase {
         if(current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(original)) {
           // A user may save again while the original request is in-flight.
-          // Attach only a matching staged text write to the untouched newer
+          // Attach only an exact staged text write or portrait to the newer
           // owner; never replace the newer payload or reuse its operation ID.
-          if(current is Map && lane=='records' &&
-              {'school_calendar','school_notices'}.contains(original['collection']) &&
+          if(current is Map && (boundPhotoTicket || (lane=='records' &&
+              {'school_calendar','school_notices'}.contains(original['collection']))) &&
               {'set','update'}.contains(original['operation']) &&
               current['schoolId']==school &&
               current['collection']==original['collection'] &&
@@ -2579,7 +2579,11 @@ class _LocalSchoolDatabase {
               current['priorDeletion']==null &&
               current['wireData']==null) {
             current['priorCloudWrite']={...original,'syncState':'cloudAccepted',
-              'cloudTicketId':ticketId,'cloudTicketLane':'records',
+              'cloudTicketId':ticketId,'cloudTicketLane':lane,
+              if (boundPhotoTicket) ...{
+                'cloudMediaSourceHash':mediaSourceHash,
+                'cloudMediaFileSha256':mediaFileSha256,
+              },
               'cloudAcceptedAt':DateTime.now().millisecondsSinceEpoch};
             _storeCollections(root,collections);await _writeRoot(root);
             final signal=_signals['_windows_firebase_outbox'];
