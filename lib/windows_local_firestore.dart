@@ -2070,6 +2070,16 @@ class _LocalSchoolDatabase {
                     throw StateError('Staged predecessor identity changed; retained.');
                   queued['baseCloudRevision']=revision;
                   queued.remove('priorCloudWrite');
+                  final deletion=queued['priorDeletion'];
+                  if(deletion is Map && deletion['schoolId']==sent['schoolId'] &&
+                      deletion['collection']==sent['collection'] &&
+                      deletion['documentId']==sent['documentId'] &&
+                      deletion['baseCloudRevision']==sent['baseCloudRevision'] &&
+                      deletion['priorCloudWrite'] is Map &&
+                      deletion['priorCloudWrite']['operationId']==sent['operationId']) {
+                    deletion['baseCloudRevision']=revision;
+                    deletion.remove('priorCloudWrite');
+                  }
                   // The old prepared baseline is no longer valid. Existing
                   // point-read/field-patch preparation owns the fresh request.
                   for(final key in ['wireData','wireMode','fieldPatch','fieldPatchBase','createIntent'])
@@ -2544,6 +2554,31 @@ class _LocalSchoolDatabase {
         final current=queue is Map?queue[queueId]:null;
         if(current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(original)) {
+          // A user may save again while the original request is in-flight.
+          // Attach only a matching staged text write to the untouched newer
+          // owner; never replace the newer payload or reuse its operation ID.
+          if(current is Map && lane=='records' &&
+              {'school_calendar','school_notices'}.contains(original['collection']) &&
+              {'set','update'}.contains(original['operation']) &&
+              current['schoolId']==school &&
+              current['collection']==original['collection'] &&
+              current['documentId']==original['documentId'] &&
+              current['operationId'] is String &&
+              current['operationId']!=original['operationId'] &&
+              current['baseCloudRevision']==original['baseCloudRevision'] &&
+              current['syncState']=='pending' &&
+              current['atomicBundleId']==null &&
+              current['priorCloudWrite']==null &&
+              current['priorDeletion']==null &&
+              current['wireData']==null) {
+            current['priorCloudWrite']={...original,'syncState':'cloudAccepted',
+              'cloudTicketId':ticketId,'cloudTicketLane':'records',
+              'cloudAcceptedAt':DateTime.now().millisecondsSinceEpoch};
+            _storeCollections(root,collections);await _writeRoot(root);
+            final signal=_signals['_windows_firebase_outbox'];
+            if(signal!=null&&!signal.isClosed)signal.add(null);
+            done.complete(true);return;
+          }
           done.complete(false);return;
         }
         if(!{null,'pending','retry'}.contains(current['syncState'])) {
