@@ -37,18 +37,20 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
     var downloads = 0;
-    final printed = Completer<List<int>>();
+    Completer<List<int>>? printed;
+    var printCalls = 0;
     await tester.pumpWidget(MaterialApp(home: NativeIdCardPreview(
       template: template,
       data: const {'name': 'Synthetic person', 'backText': 'Back details'},
       onDownload: () async { downloads++; },
       onPrint: (pages) async {
-        printed.complete([pages.length, pages.single.width, pages.single.height]);
+        printCalls++;
+        printed?.complete([pages.length, pages.single.width, pages.single.height]);
       },
     )));
     await tester.tap(find.text('Front only'));
     await tester.pumpAndSettle();
-    expect(printed.isCompleted, isFalse);
+    expect(printCalls, 0);
     final printButton = tester.widget<OutlinedButton>(
       find.ancestor(
         of: find.text('Print'),
@@ -56,8 +58,9 @@ void main() {
       ),
     );
     final result = await tester.runAsync(() {
+      final completion = printed = Completer<List<int>>();
       printButton.onPressed!();
-      return printed.future.timeout(const Duration(seconds: 15), onTimeout: () => []);
+      return completion.future.timeout(const Duration(seconds: 15), onTimeout: () => []);
     });
     await tester.pumpAndSettle();
     expect(find.textContaining('Print failed'), findsNothing);
