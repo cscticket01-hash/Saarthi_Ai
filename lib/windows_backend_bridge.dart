@@ -1027,7 +1027,7 @@ class WindowsBackendBridge {
               throw StateError('Multiple document stage identities retained for review.');
             final restored=await WindowsDriveDeliveryQueue.recoverDocumentHandoff(
               queued.reference,record,bound.first,school);
-            if(restored)report('cloudAccepted');
+            if(restored)report('cloudflareAccepted');
             // Even when a newer CAS won, never resend this stale snapshot.
             continue;
           }
@@ -1132,7 +1132,7 @@ class WindowsBackendBridge {
                     crypto.sha256.convert(bytes).toString()) {
               throw const MissingSyncAcknowledgement();
             }
-            await _documentWrite(() async {
+            final committed = await _documentWrite<bool>(() async {
               if (FirebaseFirestore.instance.activeProfileId != origin)
                 throw StateError('School changed before document Cloudflare receipt.');
               final current = (await queued.reference.get()).data();
@@ -1142,7 +1142,7 @@ class WindowsBackendBridge {
                   current['schoolId'] != record['schoolId'] ||
                   current['contentHash'] != payload['contentHash']) {
                 // A newer local generation must not be cleared by an older ACK.
-                return;
+                return false;
               }
               final localRef = FirebaseFirestore.instance
                   .collection('_local_student_documents').doc(queued.id);
@@ -1150,7 +1150,7 @@ class WindowsBackendBridge {
               if (localBefore == null ||
                   localBefore['schoolId'] != record['schoolId'] ||
                   localBefore['documentRevision'] != record['documentRevision'] ||
-                  localBefore['contentHash'] != payload['contentHash']) return;
+                  localBefore['contentHash'] != payload['contentHash']) return false;
               final batch = FirebaseFirestore.instance.batch();
               batch.requireUnchanged(queued.reference, current);
               batch.requireUnchanged(localRef, localBefore);
@@ -1166,8 +1166,9 @@ class WindowsBackendBridge {
                 SetOptions(merge: true),
               );
               await batch.commit();
+              return true;
             });
-            report('cloudAccepted');
+            if(committed)report('cloudflareAccepted');
             continue;
           }
           failureStage = 'verifyAcknowledgement';
