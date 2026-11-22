@@ -676,7 +676,11 @@ class WindowsPendingSchoolSync {
               );
             }
             final deletion = Map<String, dynamic>.from(prior);
-            final deletedRevision = await sendVersioned(deletion);
+            // Nested deletes must complete before a replacement is admitted.
+            // This local transport hint is not part of the original CAS record.
+            final deletedRevision = await sendVersioned({
+              ...deletion, 'requireCanonicalDeleteReceipt': true,
+            });
             unchanged();
             if (deletedRevision.trim().isEmpty)
               throw const MissingSyncAcknowledgement();
