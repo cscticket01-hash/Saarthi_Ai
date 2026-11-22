@@ -68,6 +68,7 @@ bool eligibleForStagedDelete(Map item, String school, {
     (item['baseCloudRevision'] as String).isNotEmpty &&
     item['atomicBundleId'] == null &&
     item['priorDeletion'] == null &&
+    item['priorCloudWrite'] == null &&
     item['requireCanonicalDeleteReceipt'] != true;
 
 /// Broker-derived ticket, not merely a string that resembles a SHA-256 hash.
