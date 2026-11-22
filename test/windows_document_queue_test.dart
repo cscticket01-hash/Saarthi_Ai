@@ -216,6 +216,23 @@ void main() {
     expect(sends,0);
     expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
   });
+  test('foreign document retained after a local row stops all staging before any send',() async {
+    await db.collection('_windows_document_outbox').doc('a-local').set({
+      'schoolId':school,'studentId':'S1','documentRevision':'local-document-operation',
+      'syncState':'Pending','localPath':'/synthetic/never-send.jpg','deleted':false,
+    });
+    await db.collection('_windows_document_outbox').doc('z-foreign').set({
+      'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'documentRevision':'foreign-document-operation','syncState':'Pending',
+    });
+    var sends=0;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(send:(_)async{
+      sends++;return {'success':true};
+    }),throwsStateError);
+    expect(sends,0);
+    expect((await db.collection('_windows_document_outbox').get()).docs,hasLength(2));
+  });
+
   test('actual bundle absent, existing and replay tombstones settle only matching queued deletions', () async {
     final cases=jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
     for(final c in cases){
