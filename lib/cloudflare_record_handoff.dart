@@ -195,7 +195,8 @@ Map<String,dynamic>? acceptedCloudflareTicketBinding(
       'lane':'records','ticketId':ticket};
   }
   if(lane!='file-$ticket')return null;
-  if(original['collection']=='documents') {
+  if(queueId!=null || original['collection']=='documents') {
+    if(original['collection']!=null && original['collection']!='documents')return null;
     final id=queueId??original['documentId'];
     final binding={'schoolId':school,'action':'managed/document/stage/resumable',
       'collection':'documents','id':id,
