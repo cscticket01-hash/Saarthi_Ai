@@ -93,6 +93,53 @@ bool independentExistingPersonPatch(Map item) {
       e.value is String && !(e.value as String).startsWith('data:'));
 }
 
+/// New person creates may stage side-by-side only AFTER the existing stable
+/// school identity preparation. Cloudflare alone never commits a class/roll
+/// slot or publishes a photo/card; the Worker still serializes provider writes.
+bool independentPreparedPersonCreate(Map item) {
+  if(!{'students_directory','teachers_directory'}.contains(item['collection']) ||
+      item['createIntent']!=true || item['operation']!='set' ||
+      item['baseCloudRevision']!='' || item['priorDeletion']!=null ||
+      item['priorCloudWrite']!=null || item['atomicBundleId']!=null ||
+      item['data'] is! Map || item['wireMode']=='fieldPatch1')return false;
+  final data=item['data'] as Map;
+  final id=data['mobileStableId'],token=data['mobileLinkToken'];
+  if(data['schoolId']!=item['schoolId'] ||
+     id is! String || !RegExp(r'^p-[a-f0-9]{64}$').hasMatch(id) ||
+     token is! String || token.length<20 ||
+     data['mobileIdentityVersion']!=1 ||
+     data['replacesStudentGeneration']!=null ||
+     data.keys.any((key)=>key.toString().startsWith('_syncRecreates')) ||
+     ['photoUrl','photoBase64','logoUrl','logoBase64','sealUrl',
+      'sealBase64','principalSignatureUrl','principalSignatureBase64']
+         .any((key)=>data[key] is String && (data[key] as String).isNotEmpty) ||
+     parallelContainsInlineMedia(data))
+    return false;
+  return true;
+}
+
+/// Never let a new person overtake an unresolved delete/atomic owner or a
+/// different operation for the SAME immutable record. Only independently
+/// named, prepared people may occupy the same bounded stage window.
+bool canStagePreparedPersonPastUnrelatedOwners(
+  Map candidate,Iterable<Map<String,dynamic>> outbox,String school,
+) {
+  if(!independentPreparedPersonCreate(candidate) ||
+      candidate['schoolId']!=school)return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school || row['atomicBundleId']!=null ||
+       row['priorDeletion']!=null || row['priorCloudWrite']!=null ||
+       row['operation']=='delete' ||
+       {'school_config','school_settings'}.contains(row['collection']))
+      return false;
+    if(row['collection']==candidate['collection'] &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])
+      return false;
+  }
+  return true;
+}
+
 bool parallelContainsInlineMedia(Object? value,[int depth=0]) {
   if(depth>12)return true;
   if(value is String)return value.startsWith('data:');
@@ -108,7 +155,8 @@ bool canParallelStageRecord(Map item, String school, {
         edgeDeliverySupported: edgeDeliverySupported) &&
     ({'school_notices', 'school_calendar'}.contains(item['collection']) ||
       parallelAttendanceExpenseCollections.contains(item['collection']) ||
-      independentExistingPersonPatch(item)) &&
+      independentExistingPersonPatch(item) ||
+      independentPreparedPersonCreate(item)) &&
     !parallelContainsInlineMedia(item['data']) &&
     {'pending', 'retry'}.contains(item['syncState']) &&
     item['documentId'] is String &&
@@ -973,9 +1021,11 @@ class WindowsPendingSchoolSync {
           (!dependentBarrier ||
             (school is String &&
              (canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school) ||
-              canStageAttendancePastUnrelatedOwners(row.data(),scopedRows,school))) ||
+              canStageAttendancePastUnrelatedOwners(row.data(),scopedRows,school) ||
+              canStagePreparedPersonPastUnrelatedOwners(row.data(),scopedRows,school))) ||
             (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
-             !independentExistingPersonPatch(row.data()))) &&
+             !independentExistingPersonPatch(row.data()) &&
+             !independentPreparedPersonCreate(row.data()))) &&
           (parallelAdmission?.call(row.data()) ?? false);
       if (!independent(first)) {
         await process(first);
