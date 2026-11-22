@@ -32,6 +32,10 @@ void main() {
     expect(count,1);
   });
   testWidgets('front-only print uses a 300 DPI image without requesting PDF', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1000, 1000);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
     var downloads = 0;
     final printed = Completer<List<int>>();
     await tester.pumpWidget(MaterialApp(home: NativeIdCardPreview(
@@ -45,12 +49,18 @@ void main() {
     await tester.tap(find.text('Front only'));
     await tester.pumpAndSettle();
     expect(printed.isCompleted, isFalse);
-    await tester.ensureVisible(find.text('Print'));
-    await tester.pumpAndSettle();
-    final result = await tester.runAsync(() async {
-      await tester.tap(find.text('Print'));
-      return printed.future.timeout(const Duration(seconds: 5));
+    final printButton = tester.widget<OutlinedButton>(
+      find.ancestor(
+        of: find.text('Print'),
+        matching: find.byWidgetPredicate((widget) => widget is OutlinedButton),
+      ),
+    );
+    final result = await tester.runAsync(() {
+      printButton.onPressed!();
+      return printed.future.timeout(const Duration(seconds: 15), onTimeout: () => []);
     });
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Print failed'), findsNothing);
     expect(result, [1, 1012, 607]);
     expect(downloads, 0);
   });

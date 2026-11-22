@@ -136,4 +136,6 @@ jobs:
       - name: Compile the Android application
         run: |
           flutter create --platforms=android --project-name saarthi_ai --org com.saarthi .
+          python .github/scripts/configure_android_notifications.py
+          python .github/scripts/configure_android_plugins.py
           flutter build apk --debug -t lib/main_android.dart
