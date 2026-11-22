@@ -2057,6 +2057,24 @@ class _LocalSchoolDatabase {
                 }
 
                 final queued = docs[operation.documentId];
+                if (queued is Map && queued['priorCloudWrite'] is Map &&
+                    queued['priorCloudWrite']['operationId']==sent['operationId']) {
+                  // Only the exact original provider ACK may release this
+                  // predecessor. A new local edit is never removed by it.
+                  final prior=queued['priorCloudWrite'] as Map;
+                  if(prior['schoolId']!=sent['schoolId'] ||
+                      prior['collection']!=sent['collection'] ||
+                      prior['documentId']!=sent['documentId'] ||
+                      prior['cloudTicketId']!=sent['cloudTicketId'] ||
+                      queued['baseCloudRevision']!=sent['baseCloudRevision'])
+                    throw StateError('Staged predecessor identity changed; retained.');
+                  queued['baseCloudRevision']=revision;
+                  queued.remove('priorCloudWrite');
+                  // The old prepared baseline is no longer valid. Existing
+                  // point-read/field-patch preparation owns the fresh request.
+                  for(final key in ['wireData','wireMode','fieldPatch','fieldPatchBase','createIntent'])
+                    queued.remove(key);
+                }
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
                   queued['baseCloudRevision'] = revision;
@@ -3128,6 +3146,19 @@ class _LocalSchoolDatabase {
       if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
     }
 
+    // Keep a known staged calendar/notice write as a dependency of later
+    // local edits, using the same durable record owner. Never replay it
+    // merely because the current local data has changed.
+    final priorCloudWrite = previous is Map
+        ? previous['priorCloudWrite'] ??
+          (previous['syncState']=='cloudAccepted' &&
+           previous['cloudTicketLane']=='records' &&
+           {'school_calendar','school_notices'}.contains(previous['collection']) &&
+           {'set','update'}.contains(previous['operation']) &&
+           _activeIdentity['schoolSyncId'] is String &&
+           exactStagedRecordTicket(previous,_activeIdentity['schoolSyncId'] as String)==previous['cloudTicketId']
+             ? Map<String,dynamic>.from(previous) : null)
+        : null;
     final priorDeletion = previous is Map
         ? previous['priorDeletion'] ?? (previous['operation'] == 'delete' ? Map<String,dynamic>.from(previous) : null)
         : null;
@@ -3203,6 +3234,7 @@ class _LocalSchoolDatabase {
       },
       if (explicitDirectorySave) 'savedOverConflictOperationId':previous['operationId'],
       if(priorDeletion is Map) 'priorDeletion':Map<String,dynamic>.from(priorDeletion),
+      if(priorCloudWrite is Map) 'priorCloudWrite':Map<String,dynamic>.from(priorCloudWrite),
       if(isDelete && (previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String || baselineEntry is Map && baselineEntry['recreatedFrom'] is String))
         'recordGeneration':previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String ? previous['data']['_syncRecreatesDeletedRevision'] : baselineEntry['recreatedFrom'],
       'collection': operation.collection,
