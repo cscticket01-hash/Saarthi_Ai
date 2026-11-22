@@ -29,6 +29,45 @@ void main() {
   });
   tearDown(() => engine.details.value = previous);
 
+  test('diagnostic report separates exact handoffs and excludes foreign rows', () async {
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const foreign = 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final queue = db.collection('_windows_firebase_outbox');
+    final ticket = List.filled(64, 'a').join();
+    Map<String, dynamic> row(String op, String owner) => {
+      'schoolId': owner, 'collection': 'school_notices',
+      'documentId': op, 'operationId': op, 'operation': 'set',
+      'baseCloudRevision': '', 'syncState': 'cloudAccepted',
+      'cloudTicketId': ticket, 'cloudTicketLane': 'records',
+      'data': {'privateText': 'not for diagnostic export'},
+    };
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await queue.doc('accepted').set(row('accepted-operation-0001', school));
+      await queue.doc('unverified').set({
+        ...row('unverified-operation-0001', school),
+        'cloudTicketId': 'invalid',
+      });
+      await queue.doc('foreign').set(row('foreign-operation-0001', foreign));
+      await queue.doc('pending').set({
+        ...row('pending-operation-0001', school), 'syncState': 'pending',
+      });
+      await db.collection('_windows_sync_receipts').doc('foreign-receipt').set({
+        'schoolId': foreign, 'operationId': 'foreign-operation-0001',
+      });
+    });
+    final report = await engine.safeQueueDiagnostics();
+    expect(report['foregroundQueueCount'], 2);
+    expect(report['cloudflareOwnedPendingDriveCount'], 1);
+    expect(report['unscopedQueueCount'], 1);
+    expect(report['retainedVerifiedReceiptCount'], 0);
+    final states = (report['items'] as List).map((r) => r['state']);
+    expect(states, unorderedEquals(['cloudAccepted', 'unverifiedHandoff', 'pending']));
+    expect(report.toString(), isNot(contains('foreign-operation-0001')));
+    expect(report.toString(), isNot(contains('not for diagnostic export')));
+    expect((await queue.get()).docs.length, 4,
+        reason: 'Diagnosis never deletes or acknowledges original queue work');
+  });
+
   testWidgets('overview keeps real queue activity and combined pending counts; queue opens without adding attention twice', (tester) async {
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pumpAndSettle();
