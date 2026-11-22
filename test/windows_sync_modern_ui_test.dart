@@ -130,7 +130,7 @@ void main() {
     await tester.tap(find.text('Sync Now')); await tester.pump();
     await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Advanced checks'));
+    await tester.tap(find.text('Troubleshoot'));
     await tester.pumpAndSettle();
     for(final label in ['Check Cloud Health','Local Storage Details','School Drive Usage']) {
       expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton,label)).onPressed,isNotNull);
@@ -240,7 +240,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Diagnostics and recovery tools'), findsNothing);
-    expect(find.text('Local Storage'), findsOneWidget);
+    expect(find.text('Local Save'), findsOneWidget);
     expect(find.text('Open Folder'), findsNothing);
     await tester.runAsync(() async {
       final image =

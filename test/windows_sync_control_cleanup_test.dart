@@ -101,6 +101,8 @@ void main() {
   });
 
   testWidgets('overview keeps real queue activity and combined pending counts; queue opens without adding attention twice', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pumpAndSettle();
     expect(find.text('LIVE UI'), findsNothing);
@@ -113,7 +115,7 @@ void main() {
     expect(find.text('Live Queue Activity'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Pending Uploads'), -200,
         scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Pending Uploads'));
+    await tester.tap(find.text('Pending Uploads').hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Pending Queue & Conflict Review'), findsOneWidget);
     expect(find.text('students_directory • conflict'), findsOneWidget);
