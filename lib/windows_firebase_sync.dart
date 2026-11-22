@@ -432,8 +432,9 @@ class WindowsFirebaseRemote {
     // the same two-phase protocol, but ONLY after its authenticated broker
     // advertises the durable edge-delivery capability. File-dependent rows
     // remain with the original version-safe owner.
-    final cloudHandoff=batchReply==null&&eligibleForRecordHandoff(
-      item,school,edgeDeliverySupported:edgeDeliverySupported);
+    final cloudHandoff=batchReply==null&&(
+      eligibleForRecordHandoff(item,school,edgeDeliverySupported:edgeDeliverySupported) ||
+      eligibleForStagedDelete(item,school,edgeDeliverySupported:edgeDeliverySupported));
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
