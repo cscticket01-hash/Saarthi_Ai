@@ -49,7 +49,10 @@ bool eligibleForRecordHandoff(
 }
 
 
-/// Calendar deletions have no person, document or financial cascade owner.
+/// Calendar and independent school-expense deletions have no person,
+/// document or exam cascade owner in the existing GS erase planner. Google
+/// file/Firebase retirement still runs to verified completion in the Worker;
+/// Cloudflare acceptance NEVER deletes this original local CAS operation.
 /// Require an already verified base and a first-class outbox operation.
 /// A recreate's nested deletion must wait for canonical proof before its write.
 bool eligibleForStagedDelete(Map item, String school, {
@@ -58,7 +61,7 @@ bool eligibleForStagedDelete(Map item, String school, {
     edgeDeliverySupported &&
     RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) &&
     item['schoolId'] == school &&
-    item['collection'] == 'school_calendar' &&
+    {'school_calendar','school_expenses'}.contains(item['collection']) &&
     item['operation'] == 'delete' &&
     item['documentId'] is String &&
     (item['documentId'] as String).isNotEmpty &&
