@@ -47,10 +47,7 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
   final scrollState = tester.state<ScrollableState>(find.byType(Scrollable).first);
   scrollState.position.jumpTo(scrollState.position.minScrollExtent);
   await tester.pumpAndSettle();
-  expect(overview.hitTestable(), findsOneWidget);
-  if (!primary.contains(label)) {
-    await tester.tap(overview.hitTestable());
-    await tester.pumpAndSettle();
+  if (!primary.contains(label) || overview.evaluate().isEmpty) {
     await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Troubleshoot'));
@@ -678,7 +675,12 @@ void main(){
   await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 50)); });
   await tester.pumpAndSettle();
   expect(find.byType(WindowsSyncControlCenter), findsOneWidget);
-  await tester.tap(find.text('Pending Uploads'));
+  final queueLink = find.text('View full queue');
+  await tester.scrollUntilVisible(queueLink, 200,
+      scrollable: find.byType(Scrollable).first);
+  await Scrollable.ensureVisible(tester.element(queueLink), alignment: .5);
+  await tester.pumpAndSettle();
+  await tester.tap(queueLink.hitTestable());
   await tester.pumpAndSettle();
   await tester.scrollUntilVisible(find.text('teachers_directory • status-teacher'), 250,
       scrollable: find.byType(Scrollable).first);

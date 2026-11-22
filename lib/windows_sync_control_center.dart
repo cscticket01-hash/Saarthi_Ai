@@ -705,16 +705,22 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   final _settingsKey = GlobalKey();
   final _statusKey = GlobalKey();
 
+  bool _darkDashboard(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+
   Widget _panelBox(Widget child) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       gradient:  LinearGradient(
-        colors: [WindowsAppearance.resolve(Color(0xFF132D46)), WindowsAppearance.resolve(Color(0xFF0C1F34))],
+        colors: _darkDashboard(context)
+            ? const [Color(0xFF1B1C20), Color(0xFF111216)]
+            : [WindowsAppearance.resolve(const Color(0xFF132D46)), WindowsAppearance.resolve(const Color(0xFF0C1F34))],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: WindowsAppearance.outline(const Color(0xFF21475D))),
+      border: Border.all(color: _darkDashboard(context)
+          ? const Color(0xFF77797E)
+          : WindowsAppearance.outline(const Color(0xFF21475D))),
     ),
     child: child,
   );
@@ -897,7 +903,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _syncSummary(String title, String value, IconData icon, Color accent) {
-    return _panelBox(Row(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _darkDashboard(context)
+            ? Color.alphaBlend(accent.withValues(alpha: .075), const Color(0xFF141519))
+            : accent.withValues(alpha: .07),
+        border: Border.all(color: accent.withValues(alpha: .28)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
       children: [
         CircleAvatar(
           backgroundColor: accent.withValues(alpha: .15),
@@ -933,9 +948,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final rows = details['liveQueue'] is List
         ? (details['liveQueue'] as List).whereType<Map>().map((r) => Map<String,dynamic>.from(r)).toList()
         : <Map<String,dynamic>>[];
-    final lanes = details['lanes'] is Map ? details['lanes'] as Map
-        : windowsSyncLanes(rows, DateTime.now().millisecondsSinceEpoch);
-    final other = lanes['other'] is Map ? lanes['other'] as Map : const {};
     final uploadCount = (details['pending'] as num? ?? 0).toInt();
     final incomingCount = (details['incomingPending'] as num? ?? 0).toInt();
     final inbound = details['incomingBreakdown'] is Map
@@ -1008,33 +1020,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             Icons.upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Last Synced',
             lastSync is num && transfers is num
-                ? '${stamp(lastSync)} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
+                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(lastSync.toInt())))} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
                 : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
-          _syncSummary("Today's Sync", today is int ? '$today verified' : 'Unknown',
-            Icons.layers_outlined, Colors.purpleAccent),
           _syncSummary('System Health', cloudHealth,
             Icons.health_and_safety_outlined, Colors.tealAccent),
         ]),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 14,
-          runSpacing: 14,
-          children: [
-            InkWell(
-              onTap: () => _jump(_queueKey),
-              child: metric(
-                'Pending Uploads',
-                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
-              ),
-            ),
-            metric('Adaptive Sync', adaptiveSyncCard(details['batchTransport'] is Map
-                ? details['batchTransport'] as Map : null)),
-            if (other['pending'] is num && other['pending'] > 0)
-              metric('Restore & legacy work',
-                "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
-          ],
-        ),
-        const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {WindowsAppearance.watch(context);
             final progress = _panelBox(
@@ -1123,7 +1114,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                   if (incomingCount > 0 && inbound.isEmpty) const Text(
                     'Incoming work is not detailed in this snapshot; refresh to check its source.'),
                   for (final raw
-                      in (details['liveQueue'] as List? ?? items).take(8))
+                      in (details['liveQueue'] as List? ?? items).take(3 - activityEvents.length))
                     if (raw is Map)
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1167,59 +1158,26 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 3, child: progress),
+                Expanded(flex: 2, child: progress),
                 const SizedBox(width: 18),
-                Expanded(flex: 2, child: activity),
+                Expanded(child: activity),
               ],
             );
           },
         ),
         const SizedBox(height: 12),
         _syncSummaryStrip([
+          _syncSummary('Upload Queue', '$uploadCount uploads waiting',
+            Icons.cloud_upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Successful Today', today is int ? '$today' : 'Unknown',
             Icons.check_circle_outline, Colors.greenAccent),
           _syncSummary('Retry', '$retryCount', Icons.replay, Colors.amberAccent),
           _syncSummary('Failed', '$failedCount', Icons.error_outline, Colors.redAccent),
           _syncSummary('Engine Status', phaseLabel, Icons.bolt, phaseColor),
         ]),
-        const SizedBox(height: 12),
-        _panelBox(const Text(
-          'After School Server ACK, Google Drive backup runs in the background.',
-        )),
+
       ],
     );
-  }
-
-  Future<void> _chooseAutoSyncInterval() async {
-    final profile = db.activeProfileId;
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('Auto Sync (Interval)'),
-        children: [
-          for (final minutes in WindowsSyncEngine.autoSyncIntervals)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, minutes),
-              child: Row(children: [
-                Icon(minutes == engine.autoSyncIntervalMinutes
-                  ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                const SizedBox(width: 12),
-                Text(switch (minutes) {
-                  0 => 'Off',
-                  60 => 'Every 1 Hour',
-                  _ => 'Every $minutes Minutes',
-                }),
-              ]),
-            ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
-            child: Text('Controls periodic cloud checks. Saves still sync automatically.'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || selected == null || db.activeProfileId != profile) return;
-    await _run(() => engine.setAutoSyncInterval(selected));
   }
 
   Future<void> _tool(Future<void> Function() action) async {
@@ -1444,6 +1402,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Theme(
     data: Theme.of(context).copyWith(
+      colorScheme: _darkDashboard(context)
+          ? Theme.of(context).colorScheme.copyWith(
+              primary: const Color(0xFFC7ABEC),
+              onPrimary: const Color(0xFF251B30),
+              tertiary: const Color(0xFFAF93CE),
+              surface: const Color(0xFF15151A),
+              onSurface: const Color(0xFFF0ECF4),
+              outlineVariant: const Color(0xFF57545F),
+            )
+          : Theme.of(context).colorScheme,
       outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10))),
       filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
@@ -1451,13 +1419,29 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     ),
     child: Scaffold(
       key: _scaffoldKey,
-      backgroundColor: WindowsAppearance.background(const Color(0xFF071626)),
+      backgroundColor: _darkDashboard(context)
+          ? const Color(0xFF0C0D10)
+          : WindowsAppearance.background(const Color(0xFF071626)),
 
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
+        backgroundColor: _darkDashboard(context)
+            ? const Color(0xFF141518)
+            : WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
-        title: const Text('Sync Engine 4.0 — Live Sync'),
+        title: Row(children: [
+          const Flexible(child: Text('Sync Engine 4.0 — Live Sync',
+            overflow: TextOverflow.ellipsis)),
+          if (MediaQuery.sizeOf(context).width >= 900)
+            if (db.activeProfileIdentity['schoolName'] case final String schoolName)
+            if (schoolName.trim().isNotEmpty) ...[
+              const SizedBox(width: 14),
+              Flexible(child: Chip(
+                avatar: const Icon(Icons.school_outlined, size: 16),
+                label: Text(schoolName, overflow: TextOverflow.ellipsis),
+              )),
+            ],
+        ]),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active,WindowsSyncEvidence.uploads]),
@@ -1495,31 +1479,69 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
           ),
           PopupMenuButton<int>(
             tooltip: 'Sync options',
+            offset: const Offset(0, 8),
+            position: PopupMenuPosition.under,
             enabled: !busy && db.activeProfileId == origin,
             onSelected: (choice) {
               if (choice == -1) {
-                setState((){showDiagnostics=true;showHistory=false;showQueue=false;});
+                setState(() { showDiagnostics = true; showHistory = false; showQueue = false; });
               } else if (choice == -2) {
                 Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return const WindowsRecycleBin(); }));
-              } else if (choice == -3) {
-                unawaited(_chooseAutoSyncInterval());
+                  builder: (appearanceContext) {
+                    WindowsAppearance.watch(appearanceContext);
+                    return const WindowsRecycleBin();
+                  },
+                ));
+              } else if (choice >= 100) {
+                _run(() => engine.setAutoSyncInterval(choice - 100));
               } else if (choice == 0) {
                 _run(engine.resumeAutomaticSync);
               } else {
-                _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(minutes:choice)));
+                _run(() => (widget.pauseRequest ?? engine.pauseSync)(
+                  const Duration(minutes: 5),
+                ));
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem<int>(enabled:false,child:Text('Sync Pause')),
-              PopupMenuItem(value:0,child:Text('Off — resume auto sync')),
-              PopupMenuItem(value:5,child:Text('5 minutes')),
-              PopupMenuItem(value:30,child:Text('30 minutes')),
-              PopupMenuItem(value:60,child:Text('1 hour')),
-              PopupMenuDivider(),
-              PopupMenuItem(value:-3,child:Text('Auto Sync (Interval)')),
-              PopupMenuItem(value:-1,child:Text('Troubleshoot')),
-              PopupMenuItem(value:-2,child:Text('Recycle Bin')),
+            itemBuilder: (menuContext) => [
+              PopupMenuItem<int>(
+                enabled: false,
+                child: Row(children: [
+                  const Icon(Icons.pause),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('Sync Pause')),
+                  Switch(
+                    value: engine.isPaused,
+                    onChanged: (paused) => Navigator.pop(menuContext, paused ? 1 : 0),
+                  ),
+                ]),
+              ),
+              PopupMenuItem<int>(
+                enabled: false,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: SubmenuButton(
+                  leadingIcon: const Icon(Icons.sync),
+                  menuChildren: [
+                    for (final minutes in WindowsSyncEngine.autoSyncIntervals)
+                      MenuItemButton(
+                        leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
+                            ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                        onPressed: () => Navigator.pop(menuContext, 100 + minutes),
+                        child: Text(switch (minutes) {
+                          0 => 'Off',
+                          60 => 'Every 1 Hour',
+                          _ => 'Every $minutes Minutes',
+                        }),
+                      ),
+                  ],
+                  child: const Text('Auto Sync (Interval)'),
+                ),
+              ),
+              const PopupMenuItem(value: -1, child: Row(children: [
+                Icon(Icons.build_outlined), SizedBox(width: 10), Text('Troubleshoot'),
+              ])),
+              const PopupMenuItem(value: -2, child: Row(children: [
+                Icon(Icons.delete_outline), SizedBox(width: 10), Text('Recycle Bin'),
+              ])),
             ],
           ),
           const SizedBox(width: 20),
@@ -1538,21 +1560,27 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                       ? (details['items'] as List? ?? [])
                       : <dynamic>[];
                   final active = busy || engine.isSyncing || syncCommandRunning;
-                  return ListView(
-                    key: _overviewKey,
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      const Text(
-                        'Live Sync',
-                        style: TextStyle(fontFamily: 'Segoe UI', 
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                  final overview = !showDiagnostics && !showHistory;
+                  const inset = 16.0;
+                  final pageChildren = <Widget>[
+                      if (!showDiagnostics && !showHistory) ...[
+                        Row(
+                          children: [
+                            const Icon(Icons.cloud_upload_outlined, color: _cyan, size: 36),
+                            const SizedBox(width: 12),
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Live Sync',
+                                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 3),
+                                const Text('School Server sync · Automatic Google Drive backup'),
+                              ],
+                            )),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Your school records, cloud transfers and recovery — together in one live workspace.',
-                      ),
+                        const SizedBox(height: 12),
+                      ],
                       _alerts(ownSchool: ownSchool),
                       if (ownSchool && _syncStalledFor(details))
                         Padding(
@@ -1567,8 +1595,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           ),
                         ),
                       if (ownSchool) ...[
-                        _navigation(active),
-                        const SizedBox(height: 12),
+                        if (showDiagnostics || showHistory) ...[
+                          _navigation(active),
+                          const SizedBox(height: 12),
+                        ],
                         if (showHistory) ...[
                           const Text(
                             'Smart Repair History',
@@ -1620,7 +1650,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ],
                         if (!showDiagnostics && !showHistory) ...[
                           _hero(details, items, active),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 8),
                           if (engine.isPaused)
                             Text(
                               'Paused on this PC: ${engine.pausedUntil?.difference(DateTime.now()).inMinutes ?? 0} minutes remaining (until ${engine.pausedUntil?.toLocal()})${engine.isSyncing ? ' — finishing the accepted operation' : ''}',
@@ -2132,7 +2162,30 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           ],
                         ],
                       ],
-                    ],
+                  ];
+                  return ListView(
+                    key: _overviewKey,
+                    padding: const EdgeInsets.all(inset),
+                    physics: overview ? const NeverScrollableScrollPhysics() : null,
+                    children: overview
+                        ? [
+                            SizedBox(
+                              height: (constraints.maxHeight - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                              child: FittedBox(
+                                alignment: Alignment.topCenter,
+                                fit: BoxFit.scaleDown,
+                                child: SizedBox(
+                                  width: (constraints.maxWidth - 2 * inset).clamp(0.0, double.infinity).toDouble(),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: pageChildren,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ]
+                        : pageChildren,
                   );
                 },
               ),

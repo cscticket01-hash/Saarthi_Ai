@@ -2,82 +2,172 @@ import 'package:flutter/material.dart' hide Text;
 import 'windows_ui_localization.dart';
 
 /// One measured local volume and only evidence-backed active transfer links.
-class WindowsSyncFlow extends StatefulWidget {
-  const WindowsSyncFlow({super.key, required this.phase, required this.label,
-    required this.local, required this.cloud, required this.drive,
-    required this.pending, this.serverAck = 'Waiting for verified ACK', this.pendingText, this.uploadProgress, this.lastMicros, this.active = const {}});
+class WindowsSyncFlow extends StatelessWidget {
+  const WindowsSyncFlow({
+    super.key,
+    required this.phase,
+    required this.label,
+    required this.local,
+    required this.cloud,
+    required this.drive,
+    required this.pending,
+    this.serverAck = 'Waiting for verified ACK',
+    this.pendingText,
+    this.uploadProgress,
+    this.lastMicros,
+    this.active = const {},
+  });
+
   final String phase, label, local, cloud, drive, serverAck;
   final int pending;
   final String? pendingText;
   final ({int offset, int total})? uploadProgress;
   final int? lastMicros;
   final Set<String> active;
-  @override State<WindowsSyncFlow> createState() => _WindowsSyncFlowState();
-}
-class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProviderStateMixin {
-  late final AnimationController clock = AnimationController(vsync:this,duration:const Duration(milliseconds:1200));
-  void updateAnimation() {
-    if (widget.phase != 'paused' && widget.active.isNotEmpty) { if(!clock.isAnimating) clock.repeat(); }
-    else { clock.stop(); clock.value=0; }
-  }
-  @override void initState(){super.initState();updateAnimation();}
-  @override void didUpdateWidget(covariant WindowsSyncFlow old){super.didUpdateWidget(old);updateAnimation();}
-  @override void dispose(){clock.dispose();super.dispose();}
-  @override Widget build(BuildContext context) => LayoutBuilder(builder:(context,space){
-    final small=space.maxWidth<500;
-    final scale=MediaQuery.textScalerOf(context).scale(1);
-    final circle=(small?96.0:144.0)*scale.clamp(1.0,1.35);
-    final rowHeight=94.0*scale.clamp(1.0,2.0), height=rowHeight*4+24;
-    final gap=small?32.0:70.0;
-    final color=Theme.of(context).colorScheme.primary;
-    final bytes = widget.uploadProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = uploadProgress;
     final fraction = bytes == null ? null : bytes.offset / bytes.total;
-    Widget card(String title,String text,IconData icon, {bool progress = false}) => Container(
-      height:rowHeight, padding:const EdgeInsets.all(10),
-      decoration:BoxDecoration(color:color.withValues(alpha:.05),border:Border.all(color:color.withValues(alpha:.5)),borderRadius:BorderRadius.circular(14)),
-      child:Row(children:[Icon(icon,color:color,size:small?18:24),const SizedBox(width:10),Expanded(child:Column(
-        mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,
-        children:[Text(title,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontWeight:FontWeight.bold)),const SizedBox(height:5),
-          Text(text,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12)),
-          if (progress && bytes != null) ...[
-            const SizedBox(height: 4),
-            LinearProgressIndicator(value: fraction),
-            Text('${(bytes.offset * 100 ~/ bytes.total)}% · ${bytes.offset} / ${bytes.total} bytes', style: const TextStyle(fontSize: 11)),
-          ]]))]));
-    return SizedBox(height:height,child:Row(children:[
-      SizedBox(width:circle,height:circle,child:Stack(alignment:Alignment.center,children:[
-        SizedBox(width:circle-4,height:circle-4,child:CircularProgressIndicator(
-          value:widget.phase!='paused'&&widget.active.isNotEmpty?fraction:widget.phase=='idle'&&widget.lastMicros!=null?1:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
-        SizedBox(width:circle-20,height:circle-20,child:FittedBox(fit:BoxFit.scaleDown,child:SizedBox(width:circle-20,child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.phase=='idle'?Icons.check_circle_outline:Icons.sync,color:color),
-          Text(widget.label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:small?12:15,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
-          if(widget.phase=='idle') Text(widget.lastMicros==null?'Last sync: —':'Last sync: ${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
-          Text(widget.pendingText ?? '${widget.pending} pending',style:const TextStyle(fontSize:11),textAlign:TextAlign.center),
-        ]))))])),
-      SizedBox(width:gap,height:height,child:AnimatedBuilder(animation:clock,builder:(_,__)=>CustomPaint(
-        painter:_TransferLinks(color,widget.phase=='paused'?const {}:widget.active,clock.value,rowHeight)))),
-      Expanded(child:Column(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
-        card('Local Save',widget.local,Icons.storage_outlined),
-        card('School Server',widget.cloud,Icons.cloud_outlined,progress:true),
-        card('Server ACK',widget.serverAck,Icons.verified_outlined),
-        card('Google Drive',widget.drive,Icons.folder_outlined),
-      ])),
-    ]));
-  });
-}
-class _TransferLinks extends CustomPainter {
-  _TransferLinks(this.color,this.active,this.position,this.rowHeight);
-  final Color color; final Set<String> active; final double position,rowHeight;
-  @override void paint(Canvas canvas,Size size){
-    for(var i=0;i<4;i++){
-      final lane=['local','cloud','ack','drive'][i];
-      final y=rowHeight/2+i*(size.height-rowHeight)/3;
-      final path=Path()..moveTo(0,size.height/2)..cubicTo(size.width*.5,size.height/2,size.width*.5,y,size.width,y);
-      canvas.drawPath(path,Paint()..color=color.withValues(alpha:active.contains(lane)?1:.25)..strokeWidth=2..style=PaintingStyle.stroke);
-      if(active.contains(lane)){
-        final metric=path.computeMetrics().first, p=metric.getTangentForOffset(metric.length*position)!.position;
-        canvas.drawCircle(p,4,Paint()..color=color);
-      }
+    final percent = bytes == null ? null : bytes.offset * 100 ~/ bytes.total;
+    final theme = Theme.of(context);
+    final running = phase != 'paused' && active.isNotEmpty;
+    final ringColor = phase == 'idle' || running
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.primary;
+    final verifiedAck = serverAck.startsWith('Last ACK: ');
+    final driveQueued = drive.contains('Google Drive pending');
+
+    Widget stage({
+      required String title, required String detail, required IconData icon,
+      required Color accent, bool first = false, bool last = false,
+      bool highlighted = false, Key? boxKey, Widget? extra,
+    }) {
+      return IntrinsicHeight(child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(width: 22, child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned(top: first ? 24 : 0, bottom: last ? 24 : 0,
+                child: ColoredBox(color: theme.colorScheme.outlineVariant,
+                  child: const SizedBox(width: 2))),
+              Align(alignment: Alignment.center, child: Container(
+                width: 10, height: 10,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: accent, width: 2),
+                ),
+              )),
+            ],
+          )),
+          Expanded(child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: DecoratedBox(
+              key: boxKey,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: accent.withValues(alpha: highlighted ? .9 : .32)),
+                color: accent.withValues(alpha: highlighted ? .12 : .045),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Row(children: [
+                  Icon(icon, size: 21, color: accent),
+                  const SizedBox(width: 9),
+                  Expanded(child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(detail, maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12)),
+                      if (extra != null) extra,
+                    ],
+                  )),
+                ]),
+              ),
+            ),
+          )),
+        ],
+      ));
     }
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final stacked = constraints.maxWidth < 420;
+      final diameter = stacked ? 116.0 : 164.0;
+      final ring = SizedBox.square(
+        dimension: diameter,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(child: CircularProgressIndicator(
+              value: running ? fraction : 0,
+              strokeWidth: stacked ? 6 : 9,
+              strokeCap: StrokeCap.round,
+              color: ringColor,
+              backgroundColor: ringColor.withValues(alpha: .22),
+            )),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(phase == 'idle' ? Icons.check_circle_outline : Icons.cloud_upload_outlined,
+                    color: ringColor),
+                  const SizedBox(height: 4),
+                  Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(pendingText ?? '$pending pending', style: const TextStyle(fontSize: 11)),
+                  if (running && percent != null) Text('$percent%'),
+                  if (phase == 'idle')
+                    Text(lastMicros == null ? 'Last sync: —'
+                      : 'Last sync: ${(lastMicros! / 1000000).toStringAsFixed(2)} sec',
+                      key: const ValueKey('last-verified-transfer'),
+                      style: const TextStyle(fontSize: 11)),
+                ]),
+              ),
+            ),
+          ],
+        ),
+      );
+      final stages = Column(children: [
+        stage(title: 'Local Save', detail: local, icon: Icons.desktop_windows_outlined,
+          accent: Colors.lightBlueAccent, first: true),
+        stage(title: 'School Server ACK', detail: cloud, icon: Icons.dns_outlined,
+          accent: theme.colorScheme.primary, highlighted: running && active.contains('cloud'),
+          boxKey: const ValueKey('school-server-stage'),
+          extra: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (running && bytes != null) ...[
+                const SizedBox(height: 4),
+                LinearProgressIndicator(value: fraction),
+                Text('$percent% · ${bytes.offset} / ${bytes.total} bytes',
+                  style: const TextStyle(fontSize: 11)),
+              ],
+              const SizedBox(height: 4),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.verified_outlined, size: 15,
+                  color: verifiedAck ? Colors.greenAccent : theme.colorScheme.outline),
+                const SizedBox(width: 6),
+                Expanded(child: Text(serverAck, maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12))),
+              ]),
+            ],
+          )),
+        stage(title: 'Google Drive', detail: drive, icon: Icons.backup_outlined,
+          accent: driveQueued ? Colors.cyanAccent : theme.colorScheme.outline, last: true),
+      ]);
+      if (stacked) {
+        return Column(children: [ring, const SizedBox(height: 10), stages]);
+      }
+      return Row(children: [
+        ring,
+        const SizedBox(width: 10),
+        Expanded(child: stages),
+      ]);
+    });
   }
-  @override bool shouldRepaint(covariant _TransferLinks old)=>old.position!=position||old.color!=color||old.active!=active;
 }
