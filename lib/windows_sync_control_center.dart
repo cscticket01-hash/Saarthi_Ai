@@ -897,7 +897,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _syncSummary(String title, String value, IconData icon, Color accent) {
-    return _panelBox(Row(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: .07),
+        border: Border.all(color: accent.withValues(alpha: .28)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
       children: [
         CircleAvatar(
           backgroundColor: accent.withValues(alpha: .15),
@@ -1008,7 +1015,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             Icons.upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Last Synced',
             lastSync is num && transfers is num
-                ? '${stamp(lastSync)} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
+                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(lastSync.toInt())))} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
                 : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
           _syncSummary("Today's Sync", today is int ? '$today verified' : 'Unknown',
             Icons.layers_outlined, Colors.purpleAccent),
@@ -1016,25 +1023,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             Icons.health_and_safety_outlined, Colors.tealAccent),
         ]),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 14,
-          runSpacing: 14,
-          children: [
-            InkWell(
-              onTap: () => _jump(_queueKey),
-              child: metric(
-                'Pending Uploads',
-                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
-              ),
-            ),
-            metric('Adaptive Sync', adaptiveSyncCard(details['batchTransport'] is Map
-                ? details['batchTransport'] as Map : null)),
-            if (other['pending'] is num && other['pending'] > 0)
-              metric('Restore & legacy work',
-                "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
-          ],
-        ),
-        const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {WindowsAppearance.watch(context);
             final progress = _panelBox(
@@ -1167,15 +1155,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 3, child: progress),
+                Expanded(flex: 2, child: progress),
                 const SizedBox(width: 18),
-                Expanded(flex: 2, child: activity),
+                Expanded(child: activity),
               ],
             );
           },
         ),
         const SizedBox(height: 12),
         _syncSummaryStrip([
+          _syncSummary('Upload Queue', '$uploadCount pending',
+            Icons.cloud_upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Successful Today', today is int ? '$today' : 'Unknown',
             Icons.check_circle_outline, Colors.greenAccent),
           _syncSummary('Retry', '$retryCount', Icons.replay, Colors.amberAccent),
@@ -1186,6 +1176,26 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         _panelBox(const Text(
           'After School Server ACK, Google Drive backup runs in the background.',
         )),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 14,
+          runSpacing: 14,
+          children: [
+            InkWell(
+              onTap: () => _jump(_queueKey),
+              child: metric(
+                'Pending Uploads',
+                "${details['pending'] ?? 'Unknown'} Pending · ${details['needsAttention'] ?? 'Unknown'} Need Attention\n${details['conflictCount'] ?? (details['items'] is List ? items.where((row) => row is Map && (row['syncState'] ?? row['state']) == 'conflict').length : 'Unknown')} Conflicts · ${details['items'] is List ? items.where((row) => row is Map && row['syncState'] == 'failed').length : 'Unknown'} Failed\n${rows.where((r)=>r['_queueCollection']=='_windows_document_outbox'&&r['deleted']==true).length} file cleanup operations included",
+              ),
+            ),
+            metric('Adaptive Sync', adaptiveSyncCard(details['batchTransport'] is Map
+                ? details['batchTransport'] as Map : null)),
+            if (other['pending'] is num && other['pending'] > 0)
+              metric('Restore & legacy work',
+                "${other['pending']} outstanding · ${other['retry']} retry · ${other['review']} need review"),
+          ],
+        ),
+        const SizedBox(height: 10),
       ],
     );
   }
@@ -1457,7 +1467,19 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
-        title: const Text('Sync Engine 4.0 — Live Sync'),
+        title: Row(children: [
+          const Flexible(child: Text('Sync Engine 4.0 — Live Sync',
+            overflow: TextOverflow.ellipsis)),
+          if (MediaQuery.sizeOf(context).width >= 900)
+            if (db.activeProfileIdentity['schoolName'] case final String schoolName)
+            if (schoolName.trim().isNotEmpty) ...[
+              const SizedBox(width: 14),
+              Flexible(child: Chip(
+                avatar: const Icon(Icons.school_outlined, size: 16),
+                label: Text(schoolName, overflow: TextOverflow.ellipsis),
+              )),
+            ],
+        ]),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active,WindowsSyncEvidence.uploads]),
@@ -1542,17 +1564,24 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     key: _overviewKey,
                     padding: const EdgeInsets.all(16),
                     children: [
-                      const Text(
-                        'Live Sync',
-                        style: TextStyle(fontFamily: 'Segoe UI', 
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                      if (!showDiagnostics && !showHistory) ...[
+                        Row(
+                          children: [
+                            const Icon(Icons.cloud_upload_outlined, color: _cyan, size: 36),
+                            const SizedBox(width: 12),
+                            Expanded(child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Live Sync',
+                                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 3),
+                                const Text('School Server sync · Automatic Google Drive backup'),
+                              ],
+                            )),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Your school records, cloud transfers and recovery — together in one live workspace.',
-                      ),
+                        const SizedBox(height: 12),
+                      ],
                       _alerts(ownSchool: ownSchool),
                       if (ownSchool && _syncStalledFor(details))
                         Padding(
@@ -1567,8 +1596,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                           ),
                         ),
                       if (ownSchool) ...[
-                        _navigation(active),
-                        const SizedBox(height: 12),
+                        if (showDiagnostics || showHistory || constraints.maxWidth < 1000) ...[
+                          _navigation(active),
+                          const SizedBox(height: 12),
+                        ],
                         if (showHistory) ...[
                           const Text(
                             'Smart Repair History',
@@ -1620,6 +1651,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ],
                         if (!showDiagnostics && !showHistory) ...[
                           _hero(details, items, active),
+                          if (constraints.maxWidth >= 1000) ...[
+                            const SizedBox(height: 12),
+                            _navigation(active),
+                          ],
                           const SizedBox(height: 18),
                           if (engine.isPaused)
                             Text(
