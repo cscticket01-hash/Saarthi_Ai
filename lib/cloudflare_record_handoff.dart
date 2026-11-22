@@ -40,6 +40,7 @@ bool eligibleForRecordHandoff(
       item['collection'] != 'documents' &&
       item['atomicBundleId'] == null &&
       item['priorDeletion'] == null &&
+      item['priorCloudWrite'] == null &&
       {'set','update'}.contains(item['operation']) &&
       item['data'] is Map &&
       item['operationId'] is String &&
