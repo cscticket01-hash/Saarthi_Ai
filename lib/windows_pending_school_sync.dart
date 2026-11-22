@@ -513,6 +513,17 @@ class WindowsPendingSchoolSync {
         final order = priority(a.data()).compareTo(priority(b.data()));
         return order != 0 ? order : time(a.data()).compareTo(time(b.data()));
       });
+    // Recover the original authorized stage after an app/process restart,
+    // without sending a second business mutation. One school-scoped snapshot
+    // per flush; the durable CAS remains the only local handoff owner.
+    final stagedJournals = sendVersioned != null && school is String
+        ? (await db.collection('_windows_drive_deliveries').get()).docs
+            .map((row) => row.data())
+            .where((row) => row['schoolId'] == school &&
+                row['handoffAuthorized'] == true && row['state'] == 'pending')
+            .toList()
+        : <Map<String,dynamic>>[];
+    unchanged();
     Object? firstDeferred;
     Future<void> process(QueryDocumentSnapshot<Map<String, dynamic>> queued) async {
       unchanged();
@@ -524,6 +535,22 @@ class WindowsPendingSchoolSync {
       // second mutation merely to poll Google Drive; the receipt journal can
       // settle it when the authenticated provider proof eventually arrives.
       if(item['syncState']=='cloudAccepted')return;
+      if (school is String && sendVersioned != null) {
+        final bound = stagedJournals.where((journal) =>
+            recoverableStagedRecordJournal(item,journal,school)).toList();
+        if (bound.isNotEmpty) {
+          final identities = bound.map((row) => row['ticketId']).toSet();
+          if (identities.length != 1)
+            throw StateError('Multiple staged operation identities retained for review.');
+          final saved = await db.recordOutboxCloudHandoff(queued.reference,
+              item,ticketId:identities.single as String);
+          unchanged();
+          if (saved) report('cloudflareAccepted',queued.id,item);
+          // A failed CAS means an edit or another recovery owner won. Never
+          // send the stale snapshot after observing an authenticated ticket.
+          return;
+        }
+      }
       // This exact original operation belongs to the isolated atomic
       // Person/Card recovery owner. Never issue a second independent upload.
       if(item['atomicBundleId']!=null) {
