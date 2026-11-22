@@ -110,9 +110,15 @@ bool independentPreparedPersonCreate(Map item) {
      data['mobileIdentityVersion']!=1 ||
      data['replacesStudentGeneration']!=null ||
      data.keys.any((key)=>key.toString().startsWith('_syncRecreates')) ||
-     ['photoUrl','photoBase64','logoUrl','logoBase64','sealUrl',
-      'sealBase64','principalSignatureUrl','principalSignatureBase64']
-         .any((key)=>data[key] is String && (data[key] as String).isNotEmpty) ||
+     // A linked Drive file is not a metadata-only create even when it has
+     // already been represented by URL/fileId instead of inline base64.
+     data.entries.any((entry) {
+       final key=entry.key.toString().toLowerCase();
+       return RegExp(r'(photo|image|logo|seal|signature|pdf|fileid|fileurl|scan)')
+           .hasMatch(key) &&
+           (entry.value is String && (entry.value as String).isNotEmpty ||
+            entry.value is Map || entry.value is List);
+     }) ||
      parallelContainsInlineMedia(data))
     return false;
   return true;
