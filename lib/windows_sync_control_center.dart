@@ -1512,8 +1512,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                             spacing: 12,
                             runSpacing: 12,
                             children: [
-                              metric('Local database health', localHealth),
-                              metric('School cloud health', cloudHealth),
+                              if (showQueue) ...[
+                                metric('Local database health', localHealth),
+                                metric('School cloud health', cloudHealth),
+                              ],
                               if (diagnostics?['foregroundQueueCount'] is int)
                                 metric('Device queue',
                                     '${diagnostics!['foregroundQueueCount']} outstanding'),

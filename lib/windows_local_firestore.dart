@@ -3188,17 +3188,20 @@ class _LocalSchoolDatabase {
       if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
     }
 
-    // Keep a known staged calendar/notice write as a dependency of later
-    // local edits, using the same durable record owner. Never replay it
-    // merely because the current local data has changed.
+    // Keep the exact staged predecessor while a newer edit is pending.
+    final school = _activeIdentity['schoolSyncId'];
+    final stagedPhoto = previous is Map && school is String &&
+        {'set','update'}.contains(previous['operation']) &&
+        acceptedCloudflareTicketBinding(previous, school)?['action'] ==
+            'managed/record/media/stage/resumable';
     final priorCloudWrite = previous is Map
         ? previous['priorCloudWrite'] ??
-          (previous['syncState']=='cloudAccepted' &&
+          (stagedPhoto || (previous['syncState']=='cloudAccepted' &&
            previous['cloudTicketLane']=='records' &&
            {'school_calendar','school_notices'}.contains(previous['collection']) &&
            {'set','update'}.contains(previous['operation']) &&
            _activeIdentity['schoolSyncId'] is String &&
-           exactStagedRecordTicket(previous,_activeIdentity['schoolSyncId'] as String)==previous['cloudTicketId']
+           exactStagedRecordTicket(previous,_activeIdentity['schoolSyncId'] as String)==previous['cloudTicketId'])
              ? Map<String,dynamic>.from(previous) : null)
         : null;
     final priorDeletion = previous is Map
