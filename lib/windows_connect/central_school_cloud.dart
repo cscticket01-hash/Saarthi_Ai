@@ -564,6 +564,12 @@ class CentralSchoolCloud {
         'profileId': receiptProfile,
         if (action == 'managed/records' && returnAfterDurableCloudflareHandoff &&
             proof['driveState'] == 'pending') 'handoffAuthorized': true,
+        if (fileSidecarStage && returnAfterDurableCloudflareHandoff &&
+            proof['driveState'] == 'pending') ...{
+          'handoffAuthorized': true,
+          'fileSha256': body['sha256'],
+          if (mediaRecordStage) 'mediaSourceHash': (body['record'] as Map)['sourceHash'],
+        },
         if (documentStage) ...{
           'collection': 'documents',
           'id': (body['document'] as Map)['id'],
@@ -701,8 +707,11 @@ class CentralSchoolCloud {
         ...result,'edgeDeliveryVersion':1,
         'delivery':{'id':expected,'lane':'file-$expected'},
       };
-      await observe(verified);
-      return {...verified,'cloudflareHandoffVersion':1};
+      // Journal stays pending until the existing local CAS owner commits.
+      // Replay of an already completed server file must not strand that CAS
+      // behind a locally completed receipt that will never be polled again.
+      await observe({...verified,'driveState':'pending'});
+      return {...verified,'driveState':'pending','cloudflareHandoffVersion':1};
     }
     if (acceptedTicket != null &&
         (result['schoolId'] != body['schoolId'] ||
