@@ -13,6 +13,8 @@ class WindowsDriveDeliveryQueue {
   static const collection = '_windows_drive_deliveries';
   static final changed = ValueNotifier<int>(0);
   static bool _busy = false;
+  static String _orphanScanScope = '';
+  static int _nextOrphanScanAt = 0;
   static Future<void> _edgeWriteTail = Future<void>.value();
   static void _scope(String school, String profile) {
     final db = FirebaseFirestore.instance;
@@ -283,14 +285,23 @@ class WindowsDriveDeliveryQueue {
     _scope(school,profile);
     final documentRows=(await db.collection('_windows_document_outbox').get()).docs;
     _scope(school,profile);
-    final originals=<Map<String,dynamic>>[
-      for(final row in recordRows)
-        if(acceptedCloudflareTicketBinding(row.data(),school)!=null)
-          acceptedCloudflareTicketBinding(row.data(),school)!,
-      for(final row in documentRows)
-        if(acceptedCloudflareTicketBinding(row.data(),school,queueId:row.id)!=null)
-          acceptedCloudflareTicketBinding(row.data(),school,queueId:row.id)!,
-    ];
+    // Most Cloudflare-owned originals already have a healthy pending
+    // journal. Skip those before hashing their original media bytes.
+    final existing={
+      for(final row in journal)
+        if(row.data()['schoolId']==school && row.data()['state']!='completed')
+          "${row.data()['lane']}/${row.data()['ticketId']}",
+    };
+    final originals=<Map<String,dynamic>>[];
+    void collect(Map<String,dynamic> original,{String? id}) {
+      if(original['syncState']!='cloudAccepted' ||
+         existing.contains("${original['cloudTicketLane']}/${original['cloudTicketId']}"))
+        return;
+      final binding=acceptedCloudflareTicketBinding(original,school,queueId:id);
+      if(binding!=null)originals.add(binding);
+    }
+    for(final row in recordRows)collect(row.data());
+    for(final row in documentRows)collect(row.data(),id:row.id);
     final seen=<String>{};
     var repaired=false,reads=0;
     for(final binding in originals){
@@ -357,10 +368,17 @@ class WindowsDriveDeliveryQueue {
     _scope(school, profile);
     _busy = true;
     try {
-      // Recover a missing read-only receipt from the already persisted local
-      // Cloudflare ticket; never generate a second business upload.
-      await recoverMissingReceiptJournals(school,call:call,canAdmit:canAdmit);
-      _scope(school,profile);
+      // Scan for missing local status journals at most once per minute per
+      // active school/profile. An app restart scans immediately. Normal
+      // five-second provider status polling is unaffected.
+      final scanScope='$profile/$school';
+      if(_orphanScanScope!=scanScope ||
+         now().millisecondsSinceEpoch>=_nextOrphanScanAt) {
+        _orphanScanScope=scanScope;
+        _nextOrphanScanAt=now().millisecondsSinceEpoch+60000;
+        await recoverMissingReceiptJournals(school,call:call,canAdmit:canAdmit);
+        _scope(school,profile);
+      }
       final rows = (await db.collection(collection).get()).docs;
       _scope(school, profile);
       Future<void> pollLive() async {
