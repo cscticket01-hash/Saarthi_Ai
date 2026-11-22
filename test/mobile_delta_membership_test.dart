@@ -78,4 +78,57 @@ void main() {
       expect(rows.last['id'], 'n500'); expect(rows.last['title'], 'Old 500');
     } finally { await session.clear(); }
   });
+  test('malformed cached group cannot acknowledge missing rows or advance revision', () async {
+    var stage=0;
+    final session=SchoolSession(persistSession: (_) async {},
+      client:MockClient((request) async {
+        final body=jsonDecode(request.body)['request'] as Map;
+        if(body['action']=='mobile_login')return http.Response(jsonEncode(login()),200);
+        stage++;
+        if(stage==1)return http.Response(jsonEncode(response({
+          'revision':'before','mobileRecordDeltaVersion':1,
+          'revisions':{'calendar':'c1'},
+          'calendar':[{'id':'a','_mobileRecordId':'a','_mobileRecordRevision':'v1'}],
+        })),200);
+        expect((body['knownGroupRecordRevisions'] as Map).containsKey('calendar'),false);
+        return http.Response(jsonEncode(response({
+          'revision':'after','mobileRecordDeltaVersion':1,
+          'revisions':{'calendar':'c2'},
+          'groupRecordDeltas':{'calendar':{'ids':['a']}},
+          'calendar':[],
+        })),200);
+      }));
+    try {
+      await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+      await session.refreshDashboard();
+      final row=(session.dashboard['calendar'] as List).first;
+      session.dashboard={...session.dashboard,'calendar':[row,row]};
+      final retained=jsonEncode(session.dashboard);
+      await expectLater(session.refreshDashboard(),throwsStateError);
+      expect(jsonEncode(session.dashboard),retained);
+      expect(session.dashboard['revision'],'before');
+    } finally {await session.clear();}
+  });
+  test('legacy notice delta cannot silently discard absent members', () async {
+    var stage=0;
+    final session=SchoolSession(persistSession: (_) async {},
+      client:MockClient((request) async {
+        final body=jsonDecode(request.body)['request'] as Map;
+        if(body['action']=='mobile_login')return http.Response(jsonEncode(login()),200);
+        stage++;
+        return http.Response(jsonEncode(response(stage==1?{
+          'revision':'before','notices':[{'id':'n1','_noticeRevision':'v1'}],
+        }:{
+          'revision':'after','noticesDelta':true,
+          'noticeIds':['n1','n2'],'notices':[],
+        })),200);
+      }));
+    try {
+      await session.login(SchoolLink.parse(SchoolLink.encodeCompact(fixture)));
+      await session.refreshDashboard();
+      final retained=jsonEncode(session.dashboard);
+      await expectLater(session.refreshDashboard(),throwsStateError);
+      expect(jsonEncode(session.dashboard),retained);
+    } finally {await session.clear();}
+  });
 }
