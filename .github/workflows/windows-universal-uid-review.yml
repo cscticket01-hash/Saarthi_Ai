@@ -136,6 +136,18 @@ jobs:
       - name: Compile the Android application
         run: |
           flutter create --platforms=android --project-name saarthi_ai --org com.saarthi .
+          python - <<'PYTHON'
+          import re
+          from pathlib import Path
+          pubspec = Path('pubspec.yaml')
+          source = pubspec.read_text()
+          for name in ('agora_rtc_engine', 'flutter_contacts', 'google_sign_in',
+                       'googleapis', 'google_generative_ai', 'permission_handler',
+                       'firebase_auth', 'cloud_firestore', 'font_awesome_flutter'):
+              source = re.sub(r'^  ' + name + r':[^\n]*\n', '', source, flags=re.M)
+          pubspec.write_text(source)
+          PYTHON
+          flutter pub get
           python .github/scripts/configure_android_notifications.py
           python .github/scripts/configure_android_plugins.py
           flutter build apk --debug -t lib/main_android.dart
