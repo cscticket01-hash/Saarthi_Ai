@@ -2120,9 +2120,12 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     return VS_resumeEverywhereDelete(store,b.id,old);
   }
   const revision=old&&old._syncDeleted?old._syncRevision:Utilities.getUuid();
-  const targets=[],files=new Set(),retainedShared=[];
+  const targets=[],targetKeys=new Set(),files=new Set(),retainedShared=[];
+  const key=(collection,id)=>JSON.stringify([collection,id]);
+  const hasTarget=(collection,id)=>targetKeys.has(key(collection,id));
   function target(collection,id,row){
-    if(targets.some(t=>t.collection===collection&&t.id===id))return;
+    if(hasTarget(collection,id))return;
+    targetKeys.add(key(collection,id));
     const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner)||(person?generation:null);
     const value={collection:collection,id:id,sourceRevision:row&&row._syncRevision||'',revision:collection===b.collection&&id===b.id?revision:row&&row._syncDeleted?row._syncRevision:Utilities.getUuid()};
     if(owner)value.generation=owner;
@@ -2146,7 +2149,9 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     }
   }
   if(b.collection==='exams')for(const collection of ['exam_results','exam_center_results']){
-    const records=VS_sheetRecords(VS_managedSheet(collection));for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
+    const childStore=VS_managedSheet(collection),records=VS_sheetRecords(childStore);
+    if(VS_missingRecordHeads(childStore,records).some(head=>!head.deleted))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+    for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
   }
   // Shared school assets remain owned by the surviving records; deleting one
   // reference must not remove another pupil's ID card/photo or school seal.
@@ -2158,8 +2163,8 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   if(files.size>0){
     for(const collection of VS_LAYOUT_COLLECTIONS){
       const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
-      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
-      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!hasTarget(collection,head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!hasTarget(collection,id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
     }
     if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   }
