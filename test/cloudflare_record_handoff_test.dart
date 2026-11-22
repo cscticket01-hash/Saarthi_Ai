@@ -248,6 +248,37 @@ void main() {
     expect((await ref.get()).data()?['cloudTicketId'],ticket);
   });
 
+  test('orphan receipt repair rotates across retained originals after bounded failures', () async {
+    for(var n=0;n<5;n++) {
+      final op='orphan-rotation-operation-000$n',id='orphan-$n';
+      final original={'schoolId':school,'collection':'school_calendar',
+        'documentId':id,'operation':'set','operationId':op,
+        'syncState':'cloudAccepted','baseCloudRevision':'',
+        'data':{'title':'Original $n'}};
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+        db.collection('_windows_firebase_outbox').doc(id).set({
+          ...original,'cloudTicketId':exactTicket(original),
+          'cloudTicketLane':'records',
+        }));
+    }
+    final seen=<String>[];
+    Future<Map<String,dynamic>> read(String action,Map<String,dynamic> body)async {
+      expect(action,'managed/cloudflare/operation');
+      seen.add(body['id'] as String);
+      return {'success':false};
+    }
+    expect(await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:read),false);
+    expect(seen.length,3);
+    expect(await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:read),false);
+    expect(seen.length,6);
+    expect(seen.toSet().length,5,
+      reason:'bounded retries of early failed tickets must not starve later originals');
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.length,5);
+  });
+
   test('review-only receipt stays reviewable without unsafe automatic reconstruction', () async {
     const id='review-orphan',op='reviewed-record-operation-001';
     final original={'schoolId':school,'collection':'school_calendar','documentId':id,
