@@ -925,9 +925,10 @@ class FirebaseFirestore {
   }
 
   Future<void> finishLocalRestore(String deletionOperationId, {required String expectedDeletedRevision,
-      required String restoredRevision}) => _database.localRestoreMutation(deletionOperationId,
+      required String restoredRevision, Map<String,dynamic>? expectedRestoreRequest}) => _database.localRestoreMutation(deletionOperationId,
         school:activeProfileIdentity['schoolSyncId']?.toString() ?? '',
-        expectedDeletedRevision:expectedDeletedRevision,restoredRevision:restoredRevision);
+        expectedDeletedRevision:expectedDeletedRevision,restoredRevision:restoredRevision,
+        expectedRestoreRequest:expectedRestoreRequest);
 
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
@@ -2373,7 +2374,8 @@ class _LocalSchoolDatabase {
   }
 
   Future<void> localRestoreMutation(String deletionId, {required String school,
-      String? expectedDeletedRevision, String? restoredRevision}) {
+      String? expectedDeletedRevision, String? restoredRevision,
+      Map<String,dynamic>? expectedRestoreRequest}) {
     final origin = _activeProfileId;
     final completer = Completer<void>();
     _writeTail = _writeTail.then((_) async {
@@ -2430,6 +2432,11 @@ class _LocalSchoolDatabase {
           if (previous['state']=='verified') {
             if(previous['recordRevision']!=restoredRevision)throw StateError('Different restore receipt.');
             completer.complete();return;
+          }
+          if(expectedRestoreRequest!=null &&
+             _jsonStableMap(Map<String,dynamic>.from(previous))!=
+                 _jsonStableMap(_encodeMap(expectedRestoreRequest))) {
+            throw StateError('Restore request changed during provider verification; retained.');
           }
           if (docs[id] != null && _jsonStableMap(Map<String,dynamic>.from(docs[id] as Map)) != _jsonStableMap(snapshot)) {
             throw StateError('Newer local version retained.');
