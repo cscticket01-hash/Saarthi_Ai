@@ -81,7 +81,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       await WindowsDriveDeliveryQueue.poll(school,
         canAdmit: () => _initialized && !isPaused && !_resetPaused &&
             FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school,
-        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body));
+        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body),
+        onLocalSettlement: () {
+          // Provider settlement can unblock a newer durable same-record edit.
+          // Re-enter the existing scheduler, never start a second queue owner.
+          if (FirebaseFirestore.instance.activeProfileId != profile ||
+              _activeSchoolSyncId != school) return;
+          unawaited(refreshDetails().then<void>((_) {
+            if (FirebaseFirestore.instance.activeProfileId==profile &&
+                _activeSchoolSyncId==school &&
+                (details.value['pending'] as num? ?? 0)>0) {
+              scheduleSoon(localMutation:true,delay:Duration.zero);
+            }
+          },onError:(Object _,StackTrace __) {}));
+        });
       if (FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school) {
         _transferReadAfter = null;
       }
@@ -726,6 +739,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String, dynamic>.from(event));
+    if(event['stage']=='cloudflareAccepted') {
+      final elapsed=event['elapsedMicros'];
+      if(elapsed is int && elapsed>=0) {
+        metrics['lastCloudflareHandoffMicros']=elapsed;
+        _sample('cloudflareHandoffMicros',elapsed);
+      }
+      // Recompute device queue after each committed handoff, not after the
+      // unrelated end of a reconciliation or Drive backup cycle.
+      unawaited(refreshDetails().catchError((Object _) {}));
+    }
     details.value = {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
