@@ -290,6 +290,44 @@ void main(){
     }
   });
 
+  test('two independently prepared new students enter the same bounded stage window',() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    final db=FirebaseFirestore.instance;
+    await db.switchProfile('parallel-person-${DateTime.now().microsecondsSinceEpoch}',
+      identity:{'schoolSyncId':school});
+    final stable='p-${List.filled(64,'b').join()}';
+    for(var i=0;i<2;i++){
+      await db.collection('students_directory').doc('fresh-$i').set({
+        'schoolId':school,'name':'Synthetic pupil $i',
+        'mobileStableId':i==0?stable:'p-${List.filled(64,'c').join()}',
+        'mobileLinkToken':List.filled(32,i==0?'x':'y').join(),
+        'mobileIdentityVersion':1,
+      });
+    }
+    final entered=Completer<void>(),release=Completer<void>();
+    var submitted=0;
+    final work=WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      send:(a,b,c,d)async{},
+      sendVersioned:(row)async{
+        submitted++;
+        if(submitted==2 && !entered.isCompleted)entered.complete();
+        await release.future;
+        return 'provider-person-revision';
+      },
+      parallelAdmission:(item)=>canParallelStageRecord(item,school,
+        edgeDeliverySupported:true),
+    );
+    try {await entered.future.timeout(const Duration(seconds:4));}
+    finally {
+      if(!release.isCompleted)release.complete();
+      await work;
+    }
+    expect(submitted,2);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs,isEmpty);
+  });
+
   test('bounded admission drains in-flight records before admitting another window',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
