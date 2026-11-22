@@ -17,6 +17,7 @@ import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_storage.dart';
 import '../lib/windows_connect/managed_school_session.dart';
+import '../lib/windows_firebase_sync.dart';
 import '../lib/platform/platform_config.dart';
 
 // Isolated signed-readback fixture. A legacy success bool is intentionally insufficient.
@@ -139,6 +140,69 @@ void main() {
     } finally { await temp.delete(recursive:true); }
   });
 
+  test('parallel scan admission requires exact separate owner and no pending parent',(){
+    final row=<String,dynamic>{
+      'schoolId':school,'studentId':'S1','personId':'stable-S1',
+      'ownerRole':'student','documentRevision':'document-revision-100',
+      'localPath':'/synthetic/scan.jpg','scanQuotaVersion':1,
+      'baseCloudRevision':'','baseCloudUploadedAt':null,
+      'deleted':false,'syncState':'Pending',
+      'contentHash':List.filled(64,'a').join(),
+    };
+    bool allow(Map candidate,[List<Map<String,dynamic>> blockers=const []])=>
+      canParallelStageOriginalScan(candidate,school,blockers,documentStageSupported:true);
+    expect(allow(row),true);
+    expect(canParallelStageOriginalScan(row,school,const [],documentStageSupported:false),false);
+    expect(allow({...row,'schoolId':'foreign'}),false);
+    expect(allow({...row,'personId':''}),false);
+    expect(allow({...row,'contentHash':null}),false);
+    expect(allow({...row,'baseCloudRevision':'old-drive-revision'}),false);
+    expect(allow({...row,'deleted':true}),false);
+    expect(allow({...row,'documentKind':'idCard'}),false);
+    expect(allow({...row,'documentKind':'feeReceipt'}),false);
+    expect(allow({...row,'documentKind':'marksheet'}),false);
+    expect(allow({...row,'atomicBundleId':'reserved'}),false);
+    expect(allow(row,[{'schoolId':school,'collection':'students_directory','documentId':'S1'}]),false);
+    expect(allow(row,[{'schoolId':school,'collection':'school_settings','documentId':'settings'}]),false);
+    expect(allow(row,[{'schoolId':'foreign','collection':'school_expenses'}]),false);
+  });
+  test('two independent scans begin upload without waiting for each other',() async {
+    final originalStage=WindowsFirebaseRemote.documentStageSupported;
+    final dir=await Directory.systemTemp.createTemp('independent-scan-stage-');
+    WindowsFirebaseRemote.documentStageSupported=true;
+    final bothStarted=Completer<void>(),release=Completer<void>();
+    try {
+      for(final id in ['scan-alpha','scan-beta']){
+        final file=File('${dir.path}/$id.jpg');
+        await file.writeAsBytes([1,2,3,id.length]);
+        final row={'schoolId':school,'studentId':'student-$id',
+          'personId':'stable-$id','ownerRole':'student',
+          'documentRevision':'document-revision-$id','localPath':file.path,
+          'contentHash':sha256.convert(await file.readAsBytes()).toString(),
+          'scanQuotaVersion':1,'syncState':'Pending','deleted':false,
+          'baseCloudRevision':'','mimeType':'image/jpeg','fileName':'$id.jpg'};
+        await db.collection('_local_student_documents').doc(id).set(row);
+        await db.collection('_windows_document_outbox').doc(id).set(row);
+      }
+      var started=0;
+      final work=WindowsBackendBridge.flushDocumentPending(send:(payload)async{
+        started++;
+        if(started==2 && !bothStarted.isCompleted)bothStarted.complete();
+        await release.future;
+        return documentAckFixture(payload,92);
+      });
+      try {await bothStarted.future.timeout(const Duration(seconds:4));}
+      finally {
+        if(!release.isCompleted)release.complete();
+        await work;
+      }
+      expect(started,2);
+      expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+    } finally {
+      WindowsFirebaseRemote.documentStageSupported=originalStage;
+      await dir.delete(recursive:true);
+    }
+  });
   test('foreign document outbox blocks before any upload or receipt', () async {
     const id='foreign-document-pending';
     await db.collection('_windows_document_outbox').doc(id).set({
