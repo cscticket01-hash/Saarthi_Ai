@@ -134,7 +134,7 @@ class WindowsSyncFlow extends StatelessWidget {
       final stages = Column(children: [
         stage(title: 'Local Save', detail: local, icon: Icons.desktop_windows_outlined,
           accent: Colors.lightBlueAccent, first: true),
-        stage(title: 'School Server', detail: cloud, icon: Icons.dns_outlined,
+        stage(title: 'School Server ACK', detail: cloud, icon: Icons.dns_outlined,
           accent: theme.colorScheme.primary, highlighted: running && active.contains('cloud'),
           boxKey: const ValueKey('school-server-stage'),
           extra: Column(
@@ -151,14 +151,9 @@ class WindowsSyncFlow extends StatelessWidget {
                 Icon(Icons.verified_outlined, size: 15,
                   color: verifiedAck ? Colors.greenAccent : theme.colorScheme.outline),
                 const SizedBox(width: 6),
-                Expanded(child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Server ACK', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    Text(serverAck, maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12)),
-                  ],
-                )),
+                Expanded(child: Text(serverAck, maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12))),
               ]),
             ],
           )),
