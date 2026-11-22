@@ -170,6 +170,62 @@ bool recoverableStagedPhotoJournal(Map original,Map journal,String school) {
   catch(_){return false;}
 }
 
+/// Reconstruct ONLY an exact already-accepted original operation's
+/// metadata for authenticated read-only provider status recovery. This grants
+/// no new write and does not infer Google Drive completion from a local row.
+Map<String,dynamic>? acceptedCloudflareTicketBinding(
+    Map original, String school, {String? queueId}) {
+  if(!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) ||
+      original['schoolId']!=school ||
+      original['syncState']!='cloudAccepted' ||
+      original['cloudTicketId'] is! String ||
+      !RegExp(r'^[a-f0-9]{64}$').hasMatch(original['cloudTicketId']) ||
+      original['priorDeletion']!=null || original['atomicBundleId']!=null)
+    return null;
+  final ticket=original['cloudTicketId'] as String;
+  final lane=original['cloudTicketLane'];
+  if(lane=='records') {
+    if(original['operationId'] is! String ||
+       !{'set','update','delete'}.contains(original['operation']) ||
+       exactStagedRecordTicket(original,school)!=ticket)return null;
+    return {'schoolId':school,'action':'managed/records',
+      'collection':original['collection'],'id':original['documentId'],
+      'originalOperationId':original['operationId'],
+      'operation':original['operation']=='delete'?'delete':'write',
+      'lane':'records','ticketId':ticket};
+  }
+  if(lane!='file-$ticket')return null;
+  if(original['collection']=='documents') {
+    final id=queueId??original['documentId'];
+    final binding={'schoolId':school,'action':'managed/document/stage/resumable',
+      'collection':'documents','id':id,
+      'originalOperationId':original['documentRevision'],'operation':'write',
+      'fileSha256':original['contentHash'],'lane':lane,'ticketId':ticket};
+    if(original['deleted']==true ||
+       original['cloudContentHash']!=original['contentHash'] ||
+       exactSidecarTicket(binding,school)!=ticket)return null;
+    return binding;
+  }
+  final binding={'schoolId':school,'action':'managed/record/media/stage/resumable',
+    'collection':original['collection'],'id':original['documentId'],
+    'originalOperationId':original['operationId'],'operation':'write',
+    'fileSha256':original['cloudMediaFileSha256'],
+    'mediaSourceHash':original['cloudMediaSourceHash'],
+    'lane':lane,'ticketId':ticket};
+  if(!{'students_directory','teachers_directory'}.contains(original['collection']) ||
+     exactSidecarTicket(binding,school)!=ticket || original['data'] is! Map)return null;
+  final data=original['data'] as Map;
+  final photo=data['photoBase64'];
+  final raw=photo is String && photo.startsWith('data:image/')
+      ?photo:data['photoUrl'];
+  if(raw is! String || !raw.startsWith('data:image/'))return null;
+  try {
+    if(sha256.convert(UriData.parse(raw).contentAsBytes()).toString()!=
+        original['cloudMediaSourceHash'])return null;
+  } catch(_){return null;}
+  return binding;
+}
+
 /// A staged ticket is not a final result. It may retire the original
 /// locally retained operation only after the authenticated owner separately
 /// proves a canonical revision for that exact same-school ticket.
