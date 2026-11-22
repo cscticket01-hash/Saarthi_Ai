@@ -50,6 +50,7 @@ jobs:
           test/live-sync-reconciliation.test.js
           test/managed-card-issue-authority.test.js
           test/teacher-staff-retirement.test.js
+          test/managed-storage.test.js
   windows-regressions:
     if: github.ref == 'refs/heads/review/sync-engine-4-20261122'
     runs-on: windows-2022
@@ -134,6 +135,7 @@ jobs:
           test/android_startup_test.dart
           test/mobile_attendance_history_test.dart
           test/mobile_attendance_outbox_test.dart
+          test/mobile_delta_membership_test.dart
           test/published_id_card_test.dart
           test/web_atomic_bundle_review_test.dart
       - name: Compile the Web application
