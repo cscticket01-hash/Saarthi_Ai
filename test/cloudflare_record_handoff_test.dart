@@ -68,6 +68,18 @@ void main() {
       'record':{'schoolId':school,'id':id,
         '_syncRevision':'canonical-revision-001','_syncOperationId':op}};
     expect(verifiedStagedRecordFinal(accepted,journal,provider,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncOperationId':op}},school),false,
+      reason:'A missing canonical revision is not a Drive ACK');
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001'}},school),false,
+      reason:'A missing original operation is not a Drive ACK');
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001',
+        '_syncOperationId':'different-operation'}},school),false);
     expect(verifiedStagedRecordFinal(accepted,journal,
       {...provider,'record':null},school),false);
     expect(verifiedStagedRecordFinal(accepted,journal,
