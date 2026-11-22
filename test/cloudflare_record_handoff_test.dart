@@ -124,6 +124,44 @@ void main() {
     expect(history.single['state'],'completed');
   });
 
+  test('missing document journal reconstructs from verified original with no bytes replay', () async {
+    const id='untracked-document',op='untracked-document-operation-001';
+    final content=List.filled(64,'a').join();
+    final key=sha256.convert(utf8.encode('$id:$op')).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':op,
+      'contentHash':content,'cloudContentHash':content,
+      'localPath':'/synthetic/does-not-need-reopening.pdf',
+      'cloudTicketId':ticket,'cloudTicketLane':'file-$ticket',
+      'syncState':'cloudAccepted','deleted':false,
+    };
+    final outbox=db.collection('_windows_document_outbox').doc(id);
+    final local=db.collection('_local_student_documents').doc(id);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await outbox.set(original);
+      await local.set(original);
+    });
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      expect(body['lane'],'file-$ticket');
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','committed':true,
+        'fileId':'original-drive-file','fileUrl':'https://drive.google.com/file/d/original-drive-file/view',
+        'sha256':content,
+        'documentRecord':{'id':id,'operationId':op,
+          'contentHash':content,'fileId':'original-drive-file',
+          'recordRevision':'original-document-record-revision'}};
+    });
+    expect(reads,2);
+    expect((await outbox.get()).exists,false);
+    expect((await local.get()).data()?['syncState'],'Synced');
+    expect((await local.get()).data()?['cloudRecordRevision'],'original-document-record-revision');
+  });
+
   test('authorized journal restores interrupted local handoff without another mutation', () async {
     const id='restart-calendar';
     const op='restart-original-operation-001';
