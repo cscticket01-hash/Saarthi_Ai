@@ -1402,12 +1402,17 @@ class SchoolSession {
     final groupCheckpoints = <String, Map<String, String>>{};
     for (final entry in dashboard.entries) {
       if (!groups.contains(entry.key) || entry.value is! List) continue;
-      final rows = (entry.value as List).whereType<Map>().toList();
-      if (rows.any(
+      final cached = entry.value as List;
+      final rows = cached.whereType<Map>().toList();
+      // A malformed or duplicate baseline must request a whole group instead
+      // of collapsing identities and accidentally acknowledging a deletion.
+      if (rows.length != cached.length || rows.any(
         (r) =>
             r['_mobileRecordId'] is! String ||
-            r['_mobileRecordRevision'] is! String,
-      ))
+            (r['_mobileRecordId'] as String).isEmpty ||
+            r['_mobileRecordRevision'] is! String ||
+            (r['_mobileRecordRevision'] as String).isEmpty,
+      ) || rows.map((r) => r['_mobileRecordId']).toSet().length != rows.length)
         continue;
       // Whole-group fallback: large caches must not make refresh permanently
       // fail, and an arbitrary truncated ID list could acknowledge removals.
@@ -1477,6 +1482,7 @@ class SchoolSession {
         final key = entry.key;
         final meta = entry.value;
         if (key is! String ||
+            !groups.contains(key) ||
             meta is! Map ||
             meta['ids'] is! List ||
             result[key] is! List) {
@@ -1489,15 +1495,26 @@ class SchoolSession {
           throw StateError('Invalid mobile record identities.');
         }
         final rows = <String, Map>{};
-        for (final row in (dashboard[key] as List? ?? []).whereType<Map>()) {
-          if (idSet.contains(row['_mobileRecordId']))
-            rows[row['_mobileRecordId'] as String] = row;
+        // Reuse only rows whose exact immutable revisions were included in
+        // this request. An omitted/malformed cache needs a full group response.
+        final advertised = groupCheckpoints[key] ?? const <String, String>{};
+        final cached = dashboard[key];
+        if (cached is List) {
+          for (final row in cached.whereType<Map>()) {
+            final id = row['_mobileRecordId'];
+            if (id is String && idSet.contains(id) &&
+                advertised.containsKey(id) &&
+                advertised[id] == row['_mobileRecordRevision']) {
+              rows[id] = row;
+            }
+          }
         }
         final changedIds = <String>{};
         for (final row in result[key] as List) {
           if (row is! Map ||
               row['_mobileRecordId'] is! String ||
               row['_mobileRecordRevision'] is! String ||
+              (row['_mobileRecordRevision'] as String).isEmpty ||
               !idSet.contains(row['_mobileRecordId']) ||
               !changedIds.add(row['_mobileRecordId'] as String)) {
             throw StateError('Invalid changed mobile record.');
@@ -1510,23 +1527,36 @@ class SchoolSession {
       }
     }
     if (result['unchanged'] != true) {
-      if (result['noticesDelta'] == true && result['noticeIds'] is List) {
-        final ids = (result['noticeIds'] as List).whereType<String>().toList();
+      if (result['noticesDelta'] == true) {
+        if (result['noticeIds'] is! List || result['notices'] is! List)
+          throw StateError('Invalid notice delta.');
+        final rawIds = result['noticeIds'] as List;
+        final ids = rawIds.whereType<String>().toList();
         final idSet = ids.toSet();
+        if (ids.length != rawIds.length || ids.any((id) => id.isEmpty) ||
+            idSet.length != ids.length)
+          throw StateError('Invalid notice delta identities.');
         final rows = <String, Map>{};
-        for (final row
-            in (dashboard['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && idSet.contains(row['id']))
-            rows[row['id']] = row;
+        final cachedNotices = dashboard['notices'];
+        if (cachedNotices is List) {
+          for (final row in cachedNotices.whereType<Map>()) {
+            final id = row['id'];
+            if (id is String && idSet.contains(id) &&
+                legacyNotices.containsKey(id) &&
+                legacyNotices[id] == row['_noticeRevision'])
+              rows[id] = row;
+          }
         }
-        for (final row in (result['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && idSet.contains(row['id']))
-            rows[row['id']] = row;
+        final changedIds = <String>{};
+        for (final row in (result['notices'] as List)) {
+          if (row is! Map || row['id'] is! String || !idSet.contains(row['id']) ||
+              !changedIds.add(row['id'] as String))
+            throw StateError('Invalid changed notice.');
+          rows[row['id'] as String] = row;
         }
-        merged['notices'] = [
-          for (final id in ids)
-            if (rows[id] != null) rows[id],
-        ];
+        if (ids.any((id) => !rows.containsKey(id)))
+          throw StateError('Incomplete notice delta baseline.');
+        merged['notices'] = [for (final id in ids) rows[id]];
       }
       if (result.containsKey('idCardPackage') &&
           result['idCardPackage'] == null &&
