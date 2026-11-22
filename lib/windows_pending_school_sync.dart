@@ -773,7 +773,9 @@ class WindowsPendingSchoolSync {
           mediaSourceHash:accepted.mediaSourceHash,
           mediaFileSha256:accepted.mediaFileSha256);
         unchanged();
-        if(saved)report('cloudflareAccepted',queued.id,item);
+        watch.stop();
+        if(saved)report('cloudflareAccepted',queued.id,item,
+            elapsedMicros:watch.elapsedMicroseconds);
         return; // No canonical revision / no outbox deletion.
       } catch (caught, stack) {
         unchanged();
