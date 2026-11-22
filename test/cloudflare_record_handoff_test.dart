@@ -162,6 +162,49 @@ void main() {
     expect((await local.get()).data()?['cloudRecordRevision'],'original-document-record-revision');
   });
 
+  test('unverified status never recreates orphan receipt or retires original', () async {
+    const id='untrusted-orphan', op='untrusted-recovery-operation-001';
+    final original={'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'}};
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('untrusted-orphan-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+      ref.set({...original,'cloudTicketId':ticket,'cloudTicketLane':'records'}));
+    final restored=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async=>{'success':true,'schoolId':school,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'id':foreignTicket,'lane':'records'}});
+    expect(restored,false);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
+    expect((await ref.get()).data()?['cloudTicketId'],ticket);
+  });
+
+  test('review-only receipt stays reviewable without unsafe automatic reconstruction', () async {
+    const id='review-orphan',op='reviewed-record-operation-001';
+    final original={'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'}};
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('review-orphan-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await ref.set({...original,'cloudTicketId':ticket,'cloudTicketLane':'records'});
+      await db.collection(WindowsDriveDeliveryQueue.collection).doc('review-unchanged').set({
+        'schoolId':school,'edgeDeliveryVersion':1,
+        'ticketId':ticket,'lane':'records','state':'needsAttention',
+        'action':'managed/records','originalOperationId':op,
+      });
+    });
+    var calls=0;
+    final recovered=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async{calls++;return {'success':false};});
+    expect(recovered,false);
+    expect(calls,0);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data()['state'],'needsAttention');
+    expect((await ref.get()).exists,true);
+  });
+
   test('authorized journal restores interrupted local handoff without another mutation', () async {
     const id='restart-calendar';
     const op='restart-original-operation-001';
