@@ -127,7 +127,7 @@ void main() {
       const id='mismatched-scanned-document';
       final row={'schoolId':school,'studentId':'S1','documentRevision':'original-scan-002',
         'localPath':file.path,'syncState':'Pending','baseCloudRevision':'',
-        'contentHash':'${'a'*64}','deleted':false,'mimeType':'image/jpeg'};
+        'contentHash':List.filled(64,'a').join(),'deleted':false,'mimeType':'image/jpeg'};
       await db.collection('_local_student_documents').doc(id).set(row);
       await db.collection('_windows_document_outbox').doc(id).set(row);
       var sent=0;
