@@ -1447,7 +1447,10 @@ class WindowsBackendBridge {
         }
         await Future.wait<void>(window.map(processDocument),eagerError:false);
       }
-      if (firstDocumentFailure != null) Error.throwWithStackTrace(firstDocumentFailure, documentFailureStack!);
+      final failure = firstDocumentFailure;
+      if (failure != null) {
+        Error.throwWithStackTrace(failure, documentFailureStack!);
+      }
     } finally {
       _documentDraining = false;
     }
