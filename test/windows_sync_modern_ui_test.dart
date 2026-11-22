@@ -99,6 +99,8 @@ void main() {
       expect(find.text('Photos & file downloads'),findsNothing);
       expect(find.text('Inventory not yet verified'),findsNothing);
       expect(tester.takeException(), isNull);
+      await tester.scrollUntilVisible(find.text('Smart Repair History'), 180,
+        scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('Smart Repair History'));
       await tester.pumpAndSettle();
       expect(find.text('Verified sync'), findsOneWidget);
