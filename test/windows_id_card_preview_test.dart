@@ -40,6 +40,20 @@ void main() {
     }
     expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
   });
+  test('student preview and export validate the stored template category', () async {
+    await db.collection('school_settings').doc('document_templates').set({
+      'studentId': 'manifest:school-id-v1',
+    });
+    final person = {'schoolId': school, 'name': 'Synthetic Student'};
+    await expectLater(
+      WindowsDocumentTemplates.nativePersonCard('studentId', person),
+      throwsStateError,
+    );
+    await expectLater(
+      WindowsDocumentTemplates.selected('studentId', person),
+      throwsStateError,
+    );
+  });
   test('native manifest preparation rejects foreign school', () async {
     await expectLater(WindowsDocumentTemplates.nativePersonCard('studentId',{
       'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
