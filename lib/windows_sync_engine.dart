@@ -835,6 +835,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _pruneRepairHistory();
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final legacy = await db.collection('_windows_google_outbox').get();
@@ -870,7 +871,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               d.data()['state'] != 'verified',
         )
         .toList();
-    if (db.activeProfileId != origin) return;
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school ||
+        _activeSchoolSyncId != school) return;
     // A stage-owned operation remains physically in its exact local outbox
     // until the broker returns a canonical Drive revision. It is no longer
     // an outgoing device upload; show it in the separate Drive delivery
@@ -1046,11 +1049,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int
           ? backup.data()!['createdAt']
           : 0,
-      'verifiedReceiptCount': receipts.docs.length,
-      'lastCloudAckMillis': receipts.docs.fold<int>(0, (latest, row) {
-        final stamp = row.data()['acknowledgedAt'];
-        return stamp is num && stamp.toInt() > latest ? stamp.toInt() : latest;
-      }),
+      'verifiedReceiptCount': receipts.docs.where((row) =>
+          row.data()['schoolId'] == school).length,
+      // Device ACK time includes the exact durable staged receipt even before
+      // Drive completes. Never mix it with another school's retained history.
+      'lastCloudAckMillis': [
+        ...receipts.docs.where((row) => row.data()['schoolId'] == school)
+            .map((row) => row.data()['acknowledgedAt']),
+        ...cloudOwned.map((row) => row.data()['cloudAcceptedAt']),
+        ...cloudOwnedDocuments.map((row) => row.data()['cloudAcceptedAt']),
+      ].fold<int>(0, (latest, stamp) =>
+          stamp is num && stamp.isFinite && stamp > latest && stamp <= nowMillis
+              ? stamp.toInt() : latest),
       'needsAttention': items
           .where(
             (d) =>
