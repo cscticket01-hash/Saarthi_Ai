@@ -77,6 +77,11 @@ function teacherPhoneKey(data:Json):string|null {
 function saveOwner(storage:DurableObjectStorage,col:string,id:string,data:Json){
  const owner=ownerMetadata(data,id);
  if(col==='teachers_directory')owner.teacherPhoneKey=teacherPhoneKey(data);
+ if(col==='school_config'&&id.startsWith(uidProjectionPrefix)&&
+    typeof data.sourceCollection==='string'&&typeof data.sourceRecordId==='string'){
+  owner.sourceCollection=data.sourceCollection;
+  owner.sourceRecordId=data.sourceRecordId;
+ }
  storage.sql.exec('INSERT INTO live_record_owners VALUES(?,?,?) ON CONFLICT(collection,id) DO UPDATE SET body=excluded.body',col,id,canonical(owner));
 }
 function findOwner(storage:DurableObjectStorage,col:string,id:string):Json|null {
@@ -173,15 +178,28 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    return {uidProtocol:1,schoolId:school,state:'test_ready',cursor:head(),...registry.status(school)};
   }
   demand(status.initialized&&marker(),'UID migration or recovery must be verified first',412);
-  demand(['students_directory','teachers_directory'].includes(col)&&validId(b.id),'Verified student or teacher owner required',412);
-  const record=verified(col,String(b.id),b.record);
+  demand(['students_directory','teachers_directory','staff_payroll_directory'].includes(col)&&validId(b.id),'Verified person owner required',412);
+  // Payroll point reads are authenticated and verified by the internal broker.
+  // This collection has no live row. Its owner is the nested payroll entry.
+  const staff=col==='staff_payroll_directory';
+  const record=staff?b.record as Json:verified(col,String(b.id),b.record);
+  if(staff)demand(record&&record.id===b.id&&record._syncDeleted!==true&&record.deleted!==true&&record.active!==false,'Active payroll owner required',412);
   const generation=record.mobileStableId;
   demand(typeof generation==='string'&&/^p-[a-f0-9]{32,64}$/.test(generation)&&b.generation===generation,'Permanent person generation changed',409);
   demand(typeof record.name==='string'&&record.name.trim().length>0,'Verified person name required',412);
   const projection=uidProjectionPrefix+generation,prior=registry.lookup(school,generation);
   if(prior!==null)demand(readLive('school_config',projection),'UID backup projection missing; recovery required',503);
   else demand(!readLive('school_config',projection),'UID projection exists without reservation',503);
-  const category:PersonCategory=col==='students_directory'?'student':'teacher';
+  const category:PersonCategory=staff
+   ?(record.role==='Office staff'?'officeStaff':'otherStaff')
+   :(col==='students_directory'?'student':'teacher');
+  if(prior!==null){
+   const saved=readLive('school_config',projection);
+   const owner=saved?.body?JSON.parse(saved.body) as Json:findOwner(storage,'school_config',projection);
+   if(staff||owner?.sourceCollection!==undefined){
+    demand(owner?.sourceCollection===col&&(owner.sourceRecordId===b.id||!staff),'UID belongs to another person owner',409);
+   }
+  }
   let created=false;
   const value=registry.reserve(school,generation,category,record.name,(uid,family,serial)=>{
    const op=hash([school,'uid-reservation-v1',generation]);

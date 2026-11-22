@@ -1,6 +1,7 @@
 import 'windows_payment_confirmation.dart';
 import 'windows_appearance.dart';
 import 'windows_other_staff.dart';
+import 'windows_school_identity.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -87,8 +88,18 @@ class StaffPayroll {
     final previous = await ref.get();
     _sameSchool(profile);
     final people = List<dynamic>.from(previous.data()?['staff'] as List? ?? []);
-    people.add({'id': 'staff:${DateTime.now().microsecondsSinceEpoch}', 'name': name.trim(), 'role': role, 'designation': designation.trim()});
-    await ref.set({'staff': people}, SetOptions(merge: true));
+    final generation = SchoolPersonIdentity.newGeneration();
+    people.add({
+      'id': 'staff:$generation',
+      'mobileStableId': generation,
+      'name': name.trim(),
+      'role': role,
+      'designation': designation.trim(),
+    });
+    final batch = FirebaseFirestore.instance.batch();
+    batch.requireUnchanged(ref, previous.data());
+    batch.set(ref, {'staff': people}, SetOptions(merge: true));
+    await batch.commit();
   });
   static int paid(Map<String, dynamic> row) => (row['paidPaise'] as num?)?.toInt() ??
       (row['status']?.toString().toLowerCase() == 'paid' ? total(row) : 0);

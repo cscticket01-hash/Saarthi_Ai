@@ -8,10 +8,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'windows_local_firestore.dart';
 import 'windows_school_image_cache.dart';
 import 'windows_connect/school_drive_images.dart';
+import 'windows_connect/central_school_cloud.dart';
 
 /// The existing payroll directory remains the single non-teacher staff source.
 class OtherStaffDirectory {
@@ -134,12 +136,24 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
   late final String profile;
   String category = 'Teachers', search = '';
   List<Map<String, dynamic>> staff = [];
+  final Map<String, String> _confirmedUids = {};
+  Timer? _uidRetry;
+  bool _checkingUids = false;
   String? error;
   @override
   void initState() {
     super.initState();
     profile = FirebaseFirestore.instance.activeProfileId;
     _load();
+    _uidRetry = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_resolveUids());
+    });
+  }
+
+  @override
+  void dispose() {
+    _uidRetry?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -150,9 +164,93 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
           staff = value;
           error = null;
         });
+      unawaited(_resolveUids());
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     }
+  }
+
+  Future<void> _resolveUids() async {
+    if (!mounted || _checkingUids) return;
+    final pending = staff.where((person) {
+      final generation = person['mobileStableId'];
+      return generation is String &&
+          RegExp(r'^p-[a-f0-9]{32,64}$').hasMatch(generation) &&
+          !_confirmedUids.containsKey(generation);
+    }).toList();
+    if (pending.isEmpty) return;
+    _checkingUids = true;
+    CentralSchoolCloud? cloud;
+    try {
+      final db = FirebaseFirestore.instance;
+      OtherStaffDirectory.requireSchool(profile);
+      final school = db.activeProfileIdentity['schoolSyncId'];
+      if (school is! String || school.isEmpty) return;
+      final preferences = await SharedPreferences.getInstance();
+      OtherStaffDirectory.requireSchool(profile);
+      String cacheKey(Object? generation) => 'universalUid.staff.$school.$generation';
+      final cached = <String, String>{};
+      for (final person in pending) {
+        final generation = person['mobileStableId'] as String;
+        final uid = preferences.getString(cacheKey(generation));
+        if (uid != null && uid.isNotEmpty) cached[generation] = uid;
+      }
+      if (!mounted) return;
+      if (cached.isNotEmpty) {
+        setState(() => _confirmedUids.addAll(cached));
+        pending.removeWhere((person) => cached.containsKey(person['mobileStableId']));
+      }
+      pending.removeWhere((person) => person['active'] == false);
+      if (pending.isEmpty) return;
+      final saved = await CentralSchoolCloud.saved();
+      OtherStaffDirectory.requireSchool(profile);
+      if (saved['managed'] != true || saved['schoolId'] != school) return;
+      cloud = CentralSchoolCloud(
+        expectedSchoolId: school,
+        endpoint: saved['endpoint'].toString(),
+      );
+      final token = await CentralSchoolCloud.firebaseToken();
+      for (final person in pending) {
+        if (!mounted) break;
+        OtherStaffDirectory.requireSchool(profile);
+        final generation = person['mobileStableId'];
+        try {
+          final result = await cloud.api({
+            'action': 'managed/live/uid-reserve',
+            'schoolId': school,
+            'liveProtocol': 1,
+            'collection': 'staff_payroll_directory',
+            'id': person['id'],
+            'generation': generation,
+          }, token: token);
+          OtherStaffDirectory.requireSchool(profile);
+          final uid = result['universalUid'];
+          if (mounted && result['success'] == true &&
+              result['schoolId'] == school && result['uidProtocol'] == 1 &&
+              result['personId'] == generation &&
+              result['reservationId'] == 'universal_uid_v1_$generation' &&
+              uid is String && uid.trim().isNotEmpty) {
+            setState(() => _confirmedUids[generation as String] = uid);
+            await preferences.setString(cacheKey(generation), uid);
+          }
+        } on CentralCloudException catch (error) {
+          if (error.diagnosticCode != 'UID_OWNER_CHANGED') break;
+        }
+      }
+    } catch (error) {
+      debugPrint('Staff UID confirmation deferred: $error');
+    } finally {
+      cloud?.close();
+      _checkingUids = false;
+    }
+  }
+
+  String _uidLabel(Map<String, dynamic> person) {
+    final generation = person['mobileStableId'];
+    return _confirmedUids[generation] ??
+        (person['active'] != false && generation is String &&
+            RegExp(r'^p-[a-f0-9]{32,64}$').hasMatch(generation)
+            ? 'UID Pending' : '');
   }
 
   Future<void> _idCard(Map<String, dynamic> person) async {
@@ -426,9 +524,12 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                                     )
                                   : const Icon(Icons.person),
                               title: Text(person['name']?.toString() ?? ''),
-                              subtitle: Text(
-                                '${person['employeeId'] ?? person['id']} • ${person['designation'] ?? ''} • ${person['active'] == false ? 'Inactive' : 'Active'}',
-                              ),
+                              subtitle: Text([
+                                person['employeeId'] ?? person['id'],
+                                person['designation'] ?? '',
+                                person['active'] == false ? 'Inactive' : 'Active',
+                                if (_uidLabel(person).isNotEmpty) _uidLabel(person),
+                              ].join(' • ')),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [

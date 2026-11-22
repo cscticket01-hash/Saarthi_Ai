@@ -92,7 +92,7 @@ class WindowsDocumentTemplates {
   /// different school design silently. Return false for those legacy layouts.
   static Future<({IdCardManifest template, Map<String,dynamic> data,
       Map<String,Uint8List> images, Map<String,Uint8List> backgrounds})?>
-      nativePersonCard(String kind, Map<String,dynamic> data) async {
+      nativePersonCard(String kind, Map<String,dynamic> data, {String? selection}) async {
     if (!{'studentId','teacherId','otherStaffId'}.contains(kind)) {
       throw ArgumentError('Person card kind required.');
     }
@@ -108,9 +108,9 @@ class WindowsDocumentTemplates {
     }
     checkSchool();
     final settings = await selections();
-    final v = kind == 'studentId'
+    final v = selection ?? (kind == 'studentId'
         ? studentCardSelection(settings[kind])
-        : settings[kind] ?? 0;
+        : settings[kind] ?? 0);
     if (!(v is String && (v.startsWith('manifest:') || v.startsWith('reviewed:'))) &&
         kind != 'otherStaffId') return null;
     final profile = (await db.collection('school_config').doc('school_profile_cache').get()).data() ?? {};
@@ -174,26 +174,28 @@ class WindowsDocumentTemplates {
     final card=await nativePersonCard(kind,data);
     checkSchool();
     if (card == null) return false;
-    // Preserve the existing missing-photo admission rule. Show no interactive
-    // card rather than printing an incomplete or different person's portrait.
-    if (!context.mounted || card.images['photo']?.isNotEmpty != true) return true;
+    if (!context.mounted) return true;
+    final hasPhoto = card.images['photo']?.isNotEmpty == true;
     final compact=IdCardEngine.compactQr(qr);
     await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
       NativeIdCardPreview(template:card.template,data:card.data,images:card.images,
         backgrounds:card.backgrounds,qr:compact,
-        onPrint:(pages) async {
+        onPrint:hasPhoto ? (pages) async {
           checkSchool();
           await WindowsBrowserPrint.openImages(pages);
-        },
-        onDownload:() async {
+        } : null,
+        onDownload:hasPhoto ? () async {
           checkSchool();
-          final bytes=await IdCardEngine.render(card.template,card.data,
-            images:card.images,backgrounds:card.backgrounds,qr:compact);
+          final bytes = SchoolMediaBudgets.verifyGeneratedPdf(
+            kind,
+            await IdCardEngine.render(card.template, card.data,
+              images: card.images, backgrounds: card.backgrounds, qr: compact),
+          );
           checkSchool();
           if (compact.isNotEmpty) await IdCardEngine.verifyExport(bytes,compact);
           checkSchool();
           await WindowsSavePdf.save(bytes,filename);
-        })));
+        } : null)));
     return true;
   }
 
@@ -1315,6 +1317,24 @@ class _SchoolDocumentTemplatesScreenState
   Future<void> _preview(int index) async {
     final kind=_kind;
     final title=index<0?'Default preview':_names[kind]![index];
+    final entry = _manifestEntry(kind, index);
+    if (entry != null) {
+      try {
+        final db = FirebaseFirestore.instance;
+        final profile = db.activeProfileId;
+        final card = await WindowsDocumentTemplates.nativePersonCard(
+          kind, _sample, selection: 'manifest:${entry.id}',
+        );
+        if (!mounted || db.activeProfileId != profile || card == null) return;
+        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) =>
+          NativeIdCardPreview(template: card.template, data: card.data,
+            images: card.images, backgrounds: card.backgrounds)));
+      } catch (error) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Template preview unavailable: $error')));
+      }
+      return;
+    }
     final paper=_uploadedPaperLabel(index);
     final bytes = await WindowsDocumentTemplates.renderTemplate(
       kind,
@@ -1330,14 +1350,21 @@ class _SchoolDocumentTemplatesScreenState
       );
   }
 
+  IdCardCatalogEntry? _manifestEntry(String kind, int index) {
+    final position = index - _legacyCount(kind);
+    final choices = _choices(kind);
+    return position >= 0 && position < choices.length ? choices[position] : null;
+  }
+
   Future<void> _select(int index) async {
     final kind = _kind, count = _legacyCount(_kind);
     final db=FirebaseFirestore.instance;
     final origin=db.activeProfileId;
-    final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
+    final boundSchool=db.activeProfileIdentity['schoolSyncId'];
+    final school=boundSchool?.toString()??'';
     final settings=await WindowsDocumentTemplates.selections();
     if(db.activeProfileId!=origin ||
-      db.activeProfileIdentity['schoolSyncId']!=school){
+      db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection.');
     }
     final templates=WindowsDocumentTemplates.availableImportedTemplates(
@@ -1355,7 +1382,7 @@ class _SchoolDocumentTemplatesScreenState
           ? 'manifest:${_choices(kind)[index - count].id}'
           : index;
     if(db.activeProfileId!=origin ||
-      db.activeProfileIdentity['schoolSyncId']!=school){
+      db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed before template selection was saved.');
     }
     await db.collection('school_settings')
@@ -1365,7 +1392,7 @@ class _SchoolDocumentTemplatesScreenState
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
     if(db.activeProfileId!=origin ||
-      db.activeProfileIdentity['schoolSyncId']!=school){
+      db.activeProfileIdentity['schoolSyncId']!=boundSchool){
       throw StateError('School changed while template selection was saving.');
     }
     if (mounted) setState(() => _selected[kind] = value);
@@ -1463,8 +1490,10 @@ class _SchoolDocumentTemplatesScreenState
                 final i = n;
                 final chosen = _chosen();
                 final active = i == chosen;
+                final entry = _manifestEntry(_kind, i);
                 final portrait =
                     (_kind == 'studentId' || _kind == 'teacherId') &&
+                    entry == null &&
                     (_kind == 'studentId' ? i < 2 : i != 2);
                 return Card(
                   shape: RoundedRectangleBorder(
@@ -1506,7 +1535,11 @@ class _SchoolDocumentTemplatesScreenState
                         ...[
                           Expanded(
                             child: Center(
-                              child: FutureBuilder<Uint8List>(
+                              child: entry?.frontAsset != null
+                                  ? Image.asset(entry!.frontAsset!, fit: BoxFit.contain)
+                                  : entry != null
+                                  ? const Icon(Icons.badge_outlined, size: 54)
+                                  : FutureBuilder<Uint8List>(
                                 future: _thumbnail(i),
                                 builder: (context, snapshot) { WindowsAppearance.watch(context); return  snapshot.hasData
                                     ? Image.memory(

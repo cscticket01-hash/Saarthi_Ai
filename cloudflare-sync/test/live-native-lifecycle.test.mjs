@@ -221,6 +221,28 @@ test('isolated UID authority binds reservations to the current person and queues
  assert.equal(counts.assignments,2);
 });
 
+test('office and other staff share the permanent UID sequence while keeping distinct owners',async t=>{
+ const f=await setup(t,'staff-uid-reservation',['school_config','students_directory','teachers_directory']);
+ const profile=accepted(await f.commit('school_config','school_profile_cache','staff-uid-profile-operation',
+  {schoolId:school,schoolName:'Sunshine Public School',syntheticTest:true}));
+ assert.equal((await f.rpc({command:'uidSeedTest',profileRecord:profile.record})).status,200);
+ const office={id:'office-staff',mobileStableId:generation('c'),name:'Neha Kumari',role:'Office staff'};
+ const other={id:'other-staff',mobileStableId:generation('d'),name:'Ravi Das',role:'Other staff'};
+ const reserve=(record)=>f.rpc({command:'uidReservePerson',collection:'staff_payroll_directory',
+  id:record.id,generation:record.mobileStableId,record});
+ const first=await reserve(office);
+ assert.equal(first.status,200,JSON.stringify(first));
+ assert.equal(first.value.universalUid,'STF-SUNS-NEHA-000001');
+ const second=await reserve(other);
+ assert.equal(second.status,200,JSON.stringify(second));
+ assert.equal(second.value.universalUid,'STF-SUNS-RAVI-000002');
+ const replay=await reserve({...office,name:'Renamed Staff',role:'Other staff'});
+ assert.equal(replay.value.universalUid,first.value.universalUid);
+ assert.equal(replay.value.created,false);
+ assert.equal((await reserve({...office,id:'different-staff'})).status,409);
+ assert.equal((await reserve({...other,active:false})).status,412);
+});
+
 test('concurrent teacher mobile claims conflict and edits preserve identity',async t=>{
  const f=await setup(t,'teacher-phone',['teachers_directory']);
  const collection='teachers_directory';

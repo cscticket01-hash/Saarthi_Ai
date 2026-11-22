@@ -995,19 +995,31 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(operation==='uid-reserve'){
    // The school administrator's session and licence are verified above.
    // A client supplies an immutable owner binding, never a UID/name/serial.
-   if(!['students_directory','teachers_directory'].includes(b.collection)||
+   if(!['students_directory','teachers_directory','staff_payroll_directory'].includes(b.collection)||
       typeof b.id!=='string'||!/^[^/]{1,200}$/.test(b.id)||
       ['.','..','__proto__','constructor','prototype'].includes(b.id)||
       !/^p-[a-f0-9]{32,64}$/.test(b.generation||''))
     fail(400,'Verified person identity required','UID_OWNER_INVALID');
-   await liveMigration.assertCohortAdmission(m.schoolId,b.collection);
    await liveMigration.assertCohortAdmission(m.schoolId,'school_config');
-   const current=await liveSync.read(m.schoolId,b.collection,b.id,record=>signedRequest(m,record));
-   const record=current?.record;
-   if(current?.schoolId!==m.schoolId||current.liveProtocol!==1||
-      !record||record.schoolId!==m.schoolId||
-      record._syncRevision!==current.recordRevision||record.mobileStableId!==b.generation||
-      record._syncDeleted===true||record.active===false)
+   let record;
+   if(b.collection==='staff_payroll_directory'){
+    const directory=await personLifecycle.read(m.schoolId,'school_settings','staff_payroll_directory');
+    const matches=Array.isArray(directory?.staff)
+     ?directory.staff.filter(row=>row?.id===b.id||row?.mobileStableId===b.generation):[];
+    if(directory?._syncDeleted!==true&&matches.length===1&&matches[0].id===b.id){
+     const staff=matches[0];
+     record={id:staff.id,mobileStableId:staff.mobileStableId,name:staff.name,
+      role:staff.role,active:staff.active,_syncDeleted:staff._syncDeleted,deleted:staff.deleted};
+    }
+   }else{
+    await liveMigration.assertCohortAdmission(m.schoolId,b.collection);
+    const current=await liveSync.read(m.schoolId,b.collection,b.id,record=>signedRequest(m,record));
+    if(current?.schoolId===m.schoolId&&current.liveProtocol===1&&
+       current.record?.schoolId===m.schoolId&&current.record._syncRevision===current.recordRevision)
+     record=current.record;
+   }
+   if(!record||record.mobileStableId!==b.generation||
+      record._syncDeleted===true||record.deleted===true||record.active===false)
     fail(409,'Person changed or pending cloud save','UID_OWNER_CHANGED');
    const result=await liveSync.command(m.schoolId,{command:'uidReservePerson',
      collection:b.collection,id:b.id,generation:b.generation,record});
