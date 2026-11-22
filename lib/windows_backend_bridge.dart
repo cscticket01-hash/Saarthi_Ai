@@ -1,4 +1,6 @@
 import 'windows_sync_comparison.dart';
+import 'cloudflare_record_handoff.dart';
+import 'windows_drive_delivery_queue.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'document_processing_engine.dart';
@@ -972,6 +974,12 @@ class WindowsBackendBridge {
       final queue = await FirebaseFirestore.instance
           .collection('_windows_document_outbox')
           .get();
+      final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+      final stagedJournals=school is String
+        ? (await FirebaseFirestore.instance.collection(WindowsDriveDeliveryQueue.collection).get()).docs
+          .map((row)=>row.data()).where((row)=>row['schoolId']==school &&
+            row['handoffAuthorized']==true && row['state']=='pending').toList()
+        : <Map<String,dynamic>>[];
       for (final queued in queue.docs) {
         if (canAdmit?.call() == false) break;
         if (FirebaseFirestore.instance.activeProfileId != origin)
@@ -1011,6 +1019,19 @@ class WindowsBackendBridge {
         // A signed, immutable Cloudflare file+metadata ticket already owns
         // this original. Local proof remains until server-side Drive readback.
         if (record['syncState'] == 'cloudAccepted') continue;
+        if(school is String) {
+          final bound=stagedJournals.where((journal)=>
+              recoverableStagedDocumentJournal(record,journal,school,queued.id)).toList();
+          if(bound.isNotEmpty) {
+            if(bound.map((j)=>j['ticketId']).toSet().length!=1)
+              throw StateError('Multiple document stage identities retained for review.');
+            final restored=await WindowsDriveDeliveryQueue.recoverDocumentHandoff(
+              queued.reference,record,bound.first,school);
+            if(restored)report('cloudAccepted');
+            // Even when a newer CAS won, never resend this stale snapshot.
+            continue;
+          }
+        }
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
           continue;
