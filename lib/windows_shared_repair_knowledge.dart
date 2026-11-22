@@ -16,6 +16,7 @@ class WindowsSharedRepairKnowledge {
   static String? _hash;
   static bool _busy=false,_loaded=false;
   static int _nextRead=0;
+  static const _failureDelayMillis=300000, _normalDelayMillis=3600000;
   static int? value(String action,String school,{String module='all',String category='unknown'}) {
     final db=FirebaseFirestore.instance;
     if(_profile!=db.activeProfileId || _school!=school ||
@@ -32,7 +33,8 @@ class WindowsSharedRepairKnowledge {
     }
     final at=DateTime.now().millisecondsSinceEpoch;
     if(at<_nextRead) return;
-    _nextRead=at+3600000;_busy=true;
+    _nextRead=at+_normalDelayMillis;_busy=true;
+    var verifiedResponse=false;
     bool own()=>db.activeProfileId==origin && db.activeProfileIdentity['schoolSyncId']==school;
     final keys={_keyId:_publicKey};
     try {
@@ -57,18 +59,32 @@ class WindowsSharedRepairKnowledge {
       final reply=await ManagedSchoolSession.callForSchool(school,'managed/repair-knowledge/pull',
         {'observation':body}).timeout(const Duration(seconds:8));
       if(!own() || reply['success']!=true || reply['schoolId']!=school || reply['repairKnowledgeProtocol']!=1) return;
+      // A successful empty response is a valid availability observation, not
+      // a new policy and not permission to clear the anti-rollback watermark.
+      if(reply['envelope']==null){verifiedResponse=true;return;}
       if(reply['envelope'] is! Map) return;
       final envelope=Map<String,dynamic>.from(reply['envelope']);
       final next=await SharedRepairPolicy.verify(envelope,trustedKeys:keys,
         now:DateTime.now().millisecondsSinceEpoch,previousSequence:_sequence,previousHash:_hash);
       if(!own())return;
-      if(next.sequence==_sequence && next.hash==_hash) {_policy=next;return;}
+      if(next.sequence==_sequence && next.hash==_hash) {_policy=next;verifiedResponse=true;return;}
       await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>ref.set({
         'schoolId':school,'sequence':next.sequence,'hash':next.hash,'envelope':envelope,
       }));
       if(!own())return;
-      _policy=next;_sequence=next.sequence;_hash=next.hash;
+      _policy=next;_sequence=next.sequence;_hash=next.hash;verifiedResponse=true;
     } catch (_) {/* Retain only previously verified, unexpired rules; defaults otherwise. */}
-    finally {_busy=false;}
+    finally {
+      if(own()) {
+        final finished=DateTime.now().millisecondsSinceEpoch;
+        // Failures retry on a bounded later sync; policy expiry cannot cause
+        // a long gap simply because the previous hour's read already ran.
+        final regular=finished+(verifiedResponse?_normalDelayMillis:_failureDelayMillis);
+        final expiry=_policy?.expiresAt;
+        _nextRead=expiry!=null&&expiry>finished&&expiry<regular
+            ? expiry:regular;
+      }
+      _busy=false;
+    }
   }
 }
