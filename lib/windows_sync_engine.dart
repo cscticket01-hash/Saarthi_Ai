@@ -3325,6 +3325,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         (canAdmit?.call() ?? true);
     bool independent(Map<String, dynamic> item) =>
         onlyOperationId == null && onlyQueueId == null &&
+        (!independentExistingPersonPatch(item) || WindowsFirebaseRemote.recordFieldPatchSupported) &&
         canParallelStageRecord(item, school,
           edgeDeliverySupported: WindowsFirebaseRemote.edgeDeliverySupported);
     if (!admit()) return;
