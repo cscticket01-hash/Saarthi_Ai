@@ -95,3 +95,15 @@ A person-photo write can be replaced by a newer local edit after its first Cloud
 Added source-only regression cases for immediately verified record journal recovery, concurrent status/review race, rotating orphan fairness, nested photo predecessor settlement and missing photo journal recreation. These cases were authored but **not executed**. No CI/build, manual GS deployment, production activation or proof of real-device latency/offline Drive delivery was performed in this stage.
 
 Remaining modules/acceptance: direct credential-safe PC-to-Worker path, generalized person/fee/document parallel work while preserving lifecycle/ledger dependencies, all-collection canonical delete and provider GC proofs, signed shared self-repair rollout, original pending historical review, real cross-device closure/backup and end-to-end CI/release gating.
+
+## Stage 17: scan hash repair, independent staging and attendance Fast Delete
+
+Original school document saves now persist the SHA-256 of the exact bytes selected for upload; older queued scans without this field rebind it through an exact school/document-generation dual local CAS before any upload. A mixed-school document queue, changed immutable file hash, or replaced generation prevents staging. No inferred Drive ACK is granted.
+
+At most two different student owners' new scan files can stage concurrently when the original broker negotiates the document-stage capability. Existing provider order, original document CAS and verified Drive delivery remain authoritative. Fee receipts, marksheets, ID cards, replacements, deletes, atomic bundles, unbound records, and old scans without a hash stay on the serial path.
+
+At most two independently prepared new student or teacher metadata-only creates can also stage together. Original school, stable person identity, first-create revision, absence of inline or pre-uploaded media, and no unrelated delete/atomic/foreign reservation are required. A child/person lifecycle is never inferred complete from the Cloudflare ACK.
+
+Previously safe calendar and school-expense Fast Delete staging now includes standalone attendance_records, attendance_logs and teacher_attendance. Exact original tombstone, completed Google erase plan, Drive delete and Firebase readback remain final ACK requirements. Staged record WRITE proof now requires exact canonical operation ID and record revision, not optional fields. Source regression tests were authored for these cases.
+
+Outstanding: no tests/CI/builds/deployment in this stage; direct credential-safe PC-to-Worker transport, complete fee/ledger/receipt parallelism, broader person/document cascade final proof, production shared repair rollout, historical recovery, actual closed-client backup proof, 24h R2 capacity/retention and verified physical 2-5 second timing remain incomplete.
