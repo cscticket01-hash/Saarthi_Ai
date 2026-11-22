@@ -45,6 +45,27 @@ bool eligibleForRecordHandoff(
 }
 
 
+/// Calendar deletions have no person, document or financial cascade owner.
+/// Require an already verified base and a first-class outbox operation.
+/// A recreate's nested deletion must wait for canonical proof before its write.
+bool eligibleForStagedDelete(Map item, String school, {
+  required bool edgeDeliverySupported,
+}) =>
+    edgeDeliverySupported &&
+    RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) &&
+    item['schoolId'] == school &&
+    item['collection'] == 'school_calendar' &&
+    item['operation'] == 'delete' &&
+    item['documentId'] is String &&
+    (item['documentId'] as String).isNotEmpty &&
+    item['operationId'] is String &&
+    RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(item['operationId']) &&
+    item['baseCloudRevision'] is String &&
+    (item['baseCloudRevision'] as String).isNotEmpty &&
+    item['atomicBundleId'] == null &&
+    item['priorDeletion'] == null &&
+    item['requireCanonicalDeleteReceipt'] != true;
+
 /// A staged ticket is not a final result. It may retire the original
 /// locally retained operation only after the authenticated owner separately
 /// proves a canonical revision for that exact same-school ticket.
@@ -60,11 +81,12 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       original['cloudTicketId']!=ticket||
       original['cloudTicketLane']!='records'||
       original['syncState']!='cloudAccepted'||
-      !{'set','update'}.contains(original['operation'])||
+      (!{'set','update'}.contains(original['operation']) &&
+       !eligibleForStagedDelete(original,school,edgeDeliverySupported:true))||
       original['collection']=='documents'||
       original['atomicBundleId']!=null||
       original['priorDeletion']!=null||
-      original['data'] is! Map||
+      (original['operation']!='delete' && original['data'] is! Map)||
       proof['success']!=true||proof['schoolId']!=school||
       proof['cloudflareAccepted']!=true||
       proof['driveState']!='verified'||
@@ -73,6 +95,23 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       (proof['recordRevision'] as String).isEmpty)
     return false;
   final record=proof['record'];
+  if (original['operation'] == 'delete') {
+    // Staging alone is never a deletion ACK. Both providers and the exact
+    // completed erase-plan tombstone must agree before local settlement.
+    return journal['operation'] == 'delete' &&
+        proof['deleteEverywhereVersion'] == 1 &&
+        proof['driveDeletionComplete'] == true &&
+        proof['firebaseDeletionComplete'] == true &&
+        !RegExp(r'^(live-|cf-)').hasMatch(proof['recordRevision'] as String) &&
+        record is Map &&
+        record['schoolId'] == school &&
+        record['_syncDeleted'] == true &&
+        record['_syncRevision'] == proof['recordRevision'] &&
+        record['_syncOperationId'] == original['operationId'] &&
+        (record['id'] == null || record['id'] == original['documentId']) &&
+        record['_syncErasePlan'] is Map &&
+        record['_syncErasePlan']['complete'] == true;
+  }
   if(record is Map) {
     // A verified Script projection sometimes omits wrapper metadata. Its
     // signed broker owner still binds the immutable original operation ID
