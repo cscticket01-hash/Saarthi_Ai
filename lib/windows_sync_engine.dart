@@ -872,8 +872,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         )
         .toList();
     if (db.activeProfileId != origin ||
-        db.activeProfileIdentity['schoolSyncId'] != school ||
-        _activeSchoolSyncId != school) return;
+        db.activeProfileIdentity['schoolSyncId'] != school) return;
     // A stage-owned operation remains physically in its exact local outbox
     // until the broker returns a canonical Drive revision. It is no longer
     // an outgoing device upload; show it in the separate Drive delivery
@@ -975,6 +974,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastRecordAckMillis': receipts.docs
           .where(
             (d) =>
+                school is String && validSchoolId(school) && d.data()['schoolId'] == school &&
                 d.data()['collection'] is String &&
                 d.data()['collection'] != 'documents',
           )
@@ -983,7 +983,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             return at is num && at > latest ? at.toInt() : latest;
           }),
       'lastDocumentAckMillis': receipts.docs
-          .where((d) => d.data()['collection'] == 'documents')
+          .where((d) => school is String && validSchoolId(school) &&
+              d.data()['schoolId'] == school && d.data()['collection'] == 'documents')
           .fold<int>(0, (latest, d) {
             final at = d.data()['acknowledgedAt'];
             return at is num && at > latest ? at.toInt() : latest;
@@ -1050,11 +1051,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ? backup.data()!['createdAt']
           : 0,
       'verifiedReceiptCount': receipts.docs.where((row) =>
-          row.data()['schoolId'] == school).length,
+          school is String && validSchoolId(school) && row.data()['schoolId'] == school).length,
       // Device ACK time includes the exact durable staged receipt even before
       // Drive completes. Never mix it with another school's retained history.
       'lastCloudAckMillis': [
-        ...receipts.docs.where((row) => row.data()['schoolId'] == school)
+        ...receipts.docs.where((row) => school is String && validSchoolId(school) && row.data()['schoolId'] == school)
             .map((row) => row.data()['acknowledgedAt']),
         ...cloudOwned.map((row) => row.data()['cloudAcceptedAt']),
         ...cloudOwnedDocuments.map((row) => row.data()['cloudAcceptedAt']),
