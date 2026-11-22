@@ -38,6 +38,21 @@ import 'school_backend_transport.dart';
 import 'windows_sync_recovery.dart';
 import 'sync_recovery_policy.dart';
 
+/// A document upload is admitted only for the same still-durable local
+/// generation. A later save or delete owns its own operation and file bytes.
+bool samePendingDocumentGeneration(
+    Map original, Map current, String school) =>
+  original['schoolId']==school && current['schoolId']==school &&
+  original['documentRevision'] is String &&
+  original['documentRevision']==current['documentRevision'] &&
+  original['localPath']==current['localPath'] &&
+  original['contentHash']==current['contentHash'] &&
+  original['deleted']==current['deleted'] &&
+  original['parentDeletionOperationId']==current['parentDeletionOperationId'] &&
+  current['syncState']!='cloudAccepted' &&
+  current['syncState']!='conflict' &&
+  current['syncState']!='needsAttention';
+
 class WindowsBackendBridge {
   /// The exam editor is available even before a school connects its backend.
   /// Uses durable school-scoped storage and never labels a local save as cloud ACK.
@@ -970,21 +985,31 @@ class WindowsBackendBridge {
     Object? firstDocumentFailure;
     StackTrace? documentFailureStack;
     try {
-      await FirebaseFirestore.instance.reconcileDeletedOwnerDocuments();
-      final queue = await FirebaseFirestore.instance
-          .collection('_windows_document_outbox')
-          .get();
-      final school=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'];
+      final db=FirebaseFirestore.instance;
+      final school=db.activeProfileIdentity['schoolSyncId'];
+      if(school is! String || !RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school))
+        throw StateError('A verified school is required for document upload.');
+      void requireDocumentScope() {
+        if(db.activeProfileId!=origin || db.activeProfileIdentity['schoolSyncId']!=school)
+          throw StateError('School changed during document sync.');
+      }
+      requireDocumentScope();
+      await db.reconcileDeletedOwnerDocuments();
+      requireDocumentScope();
+      final queue=await db.collection('_windows_document_outbox').get();
+      requireDocumentScope();
       final stagedJournals=school is String
         ? (await FirebaseFirestore.instance.collection(WindowsDriveDeliveryQueue.collection).get()).docs
           .map((row)=>row.data()).where((row)=>row['schoolId']==school &&
             row['handoffAuthorized']==true && row['state']=='pending').toList()
         : <Map<String,dynamic>>[];
+      requireDocumentScope();
       for (final queued in queue.docs) {
         if (canAdmit?.call() == false) break;
-        if (FirebaseFirestore.instance.activeProfileId != origin)
-          throw StateError('School changed during document sync.');
+        requireDocumentScope();
         final record = queued.data();
+        if(record['schoolId']!=school)
+          throw StateError('Pending document belongs to another school.');
         // Stage, publish and Drive readback are handled by the SAME original
         // atomic queue owner. Uploading here would duplicate the ID PDF.
         if(record['atomicBundleId']!=null){
@@ -1105,6 +1130,14 @@ class WindowsBackendBridge {
           // upload and its ACK atomically, but do not start another request.
           if (canAdmit?.call() == false) break;
           if (admitRow?.call(queued.id, record) == false) continue;
+          // Local bytes may take time to read/optimize. Do not upload an old
+          // generation if a newer save or owner deletion replaced it meanwhile.
+          requireDocumentScope();
+          final currentBeforeSend=(await queued.reference.get()).data();
+          requireDocumentScope();
+          if(currentBeforeSend==null ||
+              !samePendingDocumentGeneration(record,currentBeforeSend,school))
+            continue;
           report('cloudRequest');
           failureStage = 'requestAndReadback';
           final response = (send ?? _handleCentral)(payload);
