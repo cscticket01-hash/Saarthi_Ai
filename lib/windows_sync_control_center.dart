@@ -986,9 +986,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final transfers = details['lastVerifiedTransferMicros'];
     final lastSync = details['lastVerifiedTransferAt'];
     final today = details['todayVerifiedReceipts'];
+    final activeSchool = db.activeProfileIdentity['schoolSyncId'];
     final activityEvents = (details['activity'] as List? ?? const [])
-        .whereType<Map>()
-        .where((row) => row['stage'] == 'verified')
+        .whereType<Map>().toList().reversed
+        .where((row) => activeSchool is String &&
+            activeSchool.isNotEmpty && row['schoolId'] == activeSchool &&
+            row['stage'] == 'verified')
         .take(3);
     final retryCount = rows.where((row) => row['syncState'] == 'retry' ||
         row['state'] == 'retry' || row['retryAtMillis'] is int &&

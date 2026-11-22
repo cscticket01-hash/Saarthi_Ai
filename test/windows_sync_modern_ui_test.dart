@@ -48,6 +48,11 @@ void main() {
       ],
       'activity': [
         {
+          'schoolId': 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          'stage': 'verified',
+          'at': DateTime.now().millisecondsSinceEpoch,
+        },
+        {
           'schoolId': 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           'stage': 'verified',
           'at': DateTime.now().millisecondsSinceEpoch,
@@ -87,7 +92,8 @@ void main() {
       expect(find.descendant(of: find.byType(WindowsSyncFlow),
         matching: find.text('Needs Attention')), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
-      expect(find.text('Verified sync'), findsNothing);
+      expect(find.text('Live Queue Activity'), findsOneWidget);
+      expect(find.text('Verified sync'), findsOneWidget);
       expect(find.text('School records'),findsNothing);
       expect(find.text('Documents & ID cards'),findsNothing);
       expect(find.text('Photos & file downloads'),findsNothing);
