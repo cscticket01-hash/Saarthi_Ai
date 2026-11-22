@@ -1046,6 +1046,10 @@ class WindowsBackendBridge {
       requireDocumentScope();
       final queue=await db.collection('_windows_document_outbox').get();
       requireDocumentScope();
+      // A foreign/unbound queued document means the local school scope needs
+      // repair. Never concurrently stage any school bytes past that boundary.
+      if(queue.docs.any((row)=>row.data()['schoolId']!=school))
+        throw StateError('Document outbox contains a foreign or unbound school owner.');
       final stagedJournals=school is String
         ? (await FirebaseFirestore.instance.collection(WindowsDriveDeliveryQueue.collection).get()).docs
           .map((row)=>row.data()).where((row)=>row['schoolId']==school &&
