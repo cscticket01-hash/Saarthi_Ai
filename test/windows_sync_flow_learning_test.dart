@@ -226,6 +226,39 @@ void main(){
       {...expense,'schoolId':'foreign'},rows,school),false);
   });
 
+  test('attendance admission keeps school policy and person dependencies ordered', () {
+    final attendance={'schoolId':school,'collection':'attendance_records',
+      'documentId':'attendance-a','operationId':'attendance-operation-001',
+      'operation':'set','baseCloudRevision':'','syncState':'pending',
+      'data':{'personId':'synthetic-person','present':true}};
+    final safe=<Map<String,dynamic>>[
+      attendance,
+      {'schoolId':school,'collection':'fee_payments','documentId':'fee-a',
+       'operationId':'fee-op-000000001','operation':'set','syncState':'pending'},
+      {'schoolId':school,'collection':'documents','documentId':'document-a',
+       'operationId':'file-op-000000001','operation':'set','syncState':'pending'},
+    ];
+    expect(canStageAttendancePastUnrelatedOwners(attendance,safe,school),true);
+    for(final parent in ['students_directory','teachers_directory','school_config','school_settings']) {
+      expect(canStageAttendancePastUnrelatedOwners(attendance,[
+        ...safe,{'schoolId':school,'collection':parent,'operation':'set',
+          'syncState':'cloudAccepted'},
+      ],school),false);
+    }
+    expect(canStageAttendancePastUnrelatedOwners(attendance,[
+      ...safe,{'schoolId':school,'collection':'attendance_records',
+      'documentId':'attendance-a','operationId':'different-op','operation':'set'},
+    ],school),false);
+    expect(canStageAttendancePastUnrelatedOwners(attendance,[
+      ...safe,{'schoolId':school,'collection':'school_calendar',
+      'operation':'delete','syncState':'pending'},
+    ],school),false);
+    expect(canStageAttendancePastUnrelatedOwners(attendance,[
+      ...safe,{'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'collection':'school_notices','operation':'set'},
+    ],school),false);
+  });
+
   test('bounded admission drains in-flight records before admitting another window',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
