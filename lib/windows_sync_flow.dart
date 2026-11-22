@@ -41,7 +41,7 @@ class WindowsSyncFlow extends StatelessWidget {
     Widget stage({
       required String title, required String detail, required IconData icon,
       required Color accent, bool first = false, bool last = false,
-      bool highlighted = false, Widget? progress,
+      bool highlighted = false, Key? boxKey, Widget? extra,
     }) {
       return IntrinsicHeight(child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -65,6 +65,7 @@ class WindowsSyncFlow extends StatelessWidget {
           Expanded(child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: DecoratedBox(
+              key: boxKey,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: accent.withValues(alpha: highlighted ? .9 : .32)),
@@ -82,7 +83,7 @@ class WindowsSyncFlow extends StatelessWidget {
                       Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
                       Text(detail, maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12)),
-                      if (progress != null) progress,
+                      if (extra != null) extra,
                     ],
                   )),
                 ]),
@@ -135,16 +136,32 @@ class WindowsSyncFlow extends StatelessWidget {
           accent: Colors.lightBlueAccent, first: true),
         stage(title: 'School Server', detail: cloud, icon: Icons.dns_outlined,
           accent: theme.colorScheme.primary, highlighted: running && active.contains('cloud'),
-          progress: running && bytes != null ? Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              LinearProgressIndicator(value: fraction),
-              Text('$percent% · ${bytes.offset} / ${bytes.total} bytes',
-                style: const TextStyle(fontSize: 11)),
-            ]),
-          ) : null),
-        stage(title: 'Server ACK', detail: serverAck, icon: Icons.verified_outlined,
-          accent: verifiedAck ? Colors.greenAccent : theme.colorScheme.outline),
+          boxKey: const ValueKey('school-server-stage'),
+          extra: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (running && bytes != null) ...[
+                const SizedBox(height: 4),
+                LinearProgressIndicator(value: fraction),
+                Text('$percent% · ${bytes.offset} / ${bytes.total} bytes',
+                  style: const TextStyle(fontSize: 11)),
+              ],
+              const SizedBox(height: 4),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.verified_outlined, size: 15,
+                  color: verifiedAck ? Colors.greenAccent : theme.colorScheme.outline),
+                const SizedBox(width: 6),
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Server ACK', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    Text(serverAck, maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12)),
+                  ],
+                )),
+              ]),
+            ],
+          )),
         stage(title: 'Google Drive', detail: drive, icon: Icons.backup_outlined,
           accent: driveQueued ? Colors.cyanAccent : theme.colorScheme.outline, last: true),
       ]);
