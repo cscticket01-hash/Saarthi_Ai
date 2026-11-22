@@ -1164,7 +1164,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ),
         const SizedBox(height: 12),
         _syncSummaryStrip([
-          _syncSummary('Upload Queue', '$uploadCount pending',
+          _syncSummary('Upload Queue', '$uploadCount uploads waiting',
             Icons.cloud_upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Successful Today', today is int ? '$today' : 'Unknown',
             Icons.check_circle_outline, Colors.greenAccent),
