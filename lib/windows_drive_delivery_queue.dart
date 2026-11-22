@@ -265,6 +265,7 @@ class WindowsDriveDeliveryQueue {
     required LiveSyncCall call,
     bool Function()? canAdmit,
     DateTime Function()? clock,
+    VoidCallback? onLocalSettlement,
   }) async {
     if (_busy || canAdmit?.call() == false) return;
     final now = clock ?? DateTime.now;
@@ -392,7 +393,7 @@ class WindowsDriveDeliveryQueue {
               lane is! String ||
               !(lane == 'records' || lane == 'file-$id')) continue;
           Map<String,dynamic> values;
-          var quota = false;
+          var quota = false, settledLocal = false;
           try {
             final proof = await call('managed/cloudflare/operation', {
               'lane': lane, 'id': id,
@@ -471,6 +472,7 @@ class WindowsDriveDeliveryQueue {
                   await db.acknowledgeOutbox(originals.single.reference,original,
                       revision:proof['recordRevision']);
                   _scope(school, profile);
+                  settledLocal = true;
                 }
               }
               if (lane == 'file-$id' &&
@@ -526,6 +528,7 @@ class WindowsDriveDeliveryQueue {
                   await db.acknowledgeOutbox(matches.single.reference,original,
                     revision:media['recordRevision'] as String);
                   _scope(school, profile);
+                  settledLocal = true;
                 }
               }
               if (lane == 'file-$id' &&
@@ -595,6 +598,7 @@ class WindowsDriveDeliveryQueue {
                     },
                   );
                   _scope(school, profile);
+                  settledLocal = true;
                 }
               }
               values = {
@@ -636,6 +640,11 @@ class WindowsDriveDeliveryQueue {
             () => row.reference.set(values, const SetOptions(merge:true)),
           );
           _scope(school, profile);
+          // Notify the original scheduler only after durable local settlement.
+          // An old receipt or status-only poll never wakes a mutation pass.
+          if (settledLocal) {
+            try { onLocalSettlement?.call(); } catch (_) {}
+          }
           if (quota) break;
         }
       }
