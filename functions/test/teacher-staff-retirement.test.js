@@ -115,14 +115,34 @@ test('unverified missing active records and over-deep reference scans retain byt
 test('legacy teacher lookup prefers permanent ID over an earlier row matching the phone', () => {
  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
  const script = fs.readFileSync(path.join(__dirname, '../../school-backend/SaarthiSchool.gs'), 'utf8');
- const context = vm.createContext({});
+ const trace = [];
+ const context = vm.createContext({
+  LockService: {getScriptLock: () => ({
+   tryLock: () => {trace.push('acquire'); return true;},
+   releaseLock: () => trace.push('release'),
+  })},
+  SpreadsheetApp: {flush: () => trace.push('flush')},
+ });
  vm.runInContext(script, context);
  const rows = [
   ['TCH-FIRST', '', '', '', '', '9876543210'],
   ['TCH-SECOND', '', '', '', '', '8765432109'],
  ];
- const sheet = {getLastRow: () => 3, getRange: () => ({getValues: () => rows})};
+ const sheet = {
+  getLastRow: () => 3,
+  getRange: (row, column) => ({
+   getValues: () => rows,
+   getValue: () => rows[row - 2][column - 1],
+  }),
+ };
+ context.getOrCreateDatabaseSheet = () => sheet;
  assert.equal(context.findTeacherRow(sheet, 'TCH-SECOND', '+91 98765 43210'), 3);
  assert.equal(context.findTeacherRow(sheet, '', '+91 98765 43210'), 2);
  assert.equal(context.findTeacherRow(sheet, 'TCH-NOT-FOUND', ''), -1);
+ assert.throws(() => context.withLegacyTeacherWriteLock_(() => context.editTeacher({
+  teacherId: 'TCH-SECOND', phone: '+91 98765 43210',
+ })), /already registered/);
+ assert.deepEqual(trace, ['acquire', 'release']);
+ assert.equal(context.withLegacyTeacherWriteLock_(() => true), true);
+ assert.deepEqual(trace.slice(2), ['acquire', 'flush', 'release']);
 });

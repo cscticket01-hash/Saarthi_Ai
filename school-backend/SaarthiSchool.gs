@@ -633,24 +633,22 @@ function doPost(e) {
     // ========================================================
 
     if (action === "add_teacher") {
-      return addTeacher(data);
+      return withLegacyTeacherWriteLock_(() => addTeacher(data));
     }
 
     if (action === "edit_teacher") {
-      return editTeacher(data);
+      return withLegacyTeacherWriteLock_(() => editTeacher(data));
     }
 
     if (action === "delete_teacher") {
-      return deleteTeacher(data);
+      return withLegacyTeacherWriteLock_(() => deleteTeacher(data));
     }
 
     if (
       action ===
       "update_teacher_schedule"
     ) {
-      return updateTeacherSchedule(
-        data
-      );
+      return withLegacyTeacherWriteLock_(() => updateTeacherSchedule(data));
     }
 
 
@@ -2223,6 +2221,18 @@ function generateTeacherId() {
 // ADD TEACHER
 // ============================================================
 
+function withLegacyTeacherWriteLock_(write) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Teacher directory is busy. Retry the saved details.");
+  try {
+    const response = write();
+    SpreadsheetApp.flush();
+    return response;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function addTeacher(data) {
 
   const name =
@@ -2468,9 +2478,18 @@ function editTeacher(data) {
     ).trim();
 
 
-  const finalTeacherId =
-    teacherId ||
-    existingId;
+  // Match by legacy phone if needed, but retain the recorded identity.
+  const finalTeacherId = existingId || teacherId;
+  const savedPhone = sheet.getRange(rowNumber, 6).getValue();
+  const phoneChanged = data.phone !== undefined || data.mobile !== undefined;
+  const nextPhone = phoneChanged ? normalizePhone(data.phone || data.mobile) : savedPhone;
+  if (phoneChanged && nextPhone !== normalizePhone(savedPhone)) {
+    if (nextPhone.length !== 10) throw new Error("Valid 10 digit Mobile Number required hai");
+    const duplicate = findTeacherRow(sheet, "", nextPhone);
+    if (duplicate !== -1 && duplicate !== rowNumber) {
+      throw new Error("Is mobile number se teacher already registered hai");
+    }
+  }
 
 
   const oldPhotoUrl =
@@ -2610,20 +2629,7 @@ function editTeacher(data) {
             )
             .getValue(),
 
-      (
-        data.phone !== undefined ||
-        data.mobile !== undefined
-      )
-        ? normalizePhone(
-            data.phone ||
-            data.mobile
-          )
-        : sheet
-            .getRange(
-              rowNumber,
-              6
-            )
-            .getValue(),
+      nextPhone,
 
       data.email !== undefined
         ? data.email
