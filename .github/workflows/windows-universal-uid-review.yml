@@ -89,6 +89,7 @@ jobs:
           test/windows_sync_pause_test.dart
           test/windows_sync_flow_learning_test.dart
           test/cloudflare_record_handoff_test.dart
+          test/central_school_cloud_test.dart
           test/windows_live_sync_runtime_test.dart
       - name: Prepare the Windows runner
         shell: bash
