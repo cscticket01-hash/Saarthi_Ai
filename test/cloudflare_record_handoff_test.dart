@@ -51,6 +51,79 @@ void main() {
       edgeDeliverySupported:true),false);
   });
 
+  test('missing journal binding requires exact already accepted school ticket', () {
+    const operation='journal-recovery-original-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':'repair-calendar',
+      'operation':'set','operationId':operation,'syncState':'cloudAccepted',
+      'baseCloudRevision':'base','data':{'title':'Existing'},
+    };
+    final ticket=exactTicket(original);
+    final accepted={...original,'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final bound=acceptedCloudflareTicketBinding(accepted,school);
+    expect(bound?['action'],'managed/records');
+    expect(bound?['ticketId'],ticket);
+    expect(bound?['originalOperationId'],operation);
+    expect(acceptedCloudflareTicketBinding({...accepted,'cloudTicketId':foreignTicket},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'schoolId':other},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'syncState':'pending'},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'priorDeletion':{}},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'atomicBundleId':'owner'},school),isNull);
+  });
+
+  test('missing document receipt rebinds original file identity without collection field', () {
+    const id='journal-document',op='document-generation-original-001';
+    final content=List.filled(64,'a').join();
+    final uploadKey=sha256.convert(utf8.encode('$id:$op')).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,uploadKey]))).toString();
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':op,'contentHash':content,
+      'cloudContentHash':content,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'file-$ticket','deleted':false,
+    };
+    final bound=acceptedCloudflareTicketBinding(original,school,queueId:id);
+    expect(bound?['action'],'managed/document/stage/resumable');
+    expect(bound?['id'],id);
+    expect(bound?['fileSha256'],content);
+    expect(bound?['ticketId'],ticket);
+    expect(acceptedCloudflareTicketBinding({
+      ...original,'cloudContentHash':List.filled(64,'b').join(),
+    },school,queueId:id),isNull);
+    expect(acceptedCloudflareTicketBinding({...original,'deleted':true},
+      school,queueId:id),isNull);
+    expect(acceptedCloudflareTicketBinding({...original,'cloudTicketId':foreignTicket},
+      school,queueId:id),isNull);
+  });
+
+  test('missing school-scoped original record journal reconstructs through read-only broker status', () async {
+    const id='untracked-calendar',op='untracked-record-operation-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'},
+    };
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('untracked-calendar-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set({
+      ...original,'cloudTicketLane':'records','cloudTicketId':ticket,
+    }));
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      expect(body['lane'],'records');
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'provider-final-revision',
+        'record':{'schoolId':school,'_syncRevision':'provider-final-revision',
+          '_syncOperationId':op,'id':id}};
+    });
+    expect(reads,2,reason:'one authenticated reconstruction and one owner receipt read');
+    expect((await ref.get()).exists,false);
+    final history=await WindowsDriveDeliveryQueue.history(school);
+    expect(history.single['state'],'completed');
+  });
+
   test('authorized journal restores interrupted local handoff without another mutation', () async {
     const id='restart-calendar';
     const op='restart-original-operation-001';
