@@ -678,7 +678,9 @@ void main(){
   await tester.runAsync(() async { await Future<void>.delayed(const Duration(milliseconds: 50)); });
   await tester.pumpAndSettle();
   expect(find.byType(WindowsSyncControlCenter), findsOneWidget);
-  await tester.tap(find.text('Pending Uploads'));
+  await tester.scrollUntilVisible(find.text('Pending Uploads'), 200,
+      scrollable: find.byType(Scrollable).first);
+  await tester.tap(find.text('Pending Uploads').hitTestable());
   await tester.pumpAndSettle();
   await tester.scrollUntilVisible(find.text('teachers_directory • status-teacher'), 250,
       scrollable: find.byType(Scrollable).first);
