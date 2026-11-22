@@ -81,25 +81,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(Drawer), findsNothing);
       expect(find.byType(BackButton), findsOneWidget);
-      for (final text in [
-        'Overview',
-        'Smart Repair History',
-        'Recycle Bin',
-        'Backup School Data',
-      ]) {
-        expect(find.text(text), findsOneWidget);
-      }
+      expect(find.text('Backup School Data'), findsNothing);
       expect(find.descendant(of: find.byType(WindowsSyncFlow),
         matching: find.text('Needs Attention')), findsOneWidget);
       expect(find.text('Idle'), findsNothing);
       expect(find.text('Live Queue Activity'), findsOneWidget);
       final viewport = find.byType(Scrollable).first;
       expect(tester.state<ScrollableState>(viewport).position.maxScrollExtent, 0);
-      final backupNote = find.text(
-        'After School Server ACK, Google Drive backup runs in the background.',
-      );
-      expect(tester.getRect(backupNote).bottom,
-        lessThanOrEqualTo(tester.getRect(viewport).bottom));
+      expect(find.text('Pending Uploads'), findsNothing);
       expect(find.text('View full queue').hitTestable(), findsOneWidget);
       expect(find.text('Verified sync'), findsOneWidget);
       expect(find.text('School records'),findsNothing);
@@ -107,9 +96,7 @@ void main() {
       expect(find.text('Photos & file downloads'),findsNothing);
       expect(find.text('Inventory not yet verified'),findsNothing);
       expect(tester.takeException(), isNull);
-      await tester.scrollUntilVisible(find.text('Smart Repair History'), 180,
-        scrollable: find.byType(Scrollable).first);
-      await tester.tap(find.text('Smart Repair History'));
+      await tester.tap(find.text('View full sync history').hitTestable());
       await tester.pumpAndSettle();
       expect(find.text('Verified sync'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
@@ -178,7 +165,7 @@ void main() {
       of: card, matching: find.byType(SelectableText)));
     expect(find.text(alert.data!), findsOneWidget,
       reason: 'The same alert must not also be rendered below the overview');
-    await tester.tap(find.text('Smart Repair History'));
+    await tester.tap(find.text('View full sync history').hitTestable());
     await tester.pumpAndSettle();
     expect(find.descendant(of: card, matching: find.byType(SelectableText)), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -222,12 +209,33 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Backup School Data'));
+    await tester.tap(find.byType(PopupMenuButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Troubleshoot'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backup School Data').hitTestable().first);
     await tester.pumpAndSettle();
     expect(exports, 1);
     expect(find.text('Backup Now'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('sync options show the pause switch and interval submenu', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: page()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Sync options'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sync Pause'), findsOneWidget);
+    expect(find.byType(Switch), findsOneWidget);
+    expect(find.text('Troubleshoot'), findsOneWidget);
+    expect(find.text('Recycle Bin'), findsOneWidget);
+    await tester.tap(find.text('Auto Sync (Interval)'));
+    await tester.pumpAndSettle();
+    for (final label in ['Off', 'Every 5 Minutes', 'Every 30 Minutes', 'Every 1 Hour']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('real widget preview artifact', (tester) async {
     tester.view.physicalSize = const Size(1536, 736);
     tester.view.devicePixelRatio = 1;
