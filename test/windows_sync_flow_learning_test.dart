@@ -435,8 +435,7 @@ void main(){
       await tester.pumpAndSettle();
       expect(find.text('Local Save'),findsOneWidget);expect(find.text('Last sync: 2.40 sec'),findsOneWidget);
       final serverBox = find.byKey(const ValueKey('school-server-stage'));
-      expect(find.descendant(of: serverBox, matching: find.text('School Server')), findsOneWidget);
-      expect(find.descendant(of: serverBox, matching: find.text('Server ACK')), findsOneWidget);
+      expect(find.descendant(of: serverBox, matching: find.text('School Server ACK')), findsOneWidget);
       expect(find.text('Waiting for verified ACK'), findsOneWidget);
       expect(find.text('Open Folder'),findsNothing);
       ui.WindowsUiLanguage.change('bn');await tester.pumpAndSettle();
