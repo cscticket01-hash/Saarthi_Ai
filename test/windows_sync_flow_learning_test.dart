@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -142,6 +143,64 @@ void main(){
     WindowsSyncEvidence.leave(school,'cloud');expect(WindowsSyncEvidence.lanes(school),{'cloud'});
     expect(WindowsSyncEvidence.lanes('foreign'),isEmpty);
     WindowsSyncEvidence.leave(school,'cloud');expect(WindowsSyncEvidence.lanes(school),isEmpty);
+  });
+  test('parallel admission is restricted to eligible independent school records', () {
+    final item = <String,dynamic>{
+      'schoolId':school,'collection':'school_notices','documentId':'notice-a',
+      'operation':'set','operationId':'notice-operation-0001',
+      'baseCloudRevision':'','syncState':'pending','data':{'text':'a'},
+    };
+    bool eligible(Map row) => canParallelStageRecord(row,school,edgeDeliverySupported:true);
+    expect(eligible(item),true);
+    expect(eligible({...item,'collection':'school_calendar'}),true);
+    expect(eligible({...item,'collection':'fee_payments'}),false);
+    expect(eligible({...item,'collection':'students_directory'}),false);
+    expect(eligible({...item,'schoolId':'foreign'}),false);
+    expect(eligible({...item,'operation':'delete'}),false);
+    expect(eligible({...item,'priorDeletion':{}}),false);
+    expect(eligible({...item,'atomicBundleId':'bundle'}),false);
+    expect(eligible({...item,'syncState':'cloudAccepted'}),false);
+    expect(eligible({...item,'syncState':'retry',
+      'retryAtMillis':DateTime.now().add(const Duration(hours:1)).millisecondsSinceEpoch}),false);
+    expect(canParallelStageRecord(item,school,edgeDeliverySupported:false),false);
+  });
+  test('bounded admission drains in-flight records before admitting another window',() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    final db=FirebaseFirestore.instance;
+    await db.switchProfile('parallel-${DateTime.now().microsecondsSinceEpoch}',
+      identity:{'schoolSyncId':school,'schoolId':school});
+    for(var i=0;i<4;i++) {
+      await db.collection('school_notices').doc('parallel-$i').set({'text':'notice $i'});
+    }
+    final ready=Completer<void>(), release=Completer<void>();
+    var started=0, active=0, peak=0;
+    var allow=true;
+    final flush=WindowsPendingSchoolSync.flush(
+      profileId:db.activeProfileId,
+      canAdmit:()=>allow,
+      parallelAdmission:(item)=>canParallelStageRecord(item,school,edgeDeliverySupported:true),
+      send:(_,__,___,____) async {},
+      sendVersioned:(item)async{
+        started++;active++;
+        if(active>peak)peak=active;
+        if(started==3&&!ready.isCompleted)ready.complete();
+        await release.future;
+        active--;
+        return 'revision-${item['operationId']}';
+      },
+    );
+    try {
+      await ready.future.timeout(const Duration(seconds:5));
+      expect(started,3);
+      expect(peak,3);
+      allow=false;
+    } finally {
+      if(!release.isCompleted)release.complete();
+      await flush;
+    }
+    expect(started,3);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.length,1);
   });
   test('learned retry retains the exact operation and cannot manufacture an ACK',()async{
     FlutterSecureStorage.setMockInitialValues({});
