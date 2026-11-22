@@ -563,7 +563,11 @@ class CentralSchoolCloud {
         'source': source, 'schoolId': body['schoolId'], 'action': action,
         'profileId': receiptProfile,
         if (action == 'managed/records' && returnAfterDurableCloudflareHandoff &&
-            proof['driveState'] == 'pending') 'handoffAuthorized': true,
+            {'pending','verified'}.contains(proof['driveState']) &&
+            proof['delivery'] is Map &&
+            (proof['delivery'] as Map)['lane']=='records' &&
+            (proof['delivery'] as Map)['id']==expectedRecordStageTicket(body))
+          'handoffAuthorized': true,
         if (fileSidecarStage && returnAfterDurableCloudflareHandoff &&
             {'pending','verified'}.contains(proof['driveState'])) ...{
           'handoffAuthorized': true,
