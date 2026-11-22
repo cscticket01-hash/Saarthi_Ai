@@ -127,7 +127,7 @@ function VS_managedVerify(e, onAuthenticated) {
     Object.keys(all).filter(k=>k.indexOf('VS_NONCE_')===0).forEach(k=>{if(Number(all[k])<Date.now()-240000)p.deleteProperty(k);else count++;});
     if(count>=1000)throw new Error('Retry storage shortly');p.setProperty(key,String(b.timestamp));
   } finally {lock.releaseLock();}
-  return JSON.parse(b.payload);
+  return payload; // HMAC-verified original payload, parsed once.
 }
 function VS_validateManagedCollection(name) {
   if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
@@ -382,6 +382,8 @@ function VS_managedRecycle(b) {
       VS_managedCollection(b.collection);
       if(typeof b.after!=='string'||b.after.length>200)throw new Error('Invalid record ID');
       const store=VS_managedSheet(b.collection),records=VS_sheetRecords(store),now=Date.now();
+      // A missing tombstone is not evidence that an approved restore has no snapshot.
+      if(VS_missingRecordHeads(store,records).length)throw new Error('Recycle inventory requires verified local Sheet recovery');
       const ids=Object.keys(records).filter(id=>id>b.after&&records[id]._syncDeleted===true&&records[id]._syncRecycleFileId).sort();
       const entries=ids.slice(0,25).map(id=>{
         const row=records[id],base={id:id,collection:b.collection,fileId:row._syncRecycleFileId,deletedRevision:row._syncRevision};
@@ -400,8 +402,12 @@ function VS_managedRecycle(b) {
     const item=VS_recycleRead(b.fileId),snap=item.snapshot,store=VS_managedSheet(snap.collection),current=VS_sheetItem(store,snap.id);
     if(!current||current.schoolId!==snap.schoolId)throw new Error('Record revision conflict');
     const data=current.data;
-    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision)
+    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision){
+      if(data._syncDeleted===true||typeof data._syncRevision!=='string'||!data._syncRevision||
+         data._syncRevision===snap.deletedRevision||/^(cf-|live-)/.test(data._syncRevision))
+        throw new Error('Record revision conflict');
       return {recordRevision:data._syncRevision,syncProtocol:2,restored:true};
+    }
     if(b.expectedRecordRevision!==data._syncRevision||data._syncRevision!==snap.deletedRevision||
         data._syncDeleted!==true||data._syncRecycleFileId!==b.fileId)throw new Error('Record revision conflict');
     if(b.operation==='restore') {
@@ -2120,9 +2126,12 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     return VS_resumeEverywhereDelete(store,b.id,old);
   }
   const revision=old&&old._syncDeleted?old._syncRevision:Utilities.getUuid();
-  const targets=[],files=new Set(),retainedShared=[];
+  const targets=[],targetKeys=new Set(),files=new Set(),retainedShared=[];
+  const key=(collection,id)=>JSON.stringify([collection,id]);
+  const hasTarget=(collection,id)=>targetKeys.has(key(collection,id));
   function target(collection,id,row){
-    if(targets.some(t=>t.collection===collection&&t.id===id))return;
+    if(hasTarget(collection,id))return;
+    targetKeys.add(key(collection,id));
     const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner)||(person?generation:null);
     const value={collection:collection,id:id,sourceRevision:row&&row._syncRevision||'',revision:collection===b.collection&&id===b.id?revision:row&&row._syncDeleted?row._syncRevision:Utilities.getUuid()};
     if(owner)value.generation=owner;
@@ -2146,7 +2155,9 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     }
   }
   if(b.collection==='exams')for(const collection of ['exam_results','exam_center_results']){
-    const records=VS_sheetRecords(VS_managedSheet(collection));for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
+    const childStore=VS_managedSheet(collection),records=VS_sheetRecords(childStore);
+    if(VS_missingRecordHeads(childStore,records).some(head=>!head.deleted))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+    for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
   }
   // Shared school assets remain owned by the surviving records; deleting one
   // reference must not remove another pupil's ID card/photo or school seal.
@@ -2158,8 +2169,8 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   if(files.size>0){
     for(const collection of VS_LAYOUT_COLLECTIONS){
       const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
-      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
-      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!hasTarget(collection,head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!hasTarget(collection,id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
     }
     if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   }

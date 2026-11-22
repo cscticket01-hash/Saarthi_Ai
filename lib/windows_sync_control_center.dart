@@ -498,6 +498,89 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     }
   }
 
+  Future<void> _runSystemDiagnosis() async {
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed. Reopen this page.');
+    }
+    guard();
+    if (!mounted) return;
+    setState(() {
+      diagnostics = null;
+      localHealth = 'Checking local database';
+      cloudHealth = 'Not checked yet';
+      cloudEvidence = null;
+    });
+    try {
+      final ok = await WindowsLocalStorage.healthCheck()
+          .timeout(const Duration(seconds: 15));
+      guard();
+      if (mounted) setState(() => localHealth = ok
+          ? 'Integrity/read-write check passed'
+          : 'Check failed — retained for diagnosis');
+    } catch (_) {
+      guard();
+      if (mounted) setState(() => localHealth =
+          'Local health unverified — check failed or timed out');
+    }
+    // Capture the durable queue even when the cloud is unreachable.
+    try {
+      final report = await engine.safeQueueDiagnostics();
+      guard();
+      if (mounted) setState(() => diagnostics = report);
+    } catch (_) {
+      guard();
+      if (mounted) setState(() => diagnostics = {
+        'cloudVerification': 'Not performed',
+        'queueStatus': 'Unverified — local report unavailable',
+      });
+    }
+    try {
+      await _checkCloudHealth();
+    } catch (_) {
+      // The individual health check has already recorded the failed result.
+      // Do not erase local evidence or present a failure as a successful repair.
+    }
+    guard();
+    if (mounted) setState(() => notice =
+        'Diagnosis finished. Review measured results; no queue item was acknowledged or repaired by this check.');
+  }
+
+  /// Use the existing synchronization/reconciliation owner. A troubleshooting
+  /// action is never permission to clear a queue, bypass quota or resume pause.
+  Future<void> _runSafeRepair() async {
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed. Reopen this page.');
+    }
+    guard();
+    if (engine.isPaused || engine.isSyncing)
+      throw StateError('Wait for current sync or explicitly resume the pause.');
+    final before = await engine.safeQueueDiagnostics();
+    guard();
+    if (mounted) setState(() {
+      diagnostics = before;
+      notice = 'Checking retained operations using existing safe reconciliation';
+    });
+    // Do not call requestSync: that command intentionally resumes a pause and
+    // enables explicit retry. Automatic repair must retain provider deadlines.
+    await engine.syncNow();
+    guard();
+    final after = await engine.safeQueueDiagnostics();
+    guard();
+    if (mounted) setState(() {
+      diagnostics = after;
+      notice = 'Safe repair pass returned. Device queue: '
+          '${before['foregroundQueueCount']} → ${after['foregroundQueueCount']}. '
+          'Cloud-owned pending: ${after['cloudflareOwnedPendingDriveCount']}. '
+          'Only verified receipts establish completion; unresolved work is retained.';
+    });
+  }
+
   Future<void> _checkCloudHealth() async {
     if (mounted)
       setState(() {
@@ -762,7 +845,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     };
     return CloudflareTransferStatus(
       messages: messages.toList(),
-      showTransfers: ownSchool,
+      showTransfers: false,
       panelBuilder: (messages, progress) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: _panelBox(
@@ -863,6 +946,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ? const Color(0xFFFFC153)
         : _cyan;
     final ack = details['lastCloudAckMillis'];
+    // Exact locally retained School Server tickets are positive acceptance
+    // evidence, not proof of a completed Google Drive backup.
+    final staged = details['cloudflareOwnedPendingDrive'];
+    final hasStaged = staged is int && staged > 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -892,7 +979,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Sync Progress',
+                    'Live Sync Flow',
                     style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
@@ -901,8 +988,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     local:diskEvidence?['status']=='Measured'
                       ? '${diskEvidence!['volume']}\n${bytesLabel(diskEvidence!['usedBytes'] as int)} / ${bytesLabel(diskEvidence!['totalBytes'] as int)}'
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
-                    cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
-                    drive:driveLabel,
+                    cloud:checking?'Checking cloud changes':hasStaged?'School Server saved':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
+                    drive:hasStaged?'$staged staged · Google Drive pending':'Automatic server-side backup',
                     pending:uploadCount,
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
@@ -911,7 +998,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     active:engine.isPaused || deviceIdle
                       ? const {}
                       : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
-                        .where((lane)=>lane=='local'||hasUploads).toSet(),
+                        .where((lane)=>lane=='local'||lane=='cloud'&&hasUploads).toSet(),
                   ),
                   if (incomingCount > 0) Padding(
                     padding: const EdgeInsets.only(top: 10),
@@ -1031,6 +1118,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     spacing: 12,
     runSpacing: 12,
     children: [
+      FilledButton.icon(
+        onPressed: active || busy ? null : () => _tool(_runSystemDiagnosis),
+        icon: const Icon(Icons.health_and_safety_outlined),
+        label: const Text('Run System Diagnosis'),
+      ),
+      OutlinedButton.icon(
+        onPressed: active || busy || engine.isPaused
+            ? null : () => _tool(_runSafeRepair),
+        icon: const Icon(Icons.build_circle_outlined),
+        label: const Text('Run Safe Repair'),
+      ),
       OutlinedButton(
         onPressed: () => _jump(_backupKey),
         child: const Text('Measured Status'),
@@ -1241,7 +1339,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
-        title: const Text('Sync Engine 3.0'),
+        title: const Text('Sync Engine 4 — Live Sync'),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),
@@ -1256,7 +1354,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                               !engine.isPaused
                           ? _run(
                               () => (widget.pauseRequest ?? engine.pauseSync)(
-                                const Duration(hours: 24),
+                                const Duration(minutes: 5),
                               ),
                             )
                           : _startManualSync(),
@@ -1278,20 +1376,29 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ); },
           ),
           PopupMenuButton<int>(
-            tooltip: 'Schedule sync pause',
+            tooltip: 'Sync options',
             enabled: !busy && db.activeProfileId == origin,
-            onSelected: (hours) {
-              if(hours==0){setState((){showDiagnostics=true;showHistory=false;showQueue=false;});return;}
-              _run(
-              () => (widget.pauseRequest ?? engine.pauseSync)(
-                Duration(hours: hours),
-              ),
-            );},
+            onSelected: (choice) {
+              if (choice == -1) {
+                setState((){showDiagnostics=true;showHistory=false;showQueue=false;});
+              } else if (choice == -2) {
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return const WindowsRecycleBin(); }));
+              } else if (choice == 0) {
+                _run(engine.resumeAutomaticSync);
+              } else {
+                _run(() => (widget.pauseRequest ?? engine.pauseSync)(Duration(minutes:choice)));
+              }
+            },
             itemBuilder: (_) => const [
-              PopupMenuItem(value:0,child:Text('Advanced checks')),
-              PopupMenuItem(value: 1, child: Text('Pause Sync for 1 Hour')),
-              PopupMenuItem(value: 12, child: Text('Pause Sync for 12 Hours')),
-              PopupMenuItem(value: 24, child: Text('Pause Sync for 1 Day')),
+              PopupMenuItem<int>(enabled:false,child:Text('Sync Pause')),
+              PopupMenuItem(value:0,child:Text('Off — resume auto sync')),
+              PopupMenuItem(value:5,child:Text('5 minutes')),
+              PopupMenuItem(value:30,child:Text('30 minutes')),
+              PopupMenuItem(value:60,child:Text('1 hour')),
+              PopupMenuDivider(),
+              PopupMenuItem(value:-1,child:Text('Troubleshoot')),
+              PopupMenuItem(value:-2,child:Text('Recycle Bin')),
             ],
           ),
           const SizedBox(width: 20),
@@ -1315,7 +1422,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       const Text(
-                        'Sync & Backup Control Center',
+                        'Live Sync',
                         style: TextStyle(fontFamily: 'Segoe UI', 
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -1400,6 +1507,30 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                         ],
                         if (showDiagnostics) ...[
                           _controls(active),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              if (showQueue) ...[
+                                metric('Local database health', localHealth),
+                                metric('School cloud health', cloudHealth),
+                              ],
+                              if (diagnostics?['foregroundQueueCount'] is int)
+                                metric('Device queue',
+                                    '${diagnostics!['foregroundQueueCount']} outstanding'),
+                              if (diagnostics?['cloudflareOwnedPendingDriveCount'] is int)
+                                metric('School Server handoff',
+                                    '${diagnostics!['cloudflareOwnedPendingDriveCount']} awaiting Drive verification'),
+                              if (diagnostics?['unscopedQueueCount'] is int &&
+                                  (diagnostics!['unscopedQueueCount'] as int) > 0)
+                                metric('Unscoped entries',
+                                    '${diagnostics!['unscopedQueueCount']} retained — review required'),
+                              if (diagnostics?['queueStatus'] != null)
+                                metric('Queue diagnosis', diagnostics!['queueStatus'].toString()),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                           if (showQueue) ...[
                             SizedBox(key: _queueKey),
                             const Text(

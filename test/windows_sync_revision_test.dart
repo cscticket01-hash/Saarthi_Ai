@@ -53,7 +53,7 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
     await tester.pumpAndSettle();
     await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Advanced checks'));
+    await tester.tap(find.text('Troubleshoot'));
     await tester.pumpAndSettle();
   }
   await tester.scrollUntilVisible(
@@ -263,7 +263,7 @@ void main(){
      textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),
      home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen:()async{}))));
    await tester.pumpAndSettle();
-   expect(find.text('Sync & Backup Control Center'),findsOneWidget);
+   expect(find.text('Sync Engine 4 — Live Sync'),findsOneWidget);
    await selectSyncTool(tester, 'Measured Status');
    await tester.scrollUntilVisible(find.text('Internet connectivity'), 300,
        scrollable: find.byType(Scrollable).first);
@@ -471,12 +471,12 @@ void main(){
  test('safe queue diagnostics preserve rows and exclude payloads, credentials, paths and record identifiers', () async {
    final records=db.collection('_windows_firebase_outbox');
    const ref='2c564c78-1738-429c-bf1b-4d09ba3a42b6';
-   await records.doc('PRIVATE_QUEUE_ID').set({'collection':'school_expenses','documentId':'PRIVATE_RECORD_ID',
+   await records.doc('PRIVATE_QUEUE_ID').set({'schoolId':school,'collection':'school_expenses','documentId':'PRIVATE_RECORD_ID',
      'operationId':'original-operation-123','baseCloudRevision':'retained-revision','syncState':'conflict','queuedAt':1,
      'data':{'name':'PRIVATE_STUDENT','password':'PRIVATE_PASSWORD'},'localPath':'PRIVATE_PATH',
      'lastError':'HTTP 409 [OPERATION_ID_CONFLICT] Ref: $ref. PRIVATE_RESPONSE'});
    final documents=db.collection('_windows_document_outbox');
-   await documents.doc('PRIVATE_DOCUMENT').set({'syncState':'unexpected_PRIVATE_STATE',
+   await documents.doc('PRIVATE_DOCUMENT').set({'schoolId':school,'syncState':'unexpected_PRIVATE_STATE',
      'operationId':'INVALID_PRIVATE_TOKEN@x','data':{'token':'PRIVATE_TOKEN'},'lastError':'[SCRIPT_PRIVATE_SECRET] PRIVATE_RESPONSE'});
    final beforeRecords=jsonEncode((await records.get()).docs.single.data());
    final beforeDocuments=jsonEncode((await documents.get()).docs.single.data());

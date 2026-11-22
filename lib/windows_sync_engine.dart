@@ -1,4 +1,5 @@
 import 'windows_drive_delivery_queue.dart';
+import 'cloudflare_record_handoff.dart';
 import 'windows_live_sync_runtime.dart';
 import 'live_sync_protocol.dart';
 import 'windows_sync_evidence.dart';
@@ -80,7 +81,20 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       await WindowsDriveDeliveryQueue.poll(school,
         canAdmit: () => _initialized && !isPaused && !_resetPaused &&
             FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school,
-        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body));
+        call: (action, body) => ManagedSchoolSession.callForSchool(school, action, body),
+        onLocalSettlement: () {
+          // Provider settlement can unblock a newer durable same-record edit.
+          // Re-enter the existing scheduler, never start a second queue owner.
+          if (FirebaseFirestore.instance.activeProfileId != profile ||
+              _activeSchoolSyncId != school) return;
+          unawaited(refreshDetails().then<void>((_) {
+            if (FirebaseFirestore.instance.activeProfileId==profile &&
+                _activeSchoolSyncId==school &&
+                (details.value['pending'] as num? ?? 0)>0) {
+              scheduleSoon(localMutation:true,delay:Duration.zero);
+            }
+          },onError:(Object _,StackTrace __) {}));
+        });
       if (FirebaseFirestore.instance.activeProfileId == profile && _activeSchoolSyncId == school) {
         _transferReadAfter = null;
       }
@@ -363,6 +377,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool _recordDeltasSupported = false;
   bool _sheetAuditSupported = false;
   bool _deltaBatchSupported = false;
+  bool _monitorHandoffSupported = false;
   bool _changeHeadsSupported = false, _checkingHeads = false;
   final _remoteCollections = <String>{};
   final _remoteRecordIds = <String, Set<String>>{};
@@ -725,6 +740,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _persistRepairHistory(FirebaseFirestore.instance.activeProfileId));
     if (_activity.length >= 100) _activity.removeAt(0);
     _activity.add(Map<String, dynamic>.from(event));
+    if(event['stage']=='cloudflareAccepted') {
+      final elapsed=event['elapsedMicros'];
+      if(elapsed is int && elapsed>=0) {
+        metrics['lastCloudflareHandoffMicros']=elapsed;
+        _sample('cloudflareHandoffMicros',elapsed);
+      }
+      // Recompute device queue after each committed handoff, not after the
+      // unrelated end of a reconciliation or Drive backup cycle.
+      unawaited(refreshDetails().catchError((Object _) {}));
+    }
     details.value = {
       ...details.value,
       'activity': [for (final row in _activity) Map<String, dynamic>.from(row)],
@@ -797,10 +822,45 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     });
   }
 
+  bool _hasExactCloudflareHandoff(Map<String,dynamic> row, String school) =>
+        row['syncState']=='cloudAccepted' &&
+        row['schoolId']==school &&
+        row['operationId'] is String &&
+        RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
+        row['cloudTicketId'] is String &&
+        RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
+        (row['cloudTicketLane']=='records' &&
+         (eligibleForRecordHandoff(row,school,edgeDeliverySupported:true) ||
+          eligibleForStagedDelete(row,school,edgeDeliverySupported:true)) &&
+         exactStagedRecordTicket(row,school)==row['cloudTicketId'] ||
+         // Original photo identity was revalidated by the serialized SQLite
+         // owner before the original record outbox became cloudAccepted.
+         row['cloudTicketLane']=='file-${row['cloudTicketId']}' &&
+         {'students_directory','teachers_directory'}.contains(row['collection']) &&
+         row['cloudMediaSourceHash'] is String &&
+         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaSourceHash']) &&
+         row['cloudMediaFileSha256'] is String &&
+         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaFileSha256']) &&
+         row['cloudTicketId']==sha256.convert(utf8.encode(jsonEncode([
+           school,sha256.convert(utf8.encode(jsonEncode([
+             school,row['collection'],row['documentId'],row['operationId'],
+             row['cloudMediaFileSha256'],
+           ]))).toString(),
+         ]))).toString());
+
+  bool _hasExactCloudflareDocumentHandoff(
+    Map<String,dynamic> row, String school, {required String queueId}) {
+    // The document queue normally omits collection/documentId: its durable
+    // reference ID is the immutable file ticket owner. Compare the complete
+    // original ticket, not merely a 64-character hash-shaped string.
+    return acceptedCloudflareTicketBinding(row,school,queueId:queueId)!=null;
+  }
+
   Future<void> refreshDetails() async {
     _pruneRepairHistory();
     final db = FirebaseFirestore.instance,
         origin = FirebaseFirestore.instance.activeProfileId;
+    final school = db.activeProfileIdentity['schoolSyncId'];
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final legacy = await db.collection('_windows_google_outbox').get();
@@ -836,54 +896,23 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               d.data()['state'] != 'verified',
         )
         .toList();
-    if (db.activeProfileId != origin) return;
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school) return;
     // A stage-owned operation remains physically in its exact local outbox
     // until the broker returns a canonical Drive revision. It is no longer
     // an outgoing device upload; show it in the separate Drive delivery
     // journal, never as a second upload or fake foreground spinner.
-    bool hasExactCloudflareHandoff(Map<String,dynamic> row) =>
-        row['syncState']=='cloudAccepted' &&
-        row['schoolId']==_activeSchoolSyncId &&
-        row['operationId'] is String &&
-        RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
-        row['cloudTicketId'] is String &&
-        RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
-        (row['cloudTicketLane']=='records' ||
-         // Original photo identity was revalidated by the serialized SQLite
-         // owner before the original record outbox became cloudAccepted.
-         row['cloudTicketLane']=='file-${row['cloudTicketId']}' &&
-         {'students_directory','teachers_directory'}.contains(row['collection']) &&
-         row['cloudMediaSourceHash'] is String &&
-         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaSourceHash']) &&
-         row['cloudMediaFileSha256'] is String &&
-         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaFileSha256']));
     final cloudOwned=general.docs.where(
-      (d)=>hasExactCloudflareHandoff(d.data())).toList();
+      (d)=>_hasExactCloudflareHandoff(d.data(), _activeSchoolSyncId)).toList();
     final foregroundRecords=general.docs.where(
-      (d)=>!hasExactCloudflareHandoff(d.data())).toList();
+      (d)=>!_hasExactCloudflareHandoff(d.data(), _activeSchoolSyncId)).toList();
     // R2 file bytes and the immutable original document generation have a
     // separate Cloudflare owner. A school-scoped, exact staged ticket means
     // no more OUTGOING device upload; it does not mean Drive was verified.
-    bool hasExactCloudflareDocumentHandoff(Map<String,dynamic> row) {
-      if (row['syncState'] != 'cloudAccepted' ||
-          row['schoolId'] != _activeSchoolSyncId ||
-          row['documentRevision'] is! String ||
-          !RegExp(r'^[A-Za-z0-9_-]{16,100}$')
-              .hasMatch(row['documentRevision']) ||
-          row['contentHash'] is! String ||
-          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['contentHash']) ||
-          row['cloudContentHash'] != row['contentHash'] ||
-          row['cloudTicketId'] is! String ||
-          !RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) ||
-          row['cloudTicketLane'] != 'file-${row['cloudTicketId']}' ||
-          row['deleted'] == true ||
-          row['atomicBundleId'] != null) return false;
-      return true;
-    }
     final cloudOwnedDocuments=documents.docs.where(
-      (d)=>hasExactCloudflareDocumentHandoff(d.data())).toList();
+      (d)=>_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId,queueId:d.id)).toList();
     final foregroundDocuments=documents.docs.where(
-      (d)=>!hasExactCloudflareDocumentHandoff(d.data())).toList();
+      (d)=>!_hasExactCloudflareDocumentHandoff(d.data(), _activeSchoolSyncId,queueId:d.id)).toList();
     final items = [
       ...foregroundRecords,
       ...foregroundDocuments,
@@ -970,6 +999,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastRecordAckMillis': receipts.docs
           .where(
             (d) =>
+                school is String && validSchoolId(school) && d.data()['schoolId'] == school &&
                 d.data()['collection'] is String &&
                 d.data()['collection'] != 'documents',
           )
@@ -978,7 +1008,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             return at is num && at > latest ? at.toInt() : latest;
           }),
       'lastDocumentAckMillis': receipts.docs
-          .where((d) => d.data()['collection'] == 'documents')
+          .where((d) => school is String && validSchoolId(school) &&
+              d.data()['schoolId'] == school && d.data()['collection'] == 'documents')
           .fold<int>(0, (latest, d) {
             final at = d.data()['acknowledgedAt'];
             return at is num && at > latest ? at.toInt() : latest;
@@ -1044,11 +1075,18 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int
           ? backup.data()!['createdAt']
           : 0,
-      'verifiedReceiptCount': receipts.docs.length,
-      'lastCloudAckMillis': receipts.docs.fold<int>(0, (latest, row) {
-        final stamp = row.data()['acknowledgedAt'];
-        return stamp is num && stamp.toInt() > latest ? stamp.toInt() : latest;
-      }),
+      'verifiedReceiptCount': receipts.docs.where((row) =>
+          school is String && validSchoolId(school) && row.data()['schoolId'] == school).length,
+      // Device ACK time includes the exact durable staged receipt even before
+      // Drive completes. Never mix it with another school's retained history.
+      'lastCloudAckMillis': [
+        ...receipts.docs.where((row) => school is String && validSchoolId(school) && row.data()['schoolId'] == school)
+            .map((row) => row.data()['acknowledgedAt']),
+        ...cloudOwned.map((row) => row.data()['cloudAcceptedAt']),
+        ...cloudOwnedDocuments.map((row) => row.data()['cloudAcceptedAt']),
+      ].fold<int>(0, (latest, stamp) =>
+          stamp is num && stamp.isFinite && stamp > latest && stamp <= nowMillis
+              ? stamp.toInt() : latest),
       'needsAttention': items
           .where(
             (d) =>
@@ -1156,6 +1194,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'lastLocalBackupMillis': observed['lastLocalBackupMillis'],
             'verifiedReceiptCount': observed['verifiedReceiptCount'],
             'lastCloudAckMillis': observed['lastCloudAckMillis'],
+            if (_monitorHandoffSupported && _activeProfileId==origin) ...{
+              if(observed['cloudflareOwnedPendingDrive'] is int)
+                'cloudflareOwnedPendingDrive':observed['cloudflareOwnedPendingDrive'],
+              if(observed['metrics'] is Map &&
+                 observed['metrics']['lastCloudflareHandoffMicros'] is int)
+                'lastCloudflareHandoffMicros':observed['metrics']['lastCloudflareHandoffMicros'],
+            },
           },
         },
       ).timeout(const Duration(seconds: 25));
@@ -1174,8 +1219,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     final general = await db.collection('_windows_firebase_outbox').get();
     final documents = await db.collection('_windows_document_outbox').get();
     final receipts = await db.collection('_windows_sync_receipts').get();
-    if (db.activeProfileId != origin)
+    if (db.activeProfileId != origin ||
+        db.activeProfileIdentity['schoolSyncId'] != school)
       throw StateError('School changed. Reopen Sync details.');
+    final verifiedSchool = school is String && validSchoolId(school) ? school : '';
     String? token(dynamic value) =>
         value is String && RegExp(r'^[A-Za-z0-9_-]{1,100}$').hasMatch(value)
         ? value
@@ -1222,9 +1269,19 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     }
 
     final rows = <Map<String, dynamic>>[];
+    var unscopedCount = 0;
+    var cloudOwnedCount = 0;
     for (final queue in ['records', 'documents']) {
       for (final entry in queue == 'records' ? general.docs : documents.docs) {
         final item = entry.data(), state = item['syncState'];
+        if (verifiedSchool.isEmpty || item['schoolId'] != verifiedSchool) {
+          unscopedCount++;
+          continue;
+        }
+        final cloudOwned = queue == 'records'
+            ? _hasExactCloudflareHandoff(item, verifiedSchool)
+            : _hasExactCloudflareDocumentHandoff(item, verifiedSchool,queueId:entry.id);
+        if (cloudOwned) cloudOwnedCount++;
         final collection = item['collection'];
         final queuedAt = item['queuedAt'];
         rows.add({
@@ -1246,7 +1303,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'operationId': token(item['operationId']),
           if (token(item['baseCloudRevision']) != null)
             'baseCloudRevision': token(item['baseCloudRevision']),
-          'state': state == null
+          'state': cloudOwned
+              ? 'cloudAccepted'
+              : state == 'cloudAccepted'
+              ? 'unverifiedHandoff'
+              : state == null
               ? 'pending'
               : {
                   'pending',
@@ -1257,6 +1318,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
                   'acknowledged',
                   'conflict',
                   'needsAttention',
+                  'needsReview',
+                  'rejected',
                 }.contains(state)
               ? state
               : 'unknown',
@@ -1274,10 +1337,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       if (school is String && RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school))
         'schoolId': school,
       'pendingCount': rows.length,
+      'foregroundQueueCount': rows.length - cloudOwnedCount,
+      'cloudflareOwnedPendingDriveCount': cloudOwnedCount,
+      'unscopedQueueCount': unscopedCount,
       'items': rows,
-      'retainedVerifiedReceiptCount': receipts.docs.length,
+      'retainedVerifiedReceiptCount': receipts.docs.where((row) =>
+          verifiedSchool.isNotEmpty && row.data()['schoolId'] == verifiedSchool).length,
       'historicalCountChange': 'Cannot infer ACK for missing historical items without their operation receipts',
-      'latestError': errorMetadata(lastError),
+      'latestError': verifiedSchool.isNotEmpty && _activeProfileId == origin &&
+          _activeSchoolSyncId == verifiedSchool ? errorMetadata(lastError) : <String, dynamic>{},
       'cloudVerification': 'Not performed by this read-only report',
     };
   }
@@ -1409,12 +1477,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         _syncBlocked ||
         _resetPaused ||
         isPaused ||
-        !automaticSyncEnabled)
+        !automaticSyncEnabled ||
+        FirebaseFirestore.instance.activeProfileId != _activeProfileId ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != _activeSchoolSyncId)
       return;
     if (localMutation) {
       _automaticMutationPending = true;
       _liveRuntime?.markPending();
     }
+    // Profile activation owns the admission boundary; its finally block re-arms pending work.
+    if (_activating > 0) return;
     if (!_automaticDue) return;
     if (recoveryDecision != null && !recoveryDecision!.retry) {
       if (!canScheduleAfterSyncFailure(
@@ -1545,9 +1617,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     scheduleSoon(delay: const Duration(milliseconds: 250));
   }
 
-  Future<void> activateCurrentConnections({required bool allowPairing}) async {
-    if (_resetPaused) return;
+  Future<void> _activationTail = Future<void>.value();
+  Future<void> activateCurrentConnections({required bool allowPairing}) {
+    if (_resetPaused) return Future<void>.value();
     _activating++;
+    final work = _activationTail.then((_) async {
     try {
       while (_syncing) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1557,15 +1631,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
 
       await _applyProfile(profile, seedGoogleConfig: !profile.blocked);
 
-      if (!profile.blocked) {
-        scheduleSoon(delay: const Duration(milliseconds: 350));
-      }
     } finally {
       _activating--;
       if (_activating == 0 && automaticScheduleExpected) {
-        scheduleSoon(delay: const Duration(milliseconds: 350));
+        scheduleSoon(delay: Duration.zero);
       }
     }
+    });
+    _activationTail = work.catchError((Object _) {});
+    return work;
   }
 
   Future<void> pauseForAppReset() async {
@@ -1785,7 +1859,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     _ResolvedSyncProfile profile, {
     required bool seedGoogleConfig,
   }) async {
-    if (_activeProfileId != profile.profileId) {
+    if (_activeProfileId != profile.profileId || _activeSchoolSyncId != profile.schoolSyncId) {
+      _dispatch.cancel();
+      _pauseTimer?.cancel();
+      _transferProfile = null;
+      _transferStatus = null;
+      _transferReadAfter = null;
+      details.value = <String,dynamic>{'displayState':'checking'};
       _closeLiveRuntime();
       _lastPull = null;
       _remoteResetPending = false;
@@ -1794,6 +1874,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _pendingIdInputs.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
+      _monitorHandoffSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
       WindowsFirebaseRemote.documentStageSupported = false;
       WindowsFirebaseRemote.documentReplacementStageSupported = false;
@@ -2174,7 +2255,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       state.value = SchoolCloudState.offline;
       return;
     }
-    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused)
+    if (_syncing || _activating > 0 || _syncBlocked || _resetPaused || isPaused ||
+        FirebaseFirestore.instance.activeProfileId != _activeProfileId ||
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] != _activeSchoolSyncId)
       return;
 
     if (_quotaRetryAt?.isAfter(DateTime.now()) ?? false) {
@@ -2282,6 +2365,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             );
           _sheetAuditSupported = WindowsSheetIntegrity.supported(health);
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          _monitorHandoffSupported = health['brokerSyncHandoffMonitorVersion']==1;
           WindowsFirebaseRemote.edgeDeliverySupported =
               health['brokerEdgeDeliveryVersion'] == 1;
           WindowsFirebaseRemote.documentStageSupported =
@@ -2320,6 +2404,81 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _protocolIdentity = protocolIdentity;
           _protocolVerifiedAt = DateTime.now();
         }
+        try {
+          _admitBatch();
+          _setCheckingCloud(false);
+          if(AtomicBundlePilot.buildEnabled) {
+            // Isolated TEST builds only: prepare the same QR/ID card generator
+            // before any legacy Person outbox row is independently submitted.
+            // Production and unpaired records retain the existing path.
+            await SchoolPersonIdentity.preparePendingCreates(
+              _activeSchoolSyncId,canAdmit:()=>!isPaused);
+            final pendingParents=(await FirebaseFirestore.instance
+                .collection('_windows_firebase_outbox').get()).docs;
+            final targets=<String,Set<String>>{
+              'studentId':<String>{},'teacherId':<String>{}};
+            for(final row in pendingParents){
+              final item=row.data(),collection=item['collection'],
+                    id=item['documentId'];
+              if(item['schoolId']==_activeSchoolSyncId &&
+                 item['operation']=='set' && item['baseCloudRevision']=='' &&
+                 id is String && id.isNotEmpty &&
+                 !{'conflict','needsAttention'}.contains(item['syncState'])) {
+                if(collection=='students_directory')targets['studentId']!.add(id);
+                if(collection=='teachers_directory')targets['teacherId']!.add(id);
+              }
+            }
+            if(targets.values.any((set)=>set.isNotEmpty)){
+              await WindowsDocumentTemplates.publishChangedIdCards(
+                affectedPeople:targets,onCardRepair:_recordActivity);
+            }
+            _admitBatch();
+            await _measure('atomicPersonCardStage',()=>
+              WindowsAtomicPersonCardCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Reuse the same saved fee/ledger/receipt outboxes; only the
+            // isolated TEST owner can reserve or retire a complete triple.
+            _admitBatch();
+            await _measure('atomicFinancialStage',()=>
+              WindowsAtomicFinancialCoordinator.run(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+            // Actual Windows Exam Center Save uses exam_center_results.
+            // Pair that original row with its existing immutable PDF outbox.
+            _admitBatch();
+            await _measure('atomicExamMarksheetStage',()=>
+              WindowsAtomicFinancialCoordinator.runExam(
+                _activeSchoolSyncId,canAdmit:()=>!isPaused));
+          }
+          await _measure('recordUploadStage', () => _pushManagedOutbox());
+          // Publish the durable queue/ACK state as soon as upload returns;
+          // incoming reconciliation and read-only Drive receipt polling are
+          // independent, so they must not prolong the outgoing sync display.
+          await refreshDetails();
+          unawaited(_refreshDriveDeliveries());
+        } catch (e) {
+          if (!windowsSyncRecovery(e).independentRecords &&
+              !isRecordSyncConflict(e))
+            rethrow;
+          // A rejected write can concern an unchanged cloud head already in
+          // our manifest. Admit one bounded record delta for these conflicts;
+          // otherwise the normal unchanged-head shortcut would hide readback.
+          final pending = await FirebaseFirestore.instance
+              .collection('_windows_firebase_outbox')
+              .get();
+          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
+            throw StateError('School changed before duplicate readback.');
+          for (final row in pending.docs) {
+            final item = row.data();
+            if (item['syncState'] == 'conflict' &&
+                item['schoolId'] == _activeSchoolSyncId &&
+                _firebaseCollections.contains(item['collection'])) {
+              _remoteCollections.add(item['collection'] as String);
+            }
+          }
+        }
+        // Admit outgoing durable work before optional integrity audits and
+        // inbound recovery. These remain in the same school-scoped cycle but
+        // no longer sit in front of the first record request.
         if (_sheetAuditSupported && (scheduledCheck || integrityAudit) && !isPaused) {
           final audit = await WindowsSheetIntegrity.audit(
             profile: syncOrigin,
@@ -2407,78 +2566,6 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             ),
           );
         }
-        try {
-          _admitBatch();
-          _setCheckingCloud(false);
-          if(AtomicBundlePilot.buildEnabled) {
-            // Isolated TEST builds only: prepare the same QR/ID card generator
-            // before any legacy Person outbox row is independently submitted.
-            // Production and unpaired records retain the existing path.
-            await SchoolPersonIdentity.preparePendingCreates(
-              _activeSchoolSyncId,canAdmit:()=>!isPaused);
-            final pendingParents=(await FirebaseFirestore.instance
-                .collection('_windows_firebase_outbox').get()).docs;
-            final targets=<String,Set<String>>{
-              'studentId':<String>{},'teacherId':<String>{}};
-            for(final row in pendingParents){
-              final item=row.data(),collection=item['collection'],
-                    id=item['documentId'];
-              if(item['schoolId']==_activeSchoolSyncId &&
-                 item['operation']=='set' && item['baseCloudRevision']=='' &&
-                 id is String && id.isNotEmpty &&
-                 !{'conflict','needsAttention'}.contains(item['syncState'])) {
-                if(collection=='students_directory')targets['studentId']!.add(id);
-                if(collection=='teachers_directory')targets['teacherId']!.add(id);
-              }
-            }
-            if(targets.values.any((set)=>set.isNotEmpty)){
-              await WindowsDocumentTemplates.publishChangedIdCards(
-                affectedPeople:targets,onCardRepair:_recordActivity);
-            }
-            _admitBatch();
-            await _measure('atomicPersonCardStage',()=>
-              WindowsAtomicPersonCardCoordinator.run(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-            // Reuse the same saved fee/ledger/receipt outboxes; only the
-            // isolated TEST owner can reserve or retire a complete triple.
-            _admitBatch();
-            await _measure('atomicFinancialStage',()=>
-              WindowsAtomicFinancialCoordinator.run(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-            // Actual Windows Exam Center Save uses exam_center_results.
-            // Pair that original row with its existing immutable PDF outbox.
-            _admitBatch();
-            await _measure('atomicExamMarksheetStage',()=>
-              WindowsAtomicFinancialCoordinator.runExam(
-                _activeSchoolSyncId,canAdmit:()=>!isPaused));
-          }
-          await _measure('recordUploadStage', () => _pushManagedOutbox());
-          // Publish the durable queue/ACK state as soon as upload returns;
-          // incoming reconciliation and read-only Drive receipt polling are
-          // independent, so they must not prolong the outgoing sync display.
-          await refreshDetails();
-          unawaited(_refreshDriveDeliveries());
-        } catch (e) {
-          if (!windowsSyncRecovery(e).independentRecords &&
-              !isRecordSyncConflict(e))
-            rethrow;
-          // A rejected write can concern an unchanged cloud head already in
-          // our manifest. Admit one bounded record delta for these conflicts;
-          // otherwise the normal unchanged-head shortcut would hide readback.
-          final pending = await FirebaseFirestore.instance
-              .collection('_windows_firebase_outbox')
-              .get();
-          if (FirebaseFirestore.instance.activeProfileId != syncOrigin)
-            throw StateError('School changed before duplicate readback.');
-          for (final row in pending.docs) {
-            final item = row.data();
-            if (item['syncState'] == 'conflict' &&
-                item['schoolId'] == _activeSchoolSyncId &&
-                _firebaseCollections.contains(item['collection'])) {
-              _remoteCollections.add(item['collection'] as String);
-            }
-          }
-        }
         await WindowsBackendBridge.repairIdenticalDocumentConflicts(
           _activeSchoolSyncId,canAdmit:()=>!isPaused);
         // Cloud reads/rendering for a derived repair must not block other data.
@@ -2530,15 +2617,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ));
         }
         _admitBatch();
+        final restoreSchool=_activeSchoolSyncId;
         await syncLocalRestoreRequests(
           FirebaseFirestore.instance,
-          _activeSchoolSyncId,
+          restoreSchool,
           (body) => ManagedSchoolSession.callForSchool(
-            _activeSchoolSyncId,
+            restoreSchool,
             'managed/recycle',
             body,
           ),
-          canAdmit: () => !isPaused,
+          canAdmit: () => !isPaused && !_resetPaused && !_syncBlocked &&
+              _activeProfileId==syncOrigin && _activeSchoolSyncId==restoreSchool &&
+              FirebaseFirestore.instance.activeProfileId==syncOrigin &&
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']==restoreSchool &&
+              !WindowsDailyAccessGuard.blockedFor(restoreSchool) &&
+              !(_quotaRetryAt?.isAfter(DateTime.now())??false),
         );
         // Live delivery is consumed inside this same serial sync lane. Hints
         // never call the business writer or acknowledge a local upload.
@@ -2948,7 +3041,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         } catch (_) { /* Optional timing evidence never changes queue completion. */ }
         if(_activeProfileId==syncOrigin)await refreshDetails();
       }
-      if ((lastError != null &&
+      if (_activeProfileId == syncOrigin &&
+          FirebaseFirestore.instance.activeProfileId == syncOrigin &&
+          ((lastError != null &&
               recoveryDecision?.retry == true &&
               _failures <= 5) ||
           _rerunRequested ||
@@ -2956,15 +3051,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               (_remoteCollections.isNotEmpty ||
                   _remoteRecordIds.isNotEmpty ||
                   _remoteResetPending ||
-                  _pendingIdInputs.isNotEmpty))) {
-        final independentMutation =
-            _rerunRequested && recoveryDecision?.independentRecords == true;
+                  _pendingIdInputs.isNotEmpty)))) {
+        // A durable mutation arriving during this pass is not an ordinary
+        // reconciliation poll. Re-admit it immediately when the prior pass
+        // succeeded or the existing recovery policy permits independent work.
+        // scheduleSoon still enforces school identity, pause, quota and retry.
+        final immediateMutation = _rerunRequested &&
+            (lastError == null ||
+                recoveryDecision?.independentRecords == true);
         _rerunRequested = false;
         scheduleSoon(
-          localMutation: independentMutation,
-          delay: lastError == null
-              ? const Duration(milliseconds: 250)
-              : schoolRetryDelay(_failures),
+          localMutation: immediateMutation,
+          delay: immediateMutation
+              ? Duration.zero
+              : lastError == null
+                  ? const Duration(milliseconds: 250)
+                  : schoolRetryDelay(_failures),
         );
       }
     }
@@ -3053,6 +3155,22 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   }
 
   bool _rerunRequested = false;
+  /// Turn off the temporary pause without resetting provider backoff or forcing a full audit.
+  Future<void> resumeAutomaticSync() async {
+    final origin = _activeProfileId;
+    final generation = ++_pauseGeneration;
+    final ref = FirebaseFirestore.instance.collection('_windows_sync_status').doc('pause');
+    final write = _pauseWrite.catchError((Object _) {}).then((_) =>
+      ref.set({'pausedUntilMillis':0,'startedAtMillis':0}));
+    _pauseWrite = write;
+    await write;
+    if (_activeProfileId != origin || generation != _pauseGeneration) return;
+    _pause.resume();
+    _pauseTimer?.cancel();
+    await refreshDetails();
+    scheduleSoon(delay:Duration.zero);
+  }
+
   Future<void> requestSync() async {
     final generation = ++_pauseGeneration;
     final origin = _activeProfileId;
@@ -3196,14 +3314,28 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     String? onlyOperationId,
     bool Function()? canAdmit,
   }) async {
+    final profile = _activeProfileId, school = _activeSchoolSyncId;
+    bool admit() => !isPaused && !_resetPaused && !_syncBlocked &&
+        _activeProfileId == profile && _activeSchoolSyncId == school &&
+        FirebaseFirestore.instance.activeProfileId == profile &&
+        FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'] == school &&
+        !WindowsDailyAccessGuard.blockedFor(school) &&
+        !(_quotaRetryAt?.isAfter(DateTime.now()) ?? false) &&
+        (canAdmit?.call() ?? true);
+    bool independent(Map<String, dynamic> item) =>
+        onlyOperationId == null && onlyQueueId == null &&
+        (!independentExistingPersonPatch(item) || WindowsFirebaseRemote.recordFieldPatchSupported) &&
+        canParallelStageRecord(item, school,
+          edgeDeliverySupported: WindowsFirebaseRemote.edgeDeliverySupported);
+    if (!admit()) return;
     if (onlyOperationId == null) {
       await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
-        canAdmit: () => !isPaused && (canAdmit?.call() ?? true));
+        canAdmit: admit);
     }
     final batchReplies = onlyOperationId == null
         ? await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
-            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+            canAdmit: admit,
           )
         : <String, Object>{};
     if (batchReplies.isNotEmpty)
@@ -3215,8 +3347,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       onlyOperationId: onlyOperationId,
       respectBackoff: onlyOperationId == null,
       diagnoseUnclassified: _manualSync,
+      parallelAdmission: independent,
       onActivity: _recordActivity,
-      canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+      canAdmit: admit,
       send: (c, id, op, data) async {},
       prepareVersioned: (ref, item) =>
           WindowsFirebaseRemote.prepareQueuedRecord(
@@ -3229,6 +3362,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // Refill only after this bounded batch has been consumed. Dedicated
         // parent/file/delete paths retain the original serial admission rules.
         if (onlyOperationId == null &&
+            !independent(item) &&
             batchReplies.isEmpty &&
             WindowsFirebaseRemote.recordWriteBatchSupported &&
             item['operation'] == 'set' &&
@@ -3241,7 +3375,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             }.contains(item['collection'])) {
           final next = await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
-            canAdmit: () => !isPaused && (canAdmit?.call() ?? true),
+            canAdmit: admit,
           );
           if (next.isNotEmpty) {
             batchReplies.addAll(next);
@@ -3257,11 +3391,10 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             : queuedAt is num
             ? queuedAt.toInt()
             : null;
-        if (queuedMillis != null)
-          metrics['lastQueueWaitMillis'] =
-              (DateTime.now().millisecondsSinceEpoch - queuedMillis)
-                  .clamp(0, 1 << 53)
-                  .toInt();
+        final queueWait = queuedMillis == null ? null :
+            (DateTime.now().millisecondsSinceEpoch - queuedMillis)
+                .clamp(0, 1 << 53).toInt();
+        if (queueWait != null) metrics['lastQueueWaitMillis'] = queueWait;
         final origin = FirebaseFirestore.instance.activeProfileId;
         final school = _activeSchoolSyncId;
         final watch = Stopwatch()..start();
@@ -3280,8 +3413,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         // Consuming an already-verified batch receipt is not another cloud RTT.
         if (batched == null)
           _sample('cloudAckMicros', watch.elapsedMicroseconds);
-        if (queuedMillis != null)
-          _sample('queueWaitMillis', metrics['lastQueueWaitMillis']!);
+        if (queueWait != null) _sample('queueWaitMillis', queueWait);
         final clientTiming = reply['clientSyncTiming'];
         if (clientTiming is Map && clientTiming['version'] == 1) {
           for (final phase in ['preparationMicros', 'requestMicros', 'receiptProcessingMicros']) {

@@ -2,8 +2,29 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/school_profile_policy.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('managed schools cannot rebind profile or accept foreign records and outbox payloads', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await WindowsRuntimeFlags.setLocalStorageEnabled(false);
+    final db=FirebaseFirestore.instance;
+    const a='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', b='vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    await db.switchProfile('central_$a',identity:{'schoolSyncId':a,'schoolId':a});
+    final original=db.collection('school_config').doc('school_profile_cache');
+    await original.set({'schoolId':a,'schoolName':'Synthetic A'});
+    await db.switchProfile('central_$b',identity:{'schoolSyncId':b,'schoolId':b});
+    final next=db.collection('school_config').doc('school_profile_cache');
+    expect((await next.get()).exists,isFalse);
+    await expectLater(next.set({'schoolId':a,'schoolName':'Foreign A'}),throwsStateError);
+    await expectLater(db.switchProfile('central_$b',identity:{'schoolSyncId':a,'schoolId':a}),throwsStateError);
+    expect(db.activeProfileIdentity['schoolSyncId'],b);
+    await next.set({'schoolId':b,'schoolName':'Synthetic B'});
+    await expectLater(db.collection('_windows_firebase_outbox').doc('foreign-test').set({'schoolId':b,'data':{'schoolId':a}}),throwsStateError);
+    expect((await next.get()).data()?['schoolName'],'Synthetic B');
+    await db.switchProfile('central_$a',identity:{'schoolSyncId':a,'schoolId':a});
+    expect((await db.collection('school_config').doc('school_profile_cache').get()).data()?['schoolName'],'Synthetic A');
+  });
   test('cache readback cannot replace a queued school profile or generate another operation', () async {
     final db = FirebaseFirestore.instance;
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
@@ -25,3 +46,4 @@ void main() {
     expect((await ref.get()).data()?['schoolName'],'Unsent local school');
   });
 }
+

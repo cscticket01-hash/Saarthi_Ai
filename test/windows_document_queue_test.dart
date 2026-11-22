@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image/image.dart' as img;
@@ -15,6 +17,7 @@ import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_local_storage.dart';
 import '../lib/windows_connect/managed_school_session.dart';
+import '../lib/windows_firebase_sync.dart';
 import '../lib/platform/platform_config.dart';
 
 // Isolated signed-readback fixture. A legacy success bool is intentionally insufficient.
@@ -70,6 +73,166 @@ void main() {
       identity: {'schoolSyncId': school, 'schoolId': school},
     );
   });
+  test('only exact same-school, still-pending document generation may be uploaded', () {
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':'document-generation-001',
+      'localPath':'/synthetic/owner-original.pdf',
+      'contentHash':List.filled(64,'a').join(),
+      'deleted':false,'parentDeletionOperationId':null,
+      'syncState':'Pending',
+    };
+    bool eligible(Map current)=>samePendingDocumentGeneration(original,current,school);
+    expect(eligible({...original}),true);
+    expect(eligible({...original,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}),false);
+    expect(eligible({...original,'documentRevision':'document-generation-002'}),false);
+    expect(eligible({...original,'localPath':'/synthetic/replacement.pdf'}),false);
+    expect(eligible({...original,'contentHash':List.filled(64,'b').join()}),false);
+    expect(eligible({...original,'deleted':true}),false);
+    expect(eligible({...original,'parentDeletionOperationId':'parent-delete-op'}),false);
+    expect(eligible({...original,'syncState':'cloudAccepted'}),false);
+    expect(eligible({...original,'syncState':'needsAttention'}),false);
+    expect(eligible({...original,'syncState':'conflict'}),false);
+  });
+  test('legacy scanned document without file hash binds exact immutable bytes before provider send', () async {
+    final temp=await Directory.systemTemp.createTemp('legacy-scan-hash-');
+    try {
+      final file=File('${temp.path}/old-scan.jpg');
+      final bytes=<int>[1,8,3,9,7];
+      await file.writeAsBytes(bytes);
+      const id='old-scanned-document';
+      final row={'schoolId':school,'studentId':'S1','documentRevision':'original-scan-001',
+        'localPath':file.path,'syncState':'Pending','baseCloudRevision':'',
+        'deleted':false,'mimeType':'image/jpeg','fileName':'old-scan.jpg'};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      var sent=0;
+      await WindowsBackendBridge.flushDocumentPending(send:(payload)async {
+        sent++;
+        final digest=sha256.convert(bytes).toString();
+        expect(payload['contentHash'],digest);
+        expect((await db.collection('_windows_document_outbox').doc(id).get()).data()?['contentHash'],digest);
+        expect((await db.collection('_local_student_documents').doc(id).get()).data()?['contentHash'],digest);
+        return documentAckFixture(payload,71);
+      });
+      expect(sent,1);
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc(id).get()).data()?['contentHash'],sha256.convert(bytes).toString());
+    } finally { await temp.delete(recursive:true); }
+  });
+
+  test('a hash mismatch refuses document upload and preserves the original queue', () async {
+    final temp=await Directory.systemTemp.createTemp('scan-hash-mismatch-');
+    try {
+      final file=File('${temp.path}/immutable-scan.jpg');
+      await file.writeAsBytes([1,2,3]);
+      const id='mismatched-scanned-document';
+      final row={'schoolId':school,'studentId':'S1','documentRevision':'original-scan-002',
+        'localPath':file.path,'syncState':'Pending','baseCloudRevision':'',
+        'contentHash':List.filled(64,'a').join(),'deleted':false,'mimeType':'image/jpeg'};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      var sent=0;
+      await expectLater(WindowsBackendBridge.flushDocumentPending(send:(_)async {
+        sent++;return {};
+      }),throwsA(anything));
+      expect(sent,0);
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+    } finally { await temp.delete(recursive:true); }
+  });
+
+  test('parallel scan admission requires exact separate owner and no pending parent',(){
+    final row=<String,dynamic>{
+      'schoolId':school,'studentId':'S1','personId':'stable-S1',
+      'ownerRole':'student','documentRevision':'document-revision-100',
+      'localPath':'/synthetic/scan.jpg','scanQuotaVersion':1,
+      'baseCloudRevision':'','baseCloudUploadedAt':null,
+      'deleted':false,'syncState':'Pending',
+      'contentHash':List.filled(64,'a').join(),
+    };
+    bool allow(Map candidate,[List<Map<String,dynamic>> blockers=const []])=>
+      canParallelStageOriginalScan(candidate,school,blockers,documentStageSupported:true);
+    expect(allow(row),true);
+    expect(canParallelStageOriginalScan(row,school,const [],documentStageSupported:false),false);
+    expect(allow({...row,'schoolId':'foreign'}),false);
+    expect(allow({...row,'personId':''}),false);
+    expect(allow({...row,'contentHash':null}),false);
+    expect(allow({...row,'baseCloudRevision':'old-drive-revision'}),false);
+    expect(allow({...row,'deleted':true}),false);
+    expect(allow({...row,'documentKind':'idCard'}),false);
+    expect(allow({...row,'documentKind':'feeReceipt'}),false);
+    expect(allow({...row,'documentKind':'marksheet'}),false);
+    expect(allow({...row,'atomicBundleId':'reserved'}),false);
+    expect(allow(row,[{'schoolId':school,'collection':'students_directory','documentId':'S1'}]),false);
+    expect(allow(row,[{'schoolId':school,'collection':'school_settings','documentId':'settings'}]),false);
+    expect(allow(row,[{'schoolId':'foreign','collection':'school_expenses'}]),false);
+  });
+  test('two independent scans begin upload without waiting for each other',() async {
+    final originalStage=WindowsFirebaseRemote.documentStageSupported;
+    final dir=await Directory.systemTemp.createTemp('independent-scan-stage-');
+    WindowsFirebaseRemote.documentStageSupported=true;
+    final bothStarted=Completer<void>(),release=Completer<void>();
+    try {
+      for(final id in ['scan-alpha','scan-beta']){
+        final file=File('${dir.path}/$id.jpg');
+        await file.writeAsBytes([1,2,3,id.length]);
+        final row={'schoolId':school,'studentId':'student-$id',
+          'personId':'stable-$id','ownerRole':'student',
+          'documentRevision':'document-revision-$id','localPath':file.path,
+          'contentHash':sha256.convert(await file.readAsBytes()).toString(),
+          'scanQuotaVersion':1,'syncState':'Pending','deleted':false,
+          'baseCloudRevision':'','mimeType':'image/jpeg','fileName':'$id.jpg'};
+        await db.collection('_local_student_documents').doc(id).set(row);
+        await db.collection('_windows_document_outbox').doc(id).set(row);
+      }
+      var started=0;
+      final work=WindowsBackendBridge.flushDocumentPending(send:(payload)async{
+        started++;
+        if(started==2 && !bothStarted.isCompleted)bothStarted.complete();
+        await release.future;
+        return documentAckFixture(payload,92);
+      });
+      try {await bothStarted.future.timeout(const Duration(seconds:4));}
+      finally {
+        if(!release.isCompleted)release.complete();
+        await work;
+      }
+      expect(started,2);
+      expect((await db.collection('_windows_document_outbox').get()).docs,isEmpty);
+    } finally {
+      WindowsFirebaseRemote.documentStageSupported=originalStage;
+      await dir.delete(recursive:true);
+    }
+  });
+  test('foreign document outbox blocks before any upload or receipt', () async {
+    const id='foreign-document-pending';
+    await db.collection('_windows_document_outbox').doc(id).set({
+      'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'documentRevision':'document-operation-001',
+      'syncState':'cloudAccepted','contentHash':List.filled(64,'a').join(),
+    });
+    var sends=0;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(
+      send:(_)async{sends++;return {'success':true};}),throwsStateError);
+    expect(sends,0);
+    expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+  });
+  test('foreign document retained after a local row stops all staging before any send',() async {
+    await db.collection('_windows_document_outbox').doc('a-local').set({
+      'schoolId':school,'studentId':'S1','documentRevision':'local-document-operation',
+      'syncState':'Pending','localPath':'/synthetic/never-send.jpg','deleted':false,
+    });
+    await db.collection('_windows_document_outbox').doc('z-foreign').set({
+      'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'documentRevision':'foreign-document-operation','syncState':'Pending',
+    });
+    var sends=0;
+    await expectLater(WindowsBackendBridge.flushDocumentPending(send:(_)async{
+      sends++;return {'success':true};
+    }),throwsStateError);
+    expect(sends,0);
+    expect((await db.collection('_windows_document_outbox').get()).docs,hasLength(2));
+  });
+
   test('actual bundle absent, existing and replay tombstones settle only matching queued deletions', () async {
     final cases=jsonDecode(File('test/fixtures/managed_document_delete_contract.json').readAsStringSync()) as List;
     for(final c in cases){
@@ -87,6 +250,45 @@ void main() {
       expect((await db.collection('_local_student_documents').doc(id).get()).data()?['syncState'],'Synced');
     }
   });
+  test('late Google document receipt cannot verify or retire a newer local generation', () async {
+    final dir=await Directory.systemTemp.createTemp('document-generation-replacement');
+    try {
+      const id='document-replacement-ack';
+      final bytes=<int>[1,2,3,4,5];
+      final path='${dir.path}/original.pdf';
+      await File(path).writeAsBytes(bytes);
+      final old=<String,dynamic>{
+        'schoolId':school,'studentId':'student-owner',
+        'documentRevision':'document-operation-original',
+        'localPath':path,'contentHash':sha256.convert(bytes).toString(),
+        'syncState':'Pending','baseCloudRevision':'',
+        'deleted':false,'mimeType':'application/pdf','fileName':'original.pdf',
+      };
+      await db.collection('_local_student_documents').doc(id).set(old);
+      await db.collection('_windows_document_outbox').doc(id).set(old);
+      final events=<String>[];
+      await WindowsBackendBridge.flushDocumentPending(
+        onActivity:(event) => events.add(event['stage'] as String),
+        send:(payload)async {
+          final newer={...old,
+            'documentRevision':'document-operation-replacement',
+            'syncState':'Pending'};
+          await db.collection('_local_student_documents').doc(id).set(newer);
+          await db.collection('_windows_document_outbox').doc(id).set(newer);
+          return documentAckFixture(payload,42);
+        },
+      );
+      final pending=(await db.collection('_windows_document_outbox').doc(id).get()).data()!;
+      final local=(await db.collection('_local_student_documents').doc(id).get()).data()!;
+      expect(pending['documentRevision'],'document-operation-replacement');
+      expect(local['documentRevision'],'document-operation-replacement');
+      expect(local['syncState'],'Pending');
+      expect(events,contains('cloudRequest'));
+      expect(events,contains('waitingForAck'));
+      expect(events, isNot(contains('verified')));
+    } finally {await dir.delete(recursive:true);}
+  });
+
   test('document delete retries keep identity, while a later owner deletion gets a new identity', () {
     final first={'documentRevision':'delete-first','baseCloudRevision':'same-original-generation'};
     final later={...first,'documentRevision':'delete-after-restoration'};

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/windows_local_firestore.dart';
+import '../lib/cloudflare_record_handoff.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/windows_sync_engine.dart';
@@ -29,7 +32,77 @@ void main() {
   });
   tearDown(() => engine.details.value = previous);
 
+  test('diagnostic report separates exact handoffs and excludes foreign rows', () async {
+    const school = 'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const foreign = 'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final queue = db.collection('_windows_firebase_outbox');
+    Map<String, dynamic> row(String op, String owner) => {
+      'schoolId': owner, 'collection': 'school_notices',
+      'documentId': op, 'operationId': op, 'operation': 'set',
+      'baseCloudRevision': '', 'syncState': 'cloudAccepted',
+      'cloudTicketId': exactStagedRecordTicket({
+        'schoolId':owner,'collection':'school_notices',
+        'documentId':op,'operationId':op,
+      },owner), 'cloudTicketLane': 'records',
+      'data': {'privateText': 'not for diagnostic export'},
+    };
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await queue.doc('accepted').set(row('accepted-operation-0001', school));
+      await queue.doc('unverified').set({
+        ...row('unverified-operation-0001', school),
+        'cloudTicketId': List.filled(64, 'b').join(),
+      });
+      await queue.doc('foreign').set(row('foreign-operation-0001', foreign));
+      await queue.doc('pending').set({
+        ...row('pending-operation-0001', school), 'syncState': 'pending',
+      });
+      await db.collection('_windows_sync_receipts').doc('foreign-receipt').set({
+        'schoolId': foreign, 'operationId': 'foreign-operation-0001',
+      });
+    });
+    final report = await engine.safeQueueDiagnostics();
+    expect(report['foregroundQueueCount'], 2);
+    expect(report['cloudflareOwnedPendingDriveCount'], 1);
+    expect(report['unscopedQueueCount'], 1);
+    expect(report['retainedVerifiedReceiptCount'], 0);
+    final states = (report['items'] as List).map((r) => r['state']);
+    expect(states, unorderedEquals(['cloudAccepted', 'unverifiedHandoff', 'pending']));
+    expect(report.toString(), isNot(contains('foreign-operation-0001')));
+    expect(report.toString(), isNot(contains('not for diagnostic export')));
+    expect((await queue.get()).docs.length, 4,
+        reason: 'Diagnosis never deletes or acknowledges original queue work');
+  });
+
+  test('document Cloudflare-owned Idle classification requires exact original sidecar ticket', () async {
+    const school='vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const revision='document-original-operation-0001';
+    final digest=List.filled(64,'a').join();
+    String ticket(String id) {
+      final key=sha256.convert(utf8.encode('$id:$revision')).toString();
+      return sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    }
+    Map<String,dynamic> row(String id,String key)=> {
+      'schoolId':school,'documentRevision':revision,
+      'contentHash':digest,'cloudContentHash':digest,
+      'syncState':'cloudAccepted','cloudTicketLane':'file-$key',
+      'cloudTicketId':key,'deleted':false,
+    };
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await db.collection('_windows_document_outbox')
+          .doc('exact-document').set(row('exact-document',ticket('exact-document')));
+      await db.collection('_windows_document_outbox')
+          .doc('wrong-ticket').set(row('wrong-ticket',List.filled(64,'b').join()));
+    });
+    final report=await engine.safeQueueDiagnostics();
+    expect(report['cloudflareOwnedPendingDriveCount'],1);
+    expect(report['foregroundQueueCount'],1);
+    expect(report['unscopedQueueCount'],0);
+    expect((await db.collection('_windows_document_outbox').get()).docs.length,2);
+  });
+
   testWidgets('overview keeps real queue activity and combined pending counts; queue opens without adding attention twice', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(home: WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen: () async {})));
     await tester.pumpAndSettle();
     expect(find.text('LIVE UI'), findsNothing);
@@ -42,7 +115,7 @@ void main() {
     expect(find.text('Live Queue Activity'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Pending Uploads'), -200,
         scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Pending Uploads'));
+    await tester.tap(find.text('Pending Uploads').hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Pending Queue & Conflict Review'), findsOneWidget);
     expect(find.text('students_directory • conflict'), findsOneWidget);
@@ -66,7 +139,7 @@ void main() {
     expect(tester.widget<FilledButton>(pause).onPressed, isNotNull);
     await tester.tap(pause);
     await tester.pumpAndSettle();
-    expect(pauses, [const Duration(hours: 24)]);
+    expect(pauses, [const Duration(minutes: 5)]);
     expect(completion.isCompleted, false);
     expect(engine.details.value['pending'], 3);
     completion.complete();
@@ -100,7 +173,7 @@ void main() {
       expect(find.text('Diagnostics and recovery tools'),findsNothing);
       await tester.tap(find.byType(PopupMenuButton<int>));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Advanced checks'));
+      await tester.tap(find.text('Troubleshoot'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Export Sanitized Report'),

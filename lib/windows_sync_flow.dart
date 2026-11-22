@@ -39,7 +39,7 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
     return SizedBox(height:height,child:Row(children:[
       SizedBox(width:circle,height:circle,child:Stack(alignment:Alignment.center,children:[
         SizedBox(width:circle-4,height:circle-4,child:CircularProgressIndicator(
-          value:widget.phase!='paused'&&widget.active.isNotEmpty?null:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
+          value:widget.phase!='paused'&&widget.active.isNotEmpty?null:widget.phase=='idle'&&widget.lastMicros!=null?1:0,strokeWidth:4,color:color,backgroundColor:color.withValues(alpha:.15))),
         SizedBox(width:circle-20,height:circle-20,child:FittedBox(fit:BoxFit.scaleDown,child:SizedBox(width:circle-20,child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.phase=='idle'?Icons.check_circle_outline:Icons.sync,color:color),
           Text(widget.label,maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:small?12:15,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
           if(widget.phase=='idle') Text(widget.lastMicros==null?'Last sync: —':'Last sync: ${(widget.lastMicros!/1000000).toStringAsFixed(2)} sec',key:const ValueKey('last-verified-transfer'),style:const TextStyle(fontWeight:FontWeight.bold)),
@@ -48,8 +48,8 @@ class _WindowsSyncFlowState extends State<WindowsSyncFlow> with SingleTickerProv
       SizedBox(width:gap,height:height,child:AnimatedBuilder(animation:clock,builder:(_,__)=>CustomPaint(
         painter:_TransferLinks(color,widget.phase=='paused'?const {}:widget.active,clock.value,rowHeight)))),
       Expanded(child:Column(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
-        card('Local Storage',widget.local,Icons.storage_outlined),
-        card('School Cloud',widget.cloud,Icons.cloud_outlined),
+        card('Local Save',widget.local,Icons.storage_outlined),
+        card('School Server',widget.cloud,Icons.cloud_outlined),
         card('Google Drive',widget.drive,Icons.folder_outlined),
       ])),
     ]));

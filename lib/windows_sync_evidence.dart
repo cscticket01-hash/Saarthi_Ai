@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 /// Network activity is scoped to the actual school and excludes metadata polls.
 class WindowsSyncEvidence {
   static final active=ValueNotifier<Map<String,int>>({});
-  static bool dataAction(String action)=>action.startsWith('managed/file/')||action=='managed/records'||action=='managed/records/batch';
+  static bool dataAction(String action)=>action.startsWith('managed/file/')||
+      {'managed/records','managed/records/batch','managed/document/stage/resumable',
+       'managed/record/media/stage/resumable'}.contains(action);
   static void enter(String school,String lane){final key='$school:$lane';active.value={...active.value,key:(active.value[key]??0)+1};}
   static void leave(String school,String lane){final key='$school:$lane',value=(active.value[key]??0)-1;final next={...active.value}..remove(key);if(value>0)next[key]=value;active.value=next;}
   static Set<String> lanes(String school)=>{for(final lane in ['local','cloud','drive']) if((active.value['$school:$lane']??0)>0)lane};

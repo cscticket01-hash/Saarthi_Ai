@@ -3532,11 +3532,15 @@ function uploadStudentDocument(data) {
       .getValues();
 
     for (let i = 0; i < rows.length; i++) {
-      if (String(rows[i][1] || "").trim() !== studentId) {
-        continue;
-      }
-
       const rowDocumentId = String(rows[i][0] || "").trim();
+      const rowOwner = String(rows[i][1] || "").trim();
+      // A replacement ID is not permission to create a new generation for
+      // another pupil. Refuse ambiguous IDs before allocating any file.
+      if (replaceDocumentId && rowDocumentId === replaceDocumentId &&
+          (rowOwner !== studentId || replaceRow > 1)) {
+        throw new Error("Document owner or identity mismatch");
+      }
+      if (rowOwner !== studentId) continue;
 
       if (
         replaceDocumentId &&
@@ -3551,6 +3555,10 @@ function uploadStudentDocument(data) {
     }
   }
 
+  if (replaceDocumentId && replaceRow < 2) {
+    throw new Error("Document replacement requires an existing owner record");
+  }
+  if (oldFileId) VS_schoolFile(oldFileId);
   if (
     currentTotal + fileSize >
     STUDENT_DOCUMENT_MAX_BYTES
@@ -3658,9 +3666,7 @@ function uploadStudentDocument(data) {
       oldFileId !== fileId
     ) {
       try {
-        DriveApp
-          .getFileById(oldFileId)
-          .setTrashed(true);
+        VS_schoolFile(oldFileId).setTrashed(true);
       } catch (error) {
         console.log(
           "Old student document delete warning: " +
@@ -3720,9 +3726,9 @@ function deleteStudentDocument(data) {
       String(rows[i][0] || "").trim() === documentId &&
       String(rows[i][1] || "").trim() === studentId
     ) {
+      if (rowNumber > 1) throw new Error("Duplicate document identity requires review");
       rowNumber = i + 2;
       fileId = String(rows[i][9] || "").trim();
-      break;
     }
   }
 
@@ -3731,16 +3737,12 @@ function deleteStudentDocument(data) {
   }
 
   if (fileId) {
-    try {
-      DriveApp
-        .getFileById(fileId)
-        .setTrashed(true);
-    } catch (error) {
-      console.log(
-        "Student document delete warning: " +
-        error
-      );
-    }
+    // Retain the index if ownership or Drive deletion cannot be verified.
+    // Managed protocol uses its separate revision-bound tombstone owner.
+    const file = VS_schoolFile(fileId);
+    file.setTrashed(true);
+    if (file.isTrashed() !== true)
+      throw new Error("Document file cleanup unverified; record retained");
   }
 
   sheet.deleteRow(rowNumber);
@@ -6682,7 +6684,7 @@ function VS_managedVerify(e, onAuthenticated) {
     Object.keys(all).filter(k=>k.indexOf('VS_NONCE_')===0).forEach(k=>{if(Number(all[k])<Date.now()-240000)p.deleteProperty(k);else count++;});
     if(count>=1000)throw new Error('Retry storage shortly');p.setProperty(key,String(b.timestamp));
   } finally {lock.releaseLock();}
-  return JSON.parse(b.payload);
+  return payload; // HMAC-verified original payload, parsed once.
 }
 function VS_validateManagedCollection(name) {
   if (!['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results','mobile_sessions','mobile_users','mobile_complaints'].includes(name)) throw new Error('Unknown collection');
@@ -6937,6 +6939,8 @@ function VS_managedRecycle(b) {
       VS_managedCollection(b.collection);
       if(typeof b.after!=='string'||b.after.length>200)throw new Error('Invalid record ID');
       const store=VS_managedSheet(b.collection),records=VS_sheetRecords(store),now=Date.now();
+      // A missing tombstone is not evidence that an approved restore has no snapshot.
+      if(VS_missingRecordHeads(store,records).length)throw new Error('Recycle inventory requires verified local Sheet recovery');
       const ids=Object.keys(records).filter(id=>id>b.after&&records[id]._syncDeleted===true&&records[id]._syncRecycleFileId).sort();
       const entries=ids.slice(0,25).map(id=>{
         const row=records[id],base={id:id,collection:b.collection,fileId:row._syncRecycleFileId,deletedRevision:row._syncRevision};
@@ -6955,8 +6959,12 @@ function VS_managedRecycle(b) {
     const item=VS_recycleRead(b.fileId),snap=item.snapshot,store=VS_managedSheet(snap.collection),current=VS_sheetItem(store,snap.id);
     if(!current||current.schoolId!==snap.schoolId)throw new Error('Record revision conflict');
     const data=current.data;
-    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision)
+    if(b.operation==='restore'&&data._syncRecycleRestoreId===b.operationId&&data._syncRecycleSource===b.fileId&&data._syncRecycleRestoreRevision===b.expectedRecordRevision){
+      if(data._syncDeleted===true||typeof data._syncRevision!=='string'||!data._syncRevision||
+         data._syncRevision===snap.deletedRevision||/^(cf-|live-)/.test(data._syncRevision))
+        throw new Error('Record revision conflict');
       return {recordRevision:data._syncRevision,syncProtocol:2,restored:true};
+    }
     if(b.expectedRecordRevision!==data._syncRevision||data._syncRevision!==snap.deletedRevision||
         data._syncDeleted!==true||data._syncRecycleFileId!==b.fileId)throw new Error('Record revision conflict');
     if(b.operation==='restore') {
@@ -8675,9 +8683,12 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     return VS_resumeEverywhereDelete(store,b.id,old);
   }
   const revision=old&&old._syncDeleted?old._syncRevision:Utilities.getUuid();
-  const targets=[],files=new Set(),retainedShared=[];
+  const targets=[],targetKeys=new Set(),files=new Set(),retainedShared=[];
+  const key=(collection,id)=>JSON.stringify([collection,id]);
+  const hasTarget=(collection,id)=>targetKeys.has(key(collection,id));
   function target(collection,id,row){
-    if(targets.some(t=>t.collection===collection&&t.id===id))return;
+    if(hasTarget(collection,id))return;
+    targetKeys.add(key(collection,id));
     const owner=row&&(row.mobileStableId||row.personId||row._syncDeletedOwner)||(person?generation:null);
     const value={collection:collection,id:id,sourceRevision:row&&row._syncRevision||'',revision:collection===b.collection&&id===b.id?revision:row&&row._syncDeleted?row._syncRevision:Utilities.getUuid()};
     if(owner)value.generation=owner;
@@ -8701,7 +8712,9 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
     }
   }
   if(b.collection==='exams')for(const collection of ['exam_results','exam_center_results']){
-    const records=VS_sheetRecords(VS_managedSheet(collection));for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
+    const childStore=VS_managedSheet(collection),records=VS_sheetRecords(childStore);
+    if(VS_missingRecordHeads(childStore,records).some(head=>!head.deleted))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+    for(const id of Object.keys(records))if(records[id].examId===b.id)target(collection,id,records[id]);
   }
   // Shared school assets remain owned by the surviving records; deleting one
   // reference must not remove another pupil's ID card/photo or school seal.
@@ -8713,8 +8726,8 @@ function VS_deleteEverywhere(b,store,existing,wireHash){
   if(files.size>0){
     for(const collection of VS_LAYOUT_COLLECTIONS){
       const view=VS_managedSheet(collection),records=VS_sheetRecords(view);
-      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!targets.some(t=>t.collection===collection&&t.id===head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
-      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!targets.some(t=>t.collection===collection&&t.id===id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
+      if(VS_missingRecordHeads(view,records).some(head=>!head.deleted&&!hasTarget(collection,head.id)))throw new Error('Delete everywhere inventory requires verified local Sheet recovery');
+      for(const id of Object.keys(records))if(!records[id]._syncDeleted&&!hasTarget(collection,id))VS_collectRetirementReferences(records[id],references,0,{remaining:20000});
     }
     if(references.retirementScanComplete===false)throw new Error('Delete everywhere shared file inventory requires review');
   }
@@ -9040,19 +9053,39 @@ function VS_mobileAction(b){
   VS_touchPresence(session,b.version);
   const props=PropertiesService.getScriptProperties(),known=b.knownRevisions||{};
   const policy=VS_attendancePolicy(session);
-  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
+  const safePerson=VS_safePerson(session.person);
+  const revisions={},result={person:safePerson,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
   const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
   else groups.salary='teacher_salary';
+  const checkpoints=b.knownGroupRecordRevisions||{};
+  if(b.mobileRecordDeltaVersion===1){
+   if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
+   let count=0;Object.keys(checkpoints).forEach(key=>{
+    const values=checkpoints[key];
+    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');
+    if(!Object.prototype.hasOwnProperty.call(groups,key)){
+     // Older mobile clients turn cached metadata lists (e.g. noticeIds)
+     // into empty checkpoints. Ignore only empty hints; never read a new group.
+     if(Object.keys(values).length===0)return;
+     throw new Error('Invalid mobile group checkpoint');
+    }
+    Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});
+   });
+  }
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
    if(key==='reportCards'&&props.getProperty('VS_SHEET_MIGRATED_exam_center_results')!=='1')VS_managedSheet('exam_center_results');
    let revision=key==='reportCards'
     ? JSON.stringify([props.getProperty('VS_RECORD_REV_exam_results')||'legacy',props.getProperty('VS_RECORD_REV_exam_center_results')||'legacy'])
     : props.getProperty('VS_RECORD_REV_'+col)||'legacy';
-   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,VS_safePerson(session.person)]));
+   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,safePerson]));
    revisions[key]=revision;
-   if(known[key]===revision)return;
+   // Object groups keep their original revision contract. For list groups,
+   // an omitted bounded record baseline cannot prove cached membership.
+   const listGroup=key!=='school'&&key!=='templates';
+   if(known[key]===revision&&(!listGroup||b.mobileRecordDeltaVersion!==1||
+      Object.prototype.hasOwnProperty.call(checkpoints,key)))return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
    else if(key==='notices'){
@@ -9090,19 +9123,6 @@ function VS_mobileAction(b){
   // Permission-filtered list deltas. IDs acknowledge removals; hashes describe
   // only visible records, never another pupil's inventory.
   if(b.mobileRecordDeltaVersion===1){
-   const checkpoints=b.knownGroupRecordRevisions||{};
-   if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
-   let count=0;Object.keys(checkpoints).forEach(key=>{
-    const values=checkpoints[key];
-    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');
-    if(!Object.prototype.hasOwnProperty.call(groups,key)){
-     // Older mobile clients turn cached metadata lists (e.g. noticeIds)
-     // into empty checkpoints. Ignore only empty hints; never read a new group.
-     if(Object.keys(values).length===0)return;
-     throw new Error('Invalid mobile group checkpoint');
-    }
-    Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});
-   });
    result.mobileRecordDeltaVersion=1;result.groupRecordDeltas={};
    Object.keys(groups).forEach(key=>{
     if(!Array.isArray(result[key]))return;
@@ -9122,7 +9142,7 @@ function VS_mobileAction(b){
    delete result.noticesDelta;delete result.noticeIds;
   }
   result.revisions=revisions;
-  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
+  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',safePerson]));
   if(b.knownRevision===result.revision&&!Object.keys(groups).some(key=>Object.prototype.hasOwnProperty.call(result,key)))return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt,...(b.mobileRecordDeltaVersion===1?{mobileRecordDeltaVersion:1}:{})};
 
   return result;

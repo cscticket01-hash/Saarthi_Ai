@@ -358,6 +358,8 @@ class WindowsFirebaseRemote {
   }) async {
     if (item['schoolId'] != school)
       throw StateError('Pending record belongs to another school.');
+    if (item['priorCloudWrite'] != null)
+      throw StateError('Original staged predecessor awaits provider verification.');
     final collection = item['collection'].toString(),
         id = item['documentId'].toString();
     if (item['operation'] != 'delete' &&
@@ -432,8 +434,9 @@ class WindowsFirebaseRemote {
     // the same two-phase protocol, but ONLY after its authenticated broker
     // advertises the durable edge-delivery capability. File-dependent rows
     // remain with the original version-safe owner.
-    final cloudHandoff=batchReply==null&&eligibleForRecordHandoff(
-      item,school,edgeDeliverySupported:edgeDeliverySupported);
+    final cloudHandoff=batchReply==null&&(
+      eligibleForRecordHandoff(item,school,edgeDeliverySupported:edgeDeliverySupported) ||
+      eligibleForStagedDelete(item,school,edgeDeliverySupported:edgeDeliverySupported));
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
@@ -637,6 +640,7 @@ class WindowsFirebaseRemote {
           }.contains(item['collection']) ||
           (edgeDeliverySupported && item['collection'] == 'school_notices') ||
           item['priorDeletion'] != null ||
+          item['priorCloudWrite'] != null ||
           item['data'] is! Map ||
           item['operationId'] is! String ||
           (item['retryAtMillis'] as num? ?? 0) >

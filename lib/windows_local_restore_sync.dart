@@ -18,22 +18,54 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
   check();
   final requests = await db.collection('_windows_recycle_requests').get();
   check();
+  var admitted=0;
   for (final row in requests.docs.where((r)=>r.data()['localRestore']==true &&
-      r.data()['schoolId']==school && {'awaitingDeleteAck','awaitingCloudRestore','retry'}.contains(r.data()['state'])).take(3)) {
+      r.data()['schoolId']==school && {'awaitingDeleteAck','awaitingCloudRestore','retry'}.contains(r.data()['state']))) {
+    if(admitted>=3)break;
     if (canAdmit?.call() == false) return;
     final intent = row.data();
     final deletionId = intent['deletionOperationId'];
-    if (deletionId is! String || intent['administratorApproved'] != true) continue;
+    if (deletionId is! String || intent['administratorApproved'] != true ||
+        row.id!='local-restore-$deletionId' ||
+        intent['operationId'] is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(intent['operationId'])) continue;
     final evidence = (await db.collection('_windows_local_deletions').doc(deletionId).get()).data();
     check();
     if (evidence == null || evidence['schoolId'] != school || evidence['cloudDeletionVerified'] != true ||
-        evidence['deletedRevision'] is! String) continue;
+        evidence['operationId']!=deletionId ||
+        evidence['collection']!=intent['collection'] ||
+        evidence['documentId']!=intent['documentId'] ||
+        evidence['deletedRevision'] is! String || (evidence['deletedRevision'] as String).isEmpty ||
+        RegExp(r'^(cf-|live-)').hasMatch(evidence['deletedRevision'])) continue;
+    // An unresolved delete does not consume one of the three ready slots.
+    admitted++;
     final revision = evidence['deletedRevision'] as String;
+    var expected=intent;
+    Future<void> retain(Map<String,dynamic> values) async {
+      check();
+      final batch=db.batch();
+      batch.requireUnchanged(row.reference,expected);
+      final deletion = db.collection('_windows_local_deletions').doc(deletionId);
+      batch.requireUnchanged(deletion,evidence);
+      // Keep the original tombstone in the same guarded local transaction.
+      batch.set(deletion, evidence);
+      batch.set(row.reference,values,const SetOptions(merge:true));
+      await batch.commit();
+      expected={...expected,...values};
+      check();
+    }
     try {
       String? cursor;
+      final cursors=<String>{};
       Map<String,dynamic>? selected;
       final retainedBody=intent['body'];
-      if(retainedBody is Map && retainedBody['operation']=='restore' && retainedBody['operationId']==intent['operationId'] && retainedBody['expectedRecordRevision']==revision && retainedBody['fileId'] is String) {
+      if(retainedBody!=null) {
+        if(retainedBody is! Map || retainedBody.length!=4 ||
+            retainedBody['operation']!='restore' ||
+            retainedBody['operationId']!=intent['operationId'] ||
+            retainedBody['expectedRecordRevision']!=revision ||
+            retainedBody['fileId'] is! String || (retainedBody['fileId'] as String).isEmpty)
+          throw StateError('Retained restore request identity mismatch.');
         selected={'fileId':retainedBody['fileId']};
       }
       for (var page=0;selected==null && page<4;page++) {
@@ -51,32 +83,34 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
         }
         if(selected!=null || inventory['partial']==false)break;
         cursor=inventory['nextAfter'] as String?;
-        if(cursor==null || cursor.isEmpty)throw StateError('Incomplete recycle cursor.');
+        if(cursor==null || cursor.isEmpty || !cursors.add(cursor))throw StateError('Incomplete recycle cursor.');
       }
       if(selected==null) {
-        await row.reference.set({'state':'needsReview','reason':'snapshot_not_in_bounded_inventory'},const SetOptions(merge:true));
+        await retain({'state':'needsReview','reason':'snapshot_not_in_bounded_inventory'});
         continue;
       }
-      if(selected['fileId'] is! String || selected['status']=='expired' || selected['status']=='needsReview') {
-        await row.reference.set({'state':'conflict','reason':'snapshot_requires_administrator_review'},const SetOptions(merge:true));
+      if(selected['fileId'] is! String || (selected['fileId'] as String).isEmpty || selected['status']=='expired' || selected['status']=='needsReview') {
+        await retain({'state':'conflict','reason':'snapshot_requires_administrator_review'});
         continue;
       }
       final body={'operation':'restore','fileId':selected['fileId'],'operationId':intent['operationId'],'expectedRecordRevision':revision};
-      await row.reference.set({'state':'awaitingCloudRestore','body':body},const SetOptions(merge:true));
+      await retain({'state':'awaitingCloudRestore','body':body});
       check();
       if (canAdmit?.call() == false) return;
       final ack=await call(body).timeout(const Duration(seconds:95));
       check();
       if(ack['success']!=true || ack['schoolId']!=school || ack['restored']!=true || ack['syncProtocol']!=2 ||
-          ack['recordRevision'] is! String || ack['recordRevision']==revision || (ack['recordRevision'] as String).isEmpty) {
+          ack['recordRevision'] is! String || ack['recordRevision']==revision || (ack['recordRevision'] as String).isEmpty ||
+          RegExp(r'^(cf-|live-)').hasMatch(ack['recordRevision'])) {
         throw StateError('Durable same-school restore ACK required.');
       }
-      await db.finishLocalRestore(deletionId,expectedDeletedRevision:revision,restoredRevision:ack['recordRevision'] as String);
+      await db.finishLocalRestore(deletionId,expectedDeletedRevision:revision,
+        restoredRevision:ack['recordRevision'] as String,expectedRestoreRequest:expected);
     } catch (error) {
       check();
       final decision=windowsSyncRecovery(error);
       final state=decision.retry?'retry':decision.kind==SyncFailureKind.conflict?'conflict':decision.kind==SyncFailureKind.authorization?'rejected':'needsReview';
-      await row.reference.set({'state':state,'reason':decision.kind.name},const SetOptions(merge:true));
+      await retain({'state':state,'reason':decision.kind.name});
       if(decision.retry)rethrow; // Existing capped engine backoff owns temporary retries.
       // Permanent record failures require review and do not block unrelated pulls.
     }

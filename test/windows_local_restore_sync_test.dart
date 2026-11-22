@@ -76,6 +76,53 @@ void main() {
     expect((await db.collection('school_notices').doc('notice').get()).data()?['capturedAt'],1791500000123);
     expect((await db.collection('_windows_local_deletions').get()).docs.single.data()['deletedRevision'],'actual-delete-revision');
   });
+  test('unverified original deletes do not consume ready restore slots',()async {
+    await deleteAck();
+    final ready=(await db.collection('_windows_recycle_requests').get()).docs.single;
+    final intent=ready.data();
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()async {
+      await ready.reference.delete();
+      for(var i=0;i<4;i++){
+        final deletionId='unverified-delete-operation-$i';
+        await db.collection('_windows_recycle_requests').doc('local-restore-$deletionId').set({
+          ...intent,'deletionOperationId':deletionId,'operationId':'unverified-restore-operation-$i',
+          'documentId':'blocked-$i','state':'awaitingDeleteAck',
+        });
+      }
+      await ready.reference.set(intent);
+    });
+    var restores=0;
+    await syncLocalRestoreRequests(db,school,(body)async{
+      if(body['operation']=='list')return inventory();
+      restores++;
+      return {'success':true,'schoolId':school,'restored':true,'syncProtocol':2,
+        'recordRevision':'canonical-restore-revision'};
+    });
+    expect(restores,1);
+    expect((await ready.reference.get()).data()?['state'],'verified');
+  });
+
+  test('corrupted retained restore body cannot be silently replaced',()async {
+    await deleteAck();
+    final row=(await db.collection('_windows_recycle_requests').get()).docs.single;
+    await row.reference.set({'body':{'operation':'restore','fileId':'wrong-snapshot',
+      'operationId':'different-restore-operation','expectedRecordRevision':'actual-delete-revision'}},
+      const SetOptions(merge:true));
+    var calls=0;
+    await syncLocalRestoreRequests(db,school,(body)async{calls++;return inventory();});
+    expect(calls,0);
+    final retained=(await row.reference.get()).data()!;
+    expect(retained['state'],'needsReview');
+    expect(retained['body']['fileId'],'wrong-snapshot');
+  });
+
+  test('temporary Cloudflare restore revision is not a canonical restore ACK',()async {
+    await deleteAck();
+    await syncLocalRestoreRequests(db,school,(body)async=>body['operation']=='list'?inventory():
+      {'success':true,'schoolId':school,'restored':true,'syncProtocol':2,'recordRevision':'cf-temporary'});
+    expect((await db.collection('_windows_recycle_requests').get()).docs.single.data()['state'],'needsReview');
+  });
+
   test('foreign or malformed restore responses never become verified local receipts',()async {
     await deleteAck();
     await syncLocalRestoreRequests(db,school,(body)async =>body['operation']=='list'?inventory():

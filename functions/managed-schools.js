@@ -574,7 +574,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
      driveBytesPartial:data.driveBytesPartial===true,summaryAt:data.summaryAt,
    }:{}),...(cachedGood?{}:{summaryError:'School Drive not connected or not yet measured'})};
   }
-  if(action==='developer/managed/sync/status')return {success:true,schoolId:id,serverEvidence:data.syncServerEvidence||null,latestWindowsReport:data.syncWindowsReport||null,measuredAt:now()};
+  if(action==='developer/managed/sync/status'){
+   // Dashboard evidence must not be revived by a cached developer profile.
+   const fresh=(await db.doc('platform_schools/'+id).get()).data()||{};
+   if(fresh.managed!==true)fail(404,'Managed school not found');
+   return {success:true,schoolId:id,serverEvidence:fresh.syncServerEvidence||null,latestWindowsReport:fresh.syncWindowsReport||null,measuredAt:now()};
+  }
   if(action==='developer/managed/view'){
    const known=b.knownRevisions||{};if(!known||typeof known!=='object'||Array.isArray(known)||JSON.stringify(known).length>16000)fail(400,'Invalid school view checkpoint');
    const body={action:'managed_view',knownRevisions:known};
@@ -1348,10 +1353,12 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  }
  if(action==='managed/sync/status'){
   if(b.report!==undefined){const r=b.report;
-   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis','appVersion','conflictCount','documentPending','lastReconciliationMillis','lastLocalBackupMillis','mediaPending','mediaInventoryState','lastClientSyncMillis'].includes(k))||
+   if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis','appVersion','conflictCount','documentPending','lastReconciliationMillis','lastLocalBackupMillis','mediaPending','mediaInventoryState','lastClientSyncMillis','cloudflareOwnedPendingDrive','lastCloudflareHandoffMicros'].includes(k))||
      !['pending','needsAttention','verifiedReceiptCount','lastCloudAckMillis'].every(k=>Number.isSafeInteger(r[k])&&r[k]>=0)||r.needsAttention>r.pending||r.pending>100000||r.verifiedReceiptCount>10000000||r.lastCloudAckMillis>now()+300000)fail(400,'Invalid aggregate Windows sync report');
    if(r.appVersion!==undefined&&(typeof r.appVersion!=='string'||! /^[A-Za-z0-9._+-]{1,80}$/.test(r.appVersion))||['conflictCount','documentPending','lastReconciliationMillis','lastLocalBackupMillis','mediaPending','lastClientSyncMillis'].some(k=>r[k]!==undefined&&(!Number.isSafeInteger(r[k])||r[k]<0))||r.conflictCount!==undefined&&r.conflictCount>r.needsAttention||r.documentPending!==undefined&&r.documentPending>r.pending||['lastReconciliationMillis','lastLocalBackupMillis','lastClientSyncMillis'].some(k=>r[k]!==undefined&&r[k]>now()+300000))fail(400,'Invalid aggregate Windows sync evidence');
    if(r.mediaPending!==undefined&&(r.mediaPending>100000 || !['PARTIAL','VERIFIED'].includes(r.mediaInventoryState)) || r.mediaInventoryState!==undefined&&!['UNKNOWN','PARTIAL','VERIFIED'].includes(r.mediaInventoryState))fail(400,'Invalid measured media evidence');
+   if(r.cloudflareOwnedPendingDrive!==undefined&&(!Number.isSafeInteger(r.cloudflareOwnedPendingDrive)||r.cloudflareOwnedPendingDrive<0||r.cloudflareOwnedPendingDrive>100000)||
+      r.lastCloudflareHandoffMicros!==undefined&&(!Number.isSafeInteger(r.lastCloudflareHandoffMicros)||r.lastCloudflareHandoffMicros<0||r.lastCloudflareHandoffMicros>86400000000))fail(400,'Invalid Cloudflare handoff evidence');
    const row=await db.doc('platform_schools/'+m.schoolId).get(),previous=row.data()?.syncWindowsReport;
    if(!previous||now()-previous.receivedAt>=300000)await db.doc('platform_schools/'+m.schoolId).update({syncWindowsReport:{version:1,receivedAt:now(),source:'latest_windows_client_report',...r}});
   }
@@ -1427,7 +1434,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
  if(action==='managed/attendance/status'){

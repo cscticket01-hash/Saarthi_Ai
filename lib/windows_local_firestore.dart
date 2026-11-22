@@ -1,3 +1,4 @@
+import 'cloudflare_record_handoff.dart';
 import 'student_lifecycle_policy.dart';
 import 'live_sync_protocol.dart';
 import 'deleted_owner_document_policy.dart';
@@ -924,9 +925,10 @@ class FirebaseFirestore {
   }
 
   Future<void> finishLocalRestore(String deletionOperationId, {required String expectedDeletedRevision,
-      required String restoredRevision}) => _database.localRestoreMutation(deletionOperationId,
+      required String restoredRevision, Map<String,dynamic>? expectedRestoreRequest}) => _database.localRestoreMutation(deletionOperationId,
         school:activeProfileIdentity['schoolSyncId']?.toString() ?? '',
-        expectedDeletedRevision:expectedDeletedRevision,restoredRevision:restoredRevision);
+        expectedDeletedRevision:expectedDeletedRevision,restoredRevision:restoredRevision,
+        expectedRestoreRequest:expectedRestoreRequest);
 
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction transaction) action,
@@ -1542,6 +1544,7 @@ class _LocalSchoolDatabase {
   Future<File> _file() => WindowsLocalStorage.databaseFile();
 
   String _activeProfileId = 'unbound';
+  bool _profileSwitching = false;
   Map<String, dynamic> _activeIdentity = const <String, dynamic>{};
 
   // Legacy standalone Local Storage OFF uses RAM only. Verified managed
@@ -1613,8 +1616,18 @@ class _LocalSchoolDatabase {
       return;
     }
 
+    final school = nextIdentity['schoolSyncId'];
+    if (clean.startsWith('central_') &&
+        (!validSchoolId(school?.toString() ?? '') || clean != 'central_$school' ||
+         (nextIdentity['schoolId'] != null && nextIdentity['schoolId'] != school))) {
+      throw StateError('Invalid managed school profile binding.');
+    }
+    final previousProfile = _activeProfileId;
+    final previousIdentity = _activeIdentity;
+    _profileSwitching = true;
     _activeProfileId = clean;
     _activeIdentity = nextIdentity;
+    try {
 
     // Persist only profile metadata. Existing school data is never copied
     // between profiles. This is the core cross-school isolation guarantee.
@@ -1624,6 +1637,12 @@ class _LocalSchoolDatabase {
     final profile = rawProfile is Map
         ? Map<String, dynamic>.from(rawProfile)
         : <String, dynamic>{};
+    final oldIdentity = profile['identity'];
+    if (clean.startsWith('central_') && oldIdentity is Map &&
+        ((oldIdentity['schoolSyncId'] != null && oldIdentity['schoolSyncId'] != school) ||
+         (oldIdentity['schoolId'] != null && oldIdentity['schoolId'] != school))) {
+      throw StateError('Stored school profile belongs to another school; retained for review.');
+    }
     profile.putIfAbsent('collections', () => <String, dynamic>{});
     profile['identity'] = _encodeMap(nextIdentity);
     profile['lastOpenedAt'] = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -1631,6 +1650,13 @@ class _LocalSchoolDatabase {
     root['profiles'] = profiles;
     root['activeProfileHint'] = clean;
     await _writeRoot(root);
+    } catch (_) {
+      _activeProfileId = previousProfile;
+      _activeIdentity = previousIdentity;
+      rethrow;
+    } finally {
+      _profileSwitching = false;
+    }
 
     // Every existing StreamBuilder must immediately reload from the new
     // profile, otherwise the previous school's cards could stay on screen.
@@ -1668,15 +1694,41 @@ class _LocalSchoolDatabase {
     return result;
   }
 
+  void _requireReadSchool(String origin, Object? school) {
+    if (_profileSwitching || _activeProfileId != origin || _activeIdentity['schoolSyncId'] != school) {
+      throw StateError('School changed during local storage read. Reopen this view.');
+    }
+  }
+
+  // Do not relabel a foreign row to the active school. Preserve original evidence.
+  void _requireRecordSchool(Map? row) {
+    if (!_activeProfileId.startsWith('central_') || row == null) return;
+    final school = _activeIdentity['schoolSyncId'];
+    final payload = row['data'];
+    if ((row['schoolId'] != null && row['schoolId'] != school) ||
+        (payload is Map && payload['schoolId'] != null && payload['schoolId'] != school)) {
+      throw StateError('Foreign school record blocked; original retained.');
+    }
+  }
+
   Future<Map<String, dynamic>?> readDocument(
     String collection,
     String documentId,
   ) async {
+    final origin = _activeProfileId, school = _activeIdentity['schoolSyncId'];
+    _requireReadSchool(origin, school);
     if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
       final sqlite=await _sqliteStore();
-      if(sqlite!=null)return sqlite.readDocument(_activeProfileId,collection,documentId);
+      _requireReadSchool(origin, school);
+      if(sqlite!=null) {
+        final result = await sqlite.readDocument(origin,collection,documentId);
+        _requireReadSchool(origin, school);
+        _requireRecordSchool(result);
+        return result;
+      }
     }
     final root = await _readRoot();
+    _requireReadSchool(origin, school);
 
     final collections =
         _collections(root);
@@ -1693,6 +1745,7 @@ class _LocalSchoolDatabase {
       return null;
     }
 
+    _requireRecordSchool(value);
     return Map<String, dynamic>.from(value);
   }
 
@@ -1700,11 +1753,20 @@ class _LocalSchoolDatabase {
       readCollection(
     String collection,
   ) async {
+    final origin = _activeProfileId, school = _activeIdentity['schoolSyncId'];
+    _requireReadSchool(origin, school);
     if (await FirebaseFirestore.instance.localPersistenceEnabled()) {
       final sqlite=await _sqliteStore();
-      if(sqlite!=null)return sqlite.readCollection(_activeProfileId,collection);
+      _requireReadSchool(origin, school);
+      if(sqlite!=null) {
+        final result = await sqlite.readCollection(origin,collection);
+        _requireReadSchool(origin, school);
+        for (final row in result.values) { _requireRecordSchool(row); }
+        return result;
+      }
     }
     final root = await _readRoot();
+    _requireReadSchool(origin, school);
 
     final raw =
         _collections(root)[collection];
@@ -1718,6 +1780,7 @@ class _LocalSchoolDatabase {
 
     for (final entry in raw.entries) {
       if (entry.value is Map) {
+        _requireRecordSchool(entry.value as Map);
         output[entry.key.toString()] =
             Map<String, dynamic>.from(
           entry.value as Map,
@@ -1888,6 +1951,10 @@ class _LocalSchoolDatabase {
         var trackedMutation = false;
 
         for (final operation in operations) {
+          _requireRecordSchool(operation.data);
+          final currentRows = collections[operation.collection];
+          final existingRow = currentRows is Map ? currentRows[operation.documentId] : null;
+          if (existingRow is Map) _requireRecordSchool(existingRow);
           final restores = collections['_windows_recycle_requests'];
           final protected = restores is Map ? restores.values.where((r)=>r is Map &&
               r['localRestore'] == true && r['schoolId'] == _activeIdentity['schoolSyncId'] &&
@@ -1991,6 +2058,34 @@ class _LocalSchoolDatabase {
                 }
 
                 final queued = docs[operation.documentId];
+                if (queued is Map && queued['priorCloudWrite'] is Map &&
+                    queued['priorCloudWrite']['operationId']==sent['operationId']) {
+                  // Only the exact original provider ACK may release this
+                  // predecessor. A new local edit is never removed by it.
+                  final prior=queued['priorCloudWrite'] as Map;
+                  if(prior['schoolId']!=sent['schoolId'] ||
+                      prior['collection']!=sent['collection'] ||
+                      prior['documentId']!=sent['documentId'] ||
+                      prior['cloudTicketId']!=sent['cloudTicketId'] ||
+                      queued['baseCloudRevision']!=sent['baseCloudRevision'])
+                    throw StateError('Staged predecessor identity changed; retained.');
+                  queued['baseCloudRevision']=revision;
+                  queued.remove('priorCloudWrite');
+                  final deletion=queued['priorDeletion'];
+                  if(deletion is Map && deletion['schoolId']==sent['schoolId'] &&
+                      deletion['collection']==sent['collection'] &&
+                      deletion['documentId']==sent['documentId'] &&
+                      deletion['baseCloudRevision']==sent['baseCloudRevision'] &&
+                      deletion['priorCloudWrite'] is Map &&
+                      deletion['priorCloudWrite']['operationId']==sent['operationId']) {
+                    deletion['baseCloudRevision']=revision;
+                    deletion.remove('priorCloudWrite');
+                  }
+                  // The old prepared baseline is no longer valid. Existing
+                  // point-read/field-patch preparation owns the fresh request.
+                  for(final key in ['wireData','wireMode','fieldPatch','fieldPatchBase','createIntent'])
+                    queued.remove(key);
+                }
                 if (queued is Map && queued['operationId'] != sent['operationId'] &&
                     queued['baseCloudRevision'] == sent['baseCloudRevision']) {
                   queued['baseCloudRevision'] = revision;
@@ -2279,7 +2374,8 @@ class _LocalSchoolDatabase {
   }
 
   Future<void> localRestoreMutation(String deletionId, {required String school,
-      String? expectedDeletedRevision, String? restoredRevision}) {
+      String? expectedDeletedRevision, String? restoredRevision,
+      Map<String,dynamic>? expectedRestoreRequest}) {
     final origin = _activeProfileId;
     final completer = Completer<void>();
     _writeTail = _writeTail.then((_) async {
@@ -2336,6 +2432,11 @@ class _LocalSchoolDatabase {
           if (previous['state']=='verified') {
             if(previous['recordRevision']!=restoredRevision)throw StateError('Different restore receipt.');
             completer.complete();return;
+          }
+          if(expectedRestoreRequest!=null &&
+             _jsonStableMap(Map<String,dynamic>.from(previous))!=
+                 _jsonStableMap(_encodeMap(expectedRestoreRequest))) {
+            throw StateError('Restore request changed during provider verification; retained.');
           }
           if (docs[id] != null && _jsonStableMap(Map<String,dynamic>.from(docs[id] as Map)) != _jsonStableMap(snapshot)) {
             throw StateError('Newer local version retained.');
@@ -2439,11 +2540,13 @@ class _LocalSchoolDatabase {
             original['collection']=='documents' ||
             original['documentId'] is! String ||
             (original['documentId'] as String).isEmpty ||
-            !{'set','update'}.contains(original['operation']) ||
+            (!{'set','update'}.contains(original['operation']) &&
+              !(school is String && lane=='records' &&
+                eligibleForStagedDelete(original,school,edgeDeliverySupported:true))) ||
             original['atomicBundleId']!=null ||
             original['priorDeletion']!=null ||
             original['baseCloudRevision'] is! String ||
-            original['data'] is! Map ||
+            (original['operation']!='delete' && original['data'] is! Map) ||
             original['operationId'] is! String ||
             !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']) ||
             !(lane=='records'&&ticketId==sha256.convert(utf8.encode(jsonEncode([
@@ -2458,6 +2561,35 @@ class _LocalSchoolDatabase {
         final current=queue is Map?queue[queueId]:null;
         if(current is! Map ||
             _jsonStableMap(Map<String,dynamic>.from(current))!=_jsonStableMap(original)) {
+          // A user may save again while the original request is in-flight.
+          // Attach only an exact staged text write or portrait to the newer
+          // owner; never replace the newer payload or reuse its operation ID.
+          if(current is Map && (boundPhotoTicket || (lane=='records' &&
+              {'school_calendar','school_notices'}.contains(original['collection']))) &&
+              {'set','update'}.contains(original['operation']) &&
+              current['schoolId']==school &&
+              current['collection']==original['collection'] &&
+              current['documentId']==original['documentId'] &&
+              current['operationId'] is String &&
+              current['operationId']!=original['operationId'] &&
+              current['baseCloudRevision']==original['baseCloudRevision'] &&
+              current['syncState']=='pending' &&
+              current['atomicBundleId']==null &&
+              current['priorCloudWrite']==null &&
+              current['priorDeletion']==null &&
+              current['wireData']==null) {
+            current['priorCloudWrite']={...original,'syncState':'cloudAccepted',
+              'cloudTicketId':ticketId,'cloudTicketLane':lane,
+              if (boundPhotoTicket) ...{
+                'cloudMediaSourceHash':mediaSourceHash,
+                'cloudMediaFileSha256':mediaFileSha256,
+              },
+              'cloudAcceptedAt':DateTime.now().millisecondsSinceEpoch};
+            _storeCollections(root,collections);await _writeRoot(root);
+            final signal=_signals['_windows_firebase_outbox'];
+            if(signal!=null&&!signal.isClosed)signal.add(null);
+            done.complete(true);return;
+          }
           done.complete(false);return;
         }
         if(!{null,'pending','retry'}.contains(current['syncState'])) {
@@ -2842,6 +2974,7 @@ class _LocalSchoolDatabase {
           completer.complete(null);
           return;
         }
+        _requireRecordSchool(current);
         if (current['schoolId'] != null && current['schoolId'] != schoolId) {
           throw StateError('Pending operation belongs to another school.');
         }
@@ -3042,6 +3175,7 @@ class _LocalSchoolDatabase {
         operation.type == _WriteType.delete;
 
     final previous = queue[key];
+    if (previous is Map) _requireRecordSchool(previous);
     if(operation.collection=='students_directory' && !isDelete && finalDocs[operation.documentId] is Map) {
       final data=finalDocs[operation.documentId] as Map;
       final deletions=collections['_windows_local_deletions'];
@@ -3058,6 +3192,22 @@ class _LocalSchoolDatabase {
       if(operationId is String)history.putIfAbsent(operationId,()=>Map<String,dynamic>.from(previous));
     }
 
+    // Keep the exact staged predecessor while a newer edit is pending.
+    final school = _activeIdentity['schoolSyncId'];
+    final stagedPhoto = previous is Map && school is String &&
+        {'set','update'}.contains(previous['operation']) &&
+        acceptedCloudflareTicketBinding(previous, school)?['action'] ==
+            'managed/record/media/stage/resumable';
+    final priorCloudWrite = previous is Map
+        ? previous['priorCloudWrite'] ??
+          (stagedPhoto || (previous['syncState']=='cloudAccepted' &&
+           previous['cloudTicketLane']=='records' &&
+           {'school_calendar','school_notices'}.contains(previous['collection']) &&
+           {'set','update'}.contains(previous['operation']) &&
+           _activeIdentity['schoolSyncId'] is String &&
+           exactStagedRecordTicket(previous,_activeIdentity['schoolSyncId'] as String)==previous['cloudTicketId'])
+             ? Map<String,dynamic>.from(previous) : null)
+        : null;
     final priorDeletion = previous is Map
         ? previous['priorDeletion'] ?? (previous['operation'] == 'delete' ? Map<String,dynamic>.from(previous) : null)
         : null;
@@ -3133,6 +3283,7 @@ class _LocalSchoolDatabase {
       },
       if (explicitDirectorySave) 'savedOverConflictOperationId':previous['operationId'],
       if(priorDeletion is Map) 'priorDeletion':Map<String,dynamic>.from(priorDeletion),
+      if(priorCloudWrite is Map) 'priorCloudWrite':Map<String,dynamic>.from(priorCloudWrite),
       if(isDelete && (previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String || baselineEntry is Map && baselineEntry['recreatedFrom'] is String))
         'recordGeneration':previous is Map && previous['data'] is Map && previous['data']['_syncRecreatesDeletedRevision'] is String ? previous['data']['_syncRecreatesDeletedRevision'] : baselineEntry['recreatedFrom'],
       'collection': operation.collection,

@@ -16211,22 +16211,25 @@ class _AddTeacherScreenState
                     ],
                   ),
 
-                  ExpansionTile(
-                    title: const Text('Weekly Schedule'),
-                    children: [
-                      for (final entry in _scheduleControllers.entries)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 11),
-                          child: TextField(
-                            controller: entry.value,
-                            enabled: !_saving,
-                            decoration: _field(
-                              entry.key,
-                              Icons.schedule_outlined,
+                  Material(
+                    type: MaterialType.transparency,
+                    child: ExpansionTile(
+                      title: const Text('Weekly Schedule'),
+                      children: [
+                        for (final entry in _scheduleControllers.entries)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 11),
+                            child: TextField(
+                              controller: entry.value,
+                              enabled: !_saving,
+                              decoration: _field(
+                                entry.key,
+                                Icons.schedule_outlined,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
 
                   const SizedBox(

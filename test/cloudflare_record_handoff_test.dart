@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,6 +49,454 @@ void main() {
       edgeDeliverySupported:true),false);
     expect(eligibleForRecordHandoff({...row,'priorDeletion':{'operation':'delete'}},school,
       edgeDeliverySupported:true),false);
+  });
+
+  test('staged record requires a canonical provider row, never just an ACK flag', () {
+    const op='proof-bound-record-original-001',id='proof-bound-event';
+    final pending=<String,dynamic>{'schoolId':school,
+      'collection':'school_calendar','documentId':id,'operation':'set',
+      'operationId':op,'baseCloudRevision':'','data':{'title':'Proof'}};
+    final ticket=exactTicket(pending);
+    final accepted={...pending,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'action':'managed/records',
+      'originalOperationId':op,'collection':'school_calendar',
+      'id':id,'operation':'write','ticketId':ticket};
+    final provider={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'canonical-revision-001',
+      'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001','_syncOperationId':op}};
+    expect(verifiedStagedRecordFinal(accepted,journal,provider,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncOperationId':op}},school),false,
+      reason:'A missing canonical revision is not a Drive ACK');
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001'}},school),false,
+      reason:'A missing original operation is not a Drive ACK');
+    expect(verifiedStagedRecordFinal(accepted,journal,{
+      ...provider,'record':{'schoolId':school,'id':id,
+        '_syncRevision':'canonical-revision-001',
+        '_syncOperationId':'different-operation'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':null},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':{'schoolId':school,'id':id,
+        '_syncDeleted':true,'_syncRevision':'canonical-revision-001',
+        '_syncOperationId':op}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...provider,'record':{'schoolId':other,'id':id,
+        '_syncRevision':'canonical-revision-001','_syncOperationId':op}},school),false);
+    final fakeDocument={...accepted,'collection':'documents',
+      'cloudTicketId':exactTicket({...pending,'collection':'documents'})};
+    expect(acceptedCloudflareTicketBinding(fakeDocument,school),isNull);
+  });
+
+  test('missing journal for staged predecessor unblocks only the newer edit', () async {
+    const id='nested-accepted-calendar';
+    final record=db.collection('school_calendar').doc(id);
+    await record.set({'title':'Original'});
+    final first=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=first.data(),ticket=exactTicket(original);
+    expect(await db.recordOutboxCloudHandoff(first.reference,original,ticketId:ticket),true);
+    await record.set({'title':'Newer'});
+    final newest=(await first.reference.get()).data()!;
+    expect(newest['priorCloudWrite']['operationId'],original['operationId']);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    var reads=0,settled=0;
+    await WindowsDriveDeliveryQueue.poll(school,
+      onLocalSettlement:()=>settled++,
+      call:(action,body) async {
+        reads++;
+        expect(action,'managed/cloudflare/operation');
+        expect(body['lane'],'records');
+        expect(body['id'],ticket);
+        return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+          'driveState':'verified','syncProtocol':2,
+          'recordRevision':'provider-canonical-base-001',
+          'record':{'schoolId':school,'id':id,
+            '_syncRevision':'provider-canonical-base-001',
+            '_syncOperationId':original['operationId']}};
+      });
+    expect(reads,2);
+    expect(settled,1);
+    final saved=(await first.reference.get()).data()!;
+    expect(saved['operationId'],newest['operationId']);
+    expect(saved['baseCloudRevision'],'provider-canonical-base-001');
+    expect(saved['priorCloudWrite'],isNull);
+    expect((await record.get()).data()!['title'],'Newer');
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
+  test('missing journal binding requires exact already accepted school ticket', () {
+    const operation='journal-recovery-original-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':'repair-calendar',
+      'operation':'set','operationId':operation,'syncState':'cloudAccepted',
+      'baseCloudRevision':'base','data':{'title':'Existing'},
+    };
+    final ticket=exactTicket(original);
+    final accepted={...original,'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final bound=acceptedCloudflareTicketBinding(accepted,school);
+    expect(bound?['action'],'managed/records');
+    expect(bound?['ticketId'],ticket);
+    expect(bound?['originalOperationId'],operation);
+    expect(acceptedCloudflareTicketBinding({...accepted,'cloudTicketId':foreignTicket},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'schoolId':other},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'syncState':'pending'},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'priorDeletion':{}},school),isNull);
+    expect(acceptedCloudflareTicketBinding({...accepted,'atomicBundleId':'owner'},school),isNull);
+  });
+
+  test('missing document receipt rebinds original file identity without collection field', () {
+    const id='journal-document',op='document-generation-original-001';
+    final content=List.filled(64,'a').join();
+    final uploadKey=sha256.convert(utf8.encode('$id:$op')).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,uploadKey]))).toString();
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':op,'contentHash':content,
+      'cloudContentHash':content,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'file-$ticket','deleted':false,
+    };
+    final bound=acceptedCloudflareTicketBinding(original,school,queueId:id);
+    expect(bound?['action'],'managed/document/stage/resumable');
+    expect(bound?['id'],id);
+    expect(bound?['fileSha256'],content);
+    expect(bound?['ticketId'],ticket);
+    expect(acceptedCloudflareTicketBinding({
+      ...original,'cloudContentHash':List.filled(64,'b').join(),
+    },school,queueId:id),isNull);
+    expect(acceptedCloudflareTicketBinding({...original,'deleted':true},
+      school,queueId:id),isNull);
+    expect(acceptedCloudflareTicketBinding({...original,'cloudTicketId':foreignTicket},
+      school,queueId:id),isNull);
+  });
+
+  test('missing school-scoped original record journal reconstructs through read-only broker status', () async {
+    const id='untracked-calendar',op='untracked-record-operation-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'},
+    };
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('untracked-calendar-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set({
+      ...original,'cloudTicketLane':'records','cloudTicketId':ticket,
+    }));
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      expect(body['lane'],'records');
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'provider-final-revision',
+        'record':{'schoolId':school,'_syncRevision':'provider-final-revision',
+          '_syncOperationId':op,'id':id}};
+    });
+    expect(reads,2,reason:'one authenticated reconstruction and one owner receipt read');
+    expect((await ref.get()).exists,false);
+    final history=await WindowsDriveDeliveryQueue.history(school);
+    expect(history.single['state'],'completed');
+  });
+
+  test('missing document journal reconstructs from verified original with no bytes replay', () async {
+    const id='untracked-document',op='untracked-document-operation-001';
+    final content=List.filled(64,'a').join();
+    final key=sha256.convert(utf8.encode('$id:$op')).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    final original=<String,dynamic>{
+      'schoolId':school,'documentRevision':op,
+      'contentHash':content,'cloudContentHash':content,
+      'localPath':'/synthetic/does-not-need-reopening.pdf',
+      'cloudTicketId':ticket,'cloudTicketLane':'file-$ticket',
+      'syncState':'cloudAccepted','deleted':false,
+    };
+    final outbox=db.collection('_windows_document_outbox').doc(id);
+    final local=db.collection('_local_student_documents').doc(id);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await outbox.set(original);
+      await local.set(original);
+    });
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      expect(body['lane'],'file-$ticket');
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','committed':true,
+        'fileId':'original-drive-file','fileUrl':'https://drive.google.com/file/d/original-drive-file/view',
+        'sha256':content,
+        'documentRecord':{'id':id,'operationId':op,
+          'contentHash':content,'fileId':'original-drive-file',
+          'recordRevision':'original-document-record-revision'}};
+    });
+    expect(reads,2);
+    expect((await outbox.get()).exists,false);
+    expect((await local.get()).data()?['syncState'],'Synced');
+    expect((await local.get()).data()?['cloudRecordRevision'],'original-document-record-revision');
+  });
+
+  test('unverified status never recreates orphan receipt or retires original', () async {
+    const id='untrusted-orphan', op='untrusted-recovery-operation-001';
+    final original={'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'}};
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('untrusted-orphan-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() =>
+      ref.set({...original,'cloudTicketId':ticket,'cloudTicketLane':'records'}));
+    final restored=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async=>{'success':true,'schoolId':school,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'id':foreignTicket,'lane':'records'}});
+    expect(restored,false);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
+    expect((await ref.get()).data()?['cloudTicketId'],ticket);
+  });
+
+  test('orphan receipt repair rotates across retained originals after bounded failures', () async {
+    for(var n=0;n<5;n++) {
+      final op='orphan-rotation-operation-000$n',id='orphan-$n';
+      final original={'schoolId':school,'collection':'school_calendar',
+        'documentId':id,'operation':'set','operationId':op,
+        'syncState':'cloudAccepted','baseCloudRevision':'',
+        'data':{'title':'Original $n'}};
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>
+        db.collection('_windows_firebase_outbox').doc(id).set({
+          ...original,'cloudTicketId':exactTicket(original),
+          'cloudTicketLane':'records',
+        }));
+    }
+    final seen=<String>[];
+    Future<Map<String,dynamic>> read(String action,Map<String,dynamic> body)async {
+      expect(action,'managed/cloudflare/operation');
+      seen.add(body['id'] as String);
+      return {'success':false};
+    }
+    expect(await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:read),false);
+    expect(seen.length,3);
+    expect(await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:read),false);
+    expect(seen.length,6);
+    expect(seen.toSet().length,5,
+      reason:'bounded retries of early failed tickets must not starve later originals');
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs,isEmpty);
+    expect((await db.collection('_windows_firebase_outbox').get()).docs.length,5);
+  });
+
+  test('review-only receipt stays reviewable without unsafe automatic reconstruction', () async {
+    const id='review-orphan',op='reviewed-record-operation-001';
+    final original={'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'cloudAccepted','data':{'title':'Retained'}};
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('review-orphan-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await ref.set({...original,'cloudTicketId':ticket,'cloudTicketLane':'records'});
+      await db.collection(WindowsDriveDeliveryQueue.collection).doc('review-unchanged').set({
+        'schoolId':school,'edgeDeliveryVersion':1,
+        'ticketId':ticket,'lane':'records','state':'needsAttention',
+        'action':'managed/records','originalOperationId':op,
+      });
+    });
+    var calls=0;
+    final recovered=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async{calls++;return {'success':false};});
+    expect(recovered,false);
+    expect(calls,0);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data()['state'],'needsAttention');
+    expect((await ref.get()).exists,true);
+  });
+
+  test('already verified record ticket remains pollable until original local CAS settles', () async {
+    const op='instant-record-operation-001',id='instant-calendar';
+    final record={'schoolId':school,'collection':'school_calendar',
+      'documentId':id,'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'pending','data':{'title':'Original'}};
+    final ticket=exactTicket(record);
+    final row=db.collection('_windows_firebase_outbox').doc('instant-calendar-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>row.set(record));
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'c').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':id,
+      'originalOperationId':op,'operation':'write',
+      'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'verified',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    final journal=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(journal['state'],'pending');
+    expect(journal['providerVerifiedAwaitingLocalCas'],true);
+    var reads=0;
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      reads++;
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,
+        'recordRevision':'canonical-instant-revision-001',
+        'record':{'schoolId':school,'id':id,
+          '_syncOperationId':op,'_syncRevision':'canonical-instant-revision-001'}};
+    });
+    expect(reads,1);
+    expect((await row.get()).exists,false);
+    expect((await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data()['state'],'completed');
+  });
+
+  test('stale receipt status cannot overwrite administrator review',() async {
+    const op='concurrent-review-operation-001',id='review-calendar';
+    final ticket=exactTicket({'schoolId':school,'collection':'school_calendar',
+      'documentId':id,'operationId':op});
+    final journal=db.collection(WindowsDriveDeliveryQueue.collection).doc('review-status-race');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(()=>journal.set({
+      'schoolId':school,'edgeDeliveryVersion':1,
+      'action':'managed/records','collection':'school_calendar','id':id,
+      'operation':'write','originalOperationId':op,
+      'ticketId':ticket,'lane':'records','state':'pending',
+      'nextPollAt':0,'attempts':0,'handoffAuthorized':true,
+    }));
+    await expectLater(WindowsDriveDeliveryQueue.poll(school,call:(action,body)async {
+      await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(
+        ()=>journal.set({'state':'needsAttention','failureCode':'MANUAL_REVIEW'},
+          const SetOptions(merge:true)));
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'pending','delivery':{'lane':'records','id':ticket}};
+    }),throwsStateError);
+    final protected=(await journal.get()).data()!;
+    expect(protected['state'],'needsAttention');
+    expect(protected['failureCode'],'MANUAL_REVIEW');
+  });
+
+  test('authorized journal restores interrupted local handoff without another mutation', () async {
+    const id='restart-calendar';
+    const op='restart-original-operation-001';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'set','operationId':op,'baseCloudRevision':'',
+      'syncState':'pending','data':{'title':'Retained original'},
+    };
+    final ref=db.collection('_windows_firebase_outbox').doc('restart-calendar-row');
+    final ticket=exactTicket(original);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'e').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':id,'operation':'write',
+      'originalOperationId':op,'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    var sends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(_) async {sends++;return 'unexpected';});
+    expect(sends,0);
+    final retained=(await ref.get()).data()!;
+    expect(retained['operationId'],op);
+    expect(retained['syncState'],'cloudAccepted');
+    expect(retained['cloudTicketId'],ticket);
+    expect((await db.collection('_windows_sync_receipts').get()).docs,isEmpty);
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'drive-restart-revision',
+        'record':{'schoolId':school,'id':id,'_syncOperationId':op,
+          '_syncRevision':'drive-restart-revision'}};
+    });
+    expect((await ref.get()).exists,false);
+  });
+
+  test('staged predecessor settles without deleting a newer local edit', () async {
+    final record=db.collection('school_calendar').doc('ordered-calendar');
+    await record.set({'title':'Original'});
+    final initial=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=initial.data(), ticket=exactTicket(original);
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'f').join(),'schoolId':school,
+      'profileId':db.activeProfileId,'action':'managed/records',
+      'collection':'school_calendar','id':'ordered-calendar','operation':'write',
+      'originalOperationId':original['operationId'],'handoffAuthorized':true,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    });
+    await db.recordOutboxCloudHandoff(initial.reference,original,ticketId:ticket);
+    await record.set({'title':'Newer'});
+    final newer=(await initial.reference.get()).data()!;
+    expect(newer['operationId'],isNot(original['operationId']));
+    expect(newer['priorCloudWrite']['operationId'],original['operationId']);
+    var sends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(_) async {sends++;return 'unexpected';});
+    expect(sends,0);
+    var settlements=0;
+    await WindowsDriveDeliveryQueue.poll(school,onLocalSettlement:()=>settlements++,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'drive-ordered-revision',
+        'record':{'schoolId':school,'id':'ordered-calendar',
+          '_syncOperationId':original['operationId'],'_syncRevision':'drive-ordered-revision'}};
+    });
+    expect(settlements,1);
+    final retained=(await initial.reference.get()).data()!;
+    expect(retained['operationId'],newer['operationId']);
+    expect(retained['priorCloudWrite'],isNull);
+    expect(retained['baseCloudRevision'],'drive-ordered-revision');
+    expect((await record.get()).data()!['title'],'Newer');
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____) async => fail('Legacy send is unsafe'),
+      sendVersioned:(item) async {
+        sends++;
+        expect(item['operationId'],newer['operationId']);
+        expect(item['baseCloudRevision'],'drive-ordered-revision');
+        return 'drive-newer-revision';
+      });
+    expect(sends,1);
+    expect((await initial.reference.get()).exists,false);
+  });
+
+  test('local save during in-flight record handoff preserves newer owner', () async {
+    final record=db.collection('school_calendar').doc('inflight-calendar');
+    await record.set({'title':'Original'});
+    final initial=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=initial.data(), ticket=exactTicket(original);
+    await record.set({'title':'Newer'});
+    final newer=(await initial.reference.get()).data()!;
+    expect(await db.recordOutboxCloudHandoff(initial.reference,original,ticketId:ticket),true);
+    final retained=(await initial.reference.get()).data()!;
+    expect(retained['operationId'],newer['operationId']);
+    expect(retained['priorCloudWrite']['operationId'],original['operationId']);
+    expect(retained['syncState'],'pending');
+    expect((await record.get()).data()!['title'],'Newer');
+  });
+
+  test('restart journal cannot grant ownership for foreign ticket or operation', () {
+    final row={'schoolId':school,'collection':'school_calendar',
+      'documentId':'event-1','operation':'set','operationId':'restart-operation-002',
+      'baseCloudRevision':'','syncState':'pending','data':{'title':'Original'}};
+    final journal={'schoolId':school,'edgeDeliveryVersion':1,
+      'cloudflareAccepted':true,'handoffAuthorized':true,
+      'action':'managed/records','state':'pending','lane':'records',
+      'ticketId':exactTicket(row),'originalOperationId':row['operationId'],
+      'collection':'school_calendar','id':'event-1','operation':'write'};
+    expect(recoverableStagedRecordJournal(row,journal,school),true);
+    expect(recoverableStagedRecordJournal(row,{...journal,'ticketId':foreignTicket},school),false);
+    expect(recoverableStagedRecordJournal(row,{...journal,'handoffAuthorized':false},school),false);
+    expect(recoverableStagedRecordJournal({...row,'operationId':'new-operation-0000003'},journal,school),false);
+    expect(recoverableStagedRecordJournal({...row,'atomicBundleId':'owner'},journal,school),false);
   });
 
   test('a real student outbox cannot be silently made cloud-owned by a stray receipt', () async {
@@ -119,6 +568,203 @@ void main() {
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
   });
 
+  test('staged delete is limited to independent calendar, expense and attendance owners', () {
+    final row={'schoolId':school,'collection':'school_calendar',
+      'documentId':'calendar-delete-1','operation':'delete',
+      'operationId':'delete-original-operation-01','baseCloudRevision':'old-revision-1'};
+    bool eligible(Map item) => eligibleForStagedDelete(item,school,edgeDeliverySupported:true);
+    expect(eligible(row),true);
+    for(final collection in ['school_expenses','attendance_records',
+      'attendance_logs','teacher_attendance']){
+      expect(eligible({...row,'collection':collection}),true);
+    }
+    expect(eligibleForStagedDelete(row,school,edgeDeliverySupported:false),false);
+    for(final c in ['students_directory','teachers_directory','documents',
+        'fee_payments','fee_ledger','teacher_schedules','school_notices']) {
+      expect(eligible({...row,'collection':c}),false);
+    }
+    expect(eligible({...row,'schoolId':other}),false);
+    expect(eligible({...row,'baseCloudRevision':''}),false);
+    expect(eligible({...row,'priorDeletion':row}),false);
+    expect(eligible({...row,'atomicBundleId':'owner'}),false);
+    expect(eligible({...row,'requireCanonicalDeleteReceipt':true}),false);
+  });
+
+  test('independent attendance delete requires fully verified provider cleanup',(){
+    const op='attendance-delete-original-001',id='attendance-item-001';
+    final intent={'schoolId':school,'collection':'attendance_records',
+      'documentId':id,'operation':'delete','operationId':op,
+      'baseCloudRevision':'verified-attendance-revision'};
+    final ticket=exactTicket(intent);
+    final accepted={...intent,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'collection':'attendance_records',
+      'id':id,'action':'managed/records','operation':'delete',
+      'originalOperationId':op,'ticketId':ticket};
+    final row={'schoolId':school,'id':id,'_syncDeleted':true,
+      '_syncOperationId':op,'_syncRevision':'provider-delete-revision',
+      '_syncErasePlan':{'complete':true,'files':[]}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'provider-delete-revision',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,'record':row};
+    expect(eligibleForStagedDelete(intent,school,edgeDeliverySupported:true),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...row,'_syncOperationId':'other-delete-operation'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...row,'_syncErasePlan':{'complete':false}}},school),false);
+  });
+
+  test('standalone expense delete stops at Cloudflare ACK until both providers verify', () {
+    const op='expense-delete-original-000001',id='expense-delete-item';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_expenses',
+      'documentId':id,'operation':'delete','operationId':op,
+      'baseCloudRevision':'verified-expense-base-001'};
+    expect(eligibleForStagedDelete(original,school,edgeDeliverySupported:true),true);
+    final ticket=exactTicket(original);
+    final accepted={...original,'syncState':'cloudAccepted',
+      'cloudTicketId':ticket,'cloudTicketLane':'records'};
+    final journal={'schoolId':school,'collection':'school_expenses',
+      'id':id,'action':'managed/records','operation':'delete',
+      'originalOperationId':op,'ticketId':ticket};
+    final tombstone={'schoolId':school,'id':id,'_syncDeleted':true,
+      '_syncRevision':'verified-expense-deletion-001','_syncOperationId':op,
+      '_syncErasePlan':{'complete':true,'files':[]}};
+    final proof={'success':true,'schoolId':school,
+      'cloudflareAccepted':true,'driveState':'verified',
+      'syncProtocol':2,'recordRevision':'verified-expense-deletion-001',
+      'deleteEverywhereVersion':1,
+      'driveDeletionComplete':true,'firebaseDeletionComplete':true,
+      'record':tombstone};
+    expect(verifiedStagedRecordFinal(accepted,journal,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,journal,
+      {...proof,'record':{...tombstone,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(eligibleForStagedDelete({...original,'priorDeletion':original},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForStagedDelete({...original,'atomicBundleId':'financial-owner'},
+      school,edgeDeliverySupported:true),false);
+    expect(eligibleForStagedDelete({...original,'baseCloudRevision':''},
+      school,edgeDeliverySupported:true),false);
+  });
+
+  test('calendar delete requires exact complete provider tombstone proof', () async {
+    const id='calendar-delete-2',op='delete-original-operation-02';
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'school_calendar','documentId':id,
+      'operation':'delete','operationId':op,'baseCloudRevision':'base-01',
+      'syncState':'pending',
+    };
+    final ticket=exactTicket(original);
+    final ref=db.collection('_windows_firebase_outbox').doc('calendar-delete-row');
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() => ref.set(original));
+    final journal={
+      'source':'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/records','collection':'school_calendar','id':id,
+      'operation':'delete','originalOperationId':op,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'lane':'records','id':ticket}},
+    };
+    await WindowsDriveDeliveryQueue.retainEdge(journal);
+    final live=(await ref.get()).data()!;
+    expect(await db.recordOutboxCloudHandoff(ref,live,ticketId:ticket),true);
+    final accepted=(await ref.get()).data()!;
+    final proof=<String,dynamic>{
+      'success':true,'schoolId':school,'cloudflareAccepted':true,
+      'driveState':'verified','syncProtocol':2,'recordRevision':'delete-revision-02',
+      'deleteEverywhereVersion':1,'driveDeletionComplete':true,
+      'firebaseDeletionComplete':true,
+      'record':{'schoolId':school,'id':id,'_syncDeleted':true,
+        '_syncRevision':'delete-revision-02','_syncOperationId':op,
+        '_syncErasePlan':{'complete':true}},
+    };
+    final binding={...journal,'ticketId':ticket};
+    expect(verifiedStagedRecordFinal(accepted,binding,proof,school),true);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'firebaseDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'driveDeletionComplete':false},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'record':{...proof['record'] as Map,'_syncErasePlan':{'complete':false}}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'record':{...proof['record'] as Map,'_syncOperationId':'wrong-operation'}},school),false);
+    expect(verifiedStagedRecordFinal(accepted,binding,
+      {...proof,'recordRevision':'cf-stage-only'},school),false);
+    // Only canonical provider proof may retire the pending delete through the
+    // existing receipt journal. Staging alone leaves the original intact.
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      return proof;
+    });
+    expect((await ref.get()).exists,false);
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
+  test('edge receipt status is independent of slow live status and honors provider deadline', () async {
+    final journal=db.collection(WindowsDriveDeliveryQueue.collection);
+    final ticket=List.filled(64,'d').join();
+    const operation='live-operation-00000001';
+    final now=DateTime.utc(2026,11,22,12);
+    final deadline=now.add(const Duration(minutes:2)).millisecondsSinceEpoch;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await journal.doc('live-receipt').set({
+        'schoolId':school,'liveProtocol':1,'operationId':operation,
+        'recordRevision':'live-revision-01','state':'pending','nextPollAt':0,
+      });
+      await journal.doc('edge-receipt').set({
+        'schoolId':school,'edgeDeliveryVersion':1,'operationId':'edge-operation-00000001',
+        'ticketId':ticket,'lane':'records','state':'pending','nextPollAt':0,
+      });
+    });
+    final liveRelease=Completer<void>(), edgeEntered=Completer<void>();
+    final poll=WindowsDriveDeliveryQueue.poll(school,clock:()=>now,call:(action,body)async{
+      if(action=='managed/live/operationReceipt') {
+        await liveRelease.future;
+        return {'success':true,'schoolId':school,'liveProtocol':1,
+          'operationId':operation,'found':true,'receipt':{
+            'schoolId':school,'operationId':operation,'recordRevision':'live-revision-01',
+            'backupState':'pending',
+          }};
+      }
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      edgeEntered.complete();
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'pending','delivery':{'lane':'records','id':ticket},
+        'deliveryStatus':{'state':'retry','retryAtMillis':deadline}};
+    });
+    try {
+      await edgeEntered.future.timeout(const Duration(seconds:5));
+      expect(liveRelease.isCompleted,false);
+    } finally {
+      liveRelease.complete();
+      await poll;
+    }
+    final edge=(await journal.doc('edge-receipt').get()).data()!;
+    expect(edge['nextPollAt'],deadline);
+    expect(edge['state'],'pending');
+    var edgePolls=0;
+    await WindowsDriveDeliveryQueue.poll(school,
+      clock:()=>now.add(const Duration(seconds:1)),
+      call:(action,body) async {
+        if(action=='managed/cloudflare/operation')edgePolls++;
+        return {};
+      });
+    expect(edgePolls,0,reason:'provider retry deadline must not be bypassed');
+  });
+
   test('invalid final revision does not retire accepted original', () async {
     await db.collection('school_calendar').doc('event-2')
       .set({'schoolId':school,'syntheticTest':true,'title':'Synthetic test'});
@@ -142,6 +788,47 @@ void main() {
     expect((await row.reference.get()).data()?['syncState'],'cloudAccepted');
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'pending');
   });
+  test('authorized document replay recovers local CAS before final provider settlement', () async {
+    const id='restart-document';
+    const op='document-restart-operation-001';
+    final hash=List.filled(64,'a').join();
+    final original=<String,dynamic>{'schoolId':school,'documentId':id,
+      'documentRevision':op,'contentHash':hash,'localPath':'synthetic-local-path',
+      'syncState':'pending'};
+    final journal=<String,dynamic>{'source':List.filled(64,'b').join(),
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/document/stage/resumable','collection':'documents',
+      'id':id,'originalOperationId':op,'operation':'write',
+      'handoffAuthorized':true,'fileSha256':hash};
+    final ticket=exactSidecarTicket(journal,school)!;
+    final ref=db.collection('_windows_document_outbox').doc(id);
+    final local=db.collection('_local_student_documents').doc(id);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await ref.set(original);await local.set(original);
+    });
+    await WindowsDriveDeliveryQueue.retainEdge({...journal,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'verified','committed':true,
+        'fileId':'real-file','delivery':{'lane':'file-$ticket','id':ticket}}});
+    final retained=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(retained['state'],'pending');
+    expect(retained['providerVerifiedAwaitingLocalCas'],true);
+    expect(recoverableStagedDocumentJournal(original,retained,school,id),true);
+    expect(recoverableStagedDocumentJournal({...original,'contentHash':'wrong'},retained,school,id),false);
+    expect(recoverableStagedDocumentJournal({...original,'documentRevision':'replacement-generation'},retained,school,id),false);
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','committed':true,'fileId':'real-file',
+        'fileUrl':'https://drive.google.com/file/d/real-file/view',
+        'documentRecord':{'id':id,'operationId':op,'fileId':'real-file',
+          'recordRevision':'canonical-document-revision','contentHash':hash}};
+    });
+    expect((await ref.get()).exists,false);
+    expect((await local.get()).data()?['syncState'],'Synced');
+    expect((await local.get()).data()?['cloudRecordRevision'],'canonical-document-revision');
+  });
+
   test('exact original portrait file and person record must BOTH verify before local ACK', () {
     const ticket='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const fileHash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -178,6 +865,94 @@ void main() {
     },school),false);
     expect(verifiedStagedPhotoRecordFinal(original,journal,proof,other),false);
   });
+  test('verified portrait predecessor releases only old photo, retaining newer person edit', () async {
+    const id='person-photo-predecessor';
+    const optimizedHash='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final raw='data:image/jpeg;base64,${base64Encode(utf8.encode('earlier school portrait'))}';
+    final originalHash=sha256.convert(utf8.encode('earlier school portrait')).toString();
+    final record=db.collection('students_directory').doc(id);
+    await record.set({'studentId':id,'photoUrl':raw,'name':'Earlier'});
+    final queue=(await db.collection('_windows_firebase_outbox').get()).docs.single;
+    final original=queue.data(),op=original['operationId'] as String;
+    final ticketKey=sha256.convert(utf8.encode(jsonEncode([
+      school,'students_directory',id,op,optimizedHash,
+    ]))).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,ticketKey]))).toString();
+    expect(await db.recordOutboxCloudHandoff(queue.reference,original,
+      ticketId:ticket,lane:'file-$ticket',
+      mediaSourceHash:originalHash,mediaFileSha256:optimizedHash),true);
+    await record.set({'studentId':id,'photoUrl':raw,'name':'Newer'});
+    final pending=(await queue.reference.get()).data()!;
+    expect(pending['priorCloudWrite']['operationId'],op);
+    expect(pending['operationId'],isNot(op));
+    await WindowsDriveDeliveryQueue.retainEdge({
+      'source':List.filled(64,'a').join(),
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/record/media/stage/resumable',
+      'collection':'students_directory','id':id,'operation':'write',
+      'originalOperationId':op,'handoffAuthorized':true,
+      'fileSha256':optimizedHash,'mediaSourceHash':originalHash,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'pending',
+        'delivery':{'id':ticket,'lane':'file-$ticket'}},
+    });
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body)async=>{
+      'success':true,'schoolId':school,'cloudflareAccepted':true,
+      'driveState':'verified','committed':true,
+      'fileId':'verified-old-photo-file','sha256':optimizedHash,
+      'mediaRecord':{'collection':'students_directory','id':id,
+        'operationId':op,'fileId':'verified-old-photo-file',
+        'sourceHash':originalHash,'fileSha256':optimizedHash,
+        'recordRevision':'canonical-original-photo-revision'},
+    });
+    final kept=(await queue.reference.get()).data()!;
+    expect(kept['operationId'],pending['operationId']);
+    expect(kept['priorCloudWrite'],isNull);
+    expect(kept['baseCloudRevision'],'canonical-original-photo-revision');
+    expect((await record.get()).data()!['name'],'Newer');
+    expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
+  test('lost photo receipt journal can be restored from nested exact original CAS', () async {
+    const id='lost-photo-journal-person';
+    const optimized='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final raw='data:image/png;base64,${base64Encode(utf8.encode('unchanged raw portrait'))}';
+    final hash=sha256.convert(utf8.encode('unchanged raw portrait')).toString();
+    final record=db.collection('teachers_directory').doc(id);
+    await record.set({'teacherId':id,'photoUrl':raw,'name':'Previous'});
+    final ref=(await db.collection('_windows_firebase_outbox').get()).docs.single.reference;
+    final original=(await ref.get()).data()!,op=original['operationId'] as String;
+    final key=sha256.convert(utf8.encode(jsonEncode([
+      school,'teachers_directory',id,op,optimized,
+    ]))).toString();
+    final ticket=sha256.convert(utf8.encode(jsonEncode([school,key]))).toString();
+    await record.set({'teacherId':id,'photoUrl':raw,'name':'Latest'});
+    final newOperation=(await ref.get()).data()!['operationId'];
+    expect(newOperation,isNot(op));
+    expect(await db.recordOutboxCloudHandoff(ref,original,ticketId:ticket,
+      lane:'file-$ticket',mediaSourceHash:hash,mediaFileSha256:optimized),true);
+    expect((await ref.get()).data()!['priorCloudWrite']['operationId'],op);
+    var reads=0;
+    final recovered=await WindowsDriveDeliveryQueue.recoverMissingReceiptJournals(
+      school,call:(action,body)async{
+        reads++;
+        expect(action,'managed/cloudflare/operation');
+        expect(body['lane'],'file-$ticket');
+        expect(body['id'],ticket);
+        return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+          'driveState':'pending','delivery':{'id':ticket,'lane':'file-$ticket'}};
+      });
+    expect(recovered,true);
+    expect(reads,1);
+    final journal=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(journal['ticketId'],ticket);
+    expect(journal['fileSha256'],optimized);
+    expect(journal['mediaSourceHash'],hash);
+    expect(journal['state'],'pending');
+    expect((await ref.get()).data()!['operationId'],newOperation);
+    expect((await ref.get()).data()!['priorCloudWrite']['operationId'],op);
+  });
+
   test('immutable original photo outbox is never cleared before exact file and record proof', () async {
     final raw='data:image/jpeg;base64,${base64Encode(utf8.encode('original portrait'))}';
     const op='photo-original-operation-00000001',docId='school-photo-person-01';
@@ -207,14 +982,17 @@ void main() {
       'action':'managed/record/media/stage/resumable',
       'collection':'students_directory','id':docId,
       'operation':'write','originalOperationId':op,
+      'handoffAuthorized':true,'fileSha256':fileHash,'mediaSourceHash':rawHash,
       'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
         'cloudflareAccepted':true,'driveState':'pending',
         'delivery':{'lane':'file-$ticket','id':ticket}},
     });
-    final bound=await db.recordOutboxCloudHandoff(ref,live,
-      ticketId:ticket,lane:'file-$ticket',
-      mediaSourceHash:rawHash,mediaFileSha256:fileHash);
-    expect(bound,true);
+    var resends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____)async=>fail('Unexpected legacy send'),
+      sendVersioned:(_)async{resends++;return 'unexpected';});
+    expect(resends,0);
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
     expect((await ref.get()).data()?['cloudTicketLane'],'file-$ticket');
     var polls=0;
     await WindowsDriveDeliveryQueue.poll(school,call:(action,body)async{

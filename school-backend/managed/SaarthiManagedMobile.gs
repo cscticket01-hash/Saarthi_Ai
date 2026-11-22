@@ -73,19 +73,39 @@ function VS_mobileAction(b){
   VS_touchPresence(session,b.version);
   const props=PropertiesService.getScriptProperties(),known=b.knownRevisions||{};
   const policy=VS_attendancePolicy(session);
-  const revisions={},result={person:VS_safePerson(session.person),attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
+  const safePerson=VS_safePerson(session.person);
+  const revisions={},result={person:safePerson,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt};
   const groups={school:'school_config',templates:'school_settings',notices:'school_notices',calendar:'school_calendar',documents:'documents',examinations:'exams'};
   if(session.role==='student')Object.assign(groups,{reportCards:'exam_results',fees:'fee_ledger',payments:'fee_payments',feeStructures:'fee_settings'});
   else groups.salary='teacher_salary';
+  const checkpoints=b.knownGroupRecordRevisions||{};
+  if(b.mobileRecordDeltaVersion===1){
+   if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
+   let count=0;Object.keys(checkpoints).forEach(key=>{
+    const values=checkpoints[key];
+    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');
+    if(!Object.prototype.hasOwnProperty.call(groups,key)){
+     // Older mobile clients turn cached metadata lists (e.g. noticeIds)
+     // into empty checkpoints. Ignore only empty hints; never read a new group.
+     if(Object.keys(values).length===0)return;
+     throw new Error('Invalid mobile group checkpoint');
+    }
+    Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});
+   });
+  }
   Object.keys(groups).forEach(key=>{
    const col=groups[key];if(props.getProperty('VS_SHEET_MIGRATED_'+col)!=='1')VS_managedSheet(col);
    if(key==='reportCards'&&props.getProperty('VS_SHEET_MIGRATED_exam_center_results')!=='1')VS_managedSheet('exam_center_results');
    let revision=key==='reportCards'
     ? JSON.stringify([props.getProperty('VS_RECORD_REV_exam_results')||'legacy',props.getProperty('VS_RECORD_REV_exam_center_results')||'legacy'])
     : props.getProperty('VS_RECORD_REV_'+col)||'legacy';
-   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,VS_safePerson(session.person)]));
+   if(b.mobileRecordDeltaVersion===1)revision=VS_hash(JSON.stringify([revision,session.role,session.personId,safePerson]));
    revisions[key]=revision;
-   if(known[key]===revision)return;
+   // Object groups keep their original revision contract. For list groups,
+   // an omitted bounded record baseline cannot prove cached membership.
+   const listGroup=key!=='school'&&key!=='templates';
+   if(known[key]===revision&&(!listGroup||b.mobileRecordDeltaVersion!==1||
+      Object.prototype.hasOwnProperty.call(checkpoints,key)))return;
    if(key==='school')result.school=VS_mobileSchoolProfile();
    else if(key==='templates'){result.templates=VS_get('school_settings','document_templates')||{};result.calendarSettings=VS_get('school_settings','calendar')||{closedWeekdays:[0]};}
    else if(key==='notices'){
@@ -123,19 +143,6 @@ function VS_mobileAction(b){
   // Permission-filtered list deltas. IDs acknowledge removals; hashes describe
   // only visible records, never another pupil's inventory.
   if(b.mobileRecordDeltaVersion===1){
-   const checkpoints=b.knownGroupRecordRevisions||{};
-   if(!checkpoints||typeof checkpoints!=='object'||Array.isArray(checkpoints)||JSON.stringify(checkpoints).length>200000)throw new Error('Invalid mobile record checkpoint');
-   let count=0;Object.keys(checkpoints).forEach(key=>{
-    const values=checkpoints[key];
-    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Invalid mobile group checkpoint');
-    if(!Object.prototype.hasOwnProperty.call(groups,key)){
-     // Older mobile clients turn cached metadata lists (e.g. noticeIds)
-     // into empty checkpoints. Ignore only empty hints; never read a new group.
-     if(Object.keys(values).length===0)return;
-     throw new Error('Invalid mobile group checkpoint');
-    }
-    Object.keys(values).forEach(id=>{if(++count>1000||!id||id.length>200||typeof values[id]!=='string'||!/^[a-f0-9]{64}$/.test(values[id]))throw new Error('Invalid mobile record checkpoint');});
-   });
    result.mobileRecordDeltaVersion=1;result.groupRecordDeltas={};
    Object.keys(groups).forEach(key=>{
     if(!Array.isArray(result[key]))return;
@@ -155,7 +162,7 @@ function VS_mobileAction(b){
    delete result.noticesDelta;delete result.noticeIds;
   }
   result.revisions=revisions;
-  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',VS_safePerson(session.person)]));
+  result.revision=VS_hash(JSON.stringify([revisions,session.person._syncRevision||'',safePerson]));
   if(b.knownRevision===result.revision&&!Object.keys(groups).some(key=>Object.prototype.hasOwnProperty.call(result,key)))return {unchanged:true,revision:result.revision,revisions:revisions,attendancePolicy:policy,sessionExpiresAt:session.doc.expiresAt,...(b.mobileRecordDeltaVersion===1?{mobileRecordDeltaVersion:1}:{})};
 
   return result;

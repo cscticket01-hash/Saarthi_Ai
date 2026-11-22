@@ -1,7 +1,7 @@
-name: WIN-005-007 consolidated unpublished review
+name: Sync Engine 4 consolidated unpublished review
 on:
   push:
-    branches: [review/win005-007-universal-uid-20261122]
+    branches: [review/sync-engine-4-20261122]
     paths:
       - 'lib/**'
       - 'test/**'
@@ -15,11 +15,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-universal-uid-review
+  group: sync-engine-4-review
   cancel-in-progress: true
 jobs:
   uid-registry:
-    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    if: github.ref == 'refs/heads/review/sync-engine-4-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,8 +50,9 @@ jobs:
           test/live-sync-reconciliation.test.js
           test/managed-card-issue-authority.test.js
           test/teacher-staff-retirement.test.js
+          test/managed-storage.test.js
   windows-regressions:
-    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    if: github.ref == 'refs/heads/review/sync-engine-4-20261122'
     runs-on: windows-2022
     timeout-minutes: 55
     steps:
@@ -62,7 +63,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze changed Windows source
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_person_fields.dart lib/main_dashboard_screen_windows.dart lib/id_card_native_preview.dart lib/windows_id_card_designer_entry.dart lib/id_card_designer_screen.dart
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_person_fields.dart lib/main_dashboard_screen_windows.dart lib/id_card_native_preview.dart lib/windows_id_card_designer_entry.dart lib/id_card_designer_screen.dart lib/windows_local_firestore.dart lib/windows_sync_engine.dart lib/windows_sync_control_center.dart lib/windows_sync_flow.dart lib/windows_connect/central_school_cloud.dart
       - name: Consolidated teacher, payroll, student and ID-card regression suite
         env:
           APPDATA: ${{ runner.temp }}/win005-007-appdata
@@ -84,6 +85,13 @@ jobs:
           test/document_processing_engine_test.dart
           test/qr_card_authorization_test.dart
           test/school_qr_login_test.dart
+          test/windows_school_profile_cache_test.dart
+          test/windows_sync_control_cleanup_test.dart
+          test/windows_sync_pause_test.dart
+          test/windows_sync_flow_learning_test.dart
+          test/cloudflare_record_handoff_test.dart
+          test/central_school_cloud_test.dart
+          test/windows_live_sync_runtime_test.dart
       - name: Prepare the Windows runner
         shell: bash
         run: |
@@ -107,7 +115,7 @@ jobs:
           --dart-define=SAARTHI_WINDOWS_SQLITE=true
           --dart-define=SAARTHI_MANAGED_ACCOUNTS=true
   android-web-regressions:
-    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    if: github.ref == 'refs/heads/review/sync-engine-4-20261122'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -127,6 +135,7 @@ jobs:
           test/android_startup_test.dart
           test/mobile_attendance_history_test.dart
           test/mobile_attendance_outbox_test.dart
+          test/mobile_delta_membership_test.dart
           test/published_id_card_test.dart
           test/web_atomic_bundle_review_test.dart
       - name: Compile the Web application

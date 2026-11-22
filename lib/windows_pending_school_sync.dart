@@ -60,6 +60,163 @@ bool verifiedUnknownNoticeDeleteReadback(
           remote['_syncOperationId'] == item['operationId'];
 }
 
+/// Match the existing Worker's independent record-resource policy for expense
+/// and attendance mutations, in addition to text/calendar device admissions.
+/// Parent, fee, file, delete and atomic bundle dependencies remain barriers.
+const parallelAttendanceExpenseCollections = {
+  'school_expenses', 'attendance_records', 'attendance_logs', 'teacher_attendance',
+};
+/// Limit device concurrency to already versioned, metadata-only changes
+/// for established person owners. Lifecycle/slot changes and new admissions
+/// keep the existing serial owner. The Worker still orders provider commits.
+bool independentExistingPersonPatch(Map item) {
+  if(!{'students_directory','teachers_directory'}.contains(item['collection']) ||
+      item['createIntent']==true || item['updateIntent']!=true ||
+      item['baseCloudRevision'] is! String ||
+      (item['baseCloudRevision'] as String).isEmpty ||
+      RegExp(r'^(cf-|live-)').hasMatch(item['baseCloudRevision']) ||
+      item['fieldPatch'] is! Map ||
+      (item['wireData']!=null && (item['wireMode']!='fieldPatch1' ||
+        item['wireData'] is! Map || item['wireData']['_syncFieldPatch'] is! Map)))return false;
+  final patch=item['fieldPatch'] as Map;
+  final set=patch['set'], remove=patch['remove'], identity=patch['identity'];
+  final ownerKey=item['collection']=='students_directory'?'mobileStableId':'teacherId';
+  if(patch['version']!=1 || set is! Map || remove is! List || remove.isNotEmpty ||
+      identity is! Map || identity[ownerKey] is! String ||
+      (identity[ownerKey] as String).isEmpty || item['data'] is! Map ||
+      identity[ownerKey]!=item['data'][ownerKey])return false;
+  // Only non-identity contact fields; never change roll/class, generation,
+  // status, salary, guardian binding, media, or other shared resources.
+  const allowed={'phone','email','address','contactNumber','alternatePhone'};
+  final fields=set.entries.where((e)=>e.key!='updatedAt').toList();
+  return fields.isNotEmpty && fields.every((e)=>allowed.contains(e.key) &&
+      e.value is String && !(e.value as String).startsWith('data:'));
+}
+
+/// New person creates may stage side-by-side only AFTER the existing stable
+/// school identity preparation. Cloudflare alone never commits a class/roll
+/// slot or publishes a photo/card; the Worker still serializes provider writes.
+bool independentPreparedPersonCreate(Map item) {
+  if(!{'students_directory','teachers_directory'}.contains(item['collection']) ||
+      item['createIntent']!=true || item['operation']!='set' ||
+      item['baseCloudRevision']!='' || item['priorDeletion']!=null ||
+      item['priorCloudWrite']!=null || item['atomicBundleId']!=null ||
+      item['data'] is! Map || item['wireMode']=='fieldPatch1')return false;
+  final data=item['data'] as Map;
+  final id=data['mobileStableId'],token=data['mobileLinkToken'];
+  if(data['schoolId']!=item['schoolId'] ||
+     id is! String || !RegExp(r'^p-[a-f0-9]{64}$').hasMatch(id) ||
+     token is! String || token.length<20 ||
+     data['mobileIdentityVersion']!=1 ||
+     data['replacesStudentGeneration']!=null ||
+     data.keys.any((key)=>key.toString().startsWith('_syncRecreates')) ||
+     // A linked Drive file is not a metadata-only create even when it has
+     // already been represented by URL/fileId instead of inline base64.
+     data.entries.any((entry) {
+       final key=entry.key.toString().toLowerCase();
+       return RegExp(r'(photo|image|logo|seal|signature|pdf|fileid|fileurl|scan)')
+           .hasMatch(key) &&
+           (entry.value is String && (entry.value as String).isNotEmpty ||
+            entry.value is Map || entry.value is List);
+     }) ||
+     parallelContainsInlineMedia(data))
+    return false;
+  return true;
+}
+
+/// Never let a new person overtake an unresolved delete/atomic owner or a
+/// different operation for the SAME immutable record. Only independently
+/// named, prepared people may occupy the same bounded stage window.
+bool canStagePreparedPersonPastUnrelatedOwners(
+  Map candidate,Iterable<Map<String,dynamic>> outbox,String school,
+) {
+  if(!independentPreparedPersonCreate(candidate) ||
+      candidate['schoolId']!=school)return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school || row['atomicBundleId']!=null ||
+       row['priorDeletion']!=null || row['priorCloudWrite']!=null ||
+       row['operation']=='delete' ||
+       {'school_config','school_settings'}.contains(row['collection']))
+      return false;
+    if(row['collection']==candidate['collection'] &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])
+      return false;
+  }
+  return true;
+}
+
+bool parallelContainsInlineMedia(Object? value,[int depth=0]) {
+  if(depth>12)return true;
+  if(value is String)return value.startsWith('data:');
+  if(value is Map)return value.values.any((v)=>parallelContainsInlineMedia(v,depth+1));
+  if(value is List)return value.any((v)=>parallelContainsInlineMedia(v,depth+1));
+  return false;
+}
+
+bool canParallelStageRecord(Map item, String school, {
+  required bool edgeDeliverySupported,
+}) =>
+    eligibleForRecordHandoff(item, school,
+        edgeDeliverySupported: edgeDeliverySupported) &&
+    ({'school_notices', 'school_calendar'}.contains(item['collection']) ||
+      parallelAttendanceExpenseCollections.contains(item['collection']) ||
+      independentExistingPersonPatch(item) ||
+      independentPreparedPersonCreate(item)) &&
+    !parallelContainsInlineMedia(item['data']) &&
+    {'pending', 'retry'}.contains(item['syncState']) &&
+    item['documentId'] is String &&
+    (item['documentId'] as String).isNotEmpty &&
+    pendingRecordBackoffDue(Map<String, dynamic>.from(item), DateTime.now());
+
+/// Existing Worker treats school expenses as independent resources. A
+/// non-atomic fee/person/document row in this device's outbox is not a parent
+/// of an expense. Let the broker durably accept independent expenses without
+/// waiting for unrelated provider work, while retaining explicit local
+/// deletion, reservation, supersession and school isolation barriers.
+bool canStageExpensePastUnrelatedOwners(
+  Map candidate, Iterable<Map<String,dynamic>> outbox, String school,
+) {
+  if(candidate['collection']!='school_expenses' ||
+      candidate['schoolId']!=school ||
+      candidate['operation']!='set')return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school ||
+       row['atomicBundleId']!=null ||
+       row['priorDeletion']!=null ||
+       row['priorCloudWrite']!=null ||
+       row['operation']=='delete')return false;
+    if(row['collection']=='school_expenses' &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])return false;
+  }
+  return true;
+}
+
+/// Attendance can be admitted alongside unrelated fee, file and notice
+/// backlog, but never ahead of an unresolved person/school-settings owner.
+bool canStageAttendancePastUnrelatedOwners(
+  Map candidate, Iterable<Map<String,dynamic>> outbox, String school,
+) {
+  if(!{'attendance_records','attendance_logs','teacher_attendance'}
+      .contains(candidate['collection']) ||
+      candidate['schoolId']!=school || candidate['operation']!='set')
+    return false;
+  for(final row in outbox) {
+    if(row['schoolId']!=school ||
+        row['atomicBundleId']!=null ||
+        row['priorDeletion']!=null ||
+        row['priorCloudWrite']!=null ||
+        row['operation']=='delete' ||
+        {'students_directory','teachers_directory','school_config','school_settings'}
+            .contains(row['collection']))return false;
+    if(row['collection']==candidate['collection'] &&
+       row['documentId']==candidate['documentId'] &&
+       row['operationId']!=candidate['operationId'])return false;
+  }
+  return true;
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -102,7 +259,7 @@ class WindowsPendingSchoolSync {
           state = item['syncState'],
           category = item['failureCategory'];
       // Only the exact atomic bundle owner can repair this reserved operation.
-      if(item['atomicBundleId']!=null)continue;
+      if(item['atomicBundleId']!=null || item['priorCloudWrite']!=null)continue;
       // Existing unknown notices must not be stuck forever. Probe only the
       // original same-school DELETE; no automatic replay without readback.
       final unknownNoticeDelete = state == 'needsAttention' &&
@@ -414,9 +571,11 @@ class WindowsPendingSchoolSync {
     String? onlyOperationId,
     bool respectBackoff = false,
     bool diagnoseUnclassified = false,
+    bool Function(Map<String, dynamic>)? parallelAdmission,
     void Function(Map<String, dynamic>)? onActivity,
   }) async {
     final db = FirebaseFirestore.instance;
+    final school = db.activeProfileIdentity['schoolSyncId'];
     void report(
       String stage,
       String queueId,
@@ -452,7 +611,8 @@ class WindowsPendingSchoolSync {
     }
 
     void unchanged() {
-      if (db.activeProfileId != profileId)
+      if (db.activeProfileId != profileId ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
         throw StateError('School changed during sync.');
     }
 
@@ -470,7 +630,7 @@ class WindowsPendingSchoolSync {
 
     int priority(Map<String, dynamic> d) {
       final collection = d['collection'];
-      if (collection == 'students_directory') return -1;
+      if (collection == 'students_directory' || collection=='teachers_directory') return -1;
       if ({
         'attendance_records',
         'attendance_logs',
@@ -492,17 +652,50 @@ class WindowsPendingSchoolSync {
         final order = priority(a.data()).compareTo(priority(b.data()));
         return order != 0 ? order : time(a.data()).compareTo(time(b.data()));
       });
+    // Recover the original authorized stage after an app/process restart,
+    // without sending a second business mutation. One school-scoped snapshot
+    // per flush; the durable CAS remains the only local handoff owner.
+    final stagedJournals = sendVersioned != null && school is String
+        ? (await db.collection('_windows_drive_deliveries').get()).docs
+            .map((row) => row.data())
+            .where((row) => row['schoolId'] == school &&
+                row['handoffAuthorized'] == true && row['state'] == 'pending')
+            .toList()
+        : <Map<String,dynamic>>[];
+    unchanged();
     Object? firstDeferred;
-    for (final queued in docs) {
+    Future<void> process(QueryDocumentSnapshot<Map<String, dynamic>> queued) async {
       unchanged();
       queued.reference.requireOriginProfile();
-      if (onlyQueueId != null && queued.id != onlyQueueId) continue;
-      if (canAdmit?.call() == false) break;
+      if (onlyQueueId != null && queued.id != onlyQueueId) return;
+      if (canAdmit?.call() == false) return;
       var item = queued.data();
       // Cloudflare owns this immutable original. The device never submits a
       // second mutation merely to poll Google Drive; the receipt journal can
       // settle it when the authenticated provider proof eventually arrives.
-      if(item['syncState']=='cloudAccepted')continue;
+      if(item['syncState']=='cloudAccepted')return;
+      if(item['priorCloudWrite']!=null)return; // Existing receipt owner releases predecessor.
+      if (school is String && sendVersioned != null) {
+        final bound = stagedJournals.where((journal) =>
+            recoverableStagedRecordJournal(item,journal,school) ||
+            recoverableStagedPhotoJournal(item,journal,school)).toList();
+        if (bound.isNotEmpty) {
+          final identities = bound.map((row) => row['ticketId']).toSet();
+          if (identities.length != 1)
+            throw StateError('Multiple staged operation identities retained for review.');
+          final journal=bound.first;
+          final saved = await db.recordOutboxCloudHandoff(queued.reference,
+              item,ticketId:identities.single as String,
+              lane:journal['lane'] as String,
+              mediaSourceHash:journal['mediaSourceHash'] as String?,
+              mediaFileSha256:journal['fileSha256'] as String?);
+          unchanged();
+          if (saved) report('cloudflareAccepted',queued.id,item);
+          // A failed CAS means an edit or another recovery owner won. Never
+          // send the stale snapshot after observing an authenticated ticket.
+          return;
+        }
+      }
       // This exact original operation belongs to the isolated atomic
       // Person/Card recovery owner. Never issue a second independent upload.
       if(item['atomicBundleId']!=null) {
@@ -511,7 +704,7 @@ class WindowsPendingSchoolSync {
             !{'reserved','committed'}.contains(item['atomicState']) ||
             item['schoolId']!=db.activeProfileIdentity['schoolSyncId'])
           throw StateError('Atomic outbox reservation requires school review.');
-        continue;
+        return;
       }
       if (sendVersioned != null &&
           item['schoolId'] != null &&
@@ -522,7 +715,7 @@ class WindowsPendingSchoolSync {
         );
       }
       if (onlyOperationId != null && item['operationId'] != onlyOperationId)
-        continue;
+        return;
       // A manual Sync Now can bypass a local transport backoff, but cannot
       // override a provider quota minimum. Keep the immutable pending request
       // until the saved deadline even when the caller disables normal backoff.
@@ -532,7 +725,7 @@ class WindowsPendingSchoolSync {
             DateTime.now(),
             explicitRetry: onlyOperationId != null,
           ))
-        continue;
+        return;
       final collection = item['collection']?.toString() ?? '';
       final id = item['documentId']?.toString() ?? '';
       final operation = item['operation']?.toString() ?? '';
@@ -549,7 +742,7 @@ class WindowsPendingSchoolSync {
           error: 'Invalid pending sync record retained for recovery.',
         );
         report('needsAttention', queued.id, item, category: 'configuration');
-        continue;
+        return;
       }
       if (sendVersioned != null &&
           (item['operationId'] == null || item['schoolId'] == null)) {
@@ -564,7 +757,7 @@ class WindowsPendingSchoolSync {
         );
         unchanged();
         if (migrated == null)
-          continue; // A newer durable edit owns this row now.
+          return; // A newer durable edit owns this row now.
         item = migrated;
       }
       // Older clients called every filesystem error a missing attachment.
@@ -587,9 +780,9 @@ class WindowsPendingSchoolSync {
               error:'Text notice has no local attachment. Original request retained for bounded storage retry.',
               diagnostic:{'failureStage':'recordRequestAndAck','failureCode':'RECORD_LOCAL_STORAGE_IO'});
             unchanged();
-            if(!admitted)continue;
+            if(!admitted)return;
             final current=(await queued.reference.get()).data();unchanged();
-            if(current==null||current['operationId']!=item['operationId'])continue;
+            if(current==null||current['operationId']!=item['operationId'])return;
             item=current;
             report('automaticRepair',queued.id,item,category:'localStorage');
           }
@@ -610,11 +803,11 @@ class WindowsPendingSchoolSync {
           error: 'Known transport failure safely reopened; original operation retained.',
         );
         unchanged();
-        if (!repaired) continue;
+        if (!repaired) return;
         final current = (await queued.reference.get()).data();
         unchanged();
         if (current == null || current['operationId'] != item['operationId'])
-          continue;
+          return;
         item = current;
         report(
           'automaticRepair',
@@ -639,8 +832,8 @@ class WindowsPendingSchoolSync {
           item['baseCloudRevision'] is String;
       if (item['syncState'] == 'conflict' ||
           item['syncState'] == 'needsAttention' && !diagnoseLegacy)
-        continue;
-      if (canAdmit?.call() == false) break;
+        return;
+      if (canAdmit?.call() == false) return;
       String? revision;
       final watch = Stopwatch()..start();
       report('cloudRequest', queued.id, item);
@@ -659,7 +852,11 @@ class WindowsPendingSchoolSync {
               );
             }
             final deletion = Map<String, dynamic>.from(prior);
-            final deletedRevision = await sendVersioned(deletion);
+            // Nested deletes must complete before a replacement is admitted.
+            // This local transport hint is not part of the original CAS record.
+            final deletedRevision = await sendVersioned({
+              ...deletion, 'requireCanonicalDeleteReceipt': true,
+            });
             unchanged();
             if (deletedRevision.trim().isEmpty)
               throw const MissingSyncAcknowledgement();
@@ -672,7 +869,7 @@ class WindowsPendingSchoolSync {
             unchanged();
             if (current == null ||
                 current['operationId'] != item['operationId'])
-              continue;
+              return;
             item = current;
             if (item['priorDeletion'] != null)
               throw StateError('Deletion acknowledgement not durable.');
@@ -680,9 +877,13 @@ class WindowsPendingSchoolSync {
           if (prepareVersioned != null && item['operation'] != 'delete') {
             final bound = await prepareVersioned(queued.reference, item);
             unchanged();
-            if (bound == null) continue;
+            if (bound == null) return;
             item = bound;
           }
+          // Preparation can await a point read or local wire-data binding.
+          // Recheck admission before starting a new network mutation.
+          unchanged();
+          if (canAdmit?.call() == false) return;
           final response = sendVersioned(item);
           report('waitingForAck', queued.id, item);
           revision = await response;
@@ -711,8 +912,10 @@ class WindowsPendingSchoolSync {
           mediaSourceHash:accepted.mediaSourceHash,
           mediaFileSha256:accepted.mediaFileSha256);
         unchanged();
-        if(saved)report('cloudflareAccepted',queued.id,item);
-        continue; // No canonical revision / no outbox deletion.
+        watch.stop();
+        if(saved)report('cloudflareAccepted',queued.id,item,
+            elapsedMicros:watch.elapsedMicroseconds);
+        return; // No canonical revision / no outbox deletion.
       } catch (caught, stack) {
         unchanged();
         final e = caught is FileSystemException && caught is! PendingDocumentFileFailure &&
@@ -773,7 +976,7 @@ class WindowsPendingSchoolSync {
               'SCRIPT_LEGACY_RECORD_REVIEW_REQUIRED',
             }.contains(code)) {
           firstDeferred ??= e;
-          continue; // Independent rows must not be starved by a conflict.
+          return; // Independent rows must not be starved by a conflict.
         }
         Error.throwWithStackTrace(e,stack);
       }
@@ -792,6 +995,70 @@ class WindowsPendingSchoolSync {
         elapsedMicros: watch.elapsedMicroseconds,
       );
     }
-    if (firstDeferred != null) throw firstDeferred;
+    // A bounded window is drained before newer or dependent operations are
+    // admitted. The existing CAS, receipt journal, and row retry paths remain
+    // the sole ACK owners. A fatal error drains in-flight work and stops admission.
+    // Person and school-policy parents block dependent attendance. Standalone
+    // expenses and independent attendance may bypass only unrelated same-school
+    // non-atomic rows; delete, reservation, supersession and foreign bindings
+    // still prevent their concurrent admission. The Worker independently
+    // enforces final Google provider resource barriers.
+    final scopedRows=docs.map((row)=>row.data()).toList(growable:false);
+    final dependentBarrier = docs.any((row) {
+      final item = row.data();
+      return item['schoolId'] != school ||
+          item['atomicBundleId'] != null ||
+          item['operation'] == 'delete' ||
+          item['priorDeletion'] != null || item['priorCloudWrite']!=null ||
+          ({'students_directory','teachers_directory'}.contains(item['collection']) &&
+            !independentExistingPersonPatch(item)) ||
+          {'school_config',
+            'school_settings','fee_payments','fee_ledger','teacher_salary',
+            'documents'}.contains(item['collection']);
+    });
+    var offset = 0;
+    while (offset < docs.length) {
+      unchanged();
+      if (canAdmit?.call() == false) break;
+      final first = docs[offset++];
+      bool independent(QueryDocumentSnapshot<Map<String, dynamic>> row) =>
+          sendVersioned != null && onlyQueueId == null &&
+          onlyOperationId == null &&
+          (!dependentBarrier ||
+            (school is String &&
+             (canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school) ||
+              canStageAttendancePastUnrelatedOwners(row.data(),scopedRows,school) ||
+              canStagePreparedPersonPastUnrelatedOwners(row.data(),scopedRows,school))) ||
+            (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
+             !independentExistingPersonPatch(row.data()) &&
+             !independentPreparedPersonCreate(row.data()))) &&
+          (parallelAdmission?.call(row.data()) ?? false);
+      if (!independent(first)) {
+        await process(first);
+        continue;
+      }
+      final window = [first];
+      final keys = <String>{};
+      var preparedCreates = independentPreparedPersonCreate(first.data()) ? 1 : 0;
+      String key(QueryDocumentSnapshot<Map<String, dynamic>> row) {
+        final data = row.data();
+        return "${data['collection']}/${data['documentId']}";
+      }
+      keys.add(key(first));
+      while (offset < docs.length && window.length < 3 &&
+          canAdmit?.call() != false && independent(docs[offset])) {
+        final next = docs[offset];
+        final isPreparedCreate = independentPreparedPersonCreate(next.data());
+        if ((isPreparedCreate && preparedCreates == 2) || !keys.add(key(next))) {
+          break;
+        }
+        window.add(next);
+        offset++;
+        if (isPreparedCreate) preparedCreates++;
+      }
+      await Future.wait<void>(window.map(process), eagerError: false);
+    }
+    final deferred = firstDeferred;
+    if (deferred != null) throw deferred;
   }
 }

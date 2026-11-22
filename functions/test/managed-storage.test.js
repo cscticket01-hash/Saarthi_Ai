@@ -395,6 +395,12 @@ test('mobile versioned lists transfer only changed visible records and acknowled
  const request={action:'mobile_dashboard',sessionToken:login.sessionToken,mobileRecordDeltaVersion:1};
  const first=mobile(request);assert.equal(first.success,true);assert.equal(first.calendar.length,2);assert.equal(first.fees.length,1);assert.equal(first.fees[0].amount,50);
  const knownGroupRecordRevisions=Object.fromEntries(Object.keys(first.groupRecordDeltas).map(key=>[key,Object.fromEntries(first[key].map(row=>[row._mobileRecordId,row._mobileRecordRevision]))]));
+ // No checkpoint for calendar: a matching group revision alone cannot
+ // establish that the phone owns all rows. Send the full scoped group.
+ const {calendar:omitted,...otherCheckpoints}=knownGroupRecordRevisions;
+ const rebuilt=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions:otherCheckpoints});
+ assert.equal(rebuilt.success,true);assert.deepEqual(rebuilt.groupRecordDeltas.calendar.ids,['a','b']);
+ assert.equal(rebuilt.calendar.length,2);assert.equal(rebuilt.fees,undefined);
  write('school_calendar','b',{title:'After'});
  const next=mobile({...request,knownRevisions:first.revisions,knownGroupRecordRevisions});assert.equal(next.success,true);assert.equal(next.calendar.length,1);assert.equal(next.calendar[0].title,'After');assert.deepEqual(next.groupRecordDeltas.calendar.ids,['a','b']);assert.equal(next.fees,undefined);
  assert.equal(f.call({action:'managed_records',operation:'delete',collection:'school_calendar',id:'b'}).success,true);

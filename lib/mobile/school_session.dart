@@ -29,6 +29,31 @@ import '../school_qr_link.dart';
 export '../school_qr_link.dart';
 import '../school_backend_transport.dart';
 
+/// The Worker notice snapshot is complete only below its 100-item
+/// response cap. Never overwrite an unbounded signed Script cache with a
+/// truncated edge page or accept an unscoped/duplicate notice identity.
+List<Map<String,dynamic>>? verifiedCompleteCloudflareNotices(
+    Map<String,dynamic> response, String schoolId, int statusCode) {
+  if(statusCode!=200 || response['success']!=true ||
+     response['schoolId']!=schoolId ||
+     response['revision'] is! String ||
+     (response['revision'] as String).isEmpty ||
+     response['notices'] is! List)return null;
+  final values=response['notices'] as List;
+  if(values.length>=100)return null; // Worker snapshot uses slice(0,100).
+  final seen=<String>{},out=<Map<String,dynamic>>[];
+  for(final raw in values){
+    if(raw is! Map ||
+       raw['id'] is! String || (raw['id'] as String).isEmpty ||
+       !seen.add(raw['id'] as String) ||
+       raw['_noticeRevision'] is! String ||
+       (raw['_noticeRevision'] as String).isEmpty ||
+       raw['schoolId']!=null && raw['schoolId']!=schoolId) return null;
+    out.add(Map<String,dynamic>.from(raw));
+  }
+  return out;
+}
+
 /// An authoritative denial must never be mistaken for a transient outage.
 class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
@@ -1365,6 +1390,7 @@ class SchoolSession {
     await _adoptSharedSnapshot();
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
+    List<Map<String,dynamic>>? authoritativeEdgeNotices;
     final lane = _cloudflareLane, currentLink = link;
     if (lane != null && currentLink != null && lane.validFor(currentLink.schoolId, schoolToken)) {
       try {
@@ -1373,11 +1399,22 @@ class SchoolSession {
           'linkToken': currentLink.linkToken, 'sessionToken': schoolToken,
         });
         final data = _decodeSchoolResponse(reply.body);
-        if (generation == _generation && reply.statusCode == 200 && data['success'] == true &&
-            data['schoolId'] == currentLink.schoolId && data['notices'] is List) {
-          dashboard = {...dashboard, 'notices': data['notices']};
-          connectionChanges.value++;
-          await _persist();
+        final fresh = verifiedCompleteCloudflareNotices(
+            data,currentLink.schoolId,reply.statusCode);
+        if (generation == _generation && fresh != null) {
+          final prior = dashboard;
+          dashboard = {...dashboard, 'notices': fresh};
+          try {
+            await _persist();
+            if(generation!=_generation)
+              throw SchoolAccessDenied('School session changed during notice save.');
+            authoritativeEdgeNotices = fresh;
+            connectionChanges.value++;
+          } catch (_) {
+            // A failed cache commit must not leave uncommitted edge rows in
+            // memory. The regular signed dashboard can still refresh.
+            if(generation==_generation)dashboard=prior;
+          }
         }
       } catch (_) { /* Keep verified cached notices during an edge outage. */ }
     }
@@ -1402,12 +1439,17 @@ class SchoolSession {
     final groupCheckpoints = <String, Map<String, String>>{};
     for (final entry in dashboard.entries) {
       if (!groups.contains(entry.key) || entry.value is! List) continue;
-      final rows = (entry.value as List).whereType<Map>().toList();
-      if (rows.any(
+      final cached = entry.value as List;
+      final rows = cached.whereType<Map>().toList();
+      // A malformed or duplicate baseline must request a whole group instead
+      // of collapsing identities and accidentally acknowledging a deletion.
+      if (rows.length != cached.length || rows.any(
         (r) =>
             r['_mobileRecordId'] is! String ||
-            r['_mobileRecordRevision'] is! String,
-      ))
+            (r['_mobileRecordId'] as String).isEmpty ||
+            r['_mobileRecordRevision'] is! String ||
+            (r['_mobileRecordRevision'] as String).isEmpty,
+      ) || rows.map((r) => r['_mobileRecordId']).toSet().length != rows.length)
         continue;
       // Whole-group fallback: large caches must not make refresh permanently
       // fail, and an arbitrary truncated ID list could acknowledge removals.
@@ -1477,6 +1519,7 @@ class SchoolSession {
         final key = entry.key;
         final meta = entry.value;
         if (key is! String ||
+            !groups.contains(key) ||
             meta is! Map ||
             meta['ids'] is! List ||
             result[key] is! List) {
@@ -1489,15 +1532,26 @@ class SchoolSession {
           throw StateError('Invalid mobile record identities.');
         }
         final rows = <String, Map>{};
-        for (final row in (dashboard[key] as List? ?? []).whereType<Map>()) {
-          if (idSet.contains(row['_mobileRecordId']))
-            rows[row['_mobileRecordId'] as String] = row;
+        // Reuse only rows whose exact immutable revisions were included in
+        // this request. An omitted/malformed cache needs a full group response.
+        final advertised = groupCheckpoints[key] ?? const <String, String>{};
+        final cached = dashboard[key];
+        if (cached is List) {
+          for (final row in cached.whereType<Map>()) {
+            final id = row['_mobileRecordId'];
+            if (id is String && idSet.contains(id) &&
+                advertised.containsKey(id) &&
+                advertised[id] == row['_mobileRecordRevision']) {
+              rows[id] = row;
+            }
+          }
         }
         final changedIds = <String>{};
         for (final row in result[key] as List) {
           if (row is! Map ||
               row['_mobileRecordId'] is! String ||
               row['_mobileRecordRevision'] is! String ||
+              (row['_mobileRecordRevision'] as String).isEmpty ||
               !idSet.contains(row['_mobileRecordId']) ||
               !changedIds.add(row['_mobileRecordId'] as String)) {
             throw StateError('Invalid changed mobile record.');
@@ -1510,23 +1564,36 @@ class SchoolSession {
       }
     }
     if (result['unchanged'] != true) {
-      if (result['noticesDelta'] == true && result['noticeIds'] is List) {
-        final ids = (result['noticeIds'] as List).whereType<String>().toList();
+      if (result['noticesDelta'] == true) {
+        if (result['noticeIds'] is! List || result['notices'] is! List)
+          throw StateError('Invalid notice delta.');
+        final rawIds = result['noticeIds'] as List;
+        final ids = rawIds.whereType<String>().toList();
         final idSet = ids.toSet();
+        if (ids.length != rawIds.length || ids.any((id) => id.isEmpty) ||
+            idSet.length != ids.length)
+          throw StateError('Invalid notice delta identities.');
         final rows = <String, Map>{};
-        for (final row
-            in (dashboard['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && idSet.contains(row['id']))
-            rows[row['id']] = row;
+        final cachedNotices = dashboard['notices'];
+        if (cachedNotices is List) {
+          for (final row in cachedNotices.whereType<Map>()) {
+            final id = row['id'];
+            if (id is String && idSet.contains(id) &&
+                legacyNotices.containsKey(id) &&
+                legacyNotices[id] == row['_noticeRevision'])
+              rows[id] = row;
+          }
         }
-        for (final row in (result['notices'] as List? ?? []).whereType<Map>()) {
-          if (row['id'] is String && idSet.contains(row['id']))
-            rows[row['id']] = row;
+        final changedIds = <String>{};
+        for (final row in (result['notices'] as List)) {
+          if (row is! Map || row['id'] is! String || !idSet.contains(row['id']) ||
+              !changedIds.add(row['id'] as String))
+            throw StateError('Invalid changed notice.');
+          rows[row['id'] as String] = row;
         }
-        merged['notices'] = [
-          for (final id in ids)
-            if (rows[id] != null) rows[id],
-        ];
+        if (ids.any((id) => !rows.containsKey(id)))
+          throw StateError('Incomplete notice delta baseline.');
+        merged['notices'] = [for (final id in ids) rows[id]];
       }
       if (result.containsKey('idCardPackage') &&
           result['idCardPackage'] == null &&
@@ -1548,6 +1615,11 @@ class SchoolSession {
         }
       }
     }
+    // Cloudflare-first notices can be newer than the asynchronous Google
+    // Drive backup snapshot. A separately authenticated COMPLETE edge list
+    // wins over this cycle's potentially stale Script notice group only.
+    if(authoritativeEdgeNotices!=null)
+      merged['notices']=authoritativeEdgeNotices;
     if (jsonEncode(merged).length > 2 * 1024 * 1024)
       throw StateError('School response exceeds cache safety limit.');
     dashboard = merged;

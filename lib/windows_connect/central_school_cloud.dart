@@ -508,9 +508,13 @@ class CentralSchoolCloud {
     bool returnAfterDurableCloudflareHandoff = false,
   }) async {
     final receiptProfile = edgeDeliveryProfile?.call();
+    final origin = expectedSchoolId != null ? await saved() : null;
     if (expectedSchoolId != null &&
-        (await saved())['schoolId'] != expectedSchoolId)
-      throw StateError('School changed during operation.');
+        (origin?['schoolId'] != expectedSchoolId ||
+         (body['schoolId'] != null && body['schoolId'] != expectedSchoolId) ||
+         (receiptProfile != null && edgeDeliveryProfile?.call() != receiptProfile))) {
+      throw StateError('School changed or foreign operation blocked.');
+    }
     if (!validEndpoint(endpoint))
       throw StateError(
         'Developer must configure the central school cloud service. Schools do not need Firebase configuration.',
@@ -525,7 +529,6 @@ class CentralSchoolCloud {
         || action=='managed/records/batch'
         || {'managed/file/upload','managed/file/upload/resumable'}.contains(action) && body['uploadKey'] is String
         || fileSidecarStage;
-    final origin = expectedSchoolId != null ? await saved() : null;
     Object? ordered(Object? value) {
       if (value is Map) {
         final keys = value.keys.map((key) => key.toString()).toList()..sort();
@@ -559,6 +562,18 @@ class CentralSchoolCloud {
       await observer({
         'source': source, 'schoolId': body['schoolId'], 'action': action,
         'profileId': receiptProfile,
+        if (action == 'managed/records' && returnAfterDurableCloudflareHandoff &&
+            {'pending','verified'}.contains(proof['driveState']) &&
+            proof['delivery'] is Map &&
+            (proof['delivery'] as Map)['lane']=='records' &&
+            (proof['delivery'] as Map)['id']==expectedRecordStageTicket(body))
+          'handoffAuthorized': true,
+        if (fileSidecarStage && returnAfterDurableCloudflareHandoff &&
+            {'pending','verified'}.contains(proof['driveState'])) ...{
+          'handoffAuthorized': true,
+          'fileSha256': body['sha256'],
+          if (mediaRecordStage) 'mediaSourceHash': (body['record'] as Map)['sourceHash'],
+        },
         if (documentStage) ...{
           'collection': 'documents',
           'id': (body['document'] as Map)['id'],
@@ -590,6 +605,30 @@ class CentralSchoolCloud {
 
     var result=await send('POST', Uri.parse(endpoint), token: token,
         body: {...negotiateLiveSync(body), if(staged) 'edgeDeliveryVersion': 1});
+    // The independent receipt owner already controls polling schedules.
+    // An explicit authenticated status request is a single read, not a
+    // foreground mutation that needs an implicit long-poll to completion.
+    if (action == 'managed/cloudflare/operation') {
+      final ticket = result['delivery'];
+      if (result['success'] != true ||
+          result['schoolId'] != body['schoolId'] ||
+          result['cloudflareAccepted'] != true ||
+          !{'pending','verified'}.contains(result['driveState']) ||
+          (result['driveState'] == 'pending' &&
+            (result['edgeDeliveryVersion'] != 1 || ticket is! Map ||
+             ticket['lane'] != body['lane'] || ticket['id'] != body['id']))) {
+        throw StateError('Unverified Cloudflare delivery status; original retained.');
+      }
+      check();
+      if (origin != null) {
+        final current = await saved();
+        if (current['schoolId'] != origin['schoolId'] ||
+            current['uid'] != origin['uid']) {
+          throw StateError('School changed during delivery status.');
+        }
+      }
+      return result;
+    }
     final deadline=DateTime.now().add(const Duration(seconds: 90));
     Map<String, dynamic>? acceptedTicket;
     var receiptRetained = false;
@@ -672,6 +711,9 @@ class CentralSchoolCloud {
         ...result,'edgeDeliveryVersion':1,
         'delivery':{'id':expected,'lane':'file-$expected'},
       };
+      // Journal stays pending until the existing local CAS owner commits.
+      // Replay of an already completed server file must not strand that CAS
+      // behind a locally completed receipt that will never be polled again.
       await observe(verified);
       return {...verified,'cloudflareHandoffVersion':1};
     }
