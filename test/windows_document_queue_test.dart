@@ -120,6 +120,45 @@ void main() {
       expect((await db.collection('_local_student_documents').doc(id).get()).data()?['syncState'],'Synced');
     }
   });
+  test('late Google document receipt cannot verify or retire a newer local generation', () async {
+    final dir=await Directory.systemTemp.createTemp('document-generation-replacement');
+    try {
+      const id='document-replacement-ack';
+      final bytes=<int>[1,2,3,4,5];
+      final path='${dir.path}/original.pdf';
+      await File(path).writeAsBytes(bytes);
+      final old=<String,dynamic>{
+        'schoolId':school,'studentId':'student-owner',
+        'documentRevision':'document-operation-original',
+        'localPath':path,'contentHash':sha256.convert(bytes).toString(),
+        'syncState':'Pending','baseCloudRevision':'',
+        'deleted':false,'mimeType':'application/pdf','fileName':'original.pdf',
+      };
+      await db.collection('_local_student_documents').doc(id).set(old);
+      await db.collection('_windows_document_outbox').doc(id).set(old);
+      final events=<String>[];
+      await WindowsBackendBridge.flushDocumentPending(
+        onActivity:(event) => events.add(event['stage'] as String),
+        send:(payload)async {
+          final newer={...old,
+            'documentRevision':'document-operation-replacement',
+            'syncState':'Pending'};
+          await db.collection('_local_student_documents').doc(id).set(newer);
+          await db.collection('_windows_document_outbox').doc(id).set(newer);
+          return documentAckFixture(payload,42);
+        },
+      );
+      final pending=(await db.collection('_windows_document_outbox').doc(id).get()).data()!;
+      final local=(await db.collection('_local_student_documents').doc(id).get()).data()!;
+      expect(pending['documentRevision'],'document-operation-replacement');
+      expect(local['documentRevision'],'document-operation-replacement');
+      expect(local['syncState'],'Pending');
+      expect(events,contains('cloudRequest'));
+      expect(events,contains('waitingForAck'));
+      expect(events, isNot(contains('verified')));
+    } finally {await dir.delete(recursive:true);}
+  });
+
   test('document delete retries keep identity, while a later owner deletion gets a new identity', () {
     final first={'documentRevision':'delete-first','baseCloudRevision':'same-original-generation'};
     final later={...first,'documentRevision':'delete-after-restoration'};
