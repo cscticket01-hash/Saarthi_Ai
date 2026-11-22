@@ -1121,7 +1121,9 @@ class WindowsBackendBridge {
             ).toString();
             if (result['success'] != true ||
                 result['cloudflareAccepted'] != true ||
-                result['driveState'] != 'pending' ||
+                !(result['driveState'] == 'pending' ||
+                  result['driveState'] == 'verified' && result['committed']==true &&
+                  result['fileId'] is String && (result['fileId'] as String).isNotEmpty) ||
                 result['schoolId'] != record['schoolId'] ||
                 ticket is! Map ||
                 ticket['id'] != expectedTicket ||
@@ -1157,6 +1159,7 @@ class WindowsBackendBridge {
                 'cloudTicketId': expectedTicket,
                 'cloudTicketLane': 'file-$expectedTicket',
                 'cloudContentHash': payload['contentHash'],
+                'cloudAcceptedAt': DateTime.now().millisecondsSinceEpoch,
               }, SetOptions(merge: true));
               batch.set(localRef,
                 {'syncState': 'CloudflareSaved'},
