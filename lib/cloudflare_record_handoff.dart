@@ -282,15 +282,13 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
         record['_syncErasePlan'] is Map &&
         record['_syncErasePlan']['complete'] == true;
   }
-  // An R2/DO status saying "verified" without its original canonical
-  // record cannot retire a durable local mutation. Some signed Script rows
-  // omit wrapper metadata, but the record itself must always be present.
+  // A real canonical row must carry BOTH the exact committed revision
+  // and the original immutable operation. Omitting either is not authority
+  // to advance a local CAS after an older edit or delivery race.
   if(record is! Map || record['schoolId']!=school ||
       record['_syncDeleted']==true ||
-      (record['_syncRevision']!=null &&
-       record['_syncRevision']!=proof['recordRevision']) ||
-      (record['_syncOperationId']!=null &&
-       record['_syncOperationId']!=original['operationId']) ||
+      record['_syncRevision']!=proof['recordRevision'] ||
+      record['_syncOperationId']!=original['operationId'] ||
       (record['id']!=null && record['id']!=original['documentId']))
     return false;
   return true;
