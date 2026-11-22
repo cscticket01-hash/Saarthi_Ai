@@ -2624,15 +2624,21 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           ));
         }
         _admitBatch();
+        final restoreSchool=_activeSchoolSyncId;
         await syncLocalRestoreRequests(
           FirebaseFirestore.instance,
-          _activeSchoolSyncId,
+          restoreSchool,
           (body) => ManagedSchoolSession.callForSchool(
-            _activeSchoolSyncId,
+            restoreSchool,
             'managed/recycle',
             body,
           ),
-          canAdmit: () => !isPaused,
+          canAdmit: () => !isPaused && !_resetPaused && !_syncBlocked &&
+              _activeProfileId==syncOrigin && _activeSchoolSyncId==restoreSchool &&
+              FirebaseFirestore.instance.activeProfileId==syncOrigin &&
+              FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']==restoreSchool &&
+              !WindowsDailyAccessGuard.blockedFor(restoreSchool) &&
+              !(_quotaRetryAt?.isAfter(DateTime.now())??false),
         );
         // Live delivery is consumed inside this same serial sync lane. Hints
         // never call the business writer or acknowledge a local upload.
