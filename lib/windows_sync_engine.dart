@@ -1,4 +1,5 @@
 import 'windows_drive_delivery_queue.dart';
+import 'cloudflare_record_handoff.dart';
 import 'windows_live_sync_runtime.dart';
 import 'live_sync_protocol.dart';
 import 'windows_sync_evidence.dart';
@@ -804,7 +805,8 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(row['operationId']) &&
         row['cloudTicketId'] is String &&
         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudTicketId']) &&
-        (row['cloudTicketLane']=='records' ||
+        (row['cloudTicketLane']=='records' &&
+         exactStagedRecordTicket(row,school)==row['cloudTicketId'] ||
          // Original photo identity was revalidated by the serialized SQLite
          // owner before the original record outbox became cloudAccepted.
          row['cloudTicketLane']=='file-${row['cloudTicketId']}' &&
@@ -812,7 +814,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
          row['cloudMediaSourceHash'] is String &&
          RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaSourceHash']) &&
          row['cloudMediaFileSha256'] is String &&
-         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaFileSha256']));
+         RegExp(r'^[a-f0-9]{64}$').hasMatch(row['cloudMediaFileSha256']) &&
+         row['cloudTicketId']==sha256.convert(utf8.encode(jsonEncode([
+           school,sha256.convert(utf8.encode(jsonEncode([
+             school,row['collection'],row['documentId'],row['operationId'],
+             row['cloudMediaFileSha256'],
+           ]))).toString(),
+         ]))).toString());
 
   bool _hasExactCloudflareDocumentHandoff(Map<String,dynamic> row, String school) {
       if (row['syncState'] != 'cloudAccepted' ||
