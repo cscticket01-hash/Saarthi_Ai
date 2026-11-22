@@ -77,13 +77,18 @@ bool independentExistingPersonPatch(Map item) {
       RegExp(r'^(cf-|live-)').hasMatch(item['baseCloudRevision']) ||
       item['fieldPatch'] is! Map)return false;
   final patch=item['fieldPatch'] as Map;
-  final set=patch['set'], remove=patch['remove'];
-  if(set is! Map || (remove!=null && (remove is! List || remove.isNotEmpty)))return false;
+  final set=patch['set'], remove=patch['remove'], identity=patch['identity'];
+  final ownerKey=item['collection']=='students_directory'?'mobileStableId':'teacherId';
+  if(patch['version']!=1 || set is! Map || remove is! List || remove.isNotEmpty ||
+      identity is! Map || identity[ownerKey] is! String ||
+      (identity[ownerKey] as String).isEmpty || item['data'] is! Map ||
+      identity[ownerKey]!=item['data'][ownerKey])return false;
   // Only non-identity contact fields; never change roll/class, generation,
   // status, salary, guardian binding, media, or other shared resources.
   const allowed={'phone','email','address','contactNumber','alternatePhone'};
-  return set.isNotEmpty && set.keys.every((key)=>allowed.contains(key)) &&
-      set.values.every((v)=>v is String && !v.startsWith('data:'));
+  final fields=set.entries.where((e)=>e.key!='updatedAt').toList();
+  return fields.isNotEmpty && fields.every((e)=>allowed.contains(e.key) &&
+      e.value is String && !(e.value as String).startsWith('data:'));
 }
 
 bool parallelContainsInlineMedia(Object? value,[int depth=0]) {
