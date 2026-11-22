@@ -259,6 +259,37 @@ void main(){
     ],school),false);
   });
 
+  test('prepared new person creates share a bounded Cloudflare window only with safe originals',(){
+    for(final collection in ['students_directory','teachers_directory']){
+      final original=<String,dynamic>{
+        'schoolId':school,'collection':collection,'documentId':'person-create-101',
+        'operation':'set','operationId':'original-person-op-001',
+        'baseCloudRevision':'','createIntent':true,'syncState':'pending',
+        'data':{'schoolId':school,'mobileStableId':'p-${List.filled(64,'a').join()}',
+          'mobileLinkToken':List.filled(32,'x').join(),
+          'mobileIdentityVersion':1,'name':'Synthetic student'},
+      };
+      bool eligible(Map value)=>canParallelStageRecord(value,school,edgeDeliverySupported:true);
+      bool independent(List<Map<String,dynamic>> rows)=>
+          canStagePreparedPersonPastUnrelatedOwners(original,rows,school);
+      expect(eligible(original),true);
+      expect(independent([original]),true);
+      expect(independent([original,{...original,'documentId':'person-create-202',
+        'operationId':'original-person-op-002'}]),true);
+      expect(eligible({...original,'createIntent':false}),false);
+      expect(eligible({...original,'data':{...original['data'] as Map,'mobileIdentityVersion':0}}),false);
+      expect(eligible({...original,'data':{...original['data'] as Map,'photoBase64':'data:image/jpeg;base64,AQ=='}}),false);
+      expect(eligible({...original,'data':{...original['data'] as Map,'replacesStudentGeneration':'prior'}}),false);
+      expect(eligible({...original,'priorDeletion':{'id':'delete'}}),false);
+      expect(eligible({...original,'atomicBundleId':'reserved'}),false);
+      expect(independent([original,{'schoolId':school,'operation':'delete',
+        'collection':'school_calendar'}]),false);
+      expect(independent([original,{'schoolId':school,'collection':'school_config',
+        'operation':'set'}]),false);
+      expect(independent([original,{'schoolId':'foreign','collection':'school_expenses'}]),false);
+    }
+  });
+
   test('bounded admission drains in-flight records before admitting another window',() async {
     FlutterSecureStorage.setMockInitialValues({});
     await WindowsRuntimeFlags.setLocalStorageEnabled(false);
