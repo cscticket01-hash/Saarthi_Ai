@@ -896,6 +896,39 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     );
   }
 
+  Widget _syncSummary(String title, String value, IconData icon, Color accent) {
+    return _panelBox(Row(
+      children: [
+        CircleAvatar(
+          backgroundColor: accent.withValues(alpha: .15),
+          foregroundColor: WindowsAppearance.foreground(accent),
+          child: Icon(icon),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 12)),
+            const SizedBox(height: 4),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        )),
+      ],
+    ));
+  }
+
+  Widget _syncSummaryStrip(List<Widget> cards) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = (constraints.maxWidth / 205).floor().clamp(1, cards.length);
+      final width = (constraints.maxWidth - 12 * (columns - 1)) / columns;
+      return Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [for (final card in cards) SizedBox(width: width, child: card)],
+      );
+    },
+  );
+
   Widget _hero(Map<String, dynamic> details, List<dynamic> items, bool active) {
     final rows = details['liveQueue'] is List
         ? (details['liveQueue'] as List).whereType<Map>().map((r) => Map<String,dynamic>.from(r)).toList()
@@ -950,9 +983,36 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     // evidence, not proof of a completed Google Drive backup.
     final staged = details['cloudflareOwnedPendingDrive'];
     final hasStaged = staged is int && staged > 0;
+    final transfers = details['lastVerifiedTransferMicros'];
+    final lastSync = details['lastVerifiedTransferAt'];
+    final today = details['todayVerifiedReceipts'];
+    final activityEvents = (details['activity'] as List? ?? const [])
+        .whereType<Map>()
+        .where((row) => row['stage'] == 'verified')
+        .take(3);
+    final retryCount = rows.where((row) => row['syncState'] == 'retry' ||
+        row['state'] == 'retry' || row['retryAtMillis'] is int &&
+        (row['retryAtMillis'] as int) > DateTime.now().millisecondsSinceEpoch).length;
+    final failedCount = rows.where((row) =>
+        (row['syncState'] ?? row['state']) == 'failed').length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _syncSummaryStrip([
+          _syncSummary('Current Upload',
+            transferActive ? '$uploadCount pending uploads' : 'No active upload',
+            Icons.upload_outlined, Colors.lightBlueAccent),
+          _syncSummary('Last Synced',
+            lastSync is num && transfers is num
+                ? '${stamp(lastSync)} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
+                : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
+          _syncSummary("Today's Sync", today is int ? '$today verified' : 'Unknown',
+            Icons.layers_outlined, Colors.purpleAccent),
+          _syncSummary('System Health', cloudHealth,
+            Icons.health_and_safety_outlined, Colors.tealAccent),
+        ]),
+        const SizedBox(height: 12),
         Wrap(
           spacing: 14,
           runSpacing: 14,
@@ -979,7 +1039,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Live Sync Flow',
+                    'Live Sync Flow (School Server → Google Drive)',
                     style: TextStyle(fontFamily: 'Segoe UI', fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
@@ -988,7 +1048,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     local:diskEvidence?['status']=='Measured'
                       ? '${diskEvidence!['volume']}\n${bytesLabel(diskEvidence!['usedBytes'] as int)} / ${bytesLabel(diskEvidence!['totalBytes'] as int)}'
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
-                    cloud:checking?'Checking cloud changes':hasStaged?'School Server saved':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
+                    cloud:checking?'Checking cloud changes':transferActive?'Uploading · verifying':'Primary sync',
+                    serverAck:ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
                     drive:hasStaged?'$staged staged · Google Drive pending':'Automatic server-side backup',
                     pending:uploadCount,
                     pendingText:uploadCount > 0
@@ -1035,6 +1096,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     ],
                   ),
                   const SizedBox(height: 12),
+                  for (final event in activityEvents)
+                    _activityRow(Map<String, dynamic>.from(event), active),
                   if ((details['liveQueue'] as List? ?? items).isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1083,6 +1146,11 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     icon: const Icon(Icons.arrow_forward),
                     label: const Text('View full queue'),
                   ),
+                  TextButton.icon(
+                    onPressed: () => _jump(_activityKey),
+                    icon: const Icon(Icons.history),
+                    label: const Text('View full sync history'),
+                  ),
                 ],
               ),
             );
@@ -1100,6 +1168,18 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             );
           },
         ),
+        const SizedBox(height: 12),
+        _syncSummaryStrip([
+          _syncSummary('Successful Today', today is int ? '$today' : 'Unknown',
+            Icons.check_circle_outline, Colors.greenAccent),
+          _syncSummary('Retry', '$retryCount', Icons.replay, Colors.amberAccent),
+          _syncSummary('Failed', '$failedCount', Icons.error_outline, Colors.redAccent),
+          _syncSummary('Engine Status', phaseLabel, Icons.bolt, phaseColor),
+        ]),
+        const SizedBox(height: 12),
+        _panelBox(const Text(
+          'After School Server ACK, Google Drive backup runs in the background.',
+        )),
       ],
     );
   }
@@ -1339,7 +1419,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
-        title: const Text('Sync Engine 4 — Live Sync'),
+        title: const Text('Sync Engine 4.0 — Live Sync'),
         actions: [
           AnimatedBuilder(
             animation: Listenable.merge([engine.state, engine.details,ManagedSchoolSession.activeTransfers,WindowsSyncEvidence.active]),

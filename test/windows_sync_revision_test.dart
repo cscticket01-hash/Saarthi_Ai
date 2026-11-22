@@ -263,7 +263,7 @@ void main(){
      textTheme:ThemeData.dark().textTheme.apply(fontFamily:'ControlCenterPreview')),
      home:WindowsSyncControlCenter(diskProbe: (_) async => {'status': 'Unknown'}, refreshOnOpen:()async{}))));
    await tester.pumpAndSettle();
-   expect(find.text('Sync Engine 4 — Live Sync'),findsOneWidget);
+   expect(find.text('Sync Engine 4.0 — Live Sync'),findsOneWidget);
    await selectSyncTool(tester, 'Measured Status');
    await tester.scrollUntilVisible(find.text('Internet connectivity'), 300,
        scrollable: find.byType(Scrollable).first);

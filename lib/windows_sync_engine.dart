@@ -1075,6 +1075,15 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       'lastLocalBackupMillis': backup.data()?['createdAt'] is int
           ? backup.data()!['createdAt']
           : 0,
+      'todayVerifiedReceipts': receipts.docs.where((row) {
+        final receipt = row.data();
+        final acknowledged = receipt['acknowledgedAt'];
+        final now = DateTime.fromMillisecondsSinceEpoch(nowMillis);
+        return school is String && validSchoolId(school) &&
+            receipt['schoolId'] == school && acknowledged is int &&
+            acknowledged >= DateTime(now.year, now.month, now.day).millisecondsSinceEpoch &&
+            acknowledged <= nowMillis;
+      }).length,
       'verifiedReceiptCount': receipts.docs.where((row) =>
           school is String && validSchoolId(school) && row.data()['schoolId'] == school).length,
       // Device ACK time includes the exact durable staged receipt even before
