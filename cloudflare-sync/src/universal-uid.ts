@@ -63,10 +63,10 @@ export class UniversalUidRegistry {
    * may initialize this ledger. Missing proof must not be replaced with [].
    * Duplicate legacy ownership or serials roll back migration atomically.
    */
-  initializeSchool(schoolId: string, schoolName: string, verifiedLegacy: readonly Assignment[]): void {
+  initializeSchool(schoolId: string, schoolName: string, verifiedLegacy: readonly Assignment[], afterSeed?: () => void): void {
     schoolCheck(schoolId);
     requireUid(Array.isArray(verifiedLegacy) && verifiedLegacy.length <= 100000, 'Invalid legacy inventory');
-    this.seed(schoolId, uidNameCode(schoolName), verifiedLegacy);
+    this.seed(schoolId, uidNameCode(schoolName), verifiedLegacy, undefined, afterSeed);
   }
   /** Recover only from a verified current backup of this school's full ledger.
    * The caller must prove freshness and completeness before invoking restore.
@@ -79,7 +79,7 @@ export class UniversalUidRegistry {
     requireUid(verifiedSnapshot.counters && typeof verifiedSnapshot.counters === 'object', 'Missing UID backup counters');
     this.seed(schoolId, verifiedSnapshot.schoolCode, verifiedSnapshot.assignments, verifiedSnapshot.counters);
   }
-  private seed(schoolId: string, code: string, verifiedLegacy: readonly Assignment[], savedCounters?: UidCounters) {
+  private seed(schoolId: string, code: string, verifiedLegacy: readonly Assignment[], savedCounters?: UidCounters, afterSeed?: () => void) {
     requireUid(Array.isArray(verifiedLegacy), 'Invalid UID inventory');
     this.storage.transactionSync(() => {
       requireUid(!this.school(schoolId),'UID registry already initialized');
@@ -104,6 +104,7 @@ export class UniversalUidRegistry {
           'UID backup counter is below the reserved high-water mark or invalid');
         this.storage.sql.exec('INSERT INTO universal_uid_counters VALUES(?,?,?)', schoolId, family, serial);
       }
+      afterSeed?.();
     });
   }
   lookup(schoolId: string, personId: string): string|null {
@@ -114,7 +115,8 @@ export class UniversalUidRegistry {
   /** Only authenticated, verified immutable person generations may enter.
    * Retry, rename, role change and retirement never free or regenerate UID.
    */
-  reserve(schoolId: string, personId: string, category: PersonCategory, name: string): string {
+  reserve(schoolId: string, personId: string, category: PersonCategory, name: string,
+    afterReserve?: (uid: string, family: UidFamily, serial: number) => void): string {
     schoolCheck(schoolId);personCheck(personId);
     const family=uidFamily(category);
     return this.storage.transactionSync(()=>{
@@ -127,8 +129,20 @@ export class UniversalUidRegistry {
       const n=counter.next_number,uid=formatUid(family,school.school_code,name,n);
       this.storage.sql.exec('INSERT INTO universal_uid_assignments VALUES(?,?,?,?,?,?)',schoolId,personId,uid,key(uid),family,n);
       this.storage.sql.exec('UPDATE universal_uid_counters SET next_number=? WHERE school_id=? AND family=?',n+1,schoolId,family);
+      // Durable sidecar creation shares this transaction, not a second write.
+      afterReserve?.(uid, family, n);
       return uid;
     });
+  }
+  status(schoolId: string) {
+    schoolCheck(schoolId);
+    const school=this.school(schoolId);
+    if(!school)return {initialized:false as const};
+    const rows=this.storage.sql.exec('SELECT family,next_number FROM universal_uid_counters WHERE school_id=?',schoolId).toArray() as {family:string;next_number:number}[];
+    const next=Object.fromEntries(rows.map(r=>[r.family,r.next_number]));
+    requireUid(families.every(f=>Number.isInteger(next[f])&&next[f]>=1&&next[f]<=1000000),'UID counter missing or invalid; stop for recovery');
+    const count=this.storage.sql.exec('SELECT count(*) AS n FROM universal_uid_assignments WHERE school_id=?',schoolId).toArray()[0] as {n:number};
+    return {initialized:true as const,schoolCode:school.school_code,assignments:count.n,counters:{STU:next.STU,TCH:next.TCH,STF:next.STF}};
   }
   /** Permanent ledger export for a separately verified backup/restore path.
    * There is deliberately no reset, delete, release or TTL operation.

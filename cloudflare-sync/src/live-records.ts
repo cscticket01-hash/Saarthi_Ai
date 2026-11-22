@@ -2,6 +2,7 @@ import {domainCollections,personCollections,validateDomainCandidate,validatePers
 import {createHash,randomUUID} from 'node:crypto';
 import {canonical} from './spool';
 import {demand,schoolPattern} from './protocol';
+import {UniversalUidRegistry,uidNameCode,type PersonCategory} from './universal-uid';
 type Json=Record<string,unknown>;
 type Row={collection:string;id:string;body:string;revision:string;drive_revision:string;payload_hash:string};
 type Job={accepted_at:number;seq:number;collection:string;id:string;operation_id:string;operation:string;body:string;state:string;due:number;claim:string;claim_until:number;drive_revision:string|null};
@@ -13,6 +14,8 @@ const business=(v:Json)=>Object.fromEntries(Object.entries(v).filter(([k])=>!k.s
 const payloadHash=(v:Json)=>hash({deleted:v._syncDeleted===true,data:business(v)});
 const byteLength=(v:string)=>new TextEncoder().encode(v).byteLength;
 export const cloudflareVerifiedRetentionMs=24*60*60*1000;
+const uidProjectionPrefix='universal_uid_v1_';
+const uidActivationId=uidProjectionPrefix+'activation';
 const validId=(v:unknown):v is string=>typeof v==='string'&&v.length>0&&v.length<=200&&!v.includes('/')&&!['.','..','__proto__','prototype','constructor'].includes(v);
 const opId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9_-]{16,100}$/.test(v);
 function clean(v:unknown,depth=0):void{
@@ -108,6 +111,70 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
  const head=()=>sql.exec<{n:number}>("SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='live_events'),0) AS n").toArray()[0].n;
  const state=()=>sql.exec<{state:string;fingerprint:string;expected_count:number;source_revision:string}>('SELECT * FROM live_collections WHERE collection=?',col).toArray()[0];
  const row=(id:string)=>sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',col,id).toArray()[0];
+ // A permanent UID uses the same live authority and backup queue. The
+ // original person data, canonical ACK hashes and legacy history stay intact.
+ if(['uidStatus','uidSeedTest','uidReservePerson'].includes(String(command))){
+  const active=(collection:string)=>sql.exec<{state:string}>('SELECT state FROM live_collections WHERE collection=?',collection).toArray()[0]?.state==='active';
+  const readLive=(collection:string,id:string)=>sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0];
+  const marker=()=>readLive('school_config',uidActivationId);
+  const registry=new UniversalUidRegistry({sql:{exec:(query,...values)=>storage.sql.exec(query,...values)},transactionSync:fn=>storage.transactionSync(fn)});
+  const status=registry.status(school);
+  if(command==='uidStatus')return {uidProtocol:1,schoolId:school,
+    state:status.initialized?(marker()?'test_ready':'recovery_required'):(marker()?'recovery_required':'migration_required'),...status};
+  demand(active('school_config'),'Verified school configuration authority required',412);
+  const verified=(collection:string,id:string,value:unknown):Json=>{
+   demand(validId(id)&&value&&typeof value==='object'&&!Array.isArray(value),'Current record proof required');
+   const record=value as Json,stored=readLive(collection,id);
+   demand(active(collection),'Verified person collection required',412);
+   demand(stored&&record.schoolId===school&&record._syncRevision===stored.revision&&
+    (record.id===undefined||record.id===id)&&payloadHash(record)===stored.payload_hash,
+    'Current record proof changed; retry verified read',409);
+   demand(record._syncDeleted!==true&&record.deleted!==true&&record.active!==false,'Retired record',409);
+   return record;
+  };
+  if(command==='uidSeedTest'){
+   // The outer Worker also restricts this to its configured isolated test
+   // school. Production initiation needs complete legacy/recovery proof.
+   const profile=verified('school_config','school_profile_cache',b.profileRecord);
+   demand(profile.syntheticTest===true&&typeof profile.schoolName==='string','Synthetic school profile required',412);
+   demand(!status.initialized&&!marker()&&sql.exec<{n:number}>(
+    "SELECT count(*) AS n FROM live_records WHERE collection='school_config' AND id LIKE 'universal_uid_v1_%'").toArray()[0].n===0,
+    'Existing UID history must be recovered, not reset',409);
+   for(const collection of ['students_directory','teachers_directory']){
+    demand(active(collection)&&sql.exec<{n:number}>('SELECT count(*) AS n FROM live_records WHERE collection=?',collection).toArray()[0].n===0,'An empty verified synthetic baseline is required',412);
+   }
+   registry.initializeSchool(school,profile.schoolName,[],()=>{
+    const op=hash([school,'uid-test-activation-v1']);
+    appendLive(storage,school,'school_config',uidActivationId,op,'write',
+     {schoolId:school,uidProtocol:1,uidState:'isolatedTest',schoolCode:uidNameCode(String(profile.schoolName))},now,op);
+   });
+   return {uidProtocol:1,schoolId:school,state:'test_ready',cursor:head(),...registry.status(school)};
+  }
+  demand(status.initialized&&marker(),'UID migration or recovery must be verified first',412);
+  demand(['students_directory','teachers_directory'].includes(col)&&validId(b.id),'Verified student or teacher owner required',412);
+  const record=verified(col,String(b.id),b.record);
+  const generation=record.mobileStableId;
+  demand(typeof generation==='string'&&/^p-[a-f0-9]{32,64}$/.test(generation)&&b.generation===generation,'Permanent person generation changed',409);
+  demand(typeof record.name==='string'&&record.name.trim().length>0,'Verified person name required',412);
+  const projection=uidProjectionPrefix+generation,prior=registry.lookup(school,generation);
+  if(prior!==null)demand(readLive('school_config',projection),'UID backup projection missing; recovery required',503);
+  else demand(!readLive('school_config',projection),'UID projection exists without reservation',503);
+  const category:PersonCategory=col==='students_directory'?'student':'teacher';
+  let created=false;
+  const value=registry.reserve(school,generation,category,record.name,(uid,family,serial)=>{
+   const op=hash([school,'uid-reservation-v1',generation]);
+   appendLive(storage,school,'school_config',projection,op,'write',
+    {schoolId:school,uidProtocol:1,personId:generation,universalUid:uid,
+     category,family,serial,nextNumber:serial+1,sourceCollection:col,sourceRecordId:b.id},now,op);
+   created=true;
+  });
+  const saved=readLive('school_config',projection);
+  demand(saved,'UID projection missing; work retained',503);
+  const delivery=sql.exec<{state:string}>("SELECT state FROM live_backup WHERE collection='school_config' AND id=? ORDER BY seq DESC LIMIT 1",projection).toArray()[0];
+  return {uidProtocol:1,schoolId:school,personId:generation,universalUid:value,
+   reservationId:projection,recordRevision:saved.revision,
+   backupState:delivery?.state==='verified'||(!delivery&&saved.drive_revision)?'verified':'pending',created,cursor:head()};
+ }
  if(command==='seedBegin'){
   collection();demand(typeof b.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(b.fingerprint)&&Number.isSafeInteger(b.count)&&Number(b.count)>=0&&Number(b.count)<=100000&&typeof b.sourceRevision==='string'&&b.sourceRevision.length>0&&b.sourceRevision.length<=100,'Invalid seed');
   const old=state();if(old){
@@ -480,6 +547,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   });
  }
  if(command==='commit'){
+  demand(col!=='school_config'||typeof b.id!=='string'||!b.id.startsWith(uidProjectionPrefix),'UID projections are server-owned',403);
   demand(col!=='school_settings'||b.id!=='staff_payroll_directory','Staff lifecycle has its own owner',412);
   collection();demand(state()?.state==='active','Verified baseline required',412);
   demand(validId(b.id)&&opId(b.operationId)&&['write','delete','patch'].includes(String(b.operation))&&typeof b.expectedRevision==='string'&&b.expectedRevision.length<=100,'Invalid live operation');
@@ -593,6 +661,7 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
   return {liveProtocol:1,schoolId:school,cursor:b.at,records,next:records.length?records[records.length-1].id:null};
  }
  if(command==='rollbackSeal'){
+  demand(col!=='school_config'||!sql.exec<Row>('SELECT * FROM live_records WHERE collection=? AND id=?','school_config',uidActivationId).toArray()[0],'UID registry recovery proof required before configuration rollback',412);
   collection();return storage.transactionSync(()=>{
    demand(Number.isSafeInteger(b.cursor)&&b.cursor===head(),'Rollback snapshot changed',409);
    demand(typeof b.fingerprint==='string'&&/^[a-f0-9]{64}$/.test(b.fingerprint),'Invalid rollback proof');

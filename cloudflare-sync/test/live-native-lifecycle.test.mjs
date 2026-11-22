@@ -175,3 +175,48 @@ test('verified explicit deletion retires older Cloudflare payloads while unrelat
  assert.equal((await f.read('school_expenses','other-pending')).title,'Must survive');
  assert.equal((await f.read('school_expenses','erase-one'))._syncDeleted,true);
 });
+
+test('isolated UID authority binds reservations to the current person and queues one immutable backup projection',async t=>{
+ const f=await setup(t,'uid-reservation',['school_config','students_directory','teachers_directory']);
+ const before=await f.rpc({command:'uidStatus'});
+ assert.equal(before.value.state,'migration_required');
+ const profile=accepted(await f.commit('school_config','school_profile_cache','uid-test-profile-operation',
+  {schoolId:school,schoolName:'Sunshine Public School',syntheticTest:true}));
+ const init=await f.rpc({command:'uidSeedTest',profileRecord:profile.record});
+ assert.equal(init.status,200,JSON.stringify(init));
+ assert.deepEqual(init.value.counters,{STU:1,TCH:1,STF:1});
+ assert.equal((await f.rpc({command:'uidSeedTest',profileRecord:profile.record})).status,409);
+ const pupil=accepted(await f.commit('students_directory','uid-student','uid-student-original-operation',
+  {...student('uid-student','a',7),name:'Rahul Sharma'}));
+ const teacher=accepted(await f.commit('teachers_directory','uid-teacher','uid-teacher-original-operation',
+  {schoolId:school,id:'uid-teacher',teacherId:'T-independent',mobileStableId:generation('b'),name:'Amit Kumar'}));
+ const req={command:'uidReservePerson',collection:'students_directory',id:'uid-student',generation:generation('a'),record:pupil.record};
+ assert.equal((await f.rpc({...req,record:{...pupil.record,name:'Forged'}})).status,409);
+ assert.equal((await f.rpc({...req,generation:generation('b')})).status,409);
+ assert.equal((await f.rpc(req,foreign)).status,412);
+ const replies=await Promise.all([f.rpc(req),f.rpc(req),f.rpc(req)]);
+ for(const r of replies){
+  assert.equal(r.status,200,JSON.stringify(r));
+  assert.equal(r.value.universalUid,'STU-SUNS-RAHU-000001');
+  assert.equal(r.value.backupState,'pending');
+ }
+ assert.equal(replies.filter(r=>r.value.created).length,1);
+ const tUid=await f.rpc({command:'uidReservePerson',collection:'teachers_directory',id:'uid-teacher',generation:generation('b'),record:teacher.record});
+ assert.equal(tUid.status,200,JSON.stringify(tUid));
+ assert.equal(tUid.value.universalUid,'TCH-SUNS-AMIT-000001');
+ const projection=await f.read('school_config',replies[0].value.reservationId);
+ assert.equal(projection.universalUid,'STU-SUNS-RAHU-000001');
+ assert.equal(projection.nextNumber,2);
+ assert.equal((await f.read('students_directory','uid-student')).universalUid,undefined);
+ assert.equal((await f.commit('school_config',replies[0].value.reservationId,'forged-uid-projection-operation',
+  {schoolId:school,universalUid:'fake'},projection._syncRevision)).status,403);
+ const renamed=accepted(await f.commit('students_directory','uid-student','uid-student-rename-operation',
+  {...student('uid-student','a',7),name:'New Name'},pupil.recordRevision));
+ assert.equal((await f.rpc(req)).status,409);
+ const same=await f.rpc({...req,record:renamed.record});
+ assert.equal(same.value.universalUid,'STU-SUNS-RAHU-000001');
+ assert.equal(same.value.created,false);
+ const counts=(await f.rpc({command:'uidStatus'})).value;
+ assert.deepEqual(counts.counters,{STU:2,TCH:2,STF:1});
+ assert.equal(counts.assignments,2);
+});
