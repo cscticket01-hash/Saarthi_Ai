@@ -839,6 +839,7 @@ class WindowsPendingSchoolSync {
       }
       await Future.wait<void>(window.map(process), eagerError: false);
     }
-    if (firstDeferred != null) throw firstDeferred;
+    final deferred = firstDeferred;
+    if (deferred != null) throw deferred;
   }
 }
