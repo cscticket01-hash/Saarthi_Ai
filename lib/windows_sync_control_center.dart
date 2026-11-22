@@ -548,6 +548,39 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         'Diagnosis finished. Review measured results; no queue item was acknowledged or repaired by this check.');
   }
 
+  /// Use the existing synchronization/reconciliation owner. A troubleshooting
+  /// action is never permission to clear a queue, bypass quota or resume pause.
+  Future<void> _runSafeRepair() async {
+    final school = db.activeProfileIdentity['schoolSyncId'];
+    void guard() {
+      if (db.activeProfileId != origin ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed. Reopen this page.');
+    }
+    guard();
+    if (engine.isPaused || engine.isSyncing)
+      throw StateError('Wait for current sync or explicitly resume the pause.');
+    final before = await engine.safeQueueDiagnostics();
+    guard();
+    if (mounted) setState(() {
+      diagnostics = before;
+      notice = 'Checking retained operations using existing safe reconciliation';
+    });
+    // Do not call requestSync: that command intentionally resumes a pause and
+    // enables explicit retry. Automatic repair must retain provider deadlines.
+    await engine.syncNow();
+    guard();
+    final after = await engine.safeQueueDiagnostics();
+    guard();
+    if (mounted) setState(() {
+      diagnostics = after;
+      notice = 'Safe repair pass returned. Device queue: '
+          '${before['foregroundQueueCount']} → ${after['foregroundQueueCount']}. '
+          'Cloud-owned pending: ${after['cloudflareOwnedPendingDriveCount']}. '
+          'Only verified receipts establish completion; unresolved work is retained.';
+    });
+  }
+
   Future<void> _checkCloudHealth() async {
     if (mounted)
       setState(() {
@@ -1089,6 +1122,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         onPressed: active || busy ? null : () => _tool(_runSystemDiagnosis),
         icon: const Icon(Icons.health_and_safety_outlined),
         label: const Text('Run System Diagnosis'),
+      ),
+      OutlinedButton.icon(
+        onPressed: active || busy || engine.isPaused
+            ? null : () => _tool(_runSafeRepair),
+        icon: const Icon(Icons.build_circle_outlined),
+        label: const Text('Run Safe Repair'),
       ),
       OutlinedButton(
         onPressed: () => _jump(_backupKey),
