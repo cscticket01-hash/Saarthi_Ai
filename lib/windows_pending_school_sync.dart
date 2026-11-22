@@ -700,6 +700,10 @@ class WindowsPendingSchoolSync {
             if (bound == null) return;
             item = bound;
           }
+          // Preparation can await a point read or local wire-data binding.
+          // Recheck admission before starting a new network mutation.
+          unchanged();
+          if (canAdmit?.call() == false) return;
           final response = sendVersioned(item);
           report('waitingForAck', queued.id, item);
           revision = await response;
