@@ -300,7 +300,22 @@ class WindowsDriveDeliveryQueue {
       final binding=acceptedCloudflareTicketBinding(original,school,queueId:id);
       if(binding!=null)originals.add(binding);
     }
-    for(final row in recordRows)collect(row.data());
+    for(final row in recordRows) {
+      final current=row.data();
+      collect(current);
+      // The original staged Calendar/Notice owner can be nested under a
+      // newer local edit. That newer operation cannot start until the old
+      // Google revision is confirmed, even if its receipt journal was lost.
+      final prior=current['priorCloudWrite'];
+      if(prior is Map && current['schoolId']==school &&
+         current['collection']==prior['collection'] &&
+         current['documentId']==prior['documentId'] &&
+         current['operationId']!=prior['operationId'] &&
+         current['baseCloudRevision']==prior['baseCloudRevision'] &&
+         {'school_calendar','school_notices'}.contains(prior['collection'])) {
+        collect(Map<String,dynamic>.from(prior));
+      }
+    }
     for(final row in documentRows)collect(row.data(),id:row.id);
     final seen=<String>{};
     var repaired=false,reads=0;
