@@ -116,7 +116,8 @@ void main() {
       send:(_,__,___,____) async => fail('Legacy send is unsafe'),
       sendVersioned:(_) async {sends++;return 'unexpected';});
     expect(sends,0);
-    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+    var settlements=0;
+    await WindowsDriveDeliveryQueue.poll(school,onLocalSettlement:()=>settlements++,call:(action,body) async {
       expect(action,'managed/cloudflare/operation');
       expect(body['id'],ticket);
       return {'success':true,'schoolId':school,'cloudflareAccepted':true,
@@ -124,6 +125,7 @@ void main() {
         'record':{'schoolId':school,'id':'ordered-calendar',
           '_syncOperationId':original['operationId'],'_syncRevision':'drive-ordered-revision'}};
     });
+    expect(settlements,1);
     final retained=(await initial.reference.get()).data()!;
     expect(retained['operationId'],newer['operationId']);
     expect(retained['priorCloudWrite'],isNull);
