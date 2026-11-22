@@ -1052,8 +1052,8 @@ class WindowsBackendBridge {
             row['handoffAuthorized']==true && row['state']=='pending').toList()
         : <Map<String,dynamic>>[];
       requireDocumentScope();
-      for (final queued in queue.docs) {
-        if (canAdmit?.call() == false) break;
+      Future<void> processDocument(QueryDocumentSnapshot<Map<String,dynamic>> queued) async {
+        if (canAdmit?.call() == false) return;
         requireDocumentScope();
         var record = queued.data();
         if(record['schoolId']!=school)
@@ -1066,10 +1066,10 @@ class WindowsBackendBridge {
               !{'reserved','committed'}.contains(record['atomicState'])||
               record['schoolId']!=FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'])
             throw StateError('Invalid same-school atomic document reservation.');
-          continue;
+          return;
         }
-        if (admitRow?.call(queued.id, record) == false) continue;
-        if (respectBackoff && admitRow == null && (record['retryAtMillis'] as num? ?? 0) > DateTime.now().millisecondsSinceEpoch) continue;
+        if (admitRow?.call(queued.id, record) == false) return;
+        if (respectBackoff && admitRow == null && (record['retryAtMillis'] as num? ?? 0) > DateTime.now().millisecondsSinceEpoch) return;
         void report(String stage, {String? category, DateTime? retryAt}) {
           try {
             onActivity?.call({
@@ -1091,7 +1091,7 @@ class WindowsBackendBridge {
 
         // A signed, immutable Cloudflare file+metadata ticket already owns
         // this original. Local proof remains until server-side Drive readback.
-        if (record['syncState'] == 'cloudAccepted') continue;
+        if (record['syncState'] == 'cloudAccepted') return;
         if(school is String) {
           final bound=stagedJournals.where((journal)=>
               recoverableStagedDocumentJournal(record,journal,school,queued.id)).toList();
@@ -1102,12 +1102,12 @@ class WindowsBackendBridge {
               queued.reference,record,bound.first,school);
             if(restored)report('cloudflareAccepted');
             // Even when a newer CAS won, never resend this stale snapshot.
-            continue;
+            return;
           }
         }
         if (record['syncState'] == 'conflict' ||
             record['syncState'] == 'needsAttention')
-          continue;
+          return;
         var failureStage = 'prepare';
         try {
           final identity = await CentralSchoolCloud.saved();
@@ -1116,9 +1116,9 @@ class WindowsBackendBridge {
             throw StateError('Pending document belongs to another school.');
           if(smartSyncDecision(record,school:identity['schoolId'] as String,
               nowMillis:DateTime.now().millisecondsSinceEpoch,
-              respectBackoff:respectBackoff&&admitRow==null)['canAttempt']!=true)continue;
+              respectBackoff:respectBackoff&&admitRow==null)['canAttempt']!=true)return;
           if (record['parentDeletionOperationId'] is String) {
-            if (!await _prepareOwnerDocumentDeletion(queued.id, record, readCloud:readDeletionCloud)) continue;
+            if (!await _prepareOwnerDocumentDeletion(queued.id, record, readCloud:readDeletionCloud)) return;
           }
           failureStage = 'readLocalFile';
           final path =
@@ -1165,7 +1165,7 @@ class WindowsBackendBridge {
               requireDocumentScope();
               return true;
             });
-            if(!adopted)continue; // A newer document generation won the CAS.
+            if(!adopted)return; // A newer document generation won the CAS.
             record={...record,'contentHash':measuredHash};
           }
           if(record['deleted']!=true && record['contentHash']!=measuredHash)
@@ -1211,8 +1211,8 @@ class WindowsBackendBridge {
           };
           // A pause can arrive while preparing file bytes. Finish an admitted
           // upload and its ACK atomically, but do not start another request.
-          if (canAdmit?.call() == false) break;
-          if (admitRow?.call(queued.id, record) == false) continue;
+          if (canAdmit?.call() == false) return;
+          if (admitRow?.call(queued.id, record) == false) return;
           // Local bytes may take time to read/optimize. Do not upload an old
           // generation if a newer save or owner deletion replaced it meanwhile.
           requireDocumentScope();
@@ -1220,7 +1220,7 @@ class WindowsBackendBridge {
           requireDocumentScope();
           if(currentBeforeSend==null ||
               !samePendingDocumentGeneration(record,currentBeforeSend,school))
-            continue;
+            return;
           report('cloudRequest');
           failureStage = 'requestAndReadback';
           final response = (send ?? _handleCentral)(payload);
@@ -1285,7 +1285,7 @@ class WindowsBackendBridge {
               return true;
             });
             if(committed)report('cloudflareAccepted');
-            continue;
+            return;
           }
           failureStage = 'verifyAcknowledgement';
           if (!verifiedDocumentAcknowledgement(payload, result))
@@ -1395,10 +1395,53 @@ class WindowsBackendBridge {
           if (isolatedFileFailure || failureStage!='commitLocalReceipt' && independentDocumentFailure(error)) {
             firstDocumentFailure ??= isolatedFileFailure ? const PendingDocumentFileFailure() : error;
             documentFailureStack ??= stack;
-            continue; // Retain the failed row; independent documents may still sync.
+            return; // Retain the failed row; independent documents may still sync.
           }
           rethrow;
         }
+      }
+      // Cloudflare can accept two independent original scans at once, while
+      // the existing school/owner CAS and provider order stay authoritative.
+      final pendingRecords=(await db.collection('_windows_firebase_outbox').get()).docs
+          .map((row)=>row.data()).toList(growable:false);
+      requireDocumentScope();
+      final outgoing=queue.docs.toList(growable:false);
+      bool parallelScan(QueryDocumentSnapshot<Map<String,dynamic>> candidate) {
+        final value=candidate.data();
+        if(admitRow!=null ||
+           (respectBackoff && (value['retryAtMillis'] as num? ?? 0)>
+             DateTime.now().millisecondsSinceEpoch) ||
+           !canParallelStageOriginalScan(value,school,pendingRecords,
+             documentStageSupported:WindowsFirebaseRemote.documentStageSupported))
+          return false;
+        // A queued delete/replacement of this person still owns this lane.
+        return !outgoing.any((other)=>other.id!=candidate.id &&
+            other.data()['studentId']==value['studentId'] &&
+            (other.data()['deleted']==true || other.data()['atomicBundleId']!=null ||
+             other.data()['parentDeletionOperationId']!=null));
+      }
+      var offset=0;
+      while(offset<outgoing.length) {
+        requireDocumentScope();
+        if(canAdmit?.call()==false)break;
+        final first=outgoing[offset++];
+        if(!parallelScan(first)){
+          await processDocument(first);
+          continue;
+        }
+        final window=<QueryDocumentSnapshot<Map<String,dynamic>>>[first];
+        final studentIds=<String>{first.data()['studentId'] as String};
+        final personIds=<String>{first.data()['personId'] as String};
+        while(offset<outgoing.length && window.length<2 &&
+              canAdmit?.call()!=false && parallelScan(outgoing[offset]) &&
+              !studentIds.contains(outgoing[offset].data()['studentId']) &&
+              !personIds.contains(outgoing[offset].data()['personId'])) {
+          final next=outgoing[offset++];
+          window.add(next);
+          studentIds.add(next.data()['studentId'] as String);
+          personIds.add(next.data()['personId'] as String);
+        }
+        await Future.wait<void>(window.map(processDocument),eagerError:false);
       }
       if (firstDocumentFailure != null) Error.throwWithStackTrace(firstDocumentFailure, documentFailureStack!);
     } finally {
