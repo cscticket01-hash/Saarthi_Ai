@@ -638,18 +638,32 @@ class WindowsDriveDeliveryQueue {
                   throw StateError('Original photo record has no verified Google proof.');
                 }
                 final matches=(await db.collection('_windows_firebase_outbox').get())
-                    .docs.where((entry)=>
-                      entry.data()['operationId']==item['originalOperationId'] &&
-                      entry.data()['collection']==item['collection'] &&
-                      entry.data()['documentId']==item['id'] &&
-                      entry.data()['schoolId']==school).toList();
+                    .docs.where((entry) {
+                      final data=entry.data(),prior=data['priorCloudWrite'];
+                      return data['schoolId']==school &&
+                          data['collection']==item['collection'] &&
+                          data['documentId']==item['id'] &&
+                          (data['operationId']==item['originalOperationId'] ||
+                            prior is Map &&
+                            prior['operationId']==item['originalOperationId'] &&
+                            prior['schoolId']==school &&
+                            prior['collection']==data['collection'] &&
+                            prior['documentId']==data['documentId'] &&
+                            prior['baseCloudRevision']==data['baseCloudRevision']);
+                    }).toList();
                 _scope(school, profile);
                 if(matches.length>1) {
                   throw StateError('Multiple original photo record owners detected.');
                 }
                 if(matches.length==1) {
-                  var original=matches.single.data();
-                  if(recoverableStagedPhotoJournal(original,item,school)) {
+                  final current=matches.single.data();
+                  final nested=current['operationId']!=item['originalOperationId'];
+                  var original=nested
+                      ? Map<String,dynamic>.from(current['priorCloudWrite'] as Map)
+                      : current;
+                  if(nested && original['syncState']!='cloudAccepted')
+                    throw StateError('Original portrait predecessor requires durable Cloudflare CAS proof.');
+                  if(!nested && recoverableStagedPhotoJournal(original,item,school)) {
                     await db.recordOutboxCloudHandoff(matches.single.reference,
                       original,ticketId:id,lane:lane,
                       mediaSourceHash:item['mediaSourceHash'] as String,
