@@ -863,6 +863,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         ? const Color(0xFFFFC153)
         : _cyan;
     final ack = details['lastCloudAckMillis'];
+    // Exact locally retained School Server tickets are positive acceptance
+    // evidence, not proof of a completed Google Drive backup.
+    final staged = details['cloudflareOwnedPendingDrive'];
+    final hasStaged = staged is int && staged > 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -901,8 +905,8 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     local:diskEvidence?['status']=='Measured'
                       ? '${diskEvidence!['volume']}\n${bytesLabel(diskEvidence!['usedBytes'] as int)} / ${bytesLabel(diskEvidence!['totalBytes'] as int)}'
                       : localDataPath==null?'Unknown':RegExp(r'^[A-Za-z]:[\\/]').firstMatch(localDataPath!)?.group(0)??'Unknown',
-                    cloud:checking?'Checking cloud changes':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
-                    drive:'Automatic server-side backup',
+                    cloud:checking?'Checking cloud changes':hasStaged?'School Server saved':ack is num&&ack>0?'Last ACK: ${stamp(ack)}':'No verified ACK yet',
+                    drive:hasStaged?'$staged staged · Google Drive pending':'Automatic server-side backup',
                     pending:uploadCount,
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
