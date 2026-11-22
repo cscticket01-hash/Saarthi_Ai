@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+
 /// Transport-only Cloudflare ACK. This is NOT a canonical Drive record
 /// revision or proof that a user file was written to Google Drive.
 class CloudflareRecordHandoff implements Exception {
@@ -66,6 +69,47 @@ bool eligibleForStagedDelete(Map item, String school, {
     item['priorDeletion'] == null &&
     item['requireCanonicalDeleteReceipt'] != true;
 
+/// Broker-derived ticket, not merely a string that resembles a SHA-256 hash.
+String? exactStagedRecordTicket(Map original, String school) {
+  if (!RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) ||
+      original['schoolId'] != school ||
+      original['collection'] is! String ||
+      (original['collection'] as String).isEmpty ||
+      original['documentId'] is! String ||
+      (original['documentId'] as String).isEmpty ||
+      original['operationId'] is! String ||
+      !RegExp(r'^[A-Za-z0-9_-]{16,100}$').hasMatch(original['operationId']))
+    return null;
+  return sha256.convert(utf8.encode(jsonEncode([
+    school, 'managed_records', [
+      original['collection'], original['documentId'], original['operationId'],
+    ],
+  ]))).toString();
+}
+
+/// A retained, explicitly authorized first-phase receipt can restore a CAS
+/// marker lost between the journal write and the outbox write. It cannot ACK
+/// the provider or authorize a different original operation.
+bool recoverableStagedRecordJournal(Map original, Map journal, String school) {
+  final expected = exactStagedRecordTicket(original, school);
+  return expected != null &&
+      (eligibleForRecordHandoff(original,school,edgeDeliverySupported:true) ||
+       eligibleForStagedDelete(original,school,edgeDeliverySupported:true)) &&
+      {null,'pending','retry'}.contains(original['syncState']) &&
+      journal['schoolId'] == school &&
+      journal['edgeDeliveryVersion'] == 1 &&
+      journal['cloudflareAccepted'] == true &&
+      journal['handoffAuthorized'] == true &&
+      journal['action'] == 'managed/records' &&
+      journal['state'] == 'pending' &&
+      journal['lane'] == 'records' &&
+      journal['ticketId'] == expected &&
+      journal['originalOperationId'] == original['operationId'] &&
+      journal['collection'] == original['collection'] &&
+      journal['id'] == original['documentId'] &&
+      journal['operation'] == (original['operation']=='delete'?'delete':'write');
+}
+
 /// A staged ticket is not a final result. It may retire the original
 /// locally retained operation only after the authenticated owner separately
 /// proves a canonical revision for that exact same-school ticket.
@@ -73,6 +117,7 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
     String school) {
   final ticket=journal['ticketId'];
   if(ticket is! String||!RegExp(r'^[a-f0-9]{64}$').hasMatch(ticket)||
+      exactStagedRecordTicket(original,school)!=ticket||
       journal['schoolId']!=school||original['schoolId']!=school||
       journal['action']!='managed/records'||
       journal['originalOperationId']!=original['operationId']||
@@ -92,7 +137,8 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
       proof['driveState']!='verified'||
       proof['syncProtocol']!=2||
       proof['recordRevision'] is! String||
-      (proof['recordRevision'] as String).isEmpty)
+      (proof['recordRevision'] as String).isEmpty||
+      RegExp(r'^(live-|cf-)').hasMatch(proof['recordRevision']))
     return false;
   final record=proof['record'];
   if (original['operation'] == 'delete') {
