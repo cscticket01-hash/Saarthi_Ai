@@ -358,6 +358,8 @@ class WindowsFirebaseRemote {
   }) async {
     if (item['schoolId'] != school)
       throw StateError('Pending record belongs to another school.');
+    if (item['priorCloudWrite'] != null)
+      throw StateError('Original staged predecessor awaits provider verification.');
     final collection = item['collection'].toString(),
         id = item['documentId'].toString();
     if (item['operation'] != 'delete' &&
