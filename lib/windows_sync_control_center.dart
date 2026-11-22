@@ -1022,8 +1022,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             lastSync is num && transfers is num
                 ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(lastSync.toInt())))} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
                 : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
-          _syncSummary("Today's Sync", today is int ? '$today verified' : 'Unknown',
-            Icons.layers_outlined, Colors.purpleAccent),
           _syncSummary('System Health', cloudHealth,
             Icons.health_and_safety_outlined, Colors.tealAccent),
         ]),
