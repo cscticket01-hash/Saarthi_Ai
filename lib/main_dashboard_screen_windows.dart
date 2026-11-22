@@ -1304,47 +1304,6 @@ Future<Map<String, dynamic>> _loadTestStudentUidConfig() async {
   return doc.data() ?? <String, dynamic>{};
 }
 
-Future<String?> _ensureTestStudentUid(
-  DocumentReference<Map<String, dynamic>> studentRef,
-) async {
-  return FirebaseFirestore.instance.runTransaction<String?>((transaction) async {
-    final configRef = _testStudentUidConfigRef();
-    final configSnap = await transaction.get(configRef);
-    final config = configSnap.data() ?? <String, dynamic>{};
-
-    if (config['masterEnabled'] != true) return null;
-
-    final studentSnap = await transaction.get(studentRef);
-    if (!studentSnap.exists) return null;
-
-    final student = studentSnap.data() ?? <String, dynamic>{};
-    final existing = student[_testStudentUidField]?.toString().trim() ?? '';
-    if (existing.isNotEmpty) return existing;
-
-    final prefix = config['prefix']?.toString() ?? 'TEST-';
-    final padding = (config['padding'] as num?)?.toInt() ?? 6;
-    final nextNumber = (config['nextNumber'] as num?)?.toInt() ?? 1;
-    final uid = _formatTestStudentUid(prefix, padding, nextNumber);
-
-    transaction.update(studentRef, {
-      _testStudentUidField: uid,
-      'studentUidTestAssignedAt': FieldValue.serverTimestamp(),
-    });
-
-    transaction.set(
-      configRef,
-      {
-        'nextNumber': nextNumber + 1,
-        'lastIssuedUid': uid,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
-
-    return uid;
-  });
-}
-
 String _compositeStudentFeeIdentity(Map<String, dynamic> student) {
   final raw = [
     _normalizeIdentityPart(student['name']),
@@ -5105,9 +5064,7 @@ Future<Map<String, dynamic>> _getIdCardStudentData() async {
       if (showStudentUid) {
         studentUid = data[_testStudentUidField]?.toString().trim() ?? '';
 
-        if (studentUid.isEmpty) {
-          studentUid = await _ensureTestStudentUid(doc.reference) ?? '';
-        }
+        // Preview reads assigned UIDs only. Allocation belongs to saving or activation.
       }
     }
   } catch (e) {
@@ -13819,17 +13776,15 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             return;
                           }
 
-                          String normalizeTeacherPhone(dynamic value) {
-                            String digits = (value ?? '')
-                                .toString()
-                                .replaceAll(RegExp(r'\D'), '');
-
-                            if (digits.length == 12 &&
-                                digits.startsWith('91')) {
-                              digits = digits.substring(2);
-                            }
-
-                            return digits;
+                          final optionalError = validateTeacherOptionalFields(
+                            email: emailCtrl.text, birthDate: dobCtrl.text,
+                            joiningDate: joiningCtrl.text, previous: data,
+                          );
+                          if (optionalError != null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(optionalError)),
+                            );
+                            return;
                           }
 
                           final normalizedPhone =
@@ -15517,6 +15472,16 @@ class _AddTeacherScreenState
       return;
     }
 
+    final optionalError = validateTeacherOptionalFields(
+      email: _emailCtrl.text, birthDate: _dobCtrl.text,
+      joiningDate: _joiningCtrl.text,
+    );
+    if (optionalError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(optionalError)),
+      );
+      return;
+    }
     setState(() {
       _saving = true;
     });
@@ -15526,17 +15491,6 @@ class _AddTeacherScreenState
     try {
       // Firestore duplicate check.
       // Purane data me +91 / spaces ho tab bhi same mobile duplicate maana jayega.
-      String normalizeTeacherPhone(dynamic value) {
-        String digits = (value ?? '')
-            .toString()
-            .replaceAll(RegExp(r'\D'), '');
-
-        if (digits.length == 12 && digits.startsWith('91')) {
-          digits = digits.substring(2);
-        }
-
-        return digits;
-      }
 
       final normalizedPhone = normalizeTeacherPhone(phone);
 

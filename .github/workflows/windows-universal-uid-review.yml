@@ -1,0 +1,51 @@
+name: WIN-005-007 consolidated unpublished review
+on:
+  push:
+    branches: [review/win005-007-universal-uid-20261122]
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'cloudflare-sync/**'
+      - '.github/workflows/windows-universal-uid-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-universal-uid-review
+  cancel-in-progress: true
+jobs:
+  uid-registry:
+    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify permanent UID registry with real SQLite
+        working-directory: cloudflare-sync
+        run: node --test test/universal-uid.test.mjs
+      - name: Type-check Cloudflare source without deployment
+        working-directory: cloudflare-sync
+        run: |
+          npm ci
+          npm run check
+  windows-regressions:
+    if: github.ref == 'refs/heads/review/win005-007-universal-uid-20261122'
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      APPDATA: ${{ runner.temp }}/win005-007-appdata
+      LOCALAPPDATA: ${{ runner.temp }}/win005-007-localappdata
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze changed Windows source
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/windows_person_fields.dart lib/main_dashboard_screen_windows.dart
+      - name: Consolidated teacher, payroll, student and ID-card regression suite
+        run: flutter test --concurrency=1 test/windows_teacher_validation_test.dart test/windows_person_payment_fields_test.dart test/windows_operations_test.dart test/windows_id_card_preview_test.dart test/student_inventory_policy_test.dart test/windows_staff_category_policy_test.dart

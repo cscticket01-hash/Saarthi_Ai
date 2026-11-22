@@ -65,3 +65,51 @@ class WindowsDateOfBirthField extends StatelessWidget {
     );
   }
 }
+
+// Validate new or changed fields while allowing unchanged legacy typos.
+String normalizeTeacherPhone(dynamic value) {
+  var digits = (value ?? '').toString().replaceAll(RegExp(r'\D'), '');
+  if (digits.length == 12 && digits.startsWith('91')) {
+    digits = digits.substring(2);
+  }
+  return digits;
+}
+
+String? validateTeacherOptionalFields({
+  required String email,
+  required String birthDate,
+  required String joiningDate,
+  Map<String, dynamic>? previous,
+  DateTime? today,
+}) {
+  bool changed(String key, String value) =>
+      previous == null || (previous[key]?.toString().trim() ?? '') != value.trim();
+  if (changed('email', email) && email.trim().isNotEmpty &&
+      !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.trim())) {
+    return 'Enter a valid email address.';
+  }
+  DateTime? parse(String value) {
+    final trimmed = value.trim();
+    final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(trimmed);
+    return iso == null ? parsePersonBirthDate(trimmed)
+        : parsePersonBirthDate(iso[3]! + '/' + iso[2]! + '/' + iso[1]!);
+  }
+  final now = today ?? DateTime.now();
+  final day = DateTime(now.year, now.month, now.day);
+  if (changed('dateOfBirth', birthDate) && birthDate.trim().isNotEmpty) {
+    final date = parse(birthDate);
+    if (date == null || date.year < 1900 || date.isAfter(day)) {
+      return 'Enter a valid date of birth.';
+    }
+  }
+  if ((changed('joiningDate', joiningDate) || changed('dateOfBirth', birthDate)) &&
+      joiningDate.trim().isNotEmpty) {
+    final joining = parse(joiningDate);
+    final birth = parse(birthDate);
+    if (joining == null || joining.year < 1900 ||
+        (birth != null && joining.isBefore(birth))) {
+      return 'Enter a valid joining date.';
+    }
+  }
+  return null;
+}
