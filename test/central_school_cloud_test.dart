@@ -161,6 +161,51 @@ void main() {
     expect(calls, 1);
     cloud.close();
   });
+  test('explicit Cloudflare status returns one pending response without long-polling', () async {
+    final id = List.filled(64, 'a').join();
+    final retryAt = DateTime.now().add(const Duration(minutes: 2)).millisecondsSinceEpoch;
+    var calls = 0;
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+      client: MockClient((request) async {
+        calls++;
+        expect(calls, 1);
+        final body = jsonDecode(request.body) as Map;
+        expect(body['action'], 'managed/cloudflare/operation');
+        expect(body['id'], id);
+        return http.Response(jsonEncode({
+          'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+          'cloudflareAccepted': true, 'driveState': 'pending',
+          'delivery': {'lane': 'records', 'id': id},
+          'deliveryStatus': {'state': 'retry', 'retryAtMillis': retryAt},
+        }), 200);
+      }));
+    try {
+      final result = await cloud.api({
+        'action': 'managed/cloudflare/operation', 'schoolId': school,
+        'lane': 'records', 'id': id,
+      });
+      expect(result['driveState'], 'pending');
+      expect(result['deliveryStatus']['retryAtMillis'], retryAt);
+      expect(calls, 1);
+    } finally { cloud.close(); }
+  });
+
+  test('explicit Cloudflare status rejects a substituted pending ticket', () async {
+    final id = List.filled(64, 'a').join();
+    final cloud = CentralSchoolCloud(endpoint: 'https://school.example/api',
+      client: MockClient((request) async => http.Response(jsonEncode({
+        'success': true, 'schoolId': school, 'edgeDeliveryVersion': 1,
+        'cloudflareAccepted': true, 'driveState': 'pending',
+        'delivery': {'lane': 'records', 'id': List.filled(64, 'b').join()},
+      }), 200)));
+    try {
+      await expectLater(cloud.api({
+        'action': 'managed/cloudflare/operation', 'schoolId': school,
+        'lane': 'records', 'id': id,
+      }), throwsStateError);
+    } finally { cloud.close(); }
+  });
+
   test('Cloudflare acceptance polls one immutable ticket until real Drive ACK', () async {
     final calls = <Map<String, dynamic>>[];
     final id = List.filled(64, 'a').join();
