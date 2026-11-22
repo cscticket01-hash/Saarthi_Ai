@@ -75,7 +75,9 @@ bool independentExistingPersonPatch(Map item) {
       item['baseCloudRevision'] is! String ||
       (item['baseCloudRevision'] as String).isEmpty ||
       RegExp(r'^(cf-|live-)').hasMatch(item['baseCloudRevision']) ||
-      item['fieldPatch'] is! Map)return false;
+      item['fieldPatch'] is! Map ||
+      (item['wireData']!=null && (item['wireMode']!='fieldPatch1' ||
+        item['wireData'] is! Map || item['wireData']['_syncFieldPatch'] is! Map)))return false;
   final patch=item['fieldPatch'] as Map;
   final set=patch['set'], remove=patch['remove'], identity=patch['identity'];
   final ownerKey=item['collection']=='students_directory'?'mobileStableId':'teacherId';
