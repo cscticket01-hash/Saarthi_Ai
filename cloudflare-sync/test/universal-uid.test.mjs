@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import {Worker} from 'node:worker_threads';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -85,4 +86,78 @@ test('bad inputs and exhaustion do not advance or reuse sequence',t=>{
   assert.throws(()=>r.reserve('wrong-school',p(2),'teacher','Name'),/school/);
   assert.throws(()=>r.reserve(school,p(2),'student','123'),/letters/);
   assert.equal(r.snapshot(school).counters.STU,1);
+});
+
+test('verified recovery preserves reservations and counter gaps without overwriting a ledger', t => {
+  const original = registry(t);
+  const restored = registry(t);
+  original.initializeSchool(school, 'Sunshine', [
+    {personId: p(1), uid: 'LEGACY-001'},
+    {personId: p(2), uid: 'TCH-SUNS-AMIT-000020'},
+  ]);
+  const backup = original.snapshot(school);
+  assert.throws(() => restored.restoreSchool(other, backup), /another school/);
+  assert.throws(() => restored.restoreSchool(school, {
+    ...backup, counters: {...backup.counters, TCH: 20},
+  }), /high-water mark/);
+  assert.throws(() => restored.snapshot(school), /not initialized/);
+
+  const verifiedBackup = {...backup, counters: {...backup.counters, TCH: 30}};
+  restored.restoreSchool(school, verifiedBackup);
+  assert.deepEqual(restored.snapshot(school), verifiedBackup);
+  assert.equal(restored.reserve(school, p(1), 'teacher', 'Renamed'), 'LEGACY-001');
+  assert.equal(restored.reserve(school, p(3), 'teacher', 'Ravi'), 'TCH-SUNS-RAVI-000030');
+  assert.throws(() => restored.restoreSchool(school, verifiedBackup), /already initialized/);
+  assert.equal(restored.snapshot(school).counters.TCH, 31);
+});
+
+test('concurrent writers retain one UID per person and allocate unique serials', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'uid-concurrent-'));
+  t.after(() => rmSync(dir, {recursive: true, force: true}));
+  const path = join(dir, 'registry.sqlite');
+  const db = new DatabaseSync(path, {timeout: 5000});
+  t.after(() => db.close());
+  const registry = new UniversalUidRegistry(storage(db));
+  registry.initializeSchool(school, 'Sunshine', []);
+  const moduleUrl = new URL('../src/universal-uid.ts', import.meta.url).href;
+  const start = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const gate = new Int32Array(start);
+  function allocate(first) {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(`
+        const {parentPort, workerData} = require('node:worker_threads');
+        const {DatabaseSync} = require('node:sqlite');
+        (async () => {
+          const {UniversalUidRegistry} = await import(workerData.moduleUrl);
+          const {path, school, first, start} = workerData;
+          const db = new DatabaseSync(path, {timeout: 5000});
+          try {
+            const registry = new UniversalUidRegistry((${storage})(db));
+            const gate = new Int32Array(start);
+            Atomics.add(gate, 0, 1);
+            Atomics.notify(gate, 0);
+            if (Atomics.load(gate, 0) < 2 && Atomics.wait(gate, 0, 1, 5000) === 'timed-out') {
+              throw new Error('Second allocator did not start');
+            }
+            const ids = [1, ...Array.from({length: 25}, (_, index) => first + index)];
+            parentPort.postMessage(ids.map(id => registry.reserve(
+              school, (${p})(id), 'teacher', 'Same Name')));
+          } finally {
+            db.close();
+          }
+        })().catch(error => { throw error; });
+      `, {eval: true, workerData: {moduleUrl, path, school, first, start}});
+      t.after(() => worker.terminate());
+      worker.once('message', resolve);
+      worker.once('error', reject);
+      worker.once('exit', code => {
+        if (code !== 0) reject(new Error('Allocator exited with code ' + code));
+      });
+    });
+  }
+  const [first, second] = await Promise.all([allocate(2), allocate(27)]);
+  assert.equal(Atomics.load(gate, 0), 2);
+  assert.equal(first[0], second[0]);
+  assert.equal(new Set([...first, ...second]).size, 51);
+  assert.equal(registry.snapshot(school).counters.TCH, 52);
 });

@@ -111,3 +111,18 @@ test('unverified missing active records and over-deep reference scans retain byt
   assert.equal(photo.isTrashed(),false);
  }
 });
+
+test('legacy teacher lookup prefers permanent ID over an earlier row matching the phone', () => {
+ const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+ const script = fs.readFileSync(path.join(__dirname, '../../school-backend/SaarthiSchool.gs'), 'utf8');
+ const context = vm.createContext({});
+ vm.runInContext(script, context);
+ const rows = [
+  ['TCH-FIRST', '', '', '', '', '9876543210'],
+  ['TCH-SECOND', '', '', '', '', '8765432109'],
+ ];
+ const sheet = {getLastRow: () => 3, getRange: () => ({getValues: () => rows})};
+ assert.equal(context.findTeacherRow(sheet, 'TCH-SECOND', '+91 98765 43210'), 3);
+ assert.equal(context.findTeacherRow(sheet, '', '+91 98765 43210'), 2);
+ assert.equal(context.findTeacherRow(sheet, 'TCH-NOT-FOUND', ''), -1);
+});

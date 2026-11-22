@@ -9,6 +9,13 @@ export interface UidStorage {
 }
 type Assignment = {personId: string; uid: string};
 type Row = {person_id: string; uid: string};
+type UidCounters = Record<UidFamily, number>;
+type UidSnapshot = {
+  schoolId: string;
+  schoolCode: string;
+  assignments: readonly Assignment[];
+  counters: UidCounters;
+};
 const families: UidFamily[] = ['STU','TCH','STF'];
 function requireUid(ok: unknown, message: string): asserts ok {
   if (!ok) throw new Error(message);
@@ -58,11 +65,25 @@ export class UniversalUidRegistry {
    */
   initializeSchool(schoolId: string, schoolName: string, verifiedLegacy: readonly Assignment[]): void {
     schoolCheck(schoolId);
-    const code = uidNameCode(schoolName);
-    requireUid(Array.isArray(verifiedLegacy) && verifiedLegacy.length <= 100000,'Invalid legacy inventory');
+    requireUid(Array.isArray(verifiedLegacy) && verifiedLegacy.length <= 100000, 'Invalid legacy inventory');
+    this.seed(schoolId, uidNameCode(schoolName), verifiedLegacy);
+  }
+  /** Recover only from a verified current backup of this school's full ledger.
+   * The caller must prove freshness and completeness before invoking restore.
+   * Existing ledgers are never overwritten, including on a repeated request.
+   */
+  restoreSchool(schoolId: string, verifiedSnapshot: UidSnapshot): void {
+    schoolCheck(schoolId);
+    requireUid(verifiedSnapshot.schoolId === schoolId, 'UID backup belongs to another school');
+    requireUid(/^\p{L}{4}$/u.test(verifiedSnapshot.schoolCode), 'Invalid school UID code');
+    requireUid(verifiedSnapshot.counters && typeof verifiedSnapshot.counters === 'object', 'Missing UID backup counters');
+    this.seed(schoolId, verifiedSnapshot.schoolCode, verifiedSnapshot.assignments, verifiedSnapshot.counters);
+  }
+  private seed(schoolId: string, code: string, verifiedLegacy: readonly Assignment[], savedCounters?: UidCounters) {
+    requireUid(Array.isArray(verifiedLegacy), 'Invalid UID inventory');
     this.storage.transactionSync(() => {
       requireUid(!this.school(schoolId),'UID registry already initialized');
-      const next: Record<UidFamily,number> = {STU:1,TCH:1,STF:1};
+      const next: UidCounters = {STU:1,TCH:1,STF:1};
       this.storage.sql.exec('INSERT INTO universal_uid_schools VALUES(?,?)',schoolId,code);
       for(const a of verifiedLegacy) {
         personCheck(a.personId);
@@ -77,7 +98,12 @@ export class UniversalUidRegistry {
           this.storage.sql.exec('INSERT INTO universal_uid_assignments VALUES(?,?,?,?,NULL,NULL)',schoolId,a.personId,a.uid,key(a.uid));
         }
       }
-      for(const f of families) this.storage.sql.exec('INSERT INTO universal_uid_counters VALUES(?,?,?)',schoolId,f,next[f]);
+      for (const family of families) {
+        const serial = savedCounters ? savedCounters[family] : next[family];
+        requireUid(Number.isInteger(serial) && serial >= next[family] && serial <= 1000000,
+          'UID backup counter is below the reserved high-water mark or invalid');
+        this.storage.sql.exec('INSERT INTO universal_uid_counters VALUES(?,?,?)', schoolId, family, serial);
+      }
     });
   }
   lookup(schoolId: string, personId: string): string|null {
@@ -107,12 +133,20 @@ export class UniversalUidRegistry {
   /** Permanent ledger export for a separately verified backup/restore path.
    * There is deliberately no reset, delete, release or TTL operation.
    */
-  snapshot(schoolId: string) {
+  snapshot(schoolId: string): UidSnapshot {
     schoolCheck(schoolId);
     const school=this.school(schoolId);
     requireUid(school,'UID registry not initialized');
     const rows=this.storage.sql.exec('SELECT person_id,uid FROM universal_uid_assignments WHERE school_id=? ORDER BY person_id',schoolId).toArray() as Row[];
     const counters=this.storage.sql.exec('SELECT family,next_number FROM universal_uid_counters WHERE school_id=? ORDER BY family',schoolId).toArray() as {family:string;next_number:number}[];
-    return {schoolCode:school.school_code,assignments:rows.map(r=>({personId:r.person_id,uid:r.uid})),counters:Object.fromEntries(counters.map(r=>[r.family,r.next_number]))};
+    const next = Object.fromEntries(counters.map(row => [row.family, row.next_number]));
+    requireUid(families.every(family => Number.isInteger(next[family]) && next[family] >= 1 &&
+      next[family] <= 1000000), 'UID counter missing or invalid; stop for recovery');
+    return {
+      schoolId,
+      schoolCode: school.school_code,
+      assignments: rows.map(row => ({personId: row.person_id, uid: row.uid})),
+      counters: {STU: next.STU, TCH: next.TCH, STF: next.STF},
+    };
   }
 }

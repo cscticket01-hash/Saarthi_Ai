@@ -2861,10 +2861,12 @@ function findTeacherRow(
         2,
         1,
         lastRow - 1,
-        TEACHER_HEADERS.length
+        6
       )
       .getValues();
 
+
+  let phoneMatch = -1;
 
   for (
     let i = 0;
@@ -2896,18 +2898,13 @@ function findTeacherRow(
 
 
     // Phone fallback
-    if (
-      requestedPhone &&
-      rowPhone ===
-        requestedPhone
-    ) {
-
-      return i + 2;
+    if (phoneMatch === -1 && requestedPhone && rowPhone === requestedPhone) {
+      phoneMatch = i + 2;
     }
   }
 
 
-  return -1;
+  return phoneMatch;
 }
 
 
