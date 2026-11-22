@@ -66,13 +66,43 @@ bool verifiedUnknownNoticeDeleteReadback(
 const parallelAttendanceExpenseCollections = {
   'school_expenses', 'attendance_records', 'attendance_logs', 'teacher_attendance',
 };
+/// Limit device concurrency to already versioned, metadata-only changes
+/// for established person owners. Lifecycle/slot changes and new admissions
+/// keep the existing serial owner. The Worker still orders provider commits.
+bool independentExistingPersonPatch(Map item) {
+  if(!{'students_directory','teachers_directory'}.contains(item['collection']) ||
+      item['createIntent']==true || item['updateIntent']!=true ||
+      item['baseCloudRevision'] is! String ||
+      (item['baseCloudRevision'] as String).isEmpty ||
+      RegExp(r'^(cf-|live-)').hasMatch(item['baseCloudRevision']) ||
+      item['fieldPatch'] is! Map)return false;
+  final patch=item['fieldPatch'] as Map;
+  final set=patch['set'], remove=patch['remove'];
+  if(set is! Map || (remove!=null && (remove is! List || remove.isNotEmpty)))return false;
+  // Only non-identity contact fields; never change roll/class, generation,
+  // status, salary, guardian binding, media, or other shared resources.
+  const allowed={'phone','email','address','contactNumber','alternatePhone'};
+  return set.isNotEmpty && set.keys.every((key)=>allowed.contains(key)) &&
+      set.values.every((v)=>v is String && !v.startsWith('data:'));
+}
+
+bool parallelContainsInlineMedia(Object? value,[int depth=0]) {
+  if(depth>12)return true;
+  if(value is String)return value.startsWith('data:');
+  if(value is Map)return value.values.any((v)=>parallelContainsInlineMedia(v,depth+1));
+  if(value is List)return value.any((v)=>parallelContainsInlineMedia(v,depth+1));
+  return false;
+}
+
 bool canParallelStageRecord(Map item, String school, {
   required bool edgeDeliverySupported,
 }) =>
     eligibleForRecordHandoff(item, school,
         edgeDeliverySupported: edgeDeliverySupported) &&
     ({'school_notices', 'school_calendar'}.contains(item['collection']) ||
-      parallelAttendanceExpenseCollections.contains(item['collection'])) &&
+      parallelAttendanceExpenseCollections.contains(item['collection']) ||
+      independentExistingPersonPatch(item)) &&
+    !parallelContainsInlineMedia(item['data']) &&
     {'pending', 'retry'}.contains(item['syncState']) &&
     item['documentId'] is String &&
     (item['documentId'] as String).isNotEmpty &&
@@ -491,7 +521,7 @@ class WindowsPendingSchoolSync {
 
     int priority(Map<String, dynamic> d) {
       final collection = d['collection'];
-      if (collection == 'students_directory') return -1;
+      if (collection == 'students_directory' || collection=='teachers_directory') return -1;
       if ({
         'attendance_records',
         'attendance_logs',
@@ -867,8 +897,10 @@ class WindowsPendingSchoolSync {
       return item['schoolId'] != school ||
           item['atomicBundleId'] != null ||
           item['operation'] == 'delete' ||
-          item['priorDeletion'] != null ||
-          {'students_directory','teachers_directory','school_config',
+          item['priorDeletion'] != null || item['priorCloudWrite']!=null ||
+          ({'students_directory','teachers_directory'}.contains(item['collection']) &&
+            !independentExistingPersonPatch(item)) ||
+          {'school_config',
             'school_settings','fee_payments','fee_ledger','teacher_salary',
             'documents'}.contains(item['collection']);
     });
@@ -881,7 +913,8 @@ class WindowsPendingSchoolSync {
           sendVersioned != null && onlyQueueId == null &&
           onlyOperationId == null &&
           (!dependentBarrier ||
-            !parallelAttendanceExpenseCollections.contains(row.data()['collection'])) &&
+            (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
+             !independentExistingPersonPatch(row.data()))) &&
           (parallelAdmission?.call(row.data()) ?? false);
       if (!independent(first)) {
         await process(first);
