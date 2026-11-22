@@ -377,6 +377,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool _recordDeltasSupported = false;
   bool _sheetAuditSupported = false;
   bool _deltaBatchSupported = false;
+  bool _monitorHandoffSupported = false;
   bool _changeHeadsSupported = false, _checkingHeads = false;
   final _remoteCollections = <String>{};
   final _remoteRecordIds = <String, Set<String>>{};
@@ -1200,6 +1201,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             'lastLocalBackupMillis': observed['lastLocalBackupMillis'],
             'verifiedReceiptCount': observed['verifiedReceiptCount'],
             'lastCloudAckMillis': observed['lastCloudAckMillis'],
+            if (_monitorHandoffSupported && _activeProfileId==origin) ...{
+              if(observed['cloudflareOwnedPendingDrive'] is int)
+                'cloudflareOwnedPendingDrive':observed['cloudflareOwnedPendingDrive'],
+              if(observed['metrics'] is Map &&
+                 observed['metrics']['lastCloudflareHandoffMicros'] is int)
+                'lastCloudflareHandoffMicros':observed['metrics']['lastCloudflareHandoffMicros'],
+            },
           },
         },
       ).timeout(const Duration(seconds: 25));
@@ -1873,6 +1881,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _pendingIdInputs.clear();
       _changeWatch.reset();
       _changeHeadsSupported = false;
+      _monitorHandoffSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
       WindowsFirebaseRemote.documentStageSupported = false;
       WindowsFirebaseRemote.documentReplacementStageSupported = false;
@@ -2363,6 +2372,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             );
           _sheetAuditSupported = WindowsSheetIntegrity.supported(health);
           _deltaBatchSupported = health['recordDeltaBatchVersion'] == 1;
+          _monitorHandoffSupported = health['brokerSyncHandoffMonitorVersion']==1;
           WindowsFirebaseRemote.edgeDeliverySupported =
               health['brokerEdgeDeliveryVersion'] == 1;
           WindowsFirebaseRemote.documentStageSupported =
