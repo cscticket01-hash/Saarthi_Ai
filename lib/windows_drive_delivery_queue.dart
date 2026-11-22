@@ -121,6 +121,17 @@ class WindowsDriveDeliveryQueue {
       throw StateError('Unverified Cloudflare staging receipt.');
     }
     final completed = proof['driveState'] == 'verified', ticket = proof['delivery'];
+    final authorized = notice['handoffAuthorized'] == true;
+    if (authorized && (notice['action'] != 'managed/records' ||
+        !{'write','delete'}.contains(notice['operation']) ||
+        proof['driveState'] != 'pending' || ticket is! Map ||
+        ticket['lane'] != 'records' ||
+        exactStagedRecordTicket({
+          'schoolId':school,'collection':notice['collection'],
+          'documentId':notice['id'],'operationId':notice['originalOperationId'],
+        },school) != ticket['id'])) {
+      throw StateError('Unverified original record handoff journal.');
+    }
     final review = completed && notice['action'] == 'managed/records/batch' && proof['batchComplete'] != true;
     if (completed && notice['action'] == 'managed/file/upload' &&
         (proof['committed'] != true || proof['fileId'] is! String || (proof['fileId'] as String).isEmpty)) {
@@ -155,6 +166,8 @@ class WindowsDriveDeliveryQueue {
       () => ref.set({
         'schoolId': school, 'operationId': operationId, 'edgeDeliveryVersion': 1,
         'action': notice['action'], 'cloudflareAccepted': true,
+        if (authorized || old?['handoffAuthorized'] == true)
+          'handoffAuthorized': true,
         if(notice['originalOperationId'] is String)
           'originalOperationId':notice['originalOperationId'],
         if(notice['originalOperationId'] is! String &&
@@ -379,23 +392,24 @@ class WindowsDriveDeliveryQueue {
                   throw StateError('Multiple original record owners detected.');
                 }
                 if(originals.length==1) {
-                  final original=originals.single.data();
-                  // Journal persistence and original CAS marking are distinct
-                  // durable writes. If the broker finishes unusually fast,
-                  // retry the final receipt rather than lose that race or
-                  // declare the local original completed.
-                  if(original['syncState']!='cloudAccepted' &&
-                      original['cloudTicketId']==null &&
-                      original['operationId']==item['originalOperationId'] &&
-                      original['schoolId']==school)
-                    throw StateError('Original Cloudflare handoff CAS is not yet committed.');
-                  if(original['syncState']=='cloudAccepted') {
-                    if(!verifiedStagedRecordFinal(original,item,proof,school))
-                      throw StateError('Canonical staged record revision unverified; original retained.');
-                    await db.acknowledgeOutbox(originals.single.reference,original,
-                        revision:proof['recordRevision']);
+                  var original=originals.single.data();
+                  // Recover a crash between journal and local CAS only if
+                  // that exact first-phase admission was explicitly authorized.
+                  if (recoverableStagedRecordJournal(original,item,school)) {
+                    await db.recordOutboxCloudHandoff(originals.single.reference,
+                      original,ticketId:id);
                     _scope(school, profile);
+                    final reread=(await originals.single.reference.get()).data();
+                    _scope(school, profile);
+                    if(reread==null||reread['operationId']!=item['originalOperationId'])
+                      throw StateError('Original changed during handoff recovery.');
+                    original=reread;
                   }
+                  if(!verifiedStagedRecordFinal(original,item,proof,school))
+                    throw StateError('Canonical staged record revision unverified; original retained.');
+                  await db.acknowledgeOutbox(originals.single.reference,original,
+                      revision:proof['recordRevision']);
+                  _scope(school, profile);
                 }
               }
               if (lane == 'file-$id' &&
