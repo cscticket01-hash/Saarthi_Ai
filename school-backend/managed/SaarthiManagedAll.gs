@@ -7156,6 +7156,38 @@ function VS_nextFieldRevisions(previous,data,revision) {
     else if(!stamps[key])stamps[key]=previous._syncRevision||revision;
   });return stamps;
 }
+// Called under the canonical school's existing writer lock, before a new
+// scan revision is published. Never counts financial or generated ID PDFs.
+function VS_validateScanQuota(store,b,existing,school) {
+  const incoming=b.data;
+  if(b.collection!=='documents'||b.operation!=='write'||
+     !incoming||incoming.scanQuotaVersion!==1)return;
+  const isScan=row=>row&&!row._syncDeleted&&!row.deleted&&
+    !['idCard','feeReceipt','marksheet'].includes(row.documentKind)&&
+    !['generatedIdCard','feeReceipt','examMarksheet'].includes(row.inventoryCategory);
+  if(!isScan(incoming)||typeof incoming.studentId!=='string'||!incoming.studentId||
+     !Number.isSafeInteger(incoming.pageCount)||incoming.pageCount<1||
+     !Number.isSafeInteger(incoming.sizeBytes)||incoming.sizeBytes<1)
+    throw new Error('Student scan inventory requires review');
+  if(existing&&!existing.data._syncDeleted&&existing.data.studentId!==incoming.studentId)
+    throw new Error('Foreign school record');
+  let pages=incoming.pageCount,bytes=incoming.sizeBytes;
+  const rows=VS_sheetRecords(store);
+  for(const id of Object.keys(rows)){
+    if(id===b.id)continue;
+    const row=rows[id];
+    if(!isScan(row)||row.studentId!==incoming.studentId)continue;
+    if(row.schoolId!==school||!Number.isSafeInteger(row.sizeBytes)||row.sizeBytes<1)
+      throw new Error('Student scan inventory requires review');
+    const mime=row.optimizedMimeType||row.mimeType;
+    const count=Number.isSafeInteger(row.pageCount)&&row.pageCount>0?
+      row.pageCount:['image/jpeg','image/png'].includes(mime)?1:0;
+    if(!count)throw new Error('Student scan inventory requires review');
+    bytes+=row.sizeBytes;pages+=count;
+  }
+  if(pages>8||bytes>500*1024)
+    throw new Error('Student scan inventory limit exceeded');
+}
 function VS_managedRecordUnlocked(b,readContext) {
   if(b.operation==='read'&&b.knownRecordRevisions!==undefined)return VS_managedIncrementalRecords(b,readContext);
   const store=VS_managedSheet(b.collection,readContext), school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -7267,6 +7299,7 @@ function VS_managedRecordUnlocked(b,readContext) {
 
   }
   if(b.operation!=='write'||!b.data||b.data.schoolId!==school)throw new Error('Invalid school record');
+  VS_validateScanQuota(store,b,existing,school);
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory')VS_validateTeacherPayrollIdentity(b.id,b.data);
   if(VS_sheetLifecycleEnabled()&&b.collection==='teacher_salary'&&existing&&!existing.data._syncDeleted){for(const key of ['teacherId','personId','staffId','employeeId'])if(existing.data[key]!=null&&b.data[key]!==existing.data[key]){const directory=key==='employeeId'&&!String(existing.data.employeeId||'').trim()&&existing.data.staffId===b.data.staffId?VS_sheetItem(VS_managedSheet('school_settings'),'staff_payroll_directory'):null;const enrolled=directory&&(directory.data.staff||[]).some(row=>row.id===existing.data.staffId&&row.employeeId===b.data.employeeId);if(!enrolled)throw new Error('Payroll history owner is immutable');}}
   if(VS_sheetLifecycleEnabled()&&b.collection==='teachers_directory'&&existing){const old=existing.data,next=b.data;if((old.teacherId||old._syncRetiredTeacherId||b.id)!==(next.teacherId||b.id)||VS_teacherGeneration(old,b.id)!==VS_teacherGeneration(next,b.id))throw new Error('Teacher identity reassignment requires review');if(next.active===false)VS_retireTeacherAccess(b.id,old,b.operationId||Utilities.getUuid());}
@@ -7513,6 +7546,8 @@ function VS_managedDiagnostic(error) {
     'Empty school profile overwrite blocked':'SCRIPT_EMPTY_PROFILE_OVERWRITE',
     'Versioned document requires a matching revision':'SCRIPT_DOCUMENT_REVISION_REQUIRED',
     'Newer cloud document retained; resolve version conflict':'SCRIPT_DOCUMENT_REVISION_CONFLICT',
+    'Student scan inventory requires review':'SCRIPT_STUDENT_SCAN_REVIEW',
+    'Student scan inventory limit exceeded':'SCRIPT_STUDENT_SCAN_LIMIT',
     'Migration conflict; both versions retained':'SCRIPT_MIGRATION_CONFLICT',
     'Verified school tab is missing; operator recovery required':'SCRIPT_MISSING_MIGRATED_TAB',
     'School record verification failed':'SCRIPT_RECORD_VERIFY_FAILED',

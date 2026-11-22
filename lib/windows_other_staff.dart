@@ -14,13 +14,19 @@ import 'windows_connect/school_drive_images.dart';
 
 /// The existing payroll directory remains the single non-teacher staff source.
 class OtherStaffDirectory {
-  static const roles = [
-    'Office staff',
-    'Driver',
-    'Guard',
-    'Support staff',
-    'Other',
-  ];
+  // Keep legacy role values readable without migrating historical records.
+  static const roles = ['Office staff', 'Other staff'];
+  static const legacyOtherRoles = ['Driver', 'Guard', 'Support staff', 'Other'];
+
+  static String categoryFor(Map<String, dynamic> person) =>
+      person['role'] == 'Office staff' ? 'Office staff' : 'Other staff';
+
+  static String suggestedDesignation(Map<String, dynamic> person) {
+    final designation = person['designation']?.toString().trim() ?? '';
+    if (designation.isNotEmpty) return designation;
+    final role = person['role']?.toString() ?? '';
+    return legacyOtherRoles.contains(role) && role != 'Other' ? role : '';
+  }
   static Future<void> _tail = Future<void>.value();
   static void requireSchool(String profile) {
     if (FirebaseFirestore.instance.activeProfileId != profile)
@@ -51,10 +57,15 @@ class OtherStaffDirectory {
           name.length > 120 ||
           employee.isEmpty ||
           employee.length > 60 ||
-          !roles.contains(person['role']))
+          !(roles.contains(person['role']) ||
+              legacyOtherRoles.contains(person['role'])))
         throw ArgumentError(
           'Name, unique Employee ID and staff category are required.',
         );
+      final designation = person['designation']?.toString().trim() ?? '';
+      if (categoryFor(person) == 'Other staff' && designation.isEmpty) {
+        throw ArgumentError('Enter a designation for Other Staff.');
+      }
       final people = await load(profile);
       final teachers = await FirebaseFirestore.instance
           .collection('teachers_directory')
@@ -81,6 +92,7 @@ class OtherStaffDirectory {
         'id': id,
         'name': name,
         'employeeId': employee,
+        'designation': designation,
         'active': person['active'] != false,
         'updatedAt': DateTime.now().millisecondsSinceEpoch,
       };
@@ -160,7 +172,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
           text: existing?['employeeId']?.toString() ?? '',
         ),
         department = TextEditingController(
-          text: existing?['designation']?.toString() ?? '',
+          text: existing == null
+              ? ''
+              : OtherStaffDirectory.suggestedDesignation(existing),
         ),
         mobile = TextEditingController(
           text: existing?['mobile']?.toString() ?? '',
@@ -175,8 +189,10 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
     final district = TextEditingController(text: existing?['district']?.toString() ?? '');
     var role = existing?['role']?.toString() ?? category,
         active = existing?['active'] != false;
-    if (!OtherStaffDirectory.roles.contains(role))
-      role = OtherStaffDirectory.roles.first;
+    if (!OtherStaffDirectory.roles.contains(role) &&
+        !OtherStaffDirectory.legacyOtherRoles.contains(role)) {
+      role = 'Other staff';
+    }
     var photo = existing?['photoUrl']?.toString() ?? '', saving = false;
     String? problem;
     final changed = await showDialog<bool>(
@@ -187,7 +203,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
           canPop: !saving,
           child: AlertDialog(
             title: Text(
-              existing == null ? 'Add Other Staff' : 'Edit Other Staff',
+              existing == null
+                  ? 'Add ${OtherStaffDirectory.categoryFor({'role': role})}'
+                  : 'Edit ${OtherStaffDirectory.categoryFor({'role': role})}',
             ),
             content: SizedBox(
               width: 460,
@@ -205,20 +223,14 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                         labelText: 'Employee ID',
                       ),
                     ),
-                    DropdownButtonFormField<String>(
-                      initialValue: role,
-                      items: OtherStaffDirectory.roles
-                          .map(
-                            (r) => DropdownMenuItem(value: r, child: Text(r)),
-                          )
-                          .toList(),
-                      onChanged: saving ? null : (v) => setD(() => role = v!),
+                    InputDecorator(
                       decoration: const InputDecoration(labelText: 'Category'),
+                      child: Text(OtherStaffDirectory.categoryFor({'role': role})),
                     ),
                     TextField(
                       controller: department,
                       decoration: const InputDecoration(
-                        labelText: 'Department / designation',
+                        labelText: 'Designation (enter manually)',
                       ),
                     ),
                     TextField(
@@ -376,7 +388,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                           FilledButton.icon(
                             onPressed: () => _edit(),
                             icon: const Icon(Icons.person_add),
-                            label: const Text('Add Other Staff'),
+                            label: Text(category == 'Office staff'
+                                ? 'Add Office Staff'
+                                : 'Add Other Staff'),
                           ),
                         ],
                       ),
@@ -387,8 +401,8 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                         children: [
                           for (final person in staff.where(
                             (p) =>
-                                p['role'] == category &&
-                                '${p['name']} ${p['employeeId']}'
+                                OtherStaffDirectory.categoryFor(p) == category &&
+                                '${p['name']} ${p['employeeId']} ${OtherStaffDirectory.suggestedDesignation(p)}'
                                     .toLowerCase()
                                     .contains(search),
                           ))

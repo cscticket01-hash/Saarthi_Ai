@@ -5,12 +5,15 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import 'document_pipeline.dart';
-import 'fitted_document_preview.dart';
+import 'document_scan_editor.dart';
+import 'document_pdf_preview.dart';
+import 'student_inventory_policy.dart';
 
 class SelectedDocument {
-  SelectedDocument(this.name, this.mime, this.bytes);
+  SelectedDocument(this.name, this.mime, this.bytes, {this.edits = const {}});
   final String name, mime;
   final Uint8List bytes;
+  final Map<String, dynamic> edits;
 }
 
 class DocumentFilePicker {
@@ -19,14 +22,22 @@ class DocumentFilePicker {
     extensions: ['jpg', 'jpeg', 'png', 'pdf'],
     mimeTypes: ['image/jpeg', 'image/png', 'application/pdf'],
   );
-  static Future<SelectedDocument?> pick() async {
-    // The same button now accepts one or several documents, without a
-    // replacement screen. Any combination still counts toward eight pages.
+  static Future<SelectedDocument?> pick({String scope = ''}) async {
+    // The same button accepts one PDF or an image batch. PDFs are never
+    // merged with other files because that would rewrite the supplied source.
     final files = await openFiles(acceptedTypeGroups: [types]);
     if (files.isEmpty) return null;
     if (files.length > DocumentPipeline.maxScanPages) {
       throw const FormatException(
         'Smart Scan allows maximum 8 pages across PDFs and images.',
+      );
+    }
+    // Never rasterize or merge a user-supplied PDF merely because another
+    // file was selected. Upload PDFs individually; image batches may combine.
+    if (files.length > 1 && files.any((file) =>
+        file.name.toLowerCase().endsWith('.pdf'))) {
+      throw const FormatException(
+        'Upload PDF files separately. Multiple image scans can still be combined.',
       );
     }
     final sources = <Map<String, dynamic>>[];
@@ -59,7 +70,7 @@ class DocumentFilePicker {
         sources.first['bytes'] as Uint8List,
       );
     }
-    final combined = await DocumentPipeline.combineSources(sources);
+    final combined = await DocumentPipeline.combineSources(sources, scope: scope);
     final name = files.first.name;
     final dot = name.lastIndexOf('.');
     final stem = dot > 0 ? name.substring(0, dot) : name;
@@ -121,9 +132,11 @@ class DocumentUploadDialog extends StatefulWidget {
     required this.isCurrent,
     this.picker = DocumentFilePicker.pick,
     this.processor = DocumentPipeline.process,
+    this.inventoryUsage,
   });
   final String name, scope;
   final bool Function() isCurrent;
+  final ScanInventoryUsage? inventoryUsage;
   final Future<SelectedDocument?> Function() picker;
   final Future<Map<String, dynamic>> Function(Uint8List, String, {String scope})
       processor;
@@ -135,6 +148,7 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   SelectedDocument? selected;
   Map<String, dynamic>? processed;
   bool busy = false;
+  String stage = '';
   String? error;
   int generation = 0;
   @override
@@ -151,12 +165,15 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
     final current = ++generation;
     setState(() {
       busy = true;
+      stage = 'Selecting document files…';
       selected = null;
       processed = null;
       error = null;
     });
     try {
-      final file = await widget.picker();
+      final file = await (widget.picker == DocumentFilePicker.pick
+          ? DocumentFilePicker.pick(scope: widget.scope)
+          : widget.picker());
       if (!mounted || current != generation) return;
       if (!widget.isCurrent())
         throw StateError('School changed. Reopen documents.');
@@ -165,6 +182,9 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
         return;
       }
       selected = file; // Original stays untouched, even when processing fails.
+      setState(() => stage = file.mime == 'application/pdf'
+          ? 'Checking PDF size and pages…'
+          : 'Processing image and compression…');
       final result = await widget.processor(
         file.bytes,
         file.mime,
@@ -177,13 +197,65 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
           (result['optimized'] as Uint8List).isEmpty) {
         throw const FormatException('Processing returned no readable output.');
       }
+      final usage = widget.inventoryUsage;
+      if (usage != null) {
+        final pageCount = result['pageCount'] as int? ??
+            (file.mime == 'application/pdf' ? 0 : 1);
+        final problem = usage.problem(
+          addingBytes: (result['optimized'] as Uint8List).length,
+          addingPages: pageCount,
+        );
+        if (problem != null) throw FormatException(problem);
+      }
       setState(() => processed = result);
     } catch (e) {
       if (mounted && current == generation)
         setState(
-          () => error =
-              'Unable to process document: $e. Original file is unchanged. Select another file.',
+          () {
+            final details = e is FormatException ? e.message : e.toString();
+            error = 'Unable to process document: $details. '
+                'Original file is unchanged. Select another file or retry.';
+          },
         );
+    } finally {
+      if (mounted && current == generation) setState(() => busy = false);
+    }
+  }
+
+  Future<void> editScan([String tool = 'all']) async {
+    final file = selected;
+    if (busy || file == null || file.mime == 'application/pdf') return;
+    final requested = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => DocumentScanEditor(bytes: file.bytes, mime: file.mime,
+        scope: widget.scope, initialEdits: file.edits, isCurrent: widget.isCurrent,
+        initialTool: tool),
+    );
+    if (!mounted || requested == null) return;
+    if (!widget.isCurrent()) {
+      setState(() { processed = null; error = 'School changed. Reopen documents.'; });
+      return;
+    }
+    final current = ++generation;
+    setState(() { busy = true; stage = 'Applying scan edits…'; error = null; });
+    try {
+      final result = await DocumentPipeline.process(file.bytes, file.mime,
+        scope: widget.scope, edits: requested);
+      if (!mounted || current != generation) return;
+      if (!widget.isCurrent()) throw StateError('School changed. Reopen documents.');
+      final output = result['optimized'] as Uint8List;
+      final problem = widget.inventoryUsage?.problem(
+        addingBytes: output.length, addingPages: result['pageCount'] as int);
+      if (problem != null) throw FormatException(problem);
+      setState(() {
+        selected = SelectedDocument(file.name, file.mime, file.bytes,
+          edits: DocumentPipeline.checkedEdits(requested));
+        processed = result;
+      });
+    } catch (e) {
+      if (mounted && current == generation) setState(() {
+        error = e is FormatException ? e.message.toString() : e.toString();
+      });
     } finally {
       if (mounted && current == generation) setState(() => busy = false);
     }
@@ -192,6 +264,8 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
   @override
   void dispose() {
     generation++;
+    DocumentPipeline.clearCombinedPreparation(widget.scope);
+    DocumentPipeline.clearPdfSource(widget.scope);
     super.dispose();
   }
 
@@ -209,21 +283,54 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                 icon: const Icon(Icons.file_open),
                 label: const Text('Select file — JPG / JPEG / PNG / PDF'),
               ),
-              if (busy) const LinearProgressIndicator(),
+              if (busy) ...[
+                Text(stage),
+                const LinearProgressIndicator(),
+              ],
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
               if (processed != null) ...[
                 Text(
-                  '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
+                  selected!.mime == 'application/pdf'
+                    ? '${selected!.name} • ${processed!['pageCount']} ${processed!['pageCount'] == 1 ? 'page' : 'pages'} • ${(processed!['optimized'] as Uint8List).length} bytes'
+                    : '${selected!.name} • optimized ${(processed!['optimized'] as Uint8List).length} bytes • original ${selected!.bytes.length} bytes',
+                  key: const ValueKey('document-preview-metrics'),
                 ),
-                Text('Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
-                const Text(
-                  'Single image target: 80 KB. Up to 8 PDF/image pages: 500 KB total page-image budget. PDF size can be larger; readability takes priority.',
-                ),
+                Text(selected!.mime == 'application/pdf'
+                  ? (processed!['sourceRetained'] == true
+                      ? 'Original PDF retained • compression not required'
+                      : 'PDF compressed • ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}% smaller')
+                  : 'Saved ${(100 * (1 - (processed!['optimized'] as Uint8List).length / selected!.bytes.length)).toStringAsFixed(1)}%'),
+                Text(selected!.mime == 'application/pdf'
+                  ? 'Maximum 8 pages and 500 KB per student. Original PDF is preserved when within the limit.'
+                  : 'Single image target: 80 KB. Up to 8 imported pages and 500 KB of optimized scans per student. Readability takes priority.'),
+                if (processed!['processingMillis'] is num)
+                  Text(
+                    'Processing time: ${((processed!['processingMillis'] as num) / 1000).toStringAsFixed(2)} s',
+                    key: const ValueKey('document-processing-time'),
+                  ),
+                if (processed!['cleanupStatus'] != null)
+                  Text(
+                    processed!['cleanupStatus'].toString(),
+                    style: TextStyle(
+                      color: processed!['sourceRetained'] == true &&
+                              processed!['qualityGuard'] != 'original-pdf-retained'
+                          ? Colors.orangeAccent
+                          : processed!['qualityGuard'] == 'original-pdf-retained'
+                              ? Colors.green
+                              : null,
+                    ),
+                    maxLines: 3,
+                  ),
+                if (processed!['qualityGuard'] == 'review-required')
+                  const Text('Quality check needs review. Inspect the text and seals before saving.',
+                    style: TextStyle(color: Colors.orangeAccent)),
                 Expanded(
-                  child: processed!['mimeType'] == 'application/pdf'
-                      ? FittedDocumentPreview(
-                          bytes: processed!['optimized'] as Uint8List,
+                  child: selected!.mime == 'application/pdf'
+                      ? DocumentPdfPreview(
+                          pages: processed!['previewPages'] as List<Uint8List>,
+                          pdfBytes: processed!['optimized'] as Uint8List,
+                          fullResolutionPages: (processed!['previewDpi'] as num? ?? 0) >= 150,
                         )
                       : Image.memory(
                           processed!['optimized'] as Uint8List,
@@ -238,6 +345,23 @@ class _DocumentUploadDialogState extends State<DocumentUploadDialog> {
                     ),
                   ),
                 ),
+              if (selected != null && selected!.mime != 'application/pdf' &&
+                  widget.processor == DocumentPipeline.process)
+                Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(
+                  alignment: WrapAlignment.center, spacing: 8, runSpacing: 4,
+                  children: [
+
+                    OutlinedButton.icon(key: const ValueKey('document-edit-scan'),
+                      onPressed: busy ? null : () => editScan('crop'),
+                      icon: const Icon(Icons.crop), label: const Text('Crop')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('rotate'),
+                      icon: const Icon(Icons.rotate_right), label: const Text('Rotate')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('filters'),
+                      icon: const Icon(Icons.filter), label: const Text('Filters')),
+                    OutlinedButton.icon(onPressed: busy ? null : () => editScan('adjust'),
+                      icon: const Icon(Icons.tune), label: const Text('Adjust')),
+                  ],
+                )),
             ],
           ),
         ),

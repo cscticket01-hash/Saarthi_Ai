@@ -8,6 +8,138 @@ import 'package:image/image.dart' as img;
 import '../lib/document_processing_engine.dart';
 
 void main() {
+  test('PDF compression mode changes encoding only, never crops, rotates or deskews', () {
+    final sourceImage=img.Image(width:600,height:800);
+    img.fill(sourceImage,color:img.ColorRgb8(190,130,145));
+    img.fillRect(sourceImage,x1:55,y1:65,x2:545,y2:735,
+      color:img.ColorRgb8(245,240,235));
+    for(var y=120;y<700;y+=28){
+      img.drawLine(sourceImage,x1:95,y1:y,x2:510,y2:y,
+        color:img.ColorRgb8(35,35,35),thickness:2);
+    }
+    final source=Uint8List.fromList(img.encodePng(sourceImage));
+    final before=List<int>.from(source);
+    final result=DocumentProcessingEngine.process({
+      'bytes':source,'kind':'pdfCompression','targetBytes':400*1024,
+      'autoRotation':90,
+    });
+    expect(result['rotationDegrees'],0);
+    expect(result['perspectiveCorrected'],false);
+    expect(result['deskewDegrees'],0);
+    expect(result['manualCrop'],false);
+    expect(result['scanFilter'],'original');
+    expect(source,before);
+    expect(result['optimized'],isA<Uint8List>());
+  });
+
+  test('four-corner perspective correction, explicit rotation and filters are non-destructive', () {
+    final input = img.Image(width: 640, height: 800);
+    img.fill(input, color: img.ColorRgb8(170, 110, 125));
+    img.fillRect(input, x1: 60, y1: 70, x2: 570, y2: 720,
+      color: img.ColorRgb8(240, 230, 224));
+    for (var y = 130; y < 680; y += 30) {
+      img.drawLine(input, x1: 110, y1: y, x2: 520, y2: y,
+        color: img.ColorRgb8(25, 25, 25), thickness: 3);
+    }
+    final source = Uint8List.fromList(img.encodePng(input));
+    final before = Uint8List.fromList(source);
+    final result = DocumentProcessingEngine.process({
+      'bytes': source,
+      'manualEdit': [0, 0, 1, 1, 90],
+      'manualCorners': [.09, .08, .90, .09, .89, .90, .09, .91],
+      'scanFilter': 'grayscale',
+      'brightness': .05,
+      'contrast': .12,
+    });
+    expect(result['manualCrop'], true);
+    expect(result['rotationDegrees'], 90);
+    expect(result['scanFilter'], 'grayscale');
+    expect(result['sourceRetained'], false);
+    expect(result['width'], greaterThan(result['height'] as int));
+    expect(result['qualityGuard'], anyOf('pixel-check-passed', 'review-required'));
+    final optimized = img.decodeImage(result['optimized'] as Uint8List)!;
+    final rgb = optimized.convert(numChannels: 3);
+    for (var y = 0; y < rgb.height; y += 11) {
+      for (var x = 0; x < rgb.width; x += 11) {
+        final pixel = rgb.getPixel(x, y);
+        expect((pixel.r - pixel.g).abs(), lessThanOrEqualTo(3));
+        expect((pixel.r - pixel.b).abs(), lessThanOrEqualTo(3));
+      }
+    }
+    expect(result['qualityGuard'], 'pixel-check-passed');
+    expect(source, before);
+  });
+
+  test('crossed or out-of-bounds manual crop coordinates are rejected', () {
+    final bytes = Uint8List.fromList(img.encodePng(img.Image(width: 320, height: 400)));
+    expect(() => DocumentProcessingEngine.process({
+      'bytes': bytes, 'manualEdit': [0, 0, 1, 1, 0],
+      'manualCorners': [0, 0, 1, 1, 1, 0, 0, 1],
+    }), throwsFormatException);
+    expect(() => DocumentProcessingEngine.process({
+      'bytes': bytes, 'scanFilter': 'invalid',
+    }), throwsFormatException);
+  });
+
+  for (final angle in [90, 180, 270]) {
+    test('confident right-angle correction $angle preserves orientation metadata', () {
+      final image = img.Image(width: 520, height: 700);
+      img.fill(image, color: img.ColorRgb8(255, 255, 255));
+      final result = DocumentProcessingEngine.process({
+        'bytes': Uint8List.fromList(img.encodePng(image)),
+        'autoRotation': angle,
+      });
+      expect(result['rotationDegrees'], angle);
+      expect(result['sourceRetained'], false);
+      expect(result['width'], angle == 180 ? 520 : 700);
+      expect(result['height'], angle == 180 ? 700 : 520);
+    });
+  }
+
+  test('light patterned cloth is excluded using relative paper brightness', () {
+    final image = img.Image(width: 640, height: 800);
+    img.fill(image, color: img.ColorRgb8(204, 180, 192));
+    for (var y = 15; y < 800; y += 75) {
+      for (var x = 15; x < 640; x += 90) {
+        img.fillCircle(image, x: x, y: y, radius: 14,
+          color: img.ColorRgb8(160, 100, 135));
+      }
+    }
+    img.fillRect(image, x1: 85, y1: 95, x2: 560, y2: 710,
+      color: img.ColorRgb8(234, 230, 227));
+    for (var y = 150; y < 650; y += 36) {
+      img.drawLine(image, x1: 125, y1: y, x2: 510, y2: y,
+        color: img.ColorRgb8(15, 15, 15), thickness: 2);
+    }
+    final source = Uint8List.fromList(img.encodePng(image));
+    final before = Uint8List.fromList(source);
+    final result = DocumentProcessingEngine.process({'bytes': source});
+    expect(result['perspectiveCorrected'], isTrue);
+    expect(result['sourceRetained'], isFalse);
+    final output = img.decodeImage(result['optimized'] as Uint8List)!;
+    expect(output.width, lessThan(600));
+    expect(output.height, lessThan(750));
+    expect(source, before);
+  });
+
+  test('pink fabric background is cropped without reverting to source', () {
+    final photo = img.Image(width: 600, height: 800);
+    img.fill(photo, color: img.ColorRgb8(145, 55, 95));
+    img.fillRect(
+      photo,
+      x1: 75,
+      y1: 85,
+      x2: 525,
+      y2: 705,
+      color: img.ColorRgb8(243, 238, 235),
+    );
+    final original = Uint8List.fromList(img.encodeJpg(photo, quality: 35));
+    final result = DocumentProcessingEngine.process({'bytes': original});
+    expect(result['perspectiveCorrected'], true);
+    expect(result['sourceRetained'], false);
+    expect(result['cleanupStatus'], contains('Detected paper boundary'));
+  });
+
   test(
       'neutral text keeps readable processed pixels with a smaller lossless grayscale container',
       () {

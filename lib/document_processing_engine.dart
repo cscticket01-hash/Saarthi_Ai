@@ -171,6 +171,7 @@ class DocumentProcessingEngine {
 
   static Map<String, dynamic> _process(Map<String, dynamic> input) {
     final portrait = input['kind'] == 'portrait';
+    final pdfCompression = input['kind'] == 'pdfCompression';
     final bytes = input['bytes'] as Uint8List;
     if (bytes.length < 12 || bytes.length > sourceLimit)
       throw const FormatException('Source exceeds document safety limit.');
@@ -217,13 +218,84 @@ class DocumentProcessingEngine {
         height: image.height > image.width ? maxEdge : null,
         interpolation: img.Interpolation.average,
       );
-    final detected = portrait ? null : _paperCorners(image);
+    // Crop coordinates refer to the EXIF-oriented original, before rotation.
+    final edit = portrait || pdfCompression ? null : input['manualEdit'];
+    final quad = portrait || pdfCompression ? null : input['manualCorners'];
+    final filter = portrait ? 'auto' : pdfCompression ? 'original' : input['scanFilter'] ?? 'auto';
+    final brightness = portrait || pdfCompression ? 0.0 : (input['brightness'] as num? ?? 0).toDouble();
+    final contrast = portrait || pdfCompression ? 0.0 : (input['contrast'] as num? ?? 0).toDouble();
+    if (!{'auto', 'original', 'lightText', 'grayscale', 'whiteboard'}.contains(filter) ||
+        !brightness.isFinite || !contrast.isFinite ||
+        brightness.abs() > 0.4 || contrast.abs() > 0.5) {
+      throw const FormatException('Invalid scan filter or adjustment.');
+    }
+    final adjusted = filter != 'auto' || brightness != 0 || contrast != 0;
+    List<img.Point>? manualPoints;
+    if (quad != null) {
+      if (quad is! List || quad.length != 8 ||
+          quad.any((v) => v is! num || !v.isFinite || v < 0 || v > 1)) {
+        throw const FormatException('Invalid four-corner crop.');
+      }
+      final v = quad.cast<num>();
+      manualPoints = [
+        for (var i = 0; i < 8; i += 2)
+          img.Point(v[i] * (image.width - 1), v[i + 1] * (image.height - 1)),
+      ];
+      for (var i = 0; i < 4; i++) {
+        final a = manualPoints[i], b = manualPoints[(i + 1) % 4],
+            c = manualPoints[(i + 2) % 4];
+        if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) <= 0) {
+          throw const FormatException('Keep the crop corners in clockwise order.');
+        }
+      }
+      if (edit == null) throw const FormatException('Manual crop requires explicit edit settings.');
+    }
+    var manualCrop = false;
+    var rotation = 0;
+    if (edit != null) {
+      if (edit is! List || edit.length != 5 ||
+          edit.any((v) => v is! num || !v.isFinite)) {
+        throw const FormatException('Invalid manual scan correction.');
+      }
+      final values = edit.cast<num>();
+      final left = values[0], top = values[1], right = values[2], bottom = values[3];
+      if (left < 0 || top < 0 || right > 1 || bottom > 1 ||
+          right - left < 0.1 || bottom - top < 0.1 ||
+          !{0, 90, 180, 270}.contains(values[4])) {
+        throw const FormatException('Invalid manual crop or rotation.');
+      }
+      final x = (left * image.width).floor();
+      final y = (top * image.height).floor();
+      final w = (right * image.width).ceil() - x;
+      final h = (bottom * image.height).ceil() - y;
+      if (w < 16 || h < 16) {
+        throw const FormatException('Manual crop is too small.');
+      }
+      manualCrop = x != 0 || y != 0 || w != image.width || h != image.height;
+      if (manualPoints != null) {
+        final correctedImage = _rectify(image, manualPoints);
+        if (identical(correctedImage, image)) {
+          throw const FormatException('Crop is too small or corners are not valid.');
+        }
+        image = correctedImage;
+        manualCrop = true;
+      } else if (manualCrop) {
+        image = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      }
+      rotation = values[4].toInt();
+    } else if (!portrait && !pdfCompression && {90, 180, 270}.contains(input['autoRotation']) &&
+        sourceOrientation == 1) {
+      rotation = input['autoRotation'] as int;
+    }
+    if (rotation != 0) image = img.copyRotate(image, angle: rotation);
+    final detected = portrait || pdfCompression || edit != null ? null : _paperCorners(image);
     bool corrected = false;
     if (detected != null) {
-      image = _rectify(image, detected);
-      corrected = true;
+      final rectified = _rectify(image, detected);
+      corrected = !identical(image, rectified);
+      image = rectified;
     }
-    final deskew = portrait ? 0.0 : _textAngle(image);
+    final deskew = portrait || pdfCompression || edit != null ? 0.0 : _textAngle(image);
     if (deskew.abs() >= 0.5) {
       image.backgroundColor = img.ColorRgb8(255, 255, 255);
       image = img.copyRotate(
@@ -232,17 +304,25 @@ class DocumentProcessingEngine {
         interpolation: img.Interpolation.linear,
       );
     }
-    for (final pixel in image) {
-      pixel.r = ((pixel.r - 128) * 1.025 + 128).clamp(0, 255);
-      pixel.g = ((pixel.g - 128) * 1.025 + 128).clamp(0, 255);
-      pixel.b = ((pixel.b - 128) * 1.025 + 128).clamp(0, 255);
+    if (filter == 'grayscale' || filter == 'whiteboard') {
+      image = img.grayscale(image);
     }
-    // Mild local sharpening; do not threshold text/stamps into binary pixels.
-    image = img.convolution(
-      image,
-      filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
-      amount: 0.12,
-    );
+    final factor = (filter == 'original' ? 1.0 : filter == 'lightText' ? 1.16 :
+        filter == 'whiteboard' ? 1.22 : 1.025) * (1 + contrast);
+    final lift = brightness * 255 + (filter == 'whiteboard' ? 12 : filter == 'lightText' ? 6 : 0);
+    for (final pixel in image) {
+      pixel.r = ((pixel.r - 128) * factor + 128 + lift).clamp(0, 255);
+      pixel.g = ((pixel.g - 128) * factor + 128 + lift).clamp(0, 255);
+      pixel.b = ((pixel.b - 128) * factor + 128 + lift).clamp(0, 255);
+    }
+    // Mild sharpening; never erase text, seals or signatures by thresholding.
+    if (filter != 'original') {
+      image = img.convolution(
+        image,
+        filter: [0, -1, 0, -1, 5, -1, 0, -1, 0],
+        amount: 0.12,
+      );
+    }
     // Retain normalized source pixels as a fallback if sharpening expands a
     // previously compressed upload. Orientation and transparency were baked.
     // Re-encoding strips EXIF/GPS and unrelated source metadata.
@@ -295,9 +375,14 @@ class DocumentProcessingEngine {
     }
     // Photographic portraits already have a compact JPEG candidate. A full
     // lossless PNG encode costs time and is not the ID-photo size strategy.
-    final lossless = portrait ? null : Uint8List.fromList(
-      img.encodePng(neutral ? image.convert(numChannels: 1) : image, level: 9),
-    );
+    // Colour photographs almost always lose to JPEG; encoding them as
+    // maximum-compression PNG on every page is very expensive on Windows.
+    // Retain the lossless path for truly neutral text/line artwork only.
+    final lossless = portrait || !neutral
+        ? null
+        : Uint8List.fromList(
+            img.encodePng(image.convert(numChannels: 1), level: 6),
+          );
     var optimizedMime = 'image/jpeg';
     if (lossless != null && lossless.length < optimized.length) {
       optimized = lossless;
@@ -305,33 +390,9 @@ class DocumentProcessingEngine {
       optimizedWidth = image.width;
       optimizedHeight = image.height;
     }
-    // Try additional safe JPEG encodings before giving up on the size goal.
-    // Preserve the existing minimum resolution and never silently replace
-    // readable documents with thumbnails or binary/thresholded text.
-    if (optimized.length > target) {
-      final candidateImage =
-          math.max(image.width, image.height) > minimumEdge
-          ? img.copyResize(
-              image,
-              width: image.width >= image.height ? minimumEdge : null,
-              height: image.height > image.width ? minimumEdge : null,
-              interpolation: img.Interpolation.average,
-            )
-          : image;
-      for (final q in [78]) {
-        final candidate = Uint8List.fromList(
-          img.encodeJpg(candidateImage, quality: q),
-        );
-        if (candidate.length < optimized.length) {
-          optimized = candidate;
-          optimizedMime = 'image/jpeg';
-          optimizedWidth = candidateImage.width;
-          optimizedHeight = candidateImage.height;
-          quality = q;
-        }
-        if (optimized.length <= target) break;
-      }
-    }
+    // The q78 rendition at the minimum allowed edge was already measured
+    // above. Repeating that exact resize and encode cannot improve the bytes.
+    // Keep the better measured JPEG or lossless candidate.
     // ID photos are small printed/displayed regions, unlike full-page scans.
     // Adapt resolution to the measured encoded size while keeping JPEG q78,
     // aspect ratio, the uncropped face and at least a 256px long edge. Resize
@@ -378,14 +439,26 @@ class DocumentProcessingEngine {
     // Retain the original container when processing expands it: this is an
     // explicitly reported fallback, not a claim that cleanup was applied.
     final sourceContainer = _sanitizedSource(bytes, sourceOrientation);
-    final retainedSource =
-        sourceContainer != null && optimized.length > sourceContainer.length;
+    // Do not replace a successfully cropped/deskewed document with the
+    // original JPEG merely because the processed encoding is larger. That
+    // silently undoes the visible cleanup in Student Inventory.
+    final retainedSource = sourceContainer != null &&
+        optimized.length > sourceContainer.length &&
+        !corrected && !manualCrop && rotation == 0 && edit == null && !adjusted &&
+        deskew.abs() < 0.5;
     if (retainedSource) {
       optimized = sourceContainer!;
       optimizedMime = bytes[0] == 137 ? 'image/png' : 'image/jpeg';
       optimizedWidth = orientedSource.width;
       optimizedHeight = orientedSource.height;
     }
+    // Compare decoded optimized pixels with the same processed reference,
+    // at a bounded common scale. This is an image-quality guard, not an OCR
+    // guarantee for every glyph. Never silently describe an uncertain result
+    // as text-verified.
+    final qualityGuard = portrait
+        ? <String, dynamic>{}
+        : _scanQualityGuard(retainedSource ? orientedSource : image, optimized);
     final targetMet = optimized.length <= target;
     return {
       'optimized': optimized,
@@ -408,14 +481,69 @@ class DocumentProcessingEngine {
       'targetBytes': target,
       'savingsPercent': 100 * (1 - optimized.length / bytes.length),
       'perspectiveCorrected': corrected,
+      'manualCrop': manualCrop,
+      'rotationDegrees': rotation,
+      'scanFilter': filter,
+      'brightness': brightness,
+      'contrast': contrast,
       'deskewDegrees': deskew,
+      ...qualityGuard,
       'width': optimizedWidth,
       'height': optimizedHeight,
       'cleanupStatus': retainedSource
           ? 'Original container retained: cleanup encoding would enlarge upload'
+          : edit != null
+          ? 'Manual crop and rotation applied; original preserved'
           : corrected
           ? 'Detected paper boundary corrected'
+          : rotation != 0
+          ? 'Confident orientation corrected; full image preserved'
           : 'No confident boundary; full image preserved',
+    };
+  }
+
+  static Map<String, dynamic> _scanQualityGuard(img.Image reference, Uint8List encoded) {
+    final decoded = img.decodeImage(encoded);
+    if (decoded == null) throw const FormatException('Optimized scan cannot be decoded.');
+    // Use the channel count from the Image API (image 4.10), not Pixel.
+    // A grayscale sample represents equal displayed R/G/B values even when
+    // the storage object exposes absent green and blue channels as zero.
+    final w = math.min(180, math.min(reference.width, decoded.width));
+    final h = math.min(180, math.min(reference.height, decoded.height));
+    final a = img.copyResize(reference, width: w, height: h,
+        interpolation: img.Interpolation.average);
+    final b = img.copyResize(decoded, width: w, height: h,
+        interpolation: img.Interpolation.average);
+    double lum(img.Image raster, int x, int y) {
+      final p = raster.getPixel(x, y);
+      final alpha = raster.hasAlpha ? p.aNormalized : 1.0;
+      final value = raster.numChannels <= 2
+          ? p.rNormalized
+          : p.rNormalized * 0.299 + p.gNormalized * 0.587 +
+              p.bNormalized * 0.114;
+      return value * 255 * alpha + (1 - alpha) * 255;
+    }
+    var error = 0.0, edges = 0, kept = 0;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final av = lum(a, x, y), bv = lum(b, x, y);
+        error += (av - bv).abs();
+        if (x == 0) continue;
+        final da = (av - lum(a, x - 1, y)).abs();
+        final db = (bv - lum(b, x - 1, y)).abs();
+        if (da >= 40) {
+          edges++;
+          if (db >= da * 0.55) kept++;
+        }
+      }
+    }
+    final mae = error / (w * h);
+    final edgeRetention = edges == 0 ? 1.0 : kept / edges;
+    return {
+      'qualityGuard': mae <= 20 && (edges < 12 || edgeRetention >= 0.70)
+          ? 'pixel-check-passed' : 'review-required',
+      'meanLuminanceError': mae,
+      'contrastEdgeRetention': edgeRetention,
     };
   }
 
@@ -599,6 +727,55 @@ class DocumentProcessingEngine {
     return best > baseline * 1.18 ? angle : 0;
   }
 
+  // Compute a between-class variance threshold from a small detection raster.
+  // Technique reference: Otsu's method; also used by
+  // https://github.com/Nardo86/document_scanner (MIT).
+  static int _adaptivePaperThreshold(img.Image sample) {
+    final bins = List<int>.filled(256, 0);
+    var count = 0;
+    var weighted = 0;
+    for (var y = 0; y < sample.height; y += 2) {
+      for (var x = 0; x < sample.width; x += 2) {
+        final pixel = sample.getPixel(x, y);
+        final value = ((pixel.r + pixel.g + pixel.b) / 3).round().clamp(0, 255).toInt();
+        bins[value]++;
+        count++;
+        weighted += value;
+      }
+    }
+    var leftCount = 0, leftSum = 0, split = 0;
+    var best = -1.0;
+    for (var level = 0; level < 255; level++) {
+      leftCount += bins[level];
+      leftSum += level * bins[level];
+      final rightCount = count - leftCount;
+      if (leftCount == 0 || rightCount == 0) continue;
+      final gap = leftSum / leftCount - (weighted - leftSum) / rightCount;
+      final variance = leftCount.toDouble() * rightCount * gap * gap;
+      if (variance > best) {
+        best = variance;
+        split = level;
+      }
+    }
+    return split;
+  }
+
+  /// Suggest four crop handles in the normalized EXIF-oriented editor raster.
+  /// A missing result means no confident border: the editor keeps all pixels.
+  static List<double>? suggestCrop(Uint8List thumbnail) {
+    SchoolImageInput.validate(thumbnail);
+    final raster = img.decodePng(thumbnail);
+    if (raster == null) return null;
+    final points = _paperCorners(raster);
+    if (points == null) return null;
+    return [
+      for (final point in points) ...[
+        (point.x / (raster.width - 1)).clamp(0.0, 1.0).toDouble(),
+        (point.y / (raster.height - 1)).clamp(0.0, 1.0).toDouble(),
+      ],
+    ];
+  }
+
   /// Conservative bright-paper detection against a darker surrounding surface.
   /// Ambiguous/background-free scans retain all content instead of guessing.
   static List<img.Point>? _paperCorners(img.Image source) {
@@ -622,8 +799,13 @@ class DocumentProcessingEngine {
       border.add(light(sample.width - 1, y));
     }
     border.sort();
+    if (border.isEmpty) return null;
     final background = border[border.length ~/ 2];
-    if (background > 190) return null;
+    if (background > 215) return null;
+    // A relative threshold handles light cloth and shadowed paper without
+    // dropping the neutral-colour and connected-page geometry safeguards.
+    final adaptive = _adaptivePaperThreshold(sample);
+    final threshold = math.max(165.0, math.max(background + 22, adaptive.toDouble()));
     // Use one connected, neutral paper surface. Unrelated bright table/hand
     // pixels must never become the page's corners.
     final gw = (sample.width + 1) ~/ 2, gh = (sample.height + 1) ~/ 2;
@@ -634,8 +816,9 @@ class DocumentProcessingEngine {
         final spread =
             math.max(pixel.r, math.max(pixel.g, pixel.b)) -
             math.min(pixel.r, math.min(pixel.g, pixel.b));
-        if (light(x * 2, y * 2) > math.max(205, background + 45) &&
-            spread < 32) {
+        // Allow softly lit / slightly tinted paper against patterned cloth,
+        // but keep colour contrast and largest-component geometry safeguards.
+        if (light(x * 2, y * 2) > threshold && spread < 45) {
           mask[y * gw + x] = 1;
         }
       }
@@ -649,8 +832,13 @@ class DocumentProcessingEngine {
       for (var index = 0; index < queue.length; index++) {
         final cell = queue[index], x = cell % gw, y = cell ~/ gw;
         component.add(img.Point(x * 2, y * 2));
-        for (final next in [cell - 1, cell + 1, cell - gw, cell + gw]) {
-          if (next >= 0 && next < mask.length && mask[next] == 1) {
+        for (final next in [
+          if (x > 0) cell - 1,
+          if (x + 1 < gw) cell + 1,
+          if (y > 0) cell - gw,
+          if (y + 1 < gh) cell + gw,
+        ]) {
+          if (mask[next] == 1) {
             mask[next] = 2;
             queue.add(next);
           }
@@ -682,7 +870,9 @@ class DocumentProcessingEngine {
       area += a.x * b.y - b.x * a.y;
     }
     final quadArea = area.abs() / 2;
-    if (quadArea < sample.width * sample.height * 0.30 ||
+    final frameArea = sample.width * sample.height;
+    if (quadArea < frameArea * 0.30 ||
+        quadArea > frameArea * 0.96 ||
         points.length * 4 / quadArea < 0.70)
       return null;
     // Preserve a small margin so border text/seals are not shaved off.

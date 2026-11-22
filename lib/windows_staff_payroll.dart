@@ -50,6 +50,12 @@ class StaffPayroll {
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
     return next;
   }
+  /// Display grouping only: retain the stored role and salary identifiers.
+  static String displayCategory(Map<String, dynamic> person) =>
+      person['role'] == 'Teacher'
+          ? 'Teacher'
+          : OtherStaffDirectory.categoryFor(person);
+
   static Future<List<Map<String, dynamic>>> staff(String profile) async {
     _sameSchool(profile);
     final teachers = await FirebaseFirestore.instance.collection('teachers_directory').get();
@@ -69,7 +75,14 @@ class StaffPayroll {
   static Future<void> addStaff(String profile, String name, String role, String designation) => _serial(() async {
     _sameSchool(profile);
     if (name.trim().isEmpty || name.trim().length > 120 || designation.length > 120) throw ArgumentError('Enter a staff name (up to 120 characters).');
-    if (!['Office staff', 'Driver', 'Guard', 'Support staff', 'Other'].contains(role)) throw ArgumentError('Select a staff role. Add teachers in the Teachers section.');
+    if (!OtherStaffDirectory.roles.contains(role) &&
+        !OtherStaffDirectory.legacyOtherRoles.contains(role)) {
+      throw ArgumentError('Select a staff category. Add teachers in the Teachers section.');
+    }
+    if (OtherStaffDirectory.categoryFor({'role': role}) == 'Other staff' &&
+        designation.trim().isEmpty) {
+      throw ArgumentError('Enter a designation for Other Staff.');
+    }
     final ref = FirebaseFirestore.instance.collection('school_settings').doc('staff_payroll_directory');
     final previous = await ref.get();
     _sameSchool(profile);
@@ -492,7 +505,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final paid=rows.fold<int>(0,(v,r)=>v+StaffPayroll.paid(r));
     final deductions=rows.fold<int>(0,(v,r)=>v+((r['deductionPaise'] as num?)?.toInt() ?? 0));
     final paidCount=rows.where((r)=>StaffPayroll.paid(r)>=StaffPayroll.total(r)).length;
-    final people=_staff.where((s)=>(_role=='All staff'||s['role']==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
+    final people=_staff.where((s)=>(_role=='All staff'||StaffPayroll.displayCategory(s)==_role)&&'${s['name']} ${s['employeeId']} ${s['id']} ${s['designation']}'.toLowerCase().contains(_search.toLowerCase())).toList();
     final dark=Theme.of(context);
     return Theme(data:dark,child:Scaffold(appBar:AppBar(backgroundColor:WindowsAppearance.resolve(const Color(0xff0c233e)),
       title: Row(children:[Icon(Icons.account_balance_wallet,color: WindowsAppearance.foreground(Colors.lightBlueAccent)),SizedBox(width:16),
@@ -527,8 +540,8 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
           if(_error!=null) Padding(padding:const EdgeInsets.all(12),child:Text(_error!,style:TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.redAccent)))),
           SizedBox(height:16),
           Wrap(spacing:10,runSpacing:10,children:[
-            for(final role in ['All staff','Teacher','Office staff','Driver','Guard','Support staff','Other'])
-              ChoiceChip(selectedColor:WindowsAppearance.background(const Color(0xff6252ee)),labelStyle: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.resolve(Colors.white)),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>s['role']==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
+            for(final role in ['All staff','Teacher',...OtherStaffDirectory.roles])
+              ChoiceChip(selectedColor:WindowsAppearance.background(const Color(0xff6252ee)),labelStyle: TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.resolve(Colors.white)),label:Text('$role (${role=='All staff'?_staff.length:_staff.where((s)=>StaffPayroll.displayCategory(s)==role).length})'),selected:_role==role,onSelected:(_)=>setState(()=>_role=role)),
             SizedBox(width:320,child:TextField(onChanged:(v)=>setState(()=>_search=v),decoration:const InputDecoration(hintText:'Search by name, ID or department...',prefixIcon:Icon(Icons.search)))),
           ]),SizedBox(height:16),
           if(people.isEmpty) Padding(padding:EdgeInsets.all(30),child:Text('No staff found. Add teachers in Teachers and non-teaching staff in Other Staff.')),
@@ -562,7 +575,7 @@ class _StaffSalaryScreenState extends State<StaffSalaryScreen> {
     final color=status=='Paid'?Colors.green:Colors.orange;
     return DataRow(selected:_selected.contains(person['id']),onSelectChanged:(value)=>setState((){if(value==true)_selected.add(person['id'].toString());else _selected.remove(person['id']);}),cells:[
       DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['name'].toString(),style:TextStyle(fontFamily: 'Segoe UI', fontWeight:FontWeight.bold)),Text((person['employeeId']??person['teacherId']??person['id']).toString(),style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
-      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(person['role'].toString()),Text(person['designation']?.toString()??'',style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
+      DataCell(Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.start,children:[Text(StaffPayroll.displayCategory(person)),Text(OtherStaffDirectory.suggestedDesignation(person),style: TextStyle(fontFamily: 'Segoe UI', fontSize:11,color:WindowsAppearance.foreground(Colors.white54)))])),
       DataCell(Tooltip(message:'Attendance does not change salary automatically. Configure deductions in the salary editor.',child:Text(row?['attendanceSummary']?.toString()??'—'))),
       DataCell(Text(amount('basicPaise'))),DataCell(Text(amount('allowancePaise'))),DataCell(Text(amount('deductionPaise'))),DataCell(Text(row==null?'—':'₹${StaffPayroll.format(StaffPayroll.total(row))}')),
       DataCell(Chip(label:Text(status),backgroundColor:color.withValues(alpha:.2))),

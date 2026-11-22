@@ -58,6 +58,45 @@ class TemplateForgeOfflineOcr {
   static Future<bool> hasOrientationModel() async =>
     (await _availableLanguages()).contains('osd');
 
+  /// Local scan orientation. Use the installed, bundled model only; do not
+  /// download language data or send school documents to any service.
+  /// A low confidence or unavailable model must never guess an orientation.
+  static int confidentScanRotation(String output) {
+    final angle = RegExp(r'Rotate:\s*(0|90|180|270)\b').firstMatch(output);
+    final confidence = RegExp(r'Orientation confidence:\s*([0-9.]+)').firstMatch(output);
+    final score = double.tryParse(confidence?.group(1) ?? '') ?? 0;
+    return score >= 15 ? int.tryParse(angle?.group(1) ?? '') ?? 0 : 0;
+  }
+
+  static Future<int> scanRotation(Uint8List bytes) async {
+    if (!Platform.isWindows || bytes.isEmpty || bytes.length > 12 * 1024 * 1024) return 0;
+    final runtime = _runtime();
+    if (runtime.tessdata == null ||
+        !File(runtime.executable).existsSync() ||
+        !File('${runtime.tessdata}${Platform.pathSeparator}osd.traineddata').existsSync()) return 0;
+    Process? process;
+    try {
+      final child = await Process.start(runtime.executable,
+          _arguments(['stdin', 'stdout', '-l', 'osd', '--psm', '0'], runtime.tessdata),
+          runInShell: false);
+      process = child;
+      final output = child.stdout.transform(utf8.decoder).join();
+      final errors = child.stderr.transform(utf8.decoder).join();
+      final result = await (() async {
+        child.stdin.add(bytes);
+        await child.stdin.close();
+        final code = await child.exitCode;
+        final stdout = await output;
+        final stderr = await errors;
+        return code == 0 ? confidentScanRotation('$stdout\n$stderr') : 0;
+      })().timeout(const Duration(seconds: 4));
+      return result;
+    } catch (_) {
+      process?.kill();
+      return 0;
+    }
+  }
+
   /// Corrects a sideways camera capture using Tesseract's local OSD model.
   /// The source artwork is rotated only when OSD returns a confident right
   /// angle; uncertain scans remain untouched and are later rejected if needed.

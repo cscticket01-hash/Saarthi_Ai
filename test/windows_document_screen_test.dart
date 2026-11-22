@@ -18,6 +18,7 @@ import '../lib/windows_connect/central_school_cloud.dart';
 import '../lib/windows_local_firestore.dart';
 import '../lib/windows_runtime_flags.dart';
 import '../lib/platform/platform_config.dart';
+import '../lib/document_pipeline.dart';
 
 // Only the OS PDF raster boundary is simulated. The production pipeline still
 // processes raster pixels, builds both PDFs, previews and persists them.
@@ -34,6 +35,7 @@ class ReviewRaster extends PdfRaster {
 
 class ReviewPrinting extends MethodChannelPrinting {
   int rasterCalls = 0;
+  int pagesToReturn = 1;
   @override
   Stream<PdfRaster> raster(Uint8List document, List<int>? pages, double dpi) async* {
     rasterCalls++;
@@ -41,7 +43,7 @@ class ReviewPrinting extends MethodChannelPrinting {
     img.fill(paper, color: img.ColorRgba8(255, 255, 255, 255));
     img.fillRect(paper, x1: 15, y1: 20, x2: 95, y2: 25,
       color: img.ColorRgba8(0, 0, 0, 255));
-    yield ReviewRaster(paper);
+    for(var i=0;i<pagesToReturn;i++) yield ReviewRaster(paper);
   }
 }
 
@@ -174,6 +176,43 @@ void main() {
     expect(await io(t, count), existing);
   }
 
+  testWidgets('PDF over eight pages is rejected before a save can be offered',(t) async {
+    rasterizer.pagesToReturn=9;
+    final document=pw.Document()..addPage(pw.Page(build:(_)=>pw.Text('Nine page fixture')));
+    final source=(await io(t,document.save))!;
+    await expectLater(io(t,()=>DocumentPipeline.process(
+      source,'application/pdf',scope:'pdf-over-eight-pages')),throwsFormatException);
+    expect(rasterizer.rasterCalls,1);
+    expect(t.takeException(),isNull);
+  });
+
+  testWidgets('PDF above 500 KB enters compression-only path and remains within quota',(t) async {
+    final document=pw.Document()..addPage(pw.Page(build:(_)=>pw.Text('Original searchable school PDF')));
+    final source=(await io(t,document.save))!;
+    final sourceText=String.fromCharCodes(source);
+    final eof=sourceText.lastIndexOf('%%EOF');
+    expect(eof,greaterThan(0));
+    final oversized=Uint8List.fromList([
+      ...source.take(eof),
+      ...List<int>.filled(520*1024,0x20),
+      ...source.skip(eof),
+    ]);
+    expect(oversized.length,greaterThan(DocumentPipeline.scanPageImageBudget));
+    final result=(await io(t,()=>DocumentPipeline.process(
+      oversized,'application/pdf',scope:'pdf-compression-over-limit'))) as Map<String,dynamic>;
+    final output=result['optimized'] as Uint8List;
+    expect(result['pageCount'],1);
+    expect(result['sourceRetained'],false);
+    expect(result['highQuality'],orderedEquals(oversized));
+    expect(String.fromCharCodes(output.take(5)),'%PDF-');
+    expect(output.length,lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
+    expect(output, isNot(orderedEquals(oversized)));
+    expect(result['cleanupStatus'],contains('compression completed'));
+    expect(result['previewPages'],isA<List<Uint8List>>());
+    expect(rasterizer.rasterCalls,1);
+    expect(t.takeException(),isNull);
+  });
+
   testWidgets(
       'production Documents screen legacy toggle OFF: PNG and PDF offline save, cancellation and failure preserve records/queue',
       (t) async {
@@ -202,9 +241,24 @@ void main() {
                 .onPressed !=
             null);
     if (pdf) debugPrint('PDF regression: processed preview ready');
+    if (pdf) {
+      await t.pump();
+      await waitFor(t,()=>rasterizer.rasterCalls>=2);
+    }
     expect(picker.calls, 1);
+    if (!pdf) {
+      expect(find.byKey(const ValueKey('document-edit-scan')), findsOneWidget);
+      expect(find.text('Rotate'), findsOneWidget);
+      expect(find.text('Filters'), findsOneWidget);
+      expect(find.text('Adjust'), findsOneWidget);
+    }
     expect(await io(t, count), 0);
-    expect(find.textContaining('optimized'), findsWidgets);
+    expect(find.byKey(const ValueKey('document-preview-metrics')), findsOneWidget);
+    if (pdf) {
+      expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
+      expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
+    }
     await t.tap(find.byKey(const ValueKey('document-confirm-save')));
     await waitFor(
         t,
@@ -235,14 +289,17 @@ void main() {
     expect(await io(t, WindowsRuntimeFlags.localStorageEnabled), false);
     expect(await io(t, db.localPersistenceEnabled), true);
     expect(row['optimizedPath'], isNotEmpty);
-    expect(row['cleanupStatus'], contains(pdf ? 'pages processed' : ''));
+    expect(row['cleanupStatus'], contains(pdf
+        ? 'Original PDF retained'
+        : ''));
     final optimized = await io(t, () => File(row['optimizedPath'] as String).readAsBytes());
     expect(row['sizeBytes'], optimized!.length);
     expect(await io(t, () => File(row['processedPath'] as String).exists()), true);
     if (pdf) {
-      expect(rasterizer.rasterCalls, greaterThanOrEqualTo(2));
+      // Preview and Save must reuse the prepared page owned by this source.
+      expect(rasterizer.rasterCalls, 2);
       expect(String.fromCharCodes(optimized.take(5)), '%PDF-');
-      expect(optimized, isNot(source));
+      expect(optimized, orderedEquals(source));
     }
 
     // Continue the real screen/session, including its existing document. This

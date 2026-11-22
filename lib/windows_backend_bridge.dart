@@ -1069,6 +1069,8 @@ class WindowsBackendBridge {
             if (record['uploadedAt'] is num && record['uploadedAt'] > 0) 'uploadedAt':record['uploadedAt'],
             'sizeBytes': record['sizeBytes'],
             'sourceBytes': record['sourceBytes'],
+            if (record['pageCount'] is int) 'pageCount': record['pageCount'],
+            if (record['scanQuotaVersion'] == 1) 'scanQuotaVersion': 1,
             'contentHash': crypto.sha256.convert(bytes).toString(),
             'cleanupStatus': record['cleanupStatus'],
             'targetMet': record['targetMet'],
@@ -2143,7 +2145,7 @@ class WindowsBackendBridge {
               'studentId','studentName','studentClass','rollNo',
               'documentName','fileName','mimeType','uploadedBy',
               'documentKind','ownerRole','personId','inputRevision',
-              'documentRevision','uploadedAt','sizeBytes','sourceBytes',
+              'documentRevision','uploadedAt','sizeBytes','sourceBytes','pageCount','scanQuotaVersion',
               'contentHash','cleanupStatus','targetMet',
             ])
               if (body[key] != null) key: body[key],
@@ -3059,8 +3061,10 @@ class WindowsBackendBridge {
                 .doc(documentId)
                 .get())
             .data();
-    if (previous != null && previous['studentId'] != studentId)
+    if ((previous != null && previous['studentId'] != studentId) ||
+        (remoteBase != null && remoteBase['studentId'] != studentId)) {
       throw StateError('Document belongs to another student.');
+    }
     final raw = body['fileBase64']?.toString() ?? '';
     final bytes = _decodeDataUri(raw);
     if (bytes.isEmpty || bytes.length > 50 * 1024 * 1024)
@@ -3117,11 +3121,14 @@ class WindowsBackendBridge {
           Uint8List.fromList(bytes),
           body['mimeType']?.toString() ?? '',
           scope: originProfile,
+          edits: body['scanEdits'] == null ? null :
+              Map<String, dynamic>.from(body['scanEdits'] as Map),
         );
       optimized = processing['optimized'] as Uint8List;
       highQuality = processing['highQuality'] as Uint8List;
     } catch (e) {
       if (body['_queueCloud'] == true ||
+          StudentInventoryPolicy.isScan(body) ||
           {'feeReceipt','marksheet'}.contains(body['documentKind'])) rethrow;
       processingWarning =
           'Processing unavailable; original retained. ${e.runtimeType}';
@@ -3140,6 +3147,48 @@ class WindowsBackendBridge {
         throw StateError('School changed before durable document save.');
       }
     }
+    // Recheck the shared quota inside the managed document-write lock,
+    // against local and cached cloud rows. The UI snapshot alone is not enough.
+    if (StudentInventoryPolicy.isScan(body)) {
+      final db = FirebaseFirestore.instance;
+      if (db.activeProfileId != originProfile) {
+        throw StateError('School changed before document quota validation.');
+      }
+      final localRows = await db.collection('_local_student_documents')
+          .where('studentId', isEqualTo: studentId).get();
+      final cloudRows = await db.collection('documents')
+          .where('studentId', isEqualTo: studentId).get();
+      final manifest = (await db.collection('_windows_sync_manifest').get())
+          .docs.where((d) => d.data()['collection'] == 'documents')
+          .expand((d) => d.data()['deletedIds'] as List? ?? [])
+          .toSet();
+      if (db.activeProfileId != originProfile) {
+        throw StateError('School changed before document save.');
+      }
+      final rows = <String, Map<String, dynamic>>{
+        for (final row in cloudRows.docs)
+          row.id: {...row.data(), 'documentId': row.id},
+        for (final row in localRows.docs)
+          row.id: {
+            ...row.data(),
+            if (row.data()['syncState'] == 'Synced' &&
+                cloudRows.docs.any((remote) => remote.id == row.id))
+              ...cloudRows.docs.firstWhere((remote) => remote.id == row.id).data(),
+            'documentId': row.id,
+          },
+      };
+      final usage = StudentInventoryPolicy.usage(
+        rows.values.where((row) =>
+            !(row['syncState'] == 'Synced' && manifest.contains(row['documentId']))),
+        replacingId: documentId,
+      );
+      final problem = usage.problem(
+        addingBytes: optimized?.length ?? 0,
+        addingPages: processing['pageCount'] as int? ?? 0,
+      );
+      if (problem != null) throw FormatException(problem);
+    }
+
     await file.writeAsBytes(bytes, flush: true);
     final optimizedExtension = processing['mimeType'] == 'application/pdf'
         ? 'pdf'
@@ -3205,6 +3254,10 @@ class WindowsBackendBridge {
       'mimeType': body['mimeType'] ?? '',
       'sizeBytes': optimized?.length ?? bytes.length,
       'sourceBytes': bytes.length,
+      if (StudentInventoryPolicy.isScan(body)) ...{
+        'pageCount': processing['pageCount'],
+        'scanQuotaVersion': 1,
+      },
       'documentRevision': secureSetupToken(24),
       'baseCloudRevision':
           previous?['cloudRevision'] ??

@@ -2,21 +2,53 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 import '../lib/document_upload_dialog.dart';
+import '../lib/document_pdf_preview.dart';
 import '../lib/document_pipeline.dart';
+
+class _MultiFilePicker extends FileSelectorPlatform {
+  _MultiFilePicker(this.files);
+  final List<XFile> files;
+  @override
+  Future<XFile?> openFile({List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,String? confirmButtonText}) async =>
+      files.isEmpty?null:files.first;
+  @override
+  Future<List<XFile>> openFiles({List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,String? confirmButtonText}) async => files;
+}
 
 void main() {
   final bytes = Uint8List.fromList(
     img.encodePng(img.Image(width: 40, height: 60)),
   );
+  test('multiple selection never rewrites source PDFs by merging them', () async {
+    final previous=FileSelectorPlatform.instance;
+    FileSelectorPlatform.instance=_MultiFilePicker([
+      XFile.fromData(bytes,name:'one.pdf'),
+      XFile.fromData(bytes,name:'two.png'),
+    ]);
+    addTearDown(()=>FileSelectorPlatform.instance=previous);
+    await expectLater(DocumentFilePicker.pick(),throwsFormatException);
+  });
+
   Future<Map<String, dynamic>> processed(
     Uint8List b,
     String m, {
     String scope = '',
-  }) async => {'optimized': bytes, 'mimeType': 'image/jpeg'};
+  }) async => {
+    'optimized': bytes,
+    'highQuality': bytes,
+    'mimeType': m,
+    'pageCount': 1,
+    if(m == 'application/pdf') 'previewDpi': 150,
+    if(m == 'application/pdf') 'previewPages': <Uint8List>[bytes],
+    if(m == 'application/pdf') 'sourceRetained': true,
+  };
   Future<void> host(
     WidgetTester t, {
     required Future<SelectedDocument?> Function() picker,
@@ -70,6 +102,18 @@ void main() {
   }
 
 
+  testWidgets('PDF preview scrolls thumbnails horizontally and opens selected page',(t) async {
+    final second=Uint8List.fromList(img.encodePng(img.Image(width:50,height:70)));
+    await t.pumpWidget(MaterialApp(home:Scaffold(body:DocumentPdfPreview(pages:[bytes,second]))));
+    expect(find.text('Page 1 of 2'),findsOneWidget);
+    expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')),findsOneWidget);
+    expect(find.byKey(const ValueKey('pdf-page-thumbnail-1')),findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('pdf-page-thumbnail-1')));
+    await t.pump();
+    expect(find.text('Page 2 of 2'),findsOneWidget);
+    expect(t.takeException(),isNull);
+  });
+
   test('WIN-004 rejects more than eight selected Smart Scan pages', () async {
     final input = {
       'mime': 'image/png',
@@ -87,9 +131,11 @@ void main() {
       expect(perPage * pageCount,
           lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
       expect(perPage, greaterThan(0));
-      expect(perPage, lessThanOrEqualTo(80 * 1024));
+      expect(perPage, lessThanOrEqualTo(DocumentPipeline.scanPageImageBudget));
     }
-    expect(DocumentPipeline.pageImageTargetFor(8), 64000);
+    expect(DocumentPipeline.pageImageTargetFor(4), 126976);
+    expect(DocumentPipeline.pageImageTargetFor(8), 63488);
+    expect(DocumentPipeline.pageImageTargetFor(4), greaterThan(80 * 1024));
     expect(() => DocumentPipeline.pageImageTargetFor(0), throwsRangeError);
     expect(() => DocumentPipeline.pageImageTargetFor(9), throwsRangeError);
   });
@@ -160,7 +206,17 @@ void main() {
       );
       expect(calls, 1);
       expect(writes, 0);
-      expect(find.textContaining('optimized'), findsOneWidget);
+      final metrics = find.byKey(const ValueKey('document-preview-metrics'));
+      expect(metrics, findsOneWidget);
+      if (ext == 'pdf') {
+        expect(t.widget<Text>(metrics).data, contains('1 page'));
+        expect(find.text('Original PDF retained • compression not required'), findsOneWidget);
+        expect(find.byKey(const ValueKey('pdf-page-thumbnail-0')), findsOneWidget);
+        expect(find.byKey(const ValueKey('document-edit-pdf')), findsNothing);
+      } else {
+        expect(t.widget<Text>(metrics).data, contains('optimized ${bytes.length} bytes'));
+        expect(t.widget<Text>(metrics).data, contains('original ${bytes.length} bytes'));
+      }
       await t.tap(find.byKey(const ValueKey('document-confirm-save')));
       await t.pumpAndSettle();
       expect(writes, 1);
