@@ -558,6 +558,10 @@ void main() {
     expect(legacy['role'], 'Guard');
     expect(legacy.containsKey('designation'), isFalse);
     expect(OtherStaffDirectory.suggestedDesignation(legacy), 'Guard');
+    for (final role in ['Driver', 'Guard', 'Support staff']) {
+      expect(OtherStaffDirectory.suggestedDesignation({'role': role}), role);
+    }
+    expect(OtherStaffDirectory.suggestedDesignation({'role': 'Other'}), isEmpty);
     final payrollPerson = (await StaffPayroll.staff(profile)).single;
     expect(StaffPayroll.displayCategory(payrollPerson), 'Other staff');
     expect(payrollPerson['employeeId'], 'G-OLD');
