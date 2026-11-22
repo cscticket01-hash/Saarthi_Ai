@@ -391,6 +391,47 @@ void main() {
     expect((await row.reference.get()).data()?['syncState'],'cloudAccepted');
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'pending');
   });
+  test('authorized document replay recovers local CAS before final provider settlement', () async {
+    const id='restart-document';
+    const op='document-restart-operation-001';
+    final hash=List.filled(64,'a').join();
+    final original=<String,dynamic>{'schoolId':school,'documentId':id,
+      'documentRevision':op,'contentHash':hash,'localPath':'synthetic-local-path',
+      'syncState':'pending'};
+    final journal=<String,dynamic>{'source':List.filled(64,'b').join(),
+      'schoolId':school,'profileId':db.activeProfileId,
+      'action':'managed/document/stage/resumable','collection':'documents',
+      'id':id,'originalOperationId':op,'operation':'write',
+      'handoffAuthorized':true,'fileSha256':hash};
+    final ticket=exactSidecarTicket(journal,school)!;
+    final ref=db.collection('_windows_document_outbox').doc(id);
+    final local=db.collection('_local_student_documents').doc(id);
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await ref.set(original);await local.set(original);
+    });
+    await WindowsDriveDeliveryQueue.retainEdge({...journal,
+      'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
+        'cloudflareAccepted':true,'driveState':'verified','committed':true,
+        'fileId':'real-file','delivery':{'lane':'file-$ticket','id':ticket}}});
+    final retained=(await db.collection(WindowsDriveDeliveryQueue.collection).get()).docs.single.data();
+    expect(retained['state'],'pending');
+    expect(retained['providerVerifiedAwaitingLocalCas'],true);
+    expect(recoverableStagedDocumentJournal(original,retained,school,id),true);
+    expect(recoverableStagedDocumentJournal({...original,'contentHash':'wrong'},retained,school,id),false);
+    expect(recoverableStagedDocumentJournal({...original,'documentRevision':'replacement-generation'},retained,school,id),false);
+    await WindowsDriveDeliveryQueue.poll(school,call:(action,body) async {
+      expect(body['id'],ticket);
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','committed':true,'fileId':'real-file',
+        'fileUrl':'https://drive.google.com/file/d/real-file/view',
+        'documentRecord':{'id':id,'operationId':op,'fileId':'real-file',
+          'recordRevision':'canonical-document-revision','contentHash':hash}};
+    });
+    expect((await ref.get()).exists,false);
+    expect((await local.get()).data()?['syncState'],'Synced');
+    expect((await local.get()).data()?['cloudRecordRevision'],'canonical-document-revision');
+  });
+
   test('exact original portrait file and person record must BOTH verify before local ACK', () {
     const ticket='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const fileHash='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -456,14 +497,17 @@ void main() {
       'action':'managed/record/media/stage/resumable',
       'collection':'students_directory','id':docId,
       'operation':'write','originalOperationId':op,
+      'handoffAuthorized':true,'fileSha256':fileHash,'mediaSourceHash':rawHash,
       'proof':{'success':true,'schoolId':school,'edgeDeliveryVersion':1,
         'cloudflareAccepted':true,'driveState':'pending',
         'delivery':{'lane':'file-$ticket','id':ticket}},
     });
-    final bound=await db.recordOutboxCloudHandoff(ref,live,
-      ticketId:ticket,lane:'file-$ticket',
-      mediaSourceHash:rawHash,mediaFileSha256:fileHash);
-    expect(bound,true);
+    var resends=0;
+    await WindowsPendingSchoolSync.flush(profileId:db.activeProfileId,
+      send:(_,__,___,____)async=>fail('Unexpected legacy send'),
+      sendVersioned:(_)async{resends++;return 'unexpected';});
+    expect(resends,0);
+    expect((await ref.get()).data()?['syncState'],'cloudAccepted');
     expect((await ref.get()).data()?['cloudTicketLane'],'file-$ticket');
     var polls=0;
     await WindowsDriveDeliveryQueue.poll(school,call:(action,body)async{
