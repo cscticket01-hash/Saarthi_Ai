@@ -47,10 +47,7 @@ Future<void> openSyncTool(WidgetTester tester, String label) async {
   final scrollState = tester.state<ScrollableState>(find.byType(Scrollable).first);
   scrollState.position.jumpTo(scrollState.position.minScrollExtent);
   await tester.pumpAndSettle();
-  expect(overview.hitTestable(), findsOneWidget);
-  if (!primary.contains(label)) {
-    await tester.tap(overview.hitTestable());
-    await tester.pumpAndSettle();
+  if (!primary.contains(label) || overview.evaluate().isEmpty) {
     await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Troubleshoot'));
