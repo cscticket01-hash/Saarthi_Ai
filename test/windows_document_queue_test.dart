@@ -92,6 +92,53 @@ void main() {
     expect(eligible({...original,'syncState':'needsAttention'}),false);
     expect(eligible({...original,'syncState':'conflict'}),false);
   });
+  test('legacy scanned document without file hash binds exact immutable bytes before provider send', () async {
+    final temp=await Directory.systemTemp.createTemp('legacy-scan-hash-');
+    try {
+      final file=File('${temp.path}/old-scan.jpg');
+      final bytes=<int>[1,8,3,9,7];
+      await file.writeAsBytes(bytes);
+      const id='old-scanned-document';
+      final row={'schoolId':school,'studentId':'S1','documentRevision':'original-scan-001',
+        'localPath':file.path,'syncState':'Pending','baseCloudRevision':'',
+        'deleted':false,'mimeType':'image/jpeg','fileName':'old-scan.jpg'};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      var sent=0;
+      await WindowsBackendBridge.flushDocumentPending(send:(payload)async {
+        sent++;
+        final digest=sha256.convert(bytes).toString();
+        expect(payload['contentHash'],digest);
+        expect((await db.collection('_windows_document_outbox').doc(id).get()).data()?['contentHash'],digest);
+        expect((await db.collection('_local_student_documents').doc(id).get()).data()?['contentHash'],digest);
+        return documentAckFixture(payload,71);
+      });
+      expect(sent,1);
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,false);
+      expect((await db.collection('_local_student_documents').doc(id).get()).data()?['contentHash'],sha256.convert(bytes).toString());
+    } finally { await temp.delete(recursive:true); }
+  });
+
+  test('a hash mismatch refuses document upload and preserves the original queue', () async {
+    final temp=await Directory.systemTemp.createTemp('scan-hash-mismatch-');
+    try {
+      final file=File('${temp.path}/immutable-scan.jpg');
+      await file.writeAsBytes([1,2,3]);
+      const id='mismatched-scanned-document';
+      final row={'schoolId':school,'studentId':'S1','documentRevision':'original-scan-002',
+        'localPath':file.path,'syncState':'Pending','baseCloudRevision':'',
+        'contentHash':'${'a'*64}','deleted':false,'mimeType':'image/jpeg'};
+      await db.collection('_local_student_documents').doc(id).set(row);
+      await db.collection('_windows_document_outbox').doc(id).set(row);
+      var sent=0;
+      await expectLater(WindowsBackendBridge.flushDocumentPending(send:(_)async {
+        sent++;return {};
+      }),throwsA(anything));
+      expect(sent,0);
+      expect((await db.collection('_windows_document_outbox').doc(id).get()).exists,true);
+    } finally { await temp.delete(recursive:true); }
+  });
+
   test('foreign document outbox blocks before any upload or receipt', () async {
     const id='foreign-document-pending';
     await db.collection('_windows_document_outbox').doc(id).set({
