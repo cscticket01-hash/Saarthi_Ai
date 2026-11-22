@@ -29,6 +29,31 @@ import '../school_qr_link.dart';
 export '../school_qr_link.dart';
 import '../school_backend_transport.dart';
 
+/// The Worker notice snapshot is complete only below its 100-item
+/// response cap. Never overwrite an unbounded signed Script cache with a
+/// truncated edge page or accept an unscoped/duplicate notice identity.
+List<Map<String,dynamic>>? verifiedCompleteCloudflareNotices(
+    Map<String,dynamic> response, String schoolId, int statusCode) {
+  if(statusCode!=200 || response['success']!=true ||
+     response['schoolId']!=schoolId ||
+     response['revision'] is! String ||
+     (response['revision'] as String).isEmpty ||
+     response['notices'] is! List)return null;
+  final values=response['notices'] as List;
+  if(values.length>=100)return null; // Worker snapshot uses slice(0,100).
+  final seen=<String>{},out=<Map<String,dynamic>>[];
+  for(final raw in values){
+    if(raw is! Map ||
+       raw['id'] is! String || (raw['id'] as String).isEmpty ||
+       !seen.add(raw['id'] as String) ||
+       raw['_noticeRevision'] is! String ||
+       (raw['_noticeRevision'] as String).isEmpty ||
+       raw['schoolId']!=null && raw['schoolId']!=schoolId) return null;
+    out.add(Map<String,dynamic>.from(raw));
+  }
+  return out;
+}
+
 /// An authoritative denial must never be mistaken for a transient outage.
 class SchoolAccessDenied extends StateError {
   SchoolAccessDenied(super.message);
@@ -1365,6 +1390,7 @@ class SchoolSession {
     await _adoptSharedSnapshot();
     unawaited(flushAttendance().catchError((_) {}));
     final generation = _generation;
+    List<Map<String,dynamic>>? authoritativeEdgeNotices;
     final lane = _cloudflareLane, currentLink = link;
     if (lane != null && currentLink != null && lane.validFor(currentLink.schoolId, schoolToken)) {
       try {
@@ -1373,11 +1399,22 @@ class SchoolSession {
           'linkToken': currentLink.linkToken, 'sessionToken': schoolToken,
         });
         final data = _decodeSchoolResponse(reply.body);
-        if (generation == _generation && reply.statusCode == 200 && data['success'] == true &&
-            data['schoolId'] == currentLink.schoolId && data['notices'] is List) {
-          dashboard = {...dashboard, 'notices': data['notices']};
-          connectionChanges.value++;
-          await _persist();
+        final fresh = verifiedCompleteCloudflareNotices(
+            data,currentLink.schoolId,reply.statusCode);
+        if (generation == _generation && fresh != null) {
+          final prior = dashboard;
+          dashboard = {...dashboard, 'notices': fresh};
+          try {
+            await _persist();
+            if(generation!=_generation)
+              throw SchoolAccessDenied('School session changed during notice save.');
+            authoritativeEdgeNotices = fresh;
+            connectionChanges.value++;
+          } catch (_) {
+            // A failed cache commit must not leave uncommitted edge rows in
+            // memory. The regular signed dashboard can still refresh.
+            if(generation==_generation)dashboard=prior;
+          }
         }
       } catch (_) { /* Keep verified cached notices during an edge outage. */ }
     }
@@ -1578,6 +1615,11 @@ class SchoolSession {
         }
       }
     }
+    // Cloudflare-first notices can be newer than the asynchronous Google
+    // Drive backup snapshot. A separately authenticated COMPLETE edge list
+    // wins over this cycle's potentially stale Script notice group only.
+    if(authoritativeEdgeNotices!=null)
+      merged['notices']=authoritativeEdgeNotices;
     if (jsonEncode(merged).length > 2 * 1024 * 1024)
       throw StateError('School response exceeds cache safety limit.');
     dashboard = merged;
