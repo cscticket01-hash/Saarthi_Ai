@@ -101,7 +101,8 @@ Future<void> syncLocalRestoreRequests(FirebaseFirestore db, String school,
           RegExp(r'^(cf-|live-)').hasMatch(ack['recordRevision'])) {
         throw StateError('Durable same-school restore ACK required.');
       }
-      await db.finishLocalRestore(deletionId,expectedDeletedRevision:revision,restoredRevision:ack['recordRevision'] as String);
+      await db.finishLocalRestore(deletionId,expectedDeletedRevision:revision,
+        restoredRevision:ack['recordRevision'] as String,expectedRestoreRequest:expected);
     } catch (error) {
       check();
       final decision=windowsSyncRecovery(error);
