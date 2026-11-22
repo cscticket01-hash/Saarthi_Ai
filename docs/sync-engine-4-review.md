@@ -1,3 +1,9 @@
 # Sync Engine 4 review (stage 1)
 
 Existing owners retained. This branch starts from 2c98da0133794dc29d1414873e05d89c5679868d; Work Mode branch remains independent. School identity checks, serialized profile activation, stale dispatch cancellation, UI label/pause menu and foreground Drive status separation are first-stage changes. No school data deleted or production deployment. The approved overall scope is not yet complete: direct authorized Worker fast path, canonical all-collection ACK, parallel admission, independent provider retry, native recovery, cross-school repair rollout, Android delta feed, complete graphical evidence projection, Apps Script optimization and provider acceptance remain. Tests are source changes until the exact commit CI passes.
+
+## Stage 2: bounded admission and troubleshooting
+
+Windows managed outbox now supports a maximum three-request concurrent window for eligible same-school notice/calendar writes with negotiated edge-delivery support. Duplicate record keys and dependent person/finance/attendance/file/delete work remain ordered. The original CAS and receipt owners are retained; a fatal window failure drains admitted requests before further admission. Pause, school identity, access and quota gates are rechecked before new writes. Added regression source for eligibility and the pause barrier; this is not a measured device or server performance result.
+
+Troubleshoot now has a combined local/queue/authenticated cloud diagnosis and distinguishes retained cloud-owned pending Drive entries from the device queue without retiring rows. Regression source added. Full direct Worker transport, canonical delete/all-collection ACK, broader parallel lanes, independent provider recovery rollout, Android feed, Apps Script optimization and provider acceptance remain open. No production deployment or manually dispatched workflow in this stage.
