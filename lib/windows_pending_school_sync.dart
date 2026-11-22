@@ -120,7 +120,7 @@ class WindowsPendingSchoolSync {
           state = item['syncState'],
           category = item['failureCategory'];
       // Only the exact atomic bundle owner can repair this reserved operation.
-      if(item['atomicBundleId']!=null)continue;
+      if(item['atomicBundleId']!=null || item['priorCloudWrite']!=null)continue;
       // Existing unknown notices must not be stuck forever. Probe only the
       // original same-school DELETE; no automatic replay without readback.
       final unknownNoticeDelete = state == 'needsAttention' &&
@@ -535,6 +535,7 @@ class WindowsPendingSchoolSync {
       // second mutation merely to poll Google Drive; the receipt journal can
       // settle it when the authenticated provider proof eventually arrives.
       if(item['syncState']=='cloudAccepted')return;
+      if(item['priorCloudWrite']!=null)return; // Existing receipt owner releases predecessor.
       if (school is String && sendVersioned != null) {
         final bound = stagedJournals.where((journal) =>
             recoverableStagedRecordJournal(item,journal,school)).toList();
