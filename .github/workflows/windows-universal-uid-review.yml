@@ -9,9 +9,6 @@ on:
       - 'functions/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
-      - 'windows/**'
-      - 'android/**'
-      - 'web/**'
       - '.github/workflows/windows-universal-uid-review.yml'
   workflow_dispatch:
 permissions:
@@ -85,6 +82,23 @@ jobs:
           test/document_processing_engine_test.dart
           test/qr_card_authorization_test.dart
           test/school_qr_login_test.dart
+      - name: Prepare the Windows runner
+        shell: bash
+        run: |
+          flutter create --platforms=windows --project-name saarthi_ai .
+          python .github/scripts/configure_windows_single_instance.py
+          python - <<'PYTHON'
+          import re
+          from pathlib import Path
+          pubspec = Path('pubspec.yaml')
+          source = pubspec.read_text()
+          for name in ('firebase_core', 'firebase_auth', 'firebase_messaging',
+                       'flutter_local_notifications', 'cloud_firestore',
+                       'agora_rtc_engine', 'mobile_scanner', 'geolocator'):
+              source = re.sub(r'^  ' + name + r':[^\n]*\n', '', source, flags=re.M)
+          pubspec.write_text(source)
+          PYTHON
+          flutter pub get
       - name: Compile the Windows application
         run: >-
           flutter build windows --release -t lib/main_windows.dart
@@ -110,4 +124,6 @@ jobs:
           test/published_id_card_test.dart
           test/web_atomic_bundle_review_test.dart
       - name: Compile the Web application
-        run: flutter build web --release
+        run: |
+          flutter create --platforms=web --project-name saarthi_ai .
+          flutter build web --release

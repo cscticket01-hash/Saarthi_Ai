@@ -15255,6 +15255,13 @@ class _AddTeacherScreenState
   final _classesCtrl =
       TextEditingController();
 
+  final _scheduleControllers = {
+    for (final day in const [
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    ])
+      day: TextEditingController(),
+  };
+
   String _employmentType =
       'Permanent';
 
@@ -15294,6 +15301,9 @@ class _AddTeacherScreenState
     _stateCtrl.dispose();
     _districtCtrl.dispose();
     _classesCtrl.dispose();
+    for (final controller in _scheduleControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -15514,14 +15524,9 @@ class _AddTeacherScreenState
         );
       }
 
-      final schedule =
-          <String, String>{
-        'Monday': '',
-        'Tuesday': '',
-        'Wednesday': '',
-        'Thursday': '',
-        'Friday': '',
-        'Saturday': '',
+      final schedule = {
+        for (final entry in _scheduleControllers.entries)
+          entry.key: entry.value.text.trim(),
       };
 
       // FIRST:
@@ -16191,6 +16196,24 @@ class _AddTeacherScreenState
                           },
                         ),
                       ),
+                    ],
+                  ),
+
+                  ExpansionTile(
+                    title: const Text('Weekly Schedule'),
+                    children: [
+                      for (final entry in _scheduleControllers.entries)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 11),
+                          child: TextField(
+                            controller: entry.value,
+                            enabled: !_saving,
+                            decoration: _field(
+                              entry.key,
+                              Icons.schedule_outlined,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
 
