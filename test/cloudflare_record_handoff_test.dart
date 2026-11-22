@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -191,6 +192,59 @@ void main() {
     });
     expect((await ref.get()).exists,false);
     expect((await WindowsDriveDeliveryQueue.history(school)).single['state'],'completed');
+  });
+
+  test('edge receipt status is independent of slow live status and honors provider deadline', () async {
+    final journal=db.collection(WindowsDriveDeliveryQueue.collection);
+    final ticket=List.filled(64,'d').join();
+    const operation='live-operation-00000001';
+    final now=DateTime.utc(2026,11,22,12);
+    final deadline=now.add(const Duration(minutes:2)).millisecondsSinceEpoch;
+    await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(() async {
+      await journal.doc('live-receipt').set({
+        'schoolId':school,'liveProtocol':1,'operationId':operation,
+        'recordRevision':'live-revision-01','state':'pending','nextPollAt':0,
+      });
+      await journal.doc('edge-receipt').set({
+        'schoolId':school,'edgeDeliveryVersion':1,'operationId':'edge-operation-00000001',
+        'ticketId':ticket,'lane':'records','state':'pending','nextPollAt':0,
+      });
+    });
+    final liveRelease=Completer<void>(), edgeEntered=Completer<void>();
+    final poll=WindowsDriveDeliveryQueue.poll(school,clock:()=>now,call:(action,body)async{
+      if(action=='managed/live/operationReceipt') {
+        await liveRelease.future;
+        return {'success':true,'schoolId':school,'liveProtocol':1,
+          'operationId':operation,'found':true,'receipt':{
+            'schoolId':school,'operationId':operation,'recordRevision':'live-revision-01',
+            'backupState':'pending',
+          }};
+      }
+      expect(action,'managed/cloudflare/operation');
+      expect(body['id'],ticket);
+      edgeEntered.complete();
+      return {'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'pending','delivery':{'lane':'records','id':ticket},
+        'deliveryStatus':{'state':'retry','retryAtMillis':deadline}};
+    });
+    try {
+      await edgeEntered.future.timeout(const Duration(seconds:5));
+      expect(liveRelease.isCompleted,false);
+    } finally {
+      liveRelease.complete();
+      await poll;
+    }
+    final edge=(await journal.doc('edge-receipt').get()).data()!;
+    expect(edge['nextPollAt'],deadline);
+    expect(edge['state'],'pending');
+    var edgePolls=0;
+    await WindowsDriveDeliveryQueue.poll(school,
+      clock:()=>now.add(const Duration(seconds:1)),
+      call:(action,body) async {
+        if(action=='managed/cloudflare/operation')edgePolls++;
+        return {};
+      });
+    expect(edgePolls,0,reason:'provider retry deadline must not be bypassed');
   });
 
   test('invalid final revision does not retire accepted original', () async {
