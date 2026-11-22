@@ -705,16 +705,22 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   final _settingsKey = GlobalKey();
   final _statusKey = GlobalKey();
 
+  bool _darkDashboard(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+
   Widget _panelBox(Widget child) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
       gradient:  LinearGradient(
-        colors: [WindowsAppearance.resolve(Color(0xFF132D46)), WindowsAppearance.resolve(Color(0xFF0C1F34))],
+        colors: _darkDashboard(context)
+            ? const [Color(0xFF0B2A30), Color(0xFF061C22)]
+            : [WindowsAppearance.resolve(const Color(0xFF132D46)), WindowsAppearance.resolve(const Color(0xFF0C1F34))],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: WindowsAppearance.outline(const Color(0xFF21475D))),
+      border: Border.all(color: _darkDashboard(context)
+          ? const Color(0xFF396367)
+          : WindowsAppearance.outline(const Color(0xFF21475D))),
     ),
     child: child,
   );
@@ -900,7 +906,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: .07),
+        color: _darkDashboard(context)
+            ? Color.alphaBlend(accent.withValues(alpha: .075), const Color(0xFF09262C))
+            : accent.withValues(alpha: .07),
         border: Border.all(color: accent.withValues(alpha: .28)),
         borderRadius: BorderRadius.circular(12),
       ),
@@ -1396,6 +1404,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   @override
   Widget build(BuildContext context) { WindowsAppearance.watch(context); return  Theme(
     data: Theme.of(context).copyWith(
+      colorScheme: _darkDashboard(context)
+          ? Theme.of(context).colorScheme.copyWith(
+              primary: const Color(0xFF82D9CD),
+              onPrimary: const Color(0xFF042A2A),
+              tertiary: const Color(0xFF56E86A),
+              surface: const Color(0xFF0A252B),
+              onSurface: const Color(0xFFEAF7F6),
+              outlineVariant: const Color(0xFF2D555B),
+            )
+          : Theme.of(context).colorScheme,
       outlinedButtonTheme: OutlinedButtonThemeData(style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10))),
       filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(
@@ -1403,10 +1421,14 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     ),
     child: Scaffold(
       key: _scaffoldKey,
-      backgroundColor: WindowsAppearance.background(const Color(0xFF071626)),
+      backgroundColor: _darkDashboard(context)
+          ? const Color(0xFF04191F)
+          : WindowsAppearance.background(const Color(0xFF071626)),
 
       appBar: AppBar(
-        backgroundColor: WindowsAppearance.background(const Color(0xFF0A1D30)),
+        backgroundColor: _darkDashboard(context)
+            ? const Color(0xFF0B292E)
+            : WindowsAppearance.background(const Color(0xFF0A1D30)),
         automaticallyImplyLeading: false,
         leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
         title: Row(children: [
