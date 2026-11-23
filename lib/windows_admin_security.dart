@@ -16,6 +16,26 @@ class WindowsAdminSecurity {
   static int? _panelPasswordVersion;
   static String? _panelLocalFingerprint;
   static final Map<String,Map<String,String>> _localApprovalTickets={};
+  static final Map<String,DateTime> _consumedActions={};
+
+  static Future<String> _actionKey(String scope,String target) async {
+    final saved=await CentralSchoolCloud.saved();
+    final school=saved['managed']==true?saved['schoolId']?.toString():_standaloneScope();
+    if(school==null||school.isEmpty)throw StateError('School context missing.');
+    return '$scope|$target|$school';
+  }
+
+  static Future<void> requireConsumedAction({
+    required String scope,
+    required String target,
+  }) async {
+    final key=await _actionKey(scope,target);
+    final approvedAt=_consumedActions.remove(key);
+    if(approvedAt==null || DateTime.now().difference(approvedAt) >
+        const Duration(minutes:2)) {
+      throw StateError('A fresh independent Admin Password confirmation is required.');
+    }
+  }
 
   static void clearPanelSession() {
     _panelSchool=null;
@@ -23,6 +43,7 @@ class WindowsAdminSecurity {
     _panelPasswordVersion=null;
     _panelLocalFingerprint=null;
     _localApprovalTickets.clear();
+    _consumedActions.clear();
   }
 
   static String _standaloneScope() =>
@@ -162,6 +183,7 @@ class WindowsAdminSecurity {
       if(ticket==null||ticket['scope']!=scope||
          ticket['target']!=target||ticket['school']!=_standaloneScope())
         throw StateError('Local Admin Password approval is missing or invalid.');
+      _consumedActions[await _actionKey(scope,target)]=DateTime.now();
       return;
     }
     if(token.length != 64 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(token)) {
@@ -174,6 +196,7 @@ class WindowsAdminSecurity {
     if(result['authorized'] != true) {
       throw StateError('School Admin approval was not accepted by the backend.');
     }
+    _consumedActions[await _actionKey(scope,target)]=DateTime.now();
   }
 
   static Future<void> change({
