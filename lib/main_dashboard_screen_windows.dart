@@ -10446,6 +10446,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _activeFeeSettingsMessage;
 
   Map<String, double> _activeFeeAmounts = {};
+  Map<String, String> _activeFeeFrequencies = {};
   Map<String, dynamic> _activeFeeStudent = {};
   bool _hasOneTimeFees = false;
   Set<String> _selectedFeeHeads = <String>{};
@@ -10682,6 +10683,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
 
   final result = <String, dynamic>{
     'fees': fees,
+    'feeFrequencies': WindowsFeeStructure.frequencies(data),
     'configured': configuredHeads.isNotEmpty,
     'configuredHeads': configuredHeads,
     'scheduleConfigured': rawFees.values.any((v) => _toDouble(v) > 0),
@@ -10792,6 +10794,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     _activeFeeSettingsReady = false;
     _activeFeeSettingsMessage = null;
     _activeFeeAmounts = {};
+    _activeFeeFrequencies = {};
     _activeFeeStudent = {};
     _hasOneTimeFees = false;
     _selectedFeeHeads = <String>{};
@@ -10849,6 +10852,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       _activeFeeSettingsReady = false;
       _activeFeeSettingsMessage = 'Loading fee settings...';
       _activeFeeAmounts = {};
+      _activeFeeFrequencies = {};
       _activeFeeStudent = student;
       _hasOneTimeFees = false;
       _selectedFeeHeads = {};
@@ -10862,6 +10866,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       final settings = cachedSettings;
       _hasOneTimeFees = settings['hasOneTimeFees'] == true;
       final fees = Map<String, double>.from(settings['fees'] as Map);
+      final configuredFrequencies = Map<String, String>.from(
+          settings['feeFrequencies'] as Map? ?? {});
+      final storedFrequencies = ledger?['feeFrequencies'];
+      final activeFrequencies = _toDouble(ledger?['expectedAmount']) > 0
+          ? storedFrequencies is Map
+              ? Map<String, String>.from(storedFrequencies)
+              : {for (final head in (ledger?['feeItems'] as Map? ?? {}).keys)
+                  head.toString(): 'monthly'}
+          : configuredFrequencies;
       final configured = settings['configured'] == true || _toDouble(ledger?['expectedAmount']) > 0;
       if (_toDouble(ledger?['expectedAmount']) > 0 && ledger?['feeItems'] is Map) {
         fees..clear()..addAll(Map<String, dynamic>.from(ledger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value))));
@@ -10901,6 +10914,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         _activeFeeSettingsReady = true;
         _activeFeeSettingsMessage = null;
         _activeFeeAmounts = fees;
+        _activeFeeFrequencies = activeFrequencies;
         _selectedFeeHeads = selected;
         _activeLedger = ledger;
         _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
@@ -11028,6 +11042,12 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       }
     }
 
+    final feeFrequencies = <String, String>{
+      for (final head in feeItems.keys)
+        head: _activeFeeFrequencies[head] ?? 'monthly',
+    };
+    final feeAdmissionMonth = student['feeAdmissionMonth']?.toString() ?? '';
+    final feeAdmissionPersonId = student['feeAdmissionPersonId']?.toString() ?? '';
     final paymentRef = FirebaseFirestore.instance.collection('fee_payments').doc();
     final paymentData = <String, dynamic>{
       'schoolId': FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId'],
@@ -11049,6 +11069,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'parentContact': parentContact,
       'month': originMonth,
       'feeItems': feeItems,
+      'feeFrequencies': feeFrequencies,
+      if (feeAdmissionMonth.isNotEmpty) 'feeAdmissionMonth': feeAdmissionMonth,
+      if (feeAdmissionPersonId.isNotEmpty) 'feeAdmissionPersonId': feeAdmissionPersonId,
       'expectedAmount': expected,
       'installmentAmount': amount,
       'totalPaid': totalPaid,
@@ -11096,6 +11119,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'parentContact': parentContact,
           'month': originMonth,
           'feeItems': feeItems,
+          'feeFrequencies': feeFrequencies,
+          if (feeAdmissionMonth.isNotEmpty) 'feeAdmissionMonth': feeAdmissionMonth,
+          if (feeAdmissionPersonId.isNotEmpty) 'feeAdmissionPersonId': feeAdmissionPersonId,
           'expectedAmount': expected,
           'totalPaid': totalPaid,
           'balance': balance,
@@ -11123,6 +11149,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'balance': balance,
           'status': status,
           'feeItems': feeItems,
+          'feeFrequencies': feeFrequencies,
+          'feeAdmissionMonth': feeAdmissionMonth,
+          'feeAdmissionPersonId': feeAdmissionPersonId,
           'feeIdentity': feeIdentity,
           'studentUid': studentUid,
           '__docId': ledgerRef.id,

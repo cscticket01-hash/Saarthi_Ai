@@ -78,6 +78,33 @@ export function validateDomainCandidate(input:DomainCandidate):void {
    if(teacherRole&&nonempty(next.personId)&&generation(owner)!==next.personId)reject('DOMAIN_TEACHER_RETIRED');
   }
  }
+ if(['fee_payments','fee_ledger'].includes(collection)&&next.feeFrequencies!==undefined){
+  const items=next.feeItems,frequencies=next.feeFrequencies;
+  if(!items||typeof items!=='object'||Array.isArray(items)||
+     !frequencies||typeof frequencies!=='object'||Array.isArray(frequencies)||
+     !nonempty(next.studentId)||!nonempty(next.personId)||
+     typeof next.month!=='string'||!/^\\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
+   reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+  for(const [head,amount] of Object.entries(items)){
+   if(!nonempty(head)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0)
+    reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+   const frequency=frequencies[head]===undefined?'monthly':frequencies[head];
+   if(!['monthly','annual','once'].includes(String(frequency)))
+    reject('DOMAIN_FEE_BILLING_FREQUENCY_INVALID',400);
+   if(frequency==='once'){
+    const parent=owned(schoolId,readOwner('students_directory',next.studentId));
+    const ownerGeneration=generation(parent);
+    if(parent.feeAdmissionPersonId!==ownerGeneration||
+       parent.feeAdmissionMonth!==next.month||
+       next.personId!==ownerGeneration||
+       next.feeAdmissionPersonId!==parent.feeAdmissionPersonId||
+       next.feeAdmissionMonth!==parent.feeAdmissionMonth)
+     reject('DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+   }
+  }
+  if(Object.keys(frequencies).some(head=>!Object.hasOwn(items,head)))
+   reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+ }
  if(collection==='teacher_salary'&&nonempty(next.staffId)){
   const history=current&&!current._syncDeleted&&['staffId','employeeId','personId','teacherId'].every(key=>current[key]===next[key]);
   if(!history){

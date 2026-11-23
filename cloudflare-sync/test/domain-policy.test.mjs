@@ -79,3 +79,17 @@ test('one-time fee admission month is generation-bound and immutable',async()=>{
  assert.throws(()=>check({},{current:locked}),e=>e.code==='PERSON_FEE_ADMISSION_IMMUTABLE');
  assert.doesNotThrow(()=>check({mobileStableId:n,replacesStudentGeneration:g},{current:locked}));
 });
+
+
+test('one-time fee payments require the server-locked student admission month',()=>{
+ const owner={...student,feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
+ const valid={studentId:'student',personId:'generation-one',month:'2026-04',
+  feeItems:{Admission:150},feeFrequencies:{Admission:'once'},
+  feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
+ assert.doesNotThrow(()=>run(valid,{owner}));
+ assert.throws(()=>run({...valid,month:'2026-05'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeAdmissionPersonId:'generation-two'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeAdmissionMonth:'2026-03'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
+ assert.throws(()=>run({...valid,feeFrequencies:{Admission:'weekly'}},{owner}),e=>e.code==='DOMAIN_FEE_BILLING_FREQUENCY_INVALID');
+ assert.doesNotThrow(()=>run({...valid,feeFrequencies:{Admission:'monthly'},feeAdmissionMonth:undefined,feeAdmissionPersonId:undefined},{owner:student}));
+});
