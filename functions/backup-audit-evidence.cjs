@@ -34,7 +34,7 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
     throw Error('Complete school-scoped owner inventory and readback required');
   const hourEnd=Math.floor(now/3600000)*3600000,hourStart=hourEnd-3600000;
   const missingSources=[],conflicts=[],unverified=[],undated=[];
-  const originals=new Map();
+  const originals=new Map(),conflictedOriginals=new Set();
   for(const source of SOURCES){
     let inventory;
     try{inventory=await sourceInventory(schoolId,source,hourEnd);}
@@ -50,15 +50,35 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
       catch{conflicts.push(source+':invalid-original');continue;}
       const previous=originals.get(row.originalId);
       if(previous){
-        if(previous.originalSha256!==row.originalSha256)
+        if(previous.originalSha256!==row.originalSha256){
           conflicts.push(row.originalId+':immutable-hash-conflict');
-        else previous.sources.push(source);
-      }else originals.set(row.originalId,{...row,sources:[source]});
+          conflictedOriginals.add(row.originalId);
+        }else{
+          // A record and a file may share the same immutable original ID.
+          // The first (record) row must never hide the later file's byte
+          // readback requirement. Disagreeing file manifests also fail closed.
+          if(kindOf(source)==='files'){
+            if(previous.fileProofBytes!==undefined&&
+               previous.fileProofBytes!==row.fileBytes){
+              conflicts.push(row.originalId+':file-manifest-size-conflict');
+              conflictedOriginals.add(row.originalId);
+            }
+            previous.fileProofBytes=row.fileBytes;
+          }
+          previous.sources.push(source);
+        }
+      }else originals.set(row.originalId,{...row,sources:[source],
+        fileProofBytes:kindOf(source)==='files'?row.fileBytes:undefined});
     }
   }
   const breakdown=Object.fromEntries(KINDS.map(x=>[x,0]));
   let verifiedOriginals=0;
   for(const [originalId,row] of originals){
+    // Never count an original whose immutable manifests disagree.
+    if(conflictedOriginals.has(originalId))continue;
+    const fileRequired=row.sources.some(source=>kindOf(source)==='files');
+    const countedKind=fileRequired?'files':kindOf(row.source);
+    const expectedFileBytes=fileRequired?row.fileProofBytes:row.fileBytes;
     let receipt;
     try{receipt=await readOwnerProof(schoolId,row);}
     catch{unverified.push(originalId);continue;}
@@ -72,10 +92,10 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
     }
     // A file's signed provider response must prove the original bytes,
     // not just that some Drive file with the same name exists.
-    if(kindOf(row.source)==='files'&&
-      (!Number.isSafeInteger(row.fileBytes)||row.fileBytes<0||
+    if(fileRequired&&
+      (!Number.isSafeInteger(expectedFileBytes)||expectedFileBytes<0||
        receipt.fileSha256!==row.originalSha256||
-       receipt.fileBytes!==row.fileBytes||
+       receipt.fileBytes!==expectedFileBytes||
        typeof receipt.driveFileId!=='string'||
        !/^[A-Za-z0-9_-]{5,256}$/.test(receipt.driveFileId))){
       conflicts.push(originalId+':original-file-proof-missing');continue;
@@ -85,7 +105,7 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
     }
     if(receipt.fileBytes!==undefined&&
       (!Number.isSafeInteger(receipt.fileBytes)||receipt.fileBytes<0||
-       row.fileBytes!==receipt.fileBytes)){
+       expectedFileBytes!==receipt.fileBytes)){
       conflicts.push(originalId+':file-size-mismatch');continue;
     }
     verifiedOriginals++;
@@ -93,7 +113,7 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
       undated.push(originalId);continue;
     }
     if(receipt.verifiedAt>=hourStart&&receipt.verifiedAt<hourEnd)
-      breakdown[kindOf(row.source)]++;
+      breakdown[countedKind]++;
   }
   const verifiedCount=Object.values(breakdown).reduce((a,b)=>a+b,0);
   const complete=missingSources.length===0&&conflicts.length===0&&
