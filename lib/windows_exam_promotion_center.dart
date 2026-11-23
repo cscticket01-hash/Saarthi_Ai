@@ -3,6 +3,7 @@ import 'windows_appearance.dart';
 import 'windows_document_templates.dart';
 import 'windows_exam_policy.dart';
 import 'windows_local_firestore.dart';
+import 'windows_local_settings.dart';
 import 'windows_school_operations.dart';
 
 /// Compact, school-themed Exam Center promotion review.
@@ -155,7 +156,12 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       _notice('Admin override is only for a retained Final Exam FAIL student.');
       return;
     }
+    if (!WindowsLocalSecurity.configured) {
+      _notice('Configure the local Administrator Settings Lock before overriding a result.');
+      return;
+    }
     final reason = TextEditingController();
+    final password = TextEditingController();
     try {
       final proceed = await showDialog<bool>(context:context,
         builder:(ctx)=>AlertDialog(
@@ -164,13 +170,19 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
             const Text('Exception requires school policy permission and an audit reason.'),
             TextField(controller:reason,maxLength:500,maxLines:3,
               decoration:const InputDecoration(labelText:'Required reason')),
+            TextField(controller:password,obscureText:true,
+              decoration:const InputDecoration(labelText:'Administrator lock password')),
           ]),
           actions:[
             TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),
             FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Confirm override')),
           ],
         ));
-      if (proceed != true || reason.text.trim().isEmpty || !mounted || !_sameSchool) return;
+      if (proceed != true || !mounted || !_sameSchool) return;
+      if (reason.text.trim().isEmpty || !WindowsLocalSecurity.verifyPassword(password.text)) {
+        _notice('Override blocked: enter an audit reason and valid administrator password.');
+        return;
+      }
       setState(() => _working = true);
       try {
         await SchoolPromotionService.apply(
@@ -184,7 +196,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
       } finally {
         if (mounted) setState(() => _working = false);
       }
-    } finally { reason.dispose(); }
+    } finally { reason.dispose(); password.dispose(); }
   }
 
   Future<void> _preview() async {
