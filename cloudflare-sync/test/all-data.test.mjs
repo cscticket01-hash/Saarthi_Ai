@@ -385,3 +385,54 @@ test('24-hour records inventory counts original entries without inventing Drive 
  assert.equal(foreign.hours.reduce((n,h)=>n+h.admitted,0),0,
   "Another school must not inherit the original counts");
 });
+
+test('original record owner journal pages are read-only, paginated, scoped and never independent Google proof',async()=>{
+ const school='vs-'+hash('sync4-record-owner-audit-private-school').slice(0,32);
+ const empty=await rpc(school,'records',{command:'auditJournalPage',after:0,limit:1});
+ assert.equal(empty.status,200);
+ assert.equal(empty.value.scope,'immutableSpoolOwnerJournal');
+ assert.equal(empty.value.source,'records');
+ assert.equal(empty.value.partial,true);
+ assert.deepEqual(empty.value.entries,[]);
+ assert.equal(empty.value.nextCursor,null);
+ const original={...write('school_expenses','owner-record-audit',
+  'operation-record-owner-audit-0001'),
+  data:{schoolId:school,amount:15}};
+ const accepted=await delivery.record(school,original);
+ const pending=await rpc(school,'records',{command:'auditJournalPage',after:0,limit:1});
+ assert.equal(pending.value.entries.length,1);
+ assert.equal(pending.value.entries[0].id,accepted.delivery.id);
+ assert.equal(pending.value.entries[0].state,'pending');
+ assert.equal(pending.value.entries[0].driveOwnerReceiptPresent,false);
+ assert.equal(pending.value.entries[0].verifiedAt,null);
+ assert.equal(pending.value.nextCursor,null);
+ assert.equal(JSON.stringify(pending.value).includes('amount'),false,
+  'Private original financial payload cannot appear in owner journal');
+ const next=await rpc(school,'records',{command:'auditJournalPage',
+  after:pending.value.entries[0].sequence,limit:1});
+ assert.deepEqual(next.value.entries,[]);
+ await delivery.drain(school,'records',async request=>({
+  success:true,schoolId:school,syncProtocol:2,
+  recordRevision:'drive-original-audit-proven',
+  record:{...request.data,id:request.id,_syncOperationId:request.operationId}
+ }));
+ const completed=await rpc(school,'records',{command:'auditJournalPage',after:0,limit:1});
+ assert.equal(completed.value.entries[0].state,'completed');
+ // A legacy completed record without the original verified-at timestamp
+ // is NOT sufficient proof of a signed provider owner readback.
+ assert.equal(completed.value.entries[0].driveOwnerReceiptPresent,false);
+ assert.equal(completed.value.entries[0].verifiedAt,null);
+ assert.equal(completed.value.driveVerified,undefined,
+  'Owner proof is not an independent signed Google readback');
+ const otherSchool='vs-'+hash('sync4-record-owner-foreign-school').slice(0,32);
+ const other=await rpc(otherSchool,'records',
+  {command:'auditJournalPage',after:0,limit:1});
+ assert.deepEqual(other.value.entries,[]);
+ for(const bad of [{after:-1},{limit:0},{limit:101},{after:1.5}]){
+  const result=await rpc(school,'records',{command:'auditJournalPage',...bad});
+  assert.equal(result.status,400);
+ }
+ const wrongLane=await rpc(school,'file-'+'a'.repeat(64),
+  {command:'auditJournalPage',after:0,limit:1});
+ assert.equal(wrongLane.status,400);
+});
