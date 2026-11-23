@@ -406,6 +406,8 @@ class WindowsFirebaseRemote {
             school,
             (action, body) =>
                 ManagedSchoolSession.callForSchool(school, action, body),
+            verifyRetriedPhoto:photoReceiptSupported &&
+                (item['retryCount'] as num? ?? 0)>0,
           );
     final requestBody = <String, dynamic>{
       'operation': item['operation'] == 'delete' ? 'delete' : 'write',
@@ -550,6 +552,7 @@ class WindowsFirebaseRemote {
   static bool recordWriteBatchSupported = false;
   static bool edgeDeliverySupported = false;
   static bool photoRecordStageSupported = false;
+  static bool photoReceiptSupported = false;
   // Bound only to the current authenticated school's checked backend and
   // Script capability, reset with the session. Never infer from school ID.
   static bool documentStageSupported = false;
