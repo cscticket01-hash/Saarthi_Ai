@@ -311,14 +311,20 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home:AdminAnalyticsScreen()));
       await Future<void>.delayed(const Duration(milliseconds:250));
     });
-    for(var i=0;i<30;i++) {
-      await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:30)));
-      await tester.pump(const Duration(milliseconds:30));
-      if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
+    // The analytics screen uses a CircularProgressIndicator while it loads.
+    // Waiting for a LinearProgressIndicator exits too early, and pumpAndSettle
+    // cannot complete while the indeterminate loading animation is active.
+    // Wait for the five real chart controls, allowing local async reads to finish.
+    for (var i = 0; i < 120; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      if (find.byType(PopupMenuButton<int>).evaluate().length == 5) break;
     }
-    await tester.pumpAndSettle();
     final menus=find.byType(PopupMenuButton<int>);
-    expect(menus, findsNWidgets(5));
+    expect(menus, findsNWidgets(5), reason: 'Analytics did not finish loading its five charts.');
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.tap(menus.at(1)); await tester.pumpAndSettle();
     await tester.tap(find.text('Jan ${DateTime.now().year}')); await tester.pumpAndSettle();
     expect(find.text('Jan: ₹500'),findsOneWidget);
