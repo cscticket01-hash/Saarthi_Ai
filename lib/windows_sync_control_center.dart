@@ -1315,16 +1315,15 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       ),
       // Keep the approved three-entry ⋮ menu compact. Schedule preferences
       // live with other diagnostic/administrative controls, not next to Pause.
-      PopupMenuButton<int>(
-        tooltip: 'Automatic sync interval',
-        enabled: !busy && db.activeProfileId == origin,
-        onSelected: (minutes) =>
-            _run(() => engine.setAutoSyncInterval(minutes)),
-        itemBuilder: (_) => [
+      MenuAnchor(
+        menuChildren: [
           for (final minutes in WindowsSyncEngine.autoSyncIntervals)
-            CheckedPopupMenuItem<int>(
-              value: minutes,
-              checked: minutes == engine.autoSyncIntervalMinutes,
+            MenuItemButton(
+              leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked),
+              onPressed: () =>
+                  _run(() => engine.setAutoSyncInterval(minutes)),
               child: Text(switch (minutes) {
                 0 => 'Off',
                 60 => 'Every 1 Hour',
@@ -1332,15 +1331,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
               }),
             ),
         ],
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.schedule),
-            SizedBox(width: 8),
-            Text('Auto Sync (Interval)'),
-            SizedBox(width: 4),
-            Icon(Icons.arrow_drop_down),
-          ]),
+        builder: (menuContext, controller, child) => TextButton.icon(
+          onPressed: busy || db.activeProfileId != origin
+              ? null
+              : () => controller.isOpen ? controller.close() : controller.open(),
+          icon: const Icon(Icons.schedule),
+          label: const Text('Auto Sync (Interval)'),
         ),
       ),
       OutlinedButton(
