@@ -513,7 +513,8 @@ function VS_guardFinalPromotion(b,existing,school){
   if(!b||b.collection!=='students_directory'||b.operation!=='write'||!b.data)return;
   const next=b.data,old=existing&&existing.data;
   const changed=old&&(next.promotionTransactionId!==old.promotionTransactionId||
-    next.promotionExamId!==old.promotionExamId||next.classMovement!==old.classMovement);
+    next.promotionExamId!==old.promotionExamId||next.classMovement!==old.classMovement||
+    old.promotionExamId&&(next.class!==old.class||next.studentClass!==old.studentClass));
   if(!changed){
     if(!old&&(next.promotionTransactionId||next.promotionExamId||next.classMovement))
       throw new Error('New student cannot claim an approved promotion');
@@ -828,7 +829,7 @@ function VS_managedRecordUnlocked(b,readContext) {
 
   }
   if(b.collection==='school_settings'&&String(b.id||'').startsWith('promotion_event_')){
-    if(b.operation!=='write'||!b.data||existing&&existing.data&&!existing.data._syncDeleted||
+    if(b.operation!=='write'||!b.data||existing&&existing.data||
        !['RETAINED','PROMOTED','FORCE_PROMOTED','GRADUATED'].includes(b.data.movement)||
        b.id!=='promotion_event_'+b.data.examId+'_'+b.data.studentId+'_'+b.data.movement||
        b.data.schoolId!==school||typeof b.data.at!=='number'||!Number.isFinite(b.data.at))
