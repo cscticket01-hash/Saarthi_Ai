@@ -81,6 +81,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       return matches;
     });
     if (!result) denied(401, 'ADMIN_PASSWORD_INVALID', 'Admin password is incorrect');
+    return current.passwordHash;
   }
 
   async function handle(body, identity) {
@@ -116,7 +117,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
     }
     if (operation === 'change') {
       goodPassword(body.newPassword);
-      await checkPassword(identity, body.password);
+      const verifiedHash = await checkPassword(identity, body.password);
       if (body.password === body.newPassword)
         denied(400, 'ADMIN_PASSWORD_REUSE', 'Choose a different Admin Password');
       const salt = randomBytes(16).toString('hex');
@@ -124,6 +125,8 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       await db.runTransaction(async tx => {
         const current = await tx.get(ref);
         if (!current.exists) denied(409, 'ADMIN_PASSWORD_NOT_CONFIGURED', 'Set the Admin Password first');
+        if(current.data().passwordHash !== verifiedHash)
+          denied(409, 'ADMIN_PASSWORD_CHANGED', 'Admin Password changed during the request');
         tx.update(ref, {
           salt, passwordHash:nextHash, hashVersion:1, failedAttempts:0,
           lockUntil:0, updatedAt:now(), updatedBy:identity.uid
@@ -146,10 +149,11 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       if (!['drive-connection','person-delete','force-promotion','protected-settings'].includes(scope) ||
           typeof target !== 'string' || target.length < 1 || target.length > 1000)
         denied(400, 'ADMIN_APPROVAL_INVALID', 'Invalid protected action');
-      await checkPassword(identity, body.password);
+      const verifiedHash = await checkPassword(identity, body.password);
       const token = randomBytes(32).toString('hex');
       await approvalRef(identity.schoolId, identity.uid, token).create({
         schoolId:identity.schoolId, uid:identity.uid, scope, targetHash:hash(target),
+        credentialFingerprint:verifiedHash,
         issuedAt:now(), expiresAt:now()+APPROVAL_WINDOW_MS, usedAt:0
       });
       await db.collection('platform_audit').add({
@@ -177,6 +181,7 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       if (!existing.exists || record.schoolId !== identity.schoolId ||
           record.uid !== identity.uid || record.scope !== scope ||
           record.targetHash !== hash(target) ||
+          record.credentialFingerprint !== credential.data().passwordHash ||
           record.usedAt !== 0 || record.expiresAt <= now())
         denied(403, 'ADMIN_APPROVAL_EXPIRED', 'Admin approval expired or does not match this action');
       tx.update(ref, {usedAt:now()});
