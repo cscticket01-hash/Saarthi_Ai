@@ -241,9 +241,12 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
     try {
       final managed = await WindowsAdminSecurity.isManaged;
       if (!managed) {
-        // Historical standalone profiles keep their previous local workflow.
-        // The server-owned Admin Password applies to managed schools only.
-        if(mounted) setState(() { _legacy=true; _opened=true; _loading=false; });
+        if(await WindowsAdminSecurity.hasPanelSession()){
+          if(mounted)setState(() { _legacy=true;_configured=true;_opened=true;_loading=false; });
+          return;
+        }
+        final configured=await WindowsAdminSecurity.configured();
+        if(mounted)setState(() { _legacy=true;_configured=configured;_loading=false; });
         return;
       }
       if(await WindowsAdminSecurity.hasPanelSession()) {
@@ -276,10 +279,10 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
       if (_configured && !_recover) {
         await WindowsAdminSecurity.unlock(pass);
       } else {
-        if (_schoolPassword.text.isEmpty) throw StateError('Enter your school login password.');
-        if (_schoolPassword.text == pass) {
+        if(!_legacy && _schoolPassword.text.isEmpty)
+          throw StateError('Enter your school login password.');
+        if(!_legacy && _schoolPassword.text == pass)
           throw StateError('Admin Password must be different from School Login Password.');
-        }
         if(_recover) {
           await WindowsAdminSecurity.recover(
             schoolPassword:_schoolPassword.text, newPassword:pass);
@@ -309,7 +312,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
 
   @override
   Widget build(BuildContext context) {
-    if(_opened || _legacy) return widget.child;
+    if(_opened) return widget.child;
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
       appBar:AppBar(title:const Text('Admin Panel Security')),
@@ -331,12 +334,14 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                   ? 'Verify the school login password to reset the independent Admin Password.'
                   : _configured
                   ? 'Enter the independent school administrator password.'
+                  : _legacy
+                  ? 'Create an independent Admin Password for this Windows school profile.'
                   : 'School-wide Admin Password is separate from this PC App Lock.',
                   textAlign:TextAlign.center),
                 const SizedBox(height:22),
                 if(_loading) const CircularProgressIndicator()
                 else ...[
-                  if(!_configured || _recover) ...[
+                  if(!_legacy && (!_configured || _recover)) ...[
                     TextField(controller:_schoolPassword,obscureText:true,
                       enabled:!_busy,
                       decoration:const InputDecoration(
@@ -370,7 +375,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                       _configured ? 'Unlock Admin Panel' : 'Create Admin Password'),
                   ),
                 ],
-                if(!_loading && _configured) ...[
+                if(!_loading && _configured && !_legacy) ...[
                   const SizedBox(height:8),
                   TextButton(onPressed:_busy ? null : () => setState(() {
                     _recover=!_recover;
@@ -398,7 +403,6 @@ Future<String?> requestWindowsAdminApproval(
   required String scope,
   required String target,
 }) async {
-  if (!await WindowsAdminSecurity.isManaged) return null;
   if (!context.mounted) return null;
   final controller = TextEditingController();
   bool working = false;
@@ -449,8 +453,15 @@ class WindowsAdminPasswordCard extends StatefulWidget {
 class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
   final _current=TextEditingController(), _next=TextEditingController(),
     _confirm=TextEditingController();
-  bool _busy=false, _recover=false;
+  bool _busy=false, _recover=false, _managed=true;
   String? _message;
+  @override
+  void initState(){
+    super.initState();
+    WindowsAdminSecurity.isManaged.then((managed){
+      if(mounted)setState(()=>_managed=managed);
+    }).catchError((Object _){});
+  }
   @override
   void dispose(){
     _current.dispose();_next.dispose();_confirm.dispose();
@@ -469,6 +480,7 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
     setState(() { _busy=true;_message=null; });
     try {
       if(_recover) {
+        if(!_managed)throw StateError('Standalone Admin Password recovery requires school owner verification.');
         await WindowsAdminSecurity.recover(
           schoolPassword:_current.text, newPassword:_next.text);
       } else {
@@ -487,7 +499,9 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
     child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
       const Text('Admin Panel Password',style:TextStyle(fontSize:17,fontWeight:FontWeight.bold)),
       const SizedBox(height:6),
-      const Text('Separate from App Lock. Applies to every authorized PC in this school.'),
+      Text(_managed
+        ? 'Separate from App Lock. Applies to authorized PCs for this managed school.'
+        : 'Separate from App Lock. Stored only in this Windows school profile.'),
       const SizedBox(height:14),
       TextField(controller:_current,obscureText:true,enabled:!_busy,
         decoration:InputDecoration(labelText:_recover
@@ -505,7 +519,7 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
       Wrap(spacing:12,children:[
         FilledButton(onPressed:_busy ? null : _save,
           child:Text(_busy ? 'Saving...' : _recover ? 'Recover Admin Password' : 'Change Admin Password')),
-        TextButton(onPressed:_busy ? null : () => setState(() {
+        if(_managed)TextButton(onPressed:_busy ? null : () => setState(() {
           _recover=!_recover; _current.clear();_message=null;
         }),child:Text(_recover ? 'Use current Admin Password' : 'Forgot Admin Password?')),
       ]),
