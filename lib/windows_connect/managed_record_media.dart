@@ -155,7 +155,15 @@ Future<Map<String, dynamic>?> verifyRetriedOriginalPhoto({
   }
   final fileId = reply['fileId'], fileUrl = reply['fileUrl'];
   if (reply['verified'] != true || fileId is! String ||
-      !RegExp(r'^[A-Za-z0-9_-]{1,200}
+      !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId) ||
+      fileUrl is! String || schoolDriveFileId(fileUrl) != fileId) {
+    throw StateError('Original photo Drive bytes are not independently verified.');
+  }
+  return {'success': true, 'schoolId': school,
+    'fileId': fileId, 'fileUrl': fileUrl};
+}
+
+/// Upload images to this school's Drive before publishing a text-only record.
 Future<Map<String, dynamic>> prepareManagedRecord(
   Map<String, dynamic> data,
   String school,
