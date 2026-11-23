@@ -95,7 +95,6 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,recordMaxParallelism:3,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
-
  // Read-only 24-hour *original spool entry* inventory. A batch occupies one
  // original entry, not N people. Only already proof-stamped rows count in the
  // conservative provider-verified column. No school bodies, IDs or revisions
@@ -446,6 +445,11 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    }else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
+    // A failed member can be retained as partial evidence for a retry, but
+    // never turn the immutable whole-batch original into a completed receipt.
+    // This guards against a broken/forged broker finish after a partial Drive ACK.
+    if(values.state==='completed')demand((result.acknowledgements as Json[]).every(ack=>ack.success===true),
+      'Partial Google batch requires retry; original retained',409);
    }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
   }
   if(values.payloadPurged===true){
