@@ -5,19 +5,40 @@ String? cloudTransferMessage(Map<String, dynamic>? status) {
     return 'Cloudflare transfer status unavailable; saved work retained.';
   }
   if (status['enabled'] == false) return null;
-  final notices = status['notices'], delivery = status['delivery'];
-  bool count(Object? value) => value is num && value.isFinite && value >= 0 && value == value.roundToDouble();
+  final notices = status['notices'], records = status['records'],
+      delivery = status['delivery'];
+  bool count(Object? value) => value is num && value.isFinite &&
+      value >= 0 && value == value.roundToDouble();
   if (status['enabled'] != true || notices is! Map || delivery is! Map ||
       !count(notices['pending']) || !count(notices['needsAttention']) ||
       !count(delivery['pendingPartitions'])) {
     return 'Cloudflare transfer status not verified; saved work retained.';
   }
-  if (delivery['needsAttention'] != null && !count(delivery['needsAttention'])) return 'Cloudflare transfer status not verified; saved work retained.';
+  // The new records count is optional for older brokers. If advertised, a
+  // malformed or incomplete records snapshot must NOT look like an empty queue.
+  if (records != null && (records is! Map ||
+      !count(records['pending']) || !count(records['needsAttention']))) {
+    return 'Cloudflare transfer status not verified; saved work retained.';
+  }
+  if (delivery['needsAttention'] != null &&
+      !count(delivery['needsAttention'])) {
+    return 'Cloudflare transfer status not verified; saved work retained.';
+  }
   final noticeAttention = (notices['needsAttention'] as num).toInt();
-  final allAttention = (delivery['needsAttention'] as num? ?? 0).toInt();
-  final attention = noticeAttention > allAttention ? noticeAttention : allAttention;
-  if (attention > 0) return 'Cloudflare background backup · $attention transfers need school review.';
-  if ((notices['pending'] as num) > 0 || (delivery['pendingPartitions'] as num) > 0) {
+  final deliveryAttention = (delivery['needsAttention'] as num? ?? 0).toInt();
+  final recordsAttention = records is Map
+      ? (records['needsAttention'] as num).toInt() : 0;
+  // Queues may overlap at the school-wide scheduler. Their maximum is a
+  // lower bound, never an invented sum of independent failed operations.
+  final attention = [
+    noticeAttention, deliveryAttention, recordsAttention,
+  ].reduce((a, b) => a > b ? a : b);
+  if (attention > 0) {
+    return 'Cloudflare background backup · at least $attention queue items need school review.';
+  }
+  if ((notices['pending'] as num) > 0 ||
+      (records is Map && (records['pending'] as num) > 0) ||
+      (delivery['pendingPartitions'] as num) > 0) {
     // This is a school-wide backend queue, not proof that this PC's latest
     // student/record mutation reached a durable Cloudflare ACK.
     return 'Cloudflare background backup · Google Drive transfer pending.';

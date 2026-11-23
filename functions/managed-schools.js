@@ -1436,7 +1436,29 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
- if(action==='managed/cloudflare/status'){if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};const [notices,delivery]=await Promise.all([cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})]);return {success:true,schoolId:m.schoolId,enabled:true,notices,delivery};}
+ if(action==='managed/cloudflare/status'){
+  if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};
+  // The device has already finished its upload at the durable edge ACK.
+  // Observe the existing school-owned durable queues, never drain them or
+  // infer a Google Drive ACK from an aggregate pending count.
+  const [notices,records,delivery]=await Promise.all([
+   cloudflareSync.rpc(m.schoolId,'notices',{command:'stats'}),
+   cloudflareSync.rpc(m.schoolId,'records',{command:'stats'}),
+   cloudflareSync.rpc(m.schoolId,'delivery',{command:'stats'})
+  ]);
+  const valid=(item,keys)=>item&&typeof item==='object'&&
+   keys.every(key=>Number.isSafeInteger(item[key])&&item[key]>=0&&item[key]<=1000000000);
+  if(!valid(notices,['pending','needsAttention'])||
+     !valid(records,['pending','needsAttention'])||
+     !valid(delivery,['pendingPartitions','needsAttention']))
+   fail(502,'Cloudflare queue report unverified','EDGE_STATUS_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,enabled:true,
+   // Files and mobile attendance have separate dynamic lanes; this is NOT
+   // proof of a complete all-lane/hourly provider backup inventory.
+   statusScope:'records_notices_delivery',observedAt:now(),
+   notices,records:{pending:records.pending,needsAttention:records.needsAttention,
+    ...(Number.isSafeInteger(records.due)&&records.due>=0?{due:records.due}:{})},delivery};
+ }
  if(action==='managed/attendance/status'){
   if(!Array.isArray(b.operationIds)||b.operationIds.length>25||b.operationIds.some(id=>!/^[a-f0-9]{64}$/.test(id))||new Set(b.operationIds).size!==b.operationIds.length)fail(400,'Invalid attendance status batch');
   const rows=await Promise.all(b.operationIds.map(id=>attendanceRow(m.schoolId,id)));
