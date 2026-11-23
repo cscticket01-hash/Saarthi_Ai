@@ -1109,15 +1109,16 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         lastSync is num && lastSync > 0 ? lastSync.toInt() : 0;
     final newestDeviceAckAt = lastDeviceAckAt > lastProviderVerifiedAt
         ? lastDeviceAckAt : lastProviderVerifiedAt;
-    final activityEvents = (details['activity'] as List? ?? const [])
-        .whereType<Map>().toList().reversed
-        .where((row) => activeSchool is String &&
-            activeSchool.isNotEmpty && row['schoolId'] == activeSchool &&
-            {'verified','cloudflareAccepted'}.contains(row['stage']) &&
-            row['at'] is int &&
-            (row['at'] as int) <= nowMillis &&
-            nowMillis - (row['at'] as int) < 5000)
-        .take(1).toList();
+    final latestAckEvent = windowsLatestForegroundAck(
+      (details['activity'] as List? ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row)),
+      school: activeSchool is String ? activeSchool : '',
+      nowMillis: nowMillis,
+    );
+    final activityEvents = latestAckEvent == null
+        ? <Map<String, dynamic>>[]
+        : <Map<String, dynamic>>[latestAckEvent];
     final retryCount = rows.where((row) => row['syncState'] == 'retry' ||
         row['state'] == 'retry' || row['retryAtMillis'] is int &&
         (row['retryAtMillis'] as int) > DateTime.now().millisecondsSinceEpoch).length;
