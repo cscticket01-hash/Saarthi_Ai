@@ -113,7 +113,8 @@ void main() {
       call:(_,__)async=>{'success':true,'schoolId':school,'photoReceiptVersion':1,
         'uploadKey':key,'sha256':sha,'sizeBytes':size,'name':name,'mime':mime,
         'verified':false,'status':'unknown'});
-    expect(unknown,isNull,reason:'Unknown must fall through to exact-key retry, never ACK');
+    // Unknown Drive proof must fall through to exact-key retry, never ACK.
+    expect(unknown,isNull);
   });
 
   test('retry receipt rejects wrong school, digest, Drive ID, or unverified proof',() async {
