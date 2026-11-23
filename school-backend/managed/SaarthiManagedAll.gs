@@ -6974,6 +6974,7 @@ function VS_guardFinalPromotion(b,existing,school){
     exam=examRow&&examRow.data,resultRow=canonical||legacy,result=resultRow&&resultRow.data;
   if(!exam||!result||exam._syncDeleted||result._syncDeleted||
       exam.schoolId!==school||result.schoolId!==school||exam.isFinal!==true||
+      exam.completed===false||['draft','scheduled','in_progress'].includes(exam.status)||
       result.studentId!==b.id||result.examId!==undefined&&result.examId!==examId||
       !['PASS','FAIL'].includes(result.result)||result.result!==next.lastExamResult)
     throw new Error('Verified Final Exam result is required for promotion');
@@ -6982,13 +6983,15 @@ function VS_guardFinalPromotion(b,existing,school){
   if(!before||!after||classOf(exam.studentClass)!==before||
      result.studentClass&&classOf(result.studentClass)!==before||
      next.studentClass!==undefined&&next.studentClass!==next.class||
-     exam.academicSession&&result.academicSession&&exam.academicSession!==result.academicSession||
+     String(exam.academicSession||'')!==String(result.academicSession||'')||
      next.previousClass&&next.previousClass!==old.class)
     throw new Error('Promotion class/session verification failed');
   if(result.personId!=null&&result.personId!==(old.mobileStableId||b.id))
     throw new Error('Final result belongs to another student generation');
   const subjects=exam.subjects;
-  if(!Array.isArray(subjects)||!subjects.length||new Set(subjects).size!==subjects.length||
+  if(!Array.isArray(subjects)||!subjects.length||
+     subjects.some(subject=>typeof subject!=='string'||!subject.trim())||
+     new Set(subjects.map(subject=>subject.toLowerCase().trim())).size!==subjects.length||
      !result.marks||typeof result.marks!=='object'||Array.isArray(result.marks)||
      Object.keys(result.marks).length!==subjects.length||
      !Number.isFinite(Number(exam.fullMarks))||Number(exam.fullMarks)<=0||
