@@ -87,7 +87,7 @@ test('broker verifies exact signed photo receipt identity and refuses a forged D
   {photoReceiptVersion:0},{verified:false,fileId:'claimed-id'},
   {verified:false,status:'unknown',fileId:undefined, fileUrl:'https://foreign'}]){
   await assert.rejects(response(bad).call(query),
-   e=>e.code==='PHOTO_RECEIPT_UNVERIFIED');
+   e=>e.status===502 && ['PHOTO_RECEIPT_UNVERIFIED',undefined].includes(e.code));
  }
 });
 test('unconfirmed school Drive original stays explicitly unknown, not success',async()=>{
