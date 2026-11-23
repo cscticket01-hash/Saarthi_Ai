@@ -78,16 +78,40 @@ export function validateDomainCandidate(input:DomainCandidate):void {
    if(teacherRole&&nonempty(next.personId)&&generation(owner)!==next.personId)reject('DOMAIN_TEACHER_RETIRED');
   }
  }
- if(['fee_payments','fee_ledger'].includes(collection)&&next.feeFrequencies!==undefined){
+ if(['fee_payments','fee_ledger'].includes(collection)&&
+    (next.feeBillingPolicyVersion===1||next.feeFrequencies!==undefined)){
   const items=next.feeItems,frequencies=next.feeFrequencies;
+  if(next.feeBillingPolicyVersion!==1)reject('DOMAIN_FEE_BILLING_VERSION_REQUIRED',400);
   if(!items||typeof items!=='object'||Array.isArray(items)||
      !frequencies||typeof frequencies!=='object'||Array.isArray(frequencies)||
      !nonempty(next.studentId)||!nonempty(next.personId)||
      typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
    reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+  const expected=next.expectedAmount,totalPaid=next.totalPaid,balance=next.balance;
+  const paise=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)&&
+   Math.abs(value*100-Math.round(value*100))<=0.000001;
+  if(!paise(expected)||expected<=0||!paise(totalPaid)||totalPaid<=0||
+     !paise(balance)||balance<0||Math.abs(expected-totalPaid-balance)>0.001||
+     next.status!==(totalPaid===expected?'PAID':'PARTIAL'))
+   reject('DOMAIN_FEE_TOTALS_INVALID',400);
+  let itemTotal=0;
   for(const [head,amount] of Object.entries(items)){
-   if(!nonempty(head)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0)
+   if(!nonempty(head)||!paise(amount)||amount<0)
     reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+   itemTotal+=amount;
+  }
+  if(Math.abs(itemTotal-expected)>0.001)
+   reject('DOMAIN_FEE_ITEMS_TOTAL_MISMATCH',400);
+  if(collection==='fee_payments'&&(!paise(next.installmentAmount)||next.installmentAmount<=0||
+      next.installmentAmount>totalPaid))reject('DOMAIN_FEE_INSTALLMENT_INVALID',400);
+  if(collection==='fee_ledger'&&!nonempty(next.lastPaymentId))
+   reject('DOMAIN_FEE_LAST_PAYMENT_MISSING',400);
+  if(collection==='fee_ledger'&&current&&current.feeBillingPolicyVersion===1&&
+     (current.expectedAmount!==next.expectedAmount||
+      canonical(current.feeItems)!==canonical(next.feeItems)||
+      canonical(current.feeFrequencies)!==canonical(next.feeFrequencies)||
+      totalPaid<(current.totalPaid as number)))
+   reject('DOMAIN_FEE_LEDGER_TERMS_IMMUTABLE');
    const frequency=frequencies[head]===undefined?'monthly':frequencies[head];
    if(!['monthly','annual','once'].includes(String(frequency)))
     reject('DOMAIN_FEE_BILLING_FREQUENCY_INVALID',400);

@@ -84,6 +84,8 @@ test('one-time fee admission month is generation-bound and immutable',async()=>{
 test('one-time fee payments require the server-locked student admission month',()=>{
  const owner={...student,feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
  const valid={studentId:'student',personId:'generation-one',month:'2026-04',
+  feeBillingPolicyVersion:1,expectedAmount:150,totalPaid:150,balance:0,status:'PAID',
+  installmentAmount:150,lastPaymentId:'event-one',
   feeItems:{Admission:150},feeFrequencies:{Admission:'once'},
   feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
  assert.doesNotThrow(()=>run(valid,{owner}));
@@ -94,4 +96,5 @@ test('one-time fee payments require the server-locked student admission month',(
  const monthly={...valid,feeFrequencies:{Admission:'monthly'}};
  delete monthly.feeAdmissionMonth;delete monthly.feeAdmissionPersonId;
  assert.doesNotThrow(()=>run(monthly,{owner:student}));
+ assert.throws(()=>run({...monthly,expectedAmount:151},{owner:student}),e=>e.code==='DOMAIN_FEE_ITEMS_TOTAL_MISMATCH');
 });

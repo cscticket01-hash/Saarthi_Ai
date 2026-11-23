@@ -10889,6 +10889,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                 ? 'Is month ke liye koi scheduled fee due nahi. Annual fee sirf session rollover month mein, one-time fee sirf verified admission month mein payable hai.'
                 : '$studentClass ke liye fee amount Settings me save nahi hai. Pehle Payment Collection Settings complete karein.';
           _activeFeeAmounts = fees;
+          _activeFeeFrequencies = configuredFrequencies;
           _selectedFeeHeads = <String>{};
         });
         return;
@@ -11076,6 +11077,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'rollNo': roll,
       'parentContact': parentContact,
       'month': originMonth,
+      'feeBillingPolicyVersion': 1,
       'feeItems': feeItems,
       'feeFrequencies': feeFrequencies,
       if (feeAdmissionMonth.isNotEmpty) 'feeAdmissionMonth': feeAdmissionMonth,
@@ -11126,6 +11128,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'rollNo': roll,
           'parentContact': parentContact,
           'month': originMonth,
+          'feeBillingPolicyVersion': 1,
           'feeItems': feeItems,
           'feeFrequencies': feeFrequencies,
           if (feeAdmissionMonth.isNotEmpty) 'feeAdmissionMonth': feeAdmissionMonth,
@@ -11157,6 +11160,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
           'balance': balance,
           'status': status,
           'feeItems': feeItems,
+          'feeBillingPolicyVersion': 1,
           'feeFrequencies': feeFrequencies,
           'feeAdmissionMonth': feeAdmissionMonth,
           'feeAdmissionPersonId': feeAdmissionPersonId,
@@ -11373,8 +11377,18 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   try {
                     final updated = await _getClassFeeSettings(currentClass, student: _activeFeeStudent);
                     if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
+                    final refreshedFrequencies = Map<String, String>.from(
+                        updated['feeFrequencies'] as Map? ?? {});
+                    final savedFrequencies = _activeLedger?['feeFrequencies'];
+                    final refreshedActiveFrequencies = _toDouble(_activeLedger?['expectedAmount']) > 0
+                        ? savedFrequencies is Map
+                            ? Map<String, String>.from(savedFrequencies)
+                            : {for (final head in (_activeLedger?['feeItems'] as Map? ?? {}).keys)
+                                head.toString(): 'monthly'}
+                        : refreshedFrequencies;
                     setState(() {
                       _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
+                      _activeFeeFrequencies = refreshedActiveFrequencies;
                       _activeFeeSettingsReady = updated['configured'] == true || _toDouble(_activeLedger?['expectedAmount']) > 0;
                       if (_toDouble(_activeLedger?['expectedAmount']) > 0 && _activeLedger?['feeItems'] is Map) {
                         _activeFeeAmounts = Map<String, dynamic>.from(_activeLedger!['feeItems']).map((key, value) => MapEntry(key, _toDouble(value)));
