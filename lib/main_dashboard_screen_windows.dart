@@ -40,6 +40,7 @@ import 'windows_expense_history.dart';
 import 'windows_expense_receipt_preview.dart';
 import 'windows_school_expense_sync.dart';
 import 'windows_exam_service.dart';
+import 'windows_exam_policy.dart';
 import 'windows_exam_history_screen.dart';
 import 'windows_ui_localization.dart';
 import 'windows_preferences_reset.dart';
@@ -1585,10 +1586,32 @@ class _ExamCenterDataCache {
   static _ExamCenterSnapshot? snapshot;
   static Future<_ExamCenterSnapshot>? _inFlight;
   static String _profile = '';
+  static String _school = '';
+
+  static String get _currentSchool =>
+      FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '';
+
+  static void _invalidateOnSchoolChange() {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final school = _currentSchool;
+    if (_profile != profile || _school != school) {
+      snapshot = null;
+      _inFlight = null;
+      _profile = profile;
+      _school = school;
+    }
+  }
+
+  static _ExamCenterSnapshot? get snapshotForCurrentSchool {
+    _invalidateOnSchoolChange();
+    return snapshot;
+  }
 
   static Future<_ExamCenterSnapshot> refresh({bool force = false}) async {
+    _invalidateOnSchoolChange();
     final profile = FirebaseFirestore.instance.activeProfileId;
-    if (_profile != profile) { snapshot = null; _inFlight = null; _profile = profile; }
+    final school = _currentSchool;
     final cached = snapshot;
     if (!force && cached != null) {
       final age = DateTime.now().difference(cached.loadedAt);
@@ -1604,7 +1627,9 @@ class _ExamCenterDataCache {
 
     try {
       final value = await future;
-      if (_profile != profile) throw StateError('School changed. Refresh the exam screen.');
+      if (_profile != profile || _school != school) {
+        throw StateError('School changed. Refresh the exam screen.');
+      }
       snapshot = value;
       return value;
     } finally {
@@ -1641,7 +1666,7 @@ class _ExamCenterDataCache {
               .collection('students_directory')
               .where('class', isEqualTo: className)
               .get();
-          return MapEntry(className, snapshot.docs.length);
+          return MapEntry(className, snapshot.docs.where((doc) => WindowsExamPolicy.activeStudent(doc.data())).length);
         } catch (_) {
           return MapEntry(className, 0);
         }
@@ -16838,7 +16863,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
   Future<void> _warmStudentExamResults() async {
     try {
-      final cached = _ExamCenterDataCache.snapshot;
+      final cached = _ExamCenterDataCache.snapshotForCurrentSchool;
       final snapshot = cached ?? await _ExamCenterDataCache.refresh();
       if (!mounted) return;
       setState(() {
@@ -20910,7 +20935,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   void initState() {
     super.initState();
 
-    final cached = _ExamCenterDataCache.snapshot;
+    final cached = _ExamCenterDataCache.snapshotForCurrentSchool;
     if (cached != null) {
       _exams = List<Map<String, dynamic>>.from(cached.exams);
       _results = List<Map<String, dynamic>>.from(cached.results);
@@ -20957,13 +20982,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
             .collection('students_directory')
             .where('class', isEqualTo: className)
             .get();
-        return MapEntry(className, snapshot.docs.length);
+        return MapEntry(className, snapshot.docs.where((doc) => WindowsExamPolicy.activeStudent(doc.data())).length);
       }),
     );
     return Map<String, int>.fromEntries(entries);
   }
 
   Future<void> _load({bool silent = false}) async {
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+        ?.toString() ?? '';
     if (!silent && mounted) {
       setState(() {
         _loading = _exams.isEmpty && _results.isEmpty;
@@ -20977,6 +21005,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       final snapshot = await _ExamCenterDataCache.refresh(force: true);
 
       if (!mounted) return;
+      if (FirebaseFirestore.instance.activeProfileId != profile ||
+          (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+              ?.toString() ?? '') != school) {
+        throw StateError('School changed. Reopen Exam Center.');
+      }
       setState(() {
         _exams = List<Map<String, dynamic>>.from(snapshot.exams);
         _results = List<Map<String, dynamic>>.from(snapshot.results);
@@ -20995,23 +21028,24 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   int _classNumber(String value) =>
       int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 999999;
 
-  double _number(dynamic value) => value is num
-      ? value.toDouble()
-      : double.tryParse(value?.toString() ?? '') ?? 0;
+  double _number(dynamic value) =>
+      WindowsExamPolicy.finiteNumber(value) ?? 0;
 
   int _timestamp(dynamic value) => value is num
       ? value.toInt()
       : int.tryParse(value?.toString() ?? '') ?? 0;
 
   List<Map<String, dynamic>> _forExam(String examId) => _results
-      .where((e) => e['examId']?.toString() == examId)
+      .where((e) =>
+          e['examId']?.toString() == examId &&
+          e['deleted'] != true &&
+          e['_syncDeleted'] != true)
       .toList();
 
   List<List<Map<String, dynamic>>> _examGroups() {
     final grouped = <String, List<Map<String, dynamic>>>{};
     for (final exam in _exams) {
-      final displayName = exam['examName']?.toString().trim() ?? 'Exam';
-      final key = displayName.toLowerCase();
+      final key = WindowsExamPolicy.groupKey(exam);
       grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]);
       grouped[key]!.add(exam);
     }
@@ -21038,8 +21072,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
     return groups;
   }
 
-  int _expectedForExam(Map<String, dynamic> exam) =>
-      _studentCounts[exam['studentClass']?.toString() ?? ''] ?? 0;
+  int _expectedForExam(Map<String, dynamic> exam) {
+    final original = exam['expectedStudentCount'];
+    if (original is int && original >= 0) return original;
+    return _studentCounts[exam['studentClass']?.toString() ?? ''] ?? 0;
+  }
 
   int _pendingForExam(Map<String, dynamic> exam) {
     final expected = _expectedForExam(exam);
