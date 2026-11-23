@@ -164,7 +164,7 @@ class WindowsAdminSecurity {
         throw StateError('Local Admin Password approval is missing or invalid.');
       return;
     }
-    if(token.length != 64 || !RegExp(r'^[a-f0-9]+').hasMatch(token)) {
+    if(token.length != 64 || !RegExp(r'^[a-f0-9]{64}$').hasMatch(token)) {
       throw StateError('Missing school administrator authorization.');
     }
     final result=await _call({
