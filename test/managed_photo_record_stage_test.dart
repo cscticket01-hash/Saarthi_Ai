@@ -110,7 +110,7 @@ void main() {
     expect(reads,1);
     final unknown=await verifyRetriedOriginalPhoto(school:school,uploadKey:key,
       sha256Hex:sha,sizeBytes:size,name:name,mime:mime,
-      call:(_,__)async{'success':true,'schoolId':school,'photoReceiptVersion':1,
+      call:(_,__)async=>{'success':true,'schoolId':school,'photoReceiptVersion':1,
         'uploadKey':key,'sha256':sha,'sizeBytes':size,'name':name,'mime':mime,
         'verified':false,'status':'unknown'});
     expect(unknown,isNull,'Unknown must fall through to exact-key retry, never ACK');
@@ -125,7 +125,7 @@ void main() {
       'fileUrl':'https://drive.google.com/file/d/photo-id/view'};
     for(final wrong in [
       {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
-      {'sha256':'b'*64}, {'sizeBytes':9},
+      {'sha256':List.filled(64,'b').join()}, {'sizeBytes':9},
       {'verified':true,'fileId':'../outside'},
       {'verified':false,'status':'unknown'},
       {'fileUrl':'https://drive.google.com/file/d/wrong/view'},
@@ -137,7 +137,7 @@ void main() {
     }
     await expectLater(verifyRetriedOriginalPhoto(school:school,uploadKey:key,
       sha256Hex:sha,sizeBytes:size,name:name,mime:mime,
-      call:(_,__)async=>throw StateError('Original Google timeout')),
+      call:(_,__)async {throw StateError('Original Google timeout');}),
       throwsStateError,reason:'Provider timeout must retain durable original, never reupload blindly');
   });
 }
