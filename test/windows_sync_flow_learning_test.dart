@@ -26,6 +26,22 @@ void main(){
     WindowsSyncEvidence.uploads.value={};
   });
   tearDown(()=>ui.WindowsUiLanguage.change('en'));
+  test('an idle local queue distinguishes a retryable Script timeout from a failed upload',(){
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:true,displayState:'idle',pending:0,needsAttention:0),true);
+    expect(windowsIdleServerTimeoutMessage,contains('no outgoing uploads'));
+    expect(windowsIdleServerTimeoutMessage,contains('separate verified'));
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:false,displayState:'idle',pending:0,needsAttention:0),false);
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:true,displayState:'syncing',pending:0,needsAttention:0),false);
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:true,displayState:'idle',pending:1,needsAttention:0),false);
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:true,displayState:'idle',pending:0,needsAttention:1),false);
+    expect(windowsIdleServerTimeoutWarning(
+      retryableTimeout:true,displayState:null,pending:0,needsAttention:0),false);
+  });
   test('24 hour expiry removes display events but preserves persistent successful rules',(){
     final rules=WindowsLearnedSyncRules();
     rules.observe(event('retry'),school);rules.observe(event('verified'),school);

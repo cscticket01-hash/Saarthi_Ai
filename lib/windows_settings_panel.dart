@@ -5,6 +5,8 @@ import 'windows_sync_control_center.dart';
 import 'windows_school_backup_action.dart';
 import 'windows_backend_bridge.dart';
 import 'windows_sync_engine.dart';
+import 'windows_sync_projection.dart';
+import 'sync_recovery_policy.dart' show SyncFailureKind;
 import 'school_cloud_state.dart';
 import 'dart:async';
 import 'windows_local_firestore.dart' show FirebaseFirestore;
@@ -992,9 +994,13 @@ class WindowsSyncStatusCard extends StatelessWidget {
         // exact last outgoing Cloudflare ACK. A drained durable upload queue
         // is Idle even if the read-only engine cycle hasn't returned.
         final deviceIdle=details['displayState']=='idle'&&pending==0&&attention==0;
+        final idleScriptTimeout=windowsIdleServerTimeoutWarning(
+          retryableTimeout:engine.recoveryDecision?.kind==SyncFailureKind.timeout,
+          displayState:details['displayState']?.toString(),
+          pending:pending,needsAttention:attention);
         final label=engine.isPaused?'Paused':state==SchoolCloudState.offline?'Offline':
           state==SchoolCloudState.authRequired?'Sign-in required':state==SchoolCloudState.driveDisconnected?'Drive disconnected':
-          state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing&&deviceIdle?'Idle':
+          state==SchoolCloudState.syncError&&idleScriptTimeout?'Idle · server retry':state==SchoolCloudState.syncError?'Sync error':state==SchoolCloudState.syncing&&deviceIdle?'Idle':
           state==SchoolCloudState.syncing?'Syncing $pending items...':attention>0?'$attention items need attention':
           pending>0?'$pending items pending':engine.lastSuccessfulSync==null?'Awaiting first successful sync':'Synced';
         final success = state == SchoolCloudState.synced && pending == 0 && attention == 0 &&
@@ -1013,7 +1019,11 @@ class WindowsSyncStatusCard extends StatelessWidget {
                   color:pending==0?const Color(0xFF43DBAA):Colors.orangeAccent,fontWeight:FontWeight.w600))],
               )); }),
             if(engine.lastError!=null)Padding(padding:const EdgeInsets.only(top:10),
-              child:Text(engine.lastError!,style:TextStyle(fontFamily: 'Segoe UI', color:WindowsAppearance.foreground(Colors.orangeAccent),fontSize:14))),
+              child:Text(idleScriptTimeout
+                ? '$windowsIdleServerTimeoutMessage\nDiagnostic: ${engine.lastError}'
+                : engine.lastError!,
+                style:TextStyle(fontFamily: 'Segoe UI',
+                  color:WindowsAppearance.foreground(Colors.orangeAccent),fontSize:14))),
           ]),
           actions:WindowsSettingsButton(purple:true,
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  WindowsSyncControlCenter(backupRequest: () => exportWindowsSchoolBackup(context)); })),

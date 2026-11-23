@@ -499,3 +499,24 @@ bool windowsSyncAdmissionStalled(
         queuedMillis > 0 && queuedMillis <= cutoff;
   });
 }
+
+
+/// A Google Script timeout during an incoming cloud check is not evidence of
+/// an outstanding outgoing Windows upload. Keep the timeout visible as a
+/// provider warning while the immutable local queue is actually idle.
+/// Do not infer Google Drive backup success from this local presentation.
+bool windowsIdleServerTimeoutWarning({
+  required bool retryableTimeout,
+  required String? displayState,
+  required int pending,
+  required int needsAttention,
+}) =>
+    retryableTimeout &&
+    displayState == 'idle' &&
+    pending == 0 &&
+    needsAttention == 0;
+
+const windowsIdleServerTimeoutMessage =
+    'School server verification timed out. This PC currently has no outgoing '
+    'uploads waiting. Google Drive completion requires a separate verified '
+    'receipt; the existing server warning is retained for diagnosis.';
