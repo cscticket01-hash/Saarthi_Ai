@@ -55,6 +55,36 @@ void main() {
     expect(find.byType(TextButton), findsOneWidget);
   });
 
+  testWidgets('Windows frosted surface preserves controls and opt-out',
+      (tester) async {
+    var clicked = 0;
+    Widget harness({required bool glass}) => MaterialApp(
+          home: Scaffold(
+            body: LiquidGlassSurface(
+              enabled: glass,
+              radius: 19,
+              child: TextButton(
+                onPressed: () => clicked++,
+                child: const Text('Open student records'),
+              ),
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(harness(glass: false));
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.text('Open student records'), findsOneWidget);
+    await tester.tap(find.text('Open student records'));
+    expect(clicked, 1);
+
+    await tester.pumpWidget(harness(glass: true));
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(find.byType(ClipRRect), findsOneWidget);
+    expect(find.text('Open student records'), findsOneWidget);
+    await tester.tap(find.text('Open student records'));
+    expect(clicked, 2);
+  });
+
   testWidgets('reduced-motion glass backdrop remains usable',
       (tester) async {
     await tester.pumpWidget(MediaQuery(
