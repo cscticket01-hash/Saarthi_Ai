@@ -93,7 +93,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const next=storage.sql.exec<{due:number}>("SELECT min(purge_due) AS due FROM edge_ops WHERE state='completed' AND verified_at>0 AND created>0 AND verified_at>=created AND purge_due>0").toArray()[0]?.due;
   return {retentionHours:24,nextCleanupAt:next??null};
  }
- if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
+ if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,recordMaxParallelism:3,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
  if(action==='settleTestStudentSlotReview'){
   const successorId=String(b.successorId||'');
@@ -218,7 +218,9 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   return receipt(reopened);
  }
  if(action==='pending'){
-  demand(b.limit===1||lane==='records'&&b.limit===2);
+  // The broker must negotiate recordMaxParallelism:3 before requesting 3.
+  // All non-record lanes remain serial; original resource ordering applies.
+  demand(b.limit===1||lane==='records'&&(b.limit===2||b.limit===3));
   if(lane==='records')return schedule(storage,Number(b.limit),Date.now()).ids.map(get);
   const row=storage.sql.exec<Row>("SELECT * FROM edge_ops WHERE state IN ('pending','retry','processing') ORDER BY seq LIMIT 1").toArray()[0];return row&&row.due<=Date.now()?[row]:[];
  }

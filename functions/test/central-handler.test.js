@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {Readable}=require('node:stream');
-const {createHandler,isolatedTestSchool,managedFeatureOptions}=require('../../staging-school-cloud/server.cjs');
+const {createHandler,isolatedTestSchool,managedFeatureOptions,edgeRecordParallelismForSchool}=require('../../staging-school-cloud/server.cjs');
 async function request(error){
  const logs=[];let status,body;const headers={};
  const req=Readable.from([Buffer.from(JSON.stringify({action:'managed/records',schoolId:'private-school',data:{password:'NEVER_LOG_THIS'}}))]);
@@ -140,4 +140,22 @@ test('quota replies carry bounded Retry-After without leaking provider text',asy
  assert.equal(r.body.code,'FIREBASE_QUOTA_EXCEEDED');assert.equal(JSON.stringify(r).includes('NEVER_LOG_THIS'),false);
  const other=await request(Object.assign(Error('private'),{status:403,retryAfterMs:120000}));
  assert.equal(other.headers['Retry-After'],undefined);assert.equal(other.body.retryAfterMs,undefined);
+});
+
+test('three-way Cloudflare provider canary requires an exact allowlisted school',()=>{
+ const A='vs-'+'a'.repeat(32),B='vs-'+'b'.repeat(32);
+ const level=(settings,school=A)=>edgeRecordParallelismForSchool(settings,school);
+ assert.equal(level({}),1);
+ assert.equal(level({SAARTHI_EDGE_RECORD_PARALLELISM:'2'}),2,
+  'existing two-job setting remains intact');
+ const enable={SAARTHI_EDGE_RECORD_PARALLELISM:'3',
+  SAARTHI_EDGE_RECORD_PARALLEL_SCHOOLS:A};
+ assert.equal(level(enable),3);
+ assert.equal(level(enable,B),1,'not another school');
+ assert.equal(level({...enable,SAARTHI_EDGE_RECORD_PARALLEL_SCHOOLS:A+','+B},B),3);
+ for(const selector of ['', ' * ', '*', A+',', ','+A, A+',invalid',A+';;'+B,'unknown']){
+  assert.equal(level({...enable,SAARTHI_EDGE_RECORD_PARALLEL_SCHOOLS:selector}),1,
+    'malformed/wildcard canary must never become a global rollout');
+ }
+ assert.equal(level({...enable,SAARTHI_EDGE_RECORD_PARALLELISM:'4'}),1);
 });

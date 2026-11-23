@@ -226,6 +226,52 @@ test('explicit parallel canary admits at most two independent records and emits 
  assert.equal((await rpc(school,'records',{command:'stats'})).value.pending,1);
 });
 
+test('three-job canary uses real Worker resource ordering and never passes a person barrier',async()=>{
+ const school=tenant('4'),parallel=createCloudflareDelivery({edge,recordParallelism:3});
+ for(let i=0;i<3;i++)await parallel.record(school,{
+  ...write('school_expenses','three-'+i,'operation-three-'+i+'-000001'),
+  data:{schoolId:school,amount:i+1}
+ });
+ await parallel.record(school,{
+  ...write('students_directory','dependent-person','operation-three-person-0001'),
+  data:{schoolId:school,name:'Dependent'}
+ });
+ await parallel.record(school,{
+  ...write('school_expenses','after-person','operation-three-after-0001'),
+  data:{schoolId:school,amount:50}
+ });
+ // Use a dedicated tenant. An earlier negative-ACK test deliberately
+ // leaves tenant('7') with a retrying teacher barrier (which must not be bypassed).
+ const response=await rpc(school,'records',{command:'pending',limit:3});
+ assert.equal(response.status,200);
+ const eligible=response.value;
+ assert.equal(eligible.length,3);
+ let active=0,peak=0,entered=0;
+ let release;const simultaneous=new Promise(resolve=>{release=resolve;});
+ const deadline=setTimeout(release,3000);
+ try {
+  const result=await parallel.drain(school,'records',async request=>{
+   assert.equal(request.collection,'school_expenses',
+    'A student parent or a subsequent expense cannot overtake the barrier');
+   active++;peak=Math.max(peak,active);
+   if(++entered===3)release();
+   await simultaneous;active--;
+   return {success:true,schoolId:school,syncProtocol:2,
+    recordRevision:'drive-'+request.id,
+    record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
+  });
+  assert.equal(result.processed,3);
+  assert.equal(peak,3);
+ } finally {
+  clearTimeout(deadline);
+ }
+ const next=(await rpc(school,'records',{command:'pending',limit:3})).value;
+ assert.equal(next.length,1);
+ assert.equal(JSON.parse(next[0].payload).collection,'students_directory');
+ const backlog=(await rpc(school,'records',{command:'stats'})).value;
+ assert.equal(backlog.pending,2);
+});
+
 test('signed TEST readback settles only the exact superseded student roll conflict',async()=>{
  const school='vs-'+hash('student-slot-supersession').slice(0,32),id='TEST2-DEMO-000061',generation='p-'+'7'.repeat(32);
  const original={...write('students_directory',id,'original-slot-operation-0001'),
