@@ -164,6 +164,174 @@ class WindowsExamService {
     }
   }
 
+  /// All new class definitions are committed in one durable local transaction
+  /// before the sync engine admits any individual Cloudflare record.
+  /// Legacy schools retain their existing compatibility route.
+  static Future<List<String>> createClassExamGroup(
+    List<Map<String, dynamic>> configs,
+  ) async {
+    if (configs.isEmpty) return [];
+    final db = FirebaseFirestore.instance;
+    final profile = db.activeProfileId;
+    final schoolId =
+        db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    final connection = await CentralSchoolCloud.saved();
+    _requireProfile(profile);
+    if (connection['managed'] != true ||
+        connection['schoolId'] != schoolId) {
+      final created = <String>[];
+      for (final payload in configs) {
+        final result = await request({'action': 'save_exam', ...payload});
+        _requireProfile(profile);
+        if (result['success'] != true) {
+          throw StateError('Legacy exam Save failed after ${created.length} records.');
+        }
+        created.add(result['examId']?.toString() ?? '');
+      }
+      return created;
+    }
+
+    await db.ensureDurableSchoolRecords();
+    _requireProfile(profile);
+    final existing = await db.collection('exams').get();
+    _requireProfile(profile);
+    final seen = <String>{};
+    final batch = db.batch();
+    final ids = <String>[];
+    for (final row in configs) {
+      final id = row['examId']?.toString().trim() ?? '';
+      final name = row['examName']?.toString().trim() ?? '';
+      final studentClass = row['studentClass']?.toString().trim() ?? '';
+      final session = row['academicSession']?.toString().trim() ?? '';
+      final subjectsRaw = row['subjects'];
+      final full = WindowsExamPolicy.finiteNumber(row['fullMarks']);
+      final pass = WindowsExamPolicy.finiteNumber(row['passMarks']);
+      if (!RegExp(r'^[A-Za-z0-9_-]{3,128}
+  static Future<void> deleteUnusedExam(String examId) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
+      throw StateError('Invalid exam identifier.');
+    }
+    final profile = FirebaseFirestore.instance.activeProfileId;
+    final identity = FirebaseFirestore.instance.activeProfileIdentity;
+    final schoolId = identity['schoolSyncId']?.toString() ?? '';
+    final managed = await CentralSchoolCloud.saved();
+    _requireProfile(profile);
+    if (managed['managed'] != true || managed['schoolId'] != schoolId) {
+      throw StateError(
+        'Exam deletion requires the verified managed school connection. '
+        'Legacy/offline records were preserved.',
+      );
+    }
+    final local = await WindowsBackendBridge.localExamAction({
+      'action': 'list_exam_center',
+    });
+    _requireProfile(profile);
+    if (local['success'] != true) throw StateError('Exam list not verified.');
+    final exams = (local['exams'] as List? ?? []).whereType<Map>();
+    if (!exams.any((row) => row['examId']?.toString() == examId)) {
+      throw StateError('Exam no longer exists. Refresh the screen.');
+    }
+    final results = (local['results'] as List? ?? []).whereType<Map>();
+    if (results.any((row) => row['examId']?.toString() == examId)) {
+      throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
+    }
+    // Signed remote results must also be empty; offline deletes fail closed.
+    final idToken = await CentralSchoolCloud.firebaseToken();
+    for (final collection in const ['exam_center_results', 'exam_results']) {
+      _requireProfile(profile);
+      final remote = await WindowsFirebaseRemote.readCollection(
+        projectId: platformProjectId, idToken: idToken, collection: collection,
+      );
+      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
+        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
+      }
+    }
+    _requireProfile(profile);
+    final current = await CentralSchoolCloud.saved();
+    if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
+      throw StateError('School identity changed. Delete cancelled.');
+    }
+    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    // Atomic local delete avoids half-removed definitions in this PC.
+    // The existing outbox still tracks cloud tombstones for peers.
+    batch.delete(db.collection('exams').doc(examId));
+    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
+    batch.delete(db.collection('school_settings').doc('exam_$examId'));
+    _requireProfile(profile);
+    await batch.commit();
+  }
+
+  static void _requireProfile(String profile) {
+    if (FirebaseFirestore.instance.activeProfileId != profile) {
+      throw StateError(
+        'School changed during exam work. Reopen the exam screen.',
+      );
+    }
+  }
+
+  static Future<Map<String, dynamic>> _remote(
+    String url,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await WindowsBackendBridge.post(
+      Uri.parse(url),
+      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) throw StateError('Exam sync failed');
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+}
+).hasMatch(id) ||
+          name.isEmpty || studentClass.isEmpty || session.isEmpty ||
+          subjectsRaw is! List || full == null || full <= 0 ||
+          pass == null || pass < 0 || pass > full) {
+        throw StateError('Incomplete class exam definition.');
+      }
+      final subjects = WindowsExamPolicy.subjects(subjectsRaw);
+      final uniqueness = '${name.toLowerCase()}|${studentClass.toLowerCase()}|$session';
+      if (!seen.add(uniqueness)) {
+        throw StateError('Repeated class configuration in one exam group.');
+      }
+      if (existing.docs.any((doc) {
+        final old = doc.data();
+        if (doc.id == id || old['deleted'] == true ||
+            old['_syncDeleted'] == true) return false;
+        return old['examName']?.toString().trim().toLowerCase() ==
+                   name.toLowerCase() &&
+            old['studentClass']?.toString().trim().toLowerCase() ==
+                   studentClass.toLowerCase() &&
+            old['academicSession'] == session;
+      })) {
+        throw StateError('$name already exists for $studentClass ($session).');
+      }
+      batch.set(db.collection('exams').doc(id), {
+        ...row,
+        'schoolId': schoolId,
+        'examId': id,
+        'examName': name,
+        'studentClass': studentClass,
+        'academicSession': session,
+        'subjects': subjects,
+        'fullMarks': full,
+        'passMarks': pass,
+        'timestamp': row['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+      });
+      ids.add(id);
+    }
+    _requireProfile(profile);
+    final current = await CentralSchoolCloud.saved();
+    if (current['schoolId'] != schoolId ||
+        current['uid'] != connection['uid']) {
+      throw StateError('School changed before exam group Save.');
+    }
+    await batch.commit();
+    _requireProfile(profile);
+    return ids;
+  }
+
   /// Only unused class exams may be removed. Failed verification keeps data.
   static Future<void> deleteUnusedExam(String examId) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
