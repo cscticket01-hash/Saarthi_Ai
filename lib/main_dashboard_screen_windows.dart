@@ -22387,7 +22387,9 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     if (result.isNotEmpty)
                       IconButton(
                         tooltip: WindowsUiLanguage.translate('Open Report Card'),
-                        onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result))html.window.open(reportUrl, '_blank');},
+                        onPressed: () async {
+                          await WindowsDocumentTemplates.previewReport(context,result);
+                        },
                         icon: Icon(
                           Icons.picture_as_pdf_rounded,
                           color: WindowsAppearance.foreground(Colors.orangeAccent),
@@ -22991,8 +22993,9 @@ class _ExamMarksEntryScreenState
                                   'Admin',
                         });
                         doc.reference.requireOriginProfile();
-                        if (savedResult['reportCardUrl'] != null) resultData['reportCardUrl'] = savedResult['reportCardUrl'];
-                        await FirebaseFirestore.instance.collection('exam_results').doc('${_examId}_${doc.id}').set(resultData);
+                        // The Exam Center record already resides in
+                        // exam_center_results. Do not create a second
+                        // independent sync in legacy exam_results.
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
@@ -23037,7 +23040,9 @@ class _ExamMarksEntryScreenState
         SnackBar(
           backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
-              savedOffline ? 'Marks saved offline. Google report card generation is pending school connection.' : 'Marks saved aur report card Google Drive me generate ho gaya.'),
+              savedOffline
+                ? 'Marks saved locally. Cloudflare sync pending. No PDF generated.'
+                : 'Marks saved. Cloudflare sync pending. No PDF generated.'),
         ),
       );
     }
@@ -23134,7 +23139,9 @@ class _ExamMarksEntryScreenState
                     );
                   }
 
-                  final students = snapshot.data?.docs.toList() ?? [];
+                  final students = (snapshot.data?.docs.toList() ?? [])
+                      .where((doc) => WindowsExamPolicy.activeStudent(doc.data()))
+                      .toList();
                   students.sort((a, b) {
                     final ar = int.tryParse(
                             a.data()['rollNo']?.toString() ?? '') ??
@@ -23206,7 +23213,7 @@ class _ExamMarksEntryScreenState
                                   ),
                                   Text(
                                     'Roll ${student['rollNo'] ?? ''}'
-                                    '${result == null ? ' • Marks pending' : ' • ${result['total'] ?? 0}/${result['maximum'] ?? 0} • ${result['percentage'] ?? 0}% • Grade ${result['grade'] ?? ''}'}',
+                                    '${result == null ? ' • Marks pending' : ' • ${result['totalMarks'] ?? result['total'] ?? 0}/${result['maximum'] ?? (_subjects.length * _fullMarks)} • ${result['percentage'] ?? 0}%'}',
                                     style:  TextStyle(fontFamily: 'Segoe UI', 
                                         color: WindowsAppearance.foreground(Colors.white38),
                                         fontSize: 10),
@@ -23237,8 +23244,10 @@ class _ExamMarksEntryScreenState
                               ),
                             if (result != null)
                               IconButton(
-                                tooltip: WindowsUiLanguage.translate('Report Card PDF'),
-                                onPressed: () async {if(!await WindowsDocumentTemplates.previewReport(context,result!))html.window.open(reportUrl, '_blank');},
+                                tooltip: WindowsUiLanguage.translate('Preview Report Card'),
+                                onPressed: () async {
+                                  await WindowsDocumentTemplates.previewReport(context,result!);
+                                },
                                 icon: Icon(
                                     Icons.picture_as_pdf_rounded,
                                     color: WindowsAppearance.foreground(Colors.orangeAccent)),
