@@ -159,7 +159,7 @@ class WindowsAdminSecurity {
     required String target,
   }) async {
     if(!await isManaged){
-      if(!const {'drive-connection','person-delete','force-promotion','protected-settings'}.contains(scope)||
+      if(!{'drive-connection','person-delete','force-promotion','protected-settings'}.contains(scope)||
           target.isEmpty||target.length>1000)
         throw StateError('Invalid protected school action.');
       await WindowsLocalAdminSecurity.verify(password);
