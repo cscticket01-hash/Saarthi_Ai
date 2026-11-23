@@ -1,0 +1,21 @@
+name: Sync4 bounded Firebase delete proof
+on:
+  pull_request:
+    paths:
+      - 'functions/delete-everywhere.js'
+      - 'functions/test/delete-everywhere-firebase.test.js'
+      - '.github/workflows/sync4-bounded-firebase-delete-review.yml'
+permissions:
+  contents: read
+jobs:
+  delete-cas-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify original deletion CAS and Firebase readback
+        run: |
+          node --check functions/delete-everywhere.js
+          node --test functions/test/delete-everywhere-firebase.test.js
