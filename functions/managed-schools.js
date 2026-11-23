@@ -1436,6 +1436,62 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ if(action==='managed/cloudflare/auditJournalPage'){
+  // School-authenticated, paginated OWNER inventory. Never expose job bodies,
+  // secret Script replies, provider tokens or another school's journal.
+  // This is only one notice/attendance lane, not all-original Drive proof.
+  if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,
+    enabled:false,statusScope:'unavailable'};
+  const lane=b.lane,after=b.after??0,limit=b.limit??50;
+  if(typeof lane!=='string'||
+     !/^(?:notices|attendance-[a-f0-9]{2})$/.test(lane)||
+     !Number.isSafeInteger(after)||after<0||
+     !Number.isSafeInteger(limit)||limit<1||limit>100)
+    fail(400,'Invalid school owner journal page','EDGE_AUDIT_PAGE_INVALID');
+  const result=await cloudflareSync.rpc(m.schoolId,lane,{
+    command:'auditJournalPage',after,limit});
+  const source=lane==='notices'?'legacy-notices':'legacy-attendance';
+  const entries=result?.entries;
+  let last=after;
+  const valid=Array.isArray(entries)&&entries.length<=limit&&
+    entries.every(entry=>{
+      if(!entry||typeof entry!=='object'||
+         !Number.isSafeInteger(entry.sequence)||entry.sequence<=last||
+         typeof entry.id!=='string'||!/^[a-f0-9]{64}$/.test(entry.id)||
+         !['pending','retry','processing','completed','needsAttention','staging'].includes(entry.state)||
+         typeof entry.driveOwnerReceiptPresent!=='boolean'||
+         !(entry.acceptedAt===null||
+           Number.isSafeInteger(entry.acceptedAt)&&entry.acceptedAt>0)||
+         !(entry.verifiedAt===null||
+           Number.isSafeInteger(entry.verifiedAt)&&entry.verifiedAt>0)||
+         (entry.driveOwnerReceiptPresent===true&&entry.state!=='completed')||
+         (entry.driveOwnerReceiptPresent===false&&entry.verifiedAt!==null)||
+         (entry.verifiedAt!==null&&
+           (entry.acceptedAt===null||entry.verifiedAt<entry.acceptedAt)))
+        return false;
+      last=entry.sequence;
+      return true;
+    });
+  if(!result||result.version!==1||result.schoolId!==m.schoolId||
+     result.scope!=='legacyImmutableOwnerJournal'||
+     result.source!==source||result.lane!==lane||
+     result.partial!==true||result.coverage!=='one-owner-journal-only'||
+     !valid||
+     !(result.nextCursor===null||
+       Number.isSafeInteger(result.nextCursor)&&entries.length>0&&
+       result.nextCursor===last))
+    fail(502,'Cloudflare owner audit page unverified','EDGE_AUDIT_PAGE_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,enabled:true,
+    version:1,statusScope:'one-owner-journal-only',source,lane,
+    coverage:'one-owner-journal-only',partial:true,
+    entries:entries.map(row=>({
+      sequence:row.sequence,id:row.id,state:row.state,
+      acceptedAt:row.acceptedAt,
+      driveOwnerReceiptPresent:row.driveOwnerReceiptPresent,
+      verifiedAt:row.verifiedAt
+    })),
+    nextCursor:result.nextCursor};
+ }
  if(action==='managed/cloudflare/backupHourly'){
   if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false,
    statusScope:'unavailable'};
