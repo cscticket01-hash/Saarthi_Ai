@@ -120,7 +120,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _loading = true, _busy = false, _configured = false;
-  bool _opened = false, _legacy = false;
+  bool _opened = false, _legacy = false, _recover = false;
   String? _error;
 
   @override
@@ -163,27 +163,32 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
   Future<void> _submit() async {
     if (_busy || _loading) return;
     final pass = _password.text;
-    if (!_configured && (pass.length < 12 || pass.length > 128 || pass != _confirm.text)) {
+    if ((!_configured || _recover) && (pass.length < 12 || pass.length > 128 || pass != _confirm.text)) {
       setState(() => _error='Use a matching Admin Password of 12–128 characters.');
       return;
     }
     setState(() { _busy=true; _error=null; });
     try {
-      if (_configured) {
+      if (_configured && !_recover) {
         await WindowsAdminSecurity.unlock(pass);
       } else {
         if (_schoolPassword.text.isEmpty) throw StateError('Enter your school login password.');
         if (_schoolPassword.text == pass) {
           throw StateError('Admin Password must be different from School Login Password.');
         }
-        await WindowsAdminSecurity.enroll(
-          schoolPassword:_schoolPassword.text, newPassword:pass);
+        if(_recover) {
+          await WindowsAdminSecurity.recover(
+            schoolPassword:_schoolPassword.text, newPassword:pass);
+        } else {
+          await WindowsAdminSecurity.enroll(
+            schoolPassword:_schoolPassword.text, newPassword:pass);
+        }
       }
       await WindowsAdminSecurity.grantPanelSession();
       _password.clear();
       _confirm.clear();
       _schoolPassword.clear();
-      if(mounted) setState(() { _configured=true; _opened=true; _busy=false; });
+      if(mounted) setState(() { _configured=true; _recover=false; _opened=true; _busy=false; });
     } catch (e) {
       if(mounted) setState(() { _busy=false; _error=e.toString(); });
     }
@@ -214,17 +219,20 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
               child:Column(mainAxisSize:MainAxisSize.min,children:[
                 Icon(Icons.admin_panel_settings_rounded,size:48,color:colors.primary),
                 const SizedBox(height:12),
-                Text(_configured ? 'Unlock Admin Panel' : 'Create Admin Password',
+                Text(_recover ? 'Recover Admin Password' :
+                  _configured ? 'Unlock Admin Panel' : 'Create Admin Password',
                   style:Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height:8),
-                Text(_configured
+                Text(_recover
+                  ? 'Verify the school login password to reset the independent Admin Password.'
+                  : _configured
                   ? 'Enter the independent school administrator password.'
                   : 'School-wide Admin Password is separate from this PC App Lock.',
                   textAlign:TextAlign.center),
                 const SizedBox(height:22),
                 if(_loading) const CircularProgressIndicator()
                 else ...[
-                  if(!_configured) ...[
+                  if(!_configured || _recover) ...[
                     TextField(controller:_schoolPassword,obscureText:true,
                       enabled:!_busy,
                       decoration:const InputDecoration(
@@ -235,9 +243,9 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                   TextField(controller:_password,obscureText:true,enabled:!_busy,
                     onSubmitted:(_) => _submit(),
                     decoration:InputDecoration(
-                      labelText:_configured ? 'Admin Password' : 'New Admin Password',
+                      labelText:_configured && !_recover ? 'Admin Password' : 'New Admin Password',
                       prefixIcon:const Icon(Icons.lock_outline))),
-                  if(!_configured) ...[
+                  if(!_configured || _recover) ...[
                     const SizedBox(height:12),
                     TextField(controller:_confirm,obscureText:true,enabled:!_busy,
                       onSubmitted:(_) => _submit(),
@@ -249,14 +257,21 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
                   ],
                   const SizedBox(height:18),
                   FilledButton.icon(
-                    onPressed:_busy ? null : _error != null && _password.text.isEmpty && _configured
-                      ? _load : _submit,
+                    onPressed:_busy ? null : _submit,
                     icon:_busy ? const SizedBox(width:16,height:16,
                       child:CircularProgressIndicator(strokeWidth:2))
                       : const Icon(Icons.lock_open_rounded),
                     label:Text(_busy ? 'Verifying...' :
+                      _recover ? 'Reset Admin Password' :
                       _configured ? 'Unlock Admin Panel' : 'Create Admin Password'),
                   ),
+                ],
+                if(!_loading && _configured) ...[
+                  const SizedBox(height:8),
+                  TextButton(onPressed:_busy ? null : () => setState(() {
+                    _recover=!_recover;
+                    _password.clear();_confirm.clear();_schoolPassword.clear();_error=null;
+                  }),child:Text(_recover ? 'Back to Admin Password' : 'Forgot Admin Password?')),
                 ],
                 if(!_loading && _error != null) ...[
                   const SizedBox(height:10),
