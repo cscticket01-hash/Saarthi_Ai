@@ -1,0 +1,30 @@
+name: Website Windows setup download review
+on:
+  pull_request:
+    paths:
+      - 'lib/release_download.dart'
+      - 'test/release_download_test.dart'
+      - 'firebase.json'
+      - 'scripts/check_download_redirects.cjs'
+      - '.github/workflows/web-windows-release-link-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  download-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=web --project-name=saarthi_ai .
+      - run: flutter pub get
+      - name: Check website release URL selector
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/release_download.dart
+      - name: Test Windows setup link provenance and highest numeric version
+        run: flutter test test/release_download_test.dart
+      - name: Validate Windows and Android immutable Firebase download redirects
+        run: node scripts/check_download_redirects.cjs
