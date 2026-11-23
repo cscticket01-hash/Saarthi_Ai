@@ -240,8 +240,19 @@ test('three-job canary uses real Worker resource ordering and never passes a per
   ...write('school_expenses','after-person','operation-three-after-0001'),
   data:{schoolId:school,amount:50}
  });
- const eligible=(await rpc(school,'records',{command:'pending',limit:3})).value;
- assert.equal(eligible.length,3);
+ const eligibility=await rpc(school,'records',{command:'pending',limit:3});
+ const eligible=eligibility.value;
+ const snapshot=await rpc(school,'records',{command:'stats'});
+ assert.equal(eligibility.status,200,JSON.stringify(eligibility));
+ assert.equal(eligible.length,3,JSON.stringify({
+  scheduler:eligibility,stats:snapshot,
+  receipts:await Promise.all(['three-0','three-1','three-2'].map(async (id,i)=>{
+   const source=write('school_expenses',id,'operation-three-'+i+'-000001');
+   const key=hash(JSON.stringify([school,source.action,[source.collection,source.id,source.operationId]]));
+   const status=await rpc(school,'records',{command:'status',id:key});
+   return {id,status:status.value?.state,due:status.value?.due};
+  }))
+ }));
  let active=0,peak=0,entered=0;
  let release;const simultaneous=new Promise(resolve=>{release=resolve;});
  const deadline=setTimeout(release,3000);
