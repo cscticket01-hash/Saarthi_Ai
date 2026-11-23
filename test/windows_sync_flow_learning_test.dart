@@ -20,7 +20,11 @@ void main(){
     'queueCollection':'_windows_firebase_outbox','operationId':op,
     'failureCategory':category,'stage':stage,
   };
-  setUp((){ui.WindowsUiLanguage.change('en');WindowsSyncEvidence.active.value={};});
+  setUp(() {
+    ui.WindowsUiLanguage.change('en');
+    WindowsSyncEvidence.active.value={};
+    WindowsSyncEvidence.uploads.value={};
+  });
   tearDown(()=>ui.WindowsUiLanguage.change('en'));
   test('24 hour expiry removes display events but preserves persistent successful rules',(){
     final rules=WindowsLearnedSyncRules();
@@ -136,6 +140,62 @@ void main(){
     expect(windowsIncomingPendingBreakdown(schoolId:school,
       downloads:[],remoteChangeQueued:false)['total'],0);
     expect(windowsSyncFlowPendingText(0,{}),'0 pending');
+  });
+  test('Drive status and read-only cloud checks cannot wake completed device upload', () {
+    final idle = <String,dynamic>{
+      'displayState':'idle','pending':0,'cloudflareOwnedPendingDrive':2,
+    };
+    final checking = windowsCloudCheckSnapshot(idle, checkingCloud:true);
+    expect(checking['displayState'],'idle');
+    expect(checking['pending'],0);
+    expect(checking['checkingCloud'],true);
+    expect(windowsCloudCheckSnapshot(checking,checkingCloud:false)['displayState'],'idle');
+
+    const now=10000;
+    final cloudOwned=<String,dynamic>{
+      'schoolId':school, 'collection':'students_directory',
+      '_queueCollection':'_windows_firebase_outbox','syncState':'cloudAccepted',
+    };
+    final legacy=<String,dynamic>{
+      'schoolId':school,'_queueCollection':'_windows_google_outbox',
+      'syncState':'pending',
+    };
+    expect(windowsHasDueForegroundUpload([cloudOwned,legacy],
+      school:school,nowMillis:now),false,
+      reason:'Google Drive completion is not a new PC mutation');
+    final retry=<String,dynamic>{
+      'schoolId':school,'_queueCollection':'_windows_firebase_outbox',
+      'syncState':'retry','retryAtMillis':now+2000,
+    };
+    expect(windowsHasDueForegroundUpload([retry],school:school,nowMillis:now),false);
+    expect(windowsHasDueForegroundUpload([
+      {...retry,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+    ],school:school,nowMillis:now),false);
+    final newEdit={...retry,'syncState':'pending','retryAtMillis':0};
+    expect(windowsHasDueForegroundUpload([cloudOwned,newEdit],
+      school:school,nowMillis:now),true,
+      reason:'a separately saved new operation may upload after earlier Drive proof');
+    expect(windowsHasDueForegroundUpload([
+      {...newEdit,'_queueCollection':'_windows_document_outbox'},
+    ],school:school,nowMillis:now),true);
+    expect(windowsHasDueForegroundUpload([
+      {...newEdit,'syncState':'conflict'},
+    ],school:school,nowMillis:now),false);
+  });
+  test('parallel progress aggregates only measured own-school upload bytes', () {
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull);
+    WindowsSyncEvidence.reportUpload('fileA',school,200,1000);
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:200,total:1000));
+    WindowsSyncEvidence.reportUpload('fileB',school,450,900);
+    WindowsSyncEvidence.reportUpload('foreign','vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',8,8);
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:650,total:1900));
+    WindowsSyncEvidence.endUpload('fileA');
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:450,total:900));
+    WindowsSyncEvidence.reportUpload('fileB',school,901,900);
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull,
+      reason:'invalid measurement must never invent percent');
+    WindowsSyncEvidence.endUpload('fileB');
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull);
   });
   test('activity is school scoped and subscriptions are not transfer animations',(){
     expect(WindowsSyncEvidence.dataAction('managed/events'),false);
