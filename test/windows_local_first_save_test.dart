@@ -489,12 +489,19 @@ void main() {
   });
 
   test('saved final results promote PASS offline, retain FAIL and audit the deliberate override', () async {
-    final exam={'examId':'final-local','examName':'Final','isFinal':true};
+    final exam={'examId':'final-local','examName':'Final','isFinal':true,
+      'subjects':['English','Math'],'fullMarks':100,'passMarks':33};
     await db.collection('_local_exam_center_exams').doc('final-local').set(exam);
     await db.collection('students_directory').doc('passed').set({'name':'Passed pupil','class':'Class 1','rollNo':'1'});
     await db.collection('students_directory').doc('failed').set({'name':'Retained pupil','class':'Class 1','rollNo':'2'});
-    await db.collection('exam_results').doc('final-local_passed').set({'studentId':'passed','result':'PASS'});
-    await db.collection('exam_results').doc('final-local_failed').set({'studentId':'failed','result':'FAIL'});
+    await db.collection('exam_results').doc('final-local_passed').set({
+      'examId':'final-local','studentId':'passed','result':'PASS',
+      'marks':{'English':88,'Math':77},
+    });
+    await db.collection('exam_results').doc('final-local_failed').set({
+      'examId':'final-local','studentId':'failed','result':'FAIL',
+      'marks':{'English':25,'Math':70},
+    });
     await db.collection('fee_payments').doc('fee-link').set({
       'studentId':'passed','amount':250,'receipt':'original',
     });
