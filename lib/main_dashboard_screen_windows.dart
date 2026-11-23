@@ -23123,9 +23123,11 @@ class _ExamMarksEntryScreenState
         SnackBar(
           backgroundColor: WindowsAppearance.background(const Color(0xFF00A884)),
           content: Text(
-              savedOffline
-                ? 'Marks saved locally. Cloudflare sync pending. No PDF generated.'
-                : 'Marks saved. Cloudflare sync pending. No PDF generated.'),
+              promotionPending
+                ? 'Marks saved. Final-exam promotion needs review in Student Directory.'
+                : savedOffline
+                    ? 'Marks saved locally. Cloudflare sync pending. No PDF generated.'
+                    : 'Marks saved. Cloudflare sync pending. No PDF generated.'),
         ),
       );
     }
