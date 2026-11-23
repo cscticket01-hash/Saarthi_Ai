@@ -23,6 +23,14 @@ class WindowsExamService {
       throw ArgumentError('Unsupported exam action');
     }
     final request = <String, dynamic>{...body};
+    final school = FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+        ?.toString() ?? '';
+    if (school.isNotEmpty) {
+      if (request['schoolId'] != null && request['schoolId'] != school) {
+        throw StateError('Cannot save another school\'s exam data.');
+      }
+      request['schoolId'] = school;
+    }
     if (action == 'save_exam' &&
         (request['examId']?.toString().isEmpty ?? true)) {
       request['examId'] =
@@ -55,8 +63,17 @@ class WindowsExamService {
         throw StateError('Exam and student IDs are required.');
       }
       final exam = (await FirebaseFirestore.instance
-          .collection('exams').doc(examId).get()).data();
+          .collection('exams').doc(examId).get()).data() ??
+          (await FirebaseFirestore.instance
+          .collection('_local_exam_center_exams').doc(examId).get()).data();
       _requireProfile(profile);
+      if (exam == null ||
+          exam['schoolId'] != null && exam['schoolId'] != school) {
+        throw StateError('A verified same-school exam must exist before saving marks.');
+      }
+      if (request['marks'] is! Map) {
+        throw StateError('Enter complete marks before saving an exam result.');
+      }
       // A final result that already changed the student's class cannot be
       // silently rewritten. An explicit audited correction workflow is needed.
       if (exam?['isFinal'] == true || request['isFinal'] == true) {
@@ -71,8 +88,7 @@ class WindowsExamService {
             'Use an audited correction before changing its marks.');
         }
       }
-      if (exam != null && exam['subjects'] is List &&
-          request['marks'] is Map) {
+      if (exam['subjects'] is List) {
         final full = WindowsExamPolicy.finiteNumber(exam['fullMarks']);
         final pass = WindowsExamPolicy.finiteNumber(exam['passMarks']);
         if (full == null || pass == null) {
@@ -101,6 +117,8 @@ class WindowsExamService {
           'percentage': maximum > 0 ? total / maximum * 100 : 0,
           'academicSession': exam['academicSession'],
         });
+      } else {
+        throw StateError('Exam subjects must be configured before marks can be saved.');
       }
     }
     final cloud = await CentralSchoolCloud.saved();
