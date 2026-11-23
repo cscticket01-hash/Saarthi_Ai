@@ -217,6 +217,79 @@ bool canStageAttendancePastUnrelatedOwners(
   return true;
 }
 
+/// A foreground-only, standalone notice or calendar write may stage past
+/// unrelated fee/file backlog. The Worker still serializes provider commits
+/// for resource types without negotiated independent scheduling.
+bool canStageStandaloneSchoolMessagePastUnrelatedOwners(
+  Map candidate, Iterable<Map<String, dynamic>> outbox, String school,
+) {
+  if (!{'school_notices', 'school_calendar'}.contains(candidate['collection']) ||
+      candidate['schoolId'] != school ||
+      !{'set', 'update'}.contains(candidate['operation']) ||
+      candidate['documentId'] is! String ||
+      (candidate['documentId'] as String).isEmpty ||
+      candidate['priorDeletion'] != null ||
+      candidate['priorCloudWrite'] != null ||
+      candidate['atomicBundleId'] != null ||
+      candidate['data'] is! Map) return false;
+
+  // Do not allow targeted person/fee/file messages to race their parent.
+  // Unrelated static announcements and calendar events are independent at
+  // the device staging boundary, not at the final provider ACK boundary.
+  final data = candidate['data'] as Map;
+  final forbidden = RegExp(
+      r'(student|teacher|person|parent|guardian|fee|payment|ledger|file|photo|'
+      r'document|exam|attendance|classid|ownerid|roll)',
+      caseSensitive: false);
+  if (data.keys.any((key) => forbidden.hasMatch(key.toString())) ||
+      parallelContainsInlineMedia(data)) return false;
+
+  for (final row in outbox) {
+    if (row['schoolId'] != school ||
+        row['atomicBundleId'] != null ||
+        row['priorDeletion'] != null ||
+        row['priorCloudWrite'] != null ||
+        row['operation'] == 'delete' ||
+        {'school_config', 'school_settings', 'fee_settings'}
+            .contains(row['collection'])) return false;
+    if (row['collection'] == candidate['collection'] &&
+        row['documentId'] == candidate['documentId'] &&
+        row['operationId'] != candidate['operationId']) return false;
+  }
+  return true;
+}
+
+/// An established person contact-only update cannot modify a student/teacher
+/// identity, payroll or class ownership. It can stage while a different,
+/// unreserved record is awaiting the provider, but not past global school
+/// policy, any delete, or a same-person predecessor.
+bool canStageIndependentContactPatchPastUnrelatedOwners(
+  Map candidate, Iterable<Map<String, dynamic>> outbox, String school,
+) {
+  if (candidate['schoolId'] != school ||
+      !independentExistingPersonPatch(candidate) ||
+      candidate['operation'] != 'set' &&
+          candidate['operation'] != 'update' ||
+      candidate['priorDeletion'] != null ||
+      candidate['priorCloudWrite'] != null ||
+      candidate['atomicBundleId'] != null) return false;
+  for (final row in outbox) {
+    if (row['schoolId'] != school ||
+        row['atomicBundleId'] != null ||
+        row['priorDeletion'] != null ||
+        row['priorCloudWrite'] != null ||
+        row['operation'] == 'delete' ||
+        {'school_config', 'school_settings', 'fee_settings'}
+            .contains(row['collection'])) return false;
+    // An unsettled update of this same person always precedes a new patch,
+    // including when its original operation already belongs to Cloudflare.
+    if (row['collection'] == candidate['collection'] &&
+        row['documentId'] == candidate['documentId'] &&
+        row['operationId'] != candidate['operationId']) return false;
+  }
+  return true;
+}
+
 /// Publish the durable queue for one immutable local school profile.
 /// Failure leaves the queued record intact; acknowledgement is version-checked.
 class WindowsPendingSchoolSync {
@@ -1028,10 +1101,11 @@ class WindowsPendingSchoolSync {
             (school is String &&
              (canStageExpensePastUnrelatedOwners(row.data(),scopedRows,school) ||
               canStageAttendancePastUnrelatedOwners(row.data(),scopedRows,school) ||
-              canStagePreparedPersonPastUnrelatedOwners(row.data(),scopedRows,school))) ||
-            (!parallelAttendanceExpenseCollections.contains(row.data()['collection']) &&
-             !independentExistingPersonPatch(row.data()) &&
-             !independentPreparedPersonCreate(row.data()))) &&
+              canStagePreparedPersonPastUnrelatedOwners(row.data(),scopedRows,school) ||
+              canStageStandaloneSchoolMessagePastUnrelatedOwners(
+                row.data(),scopedRows,school) ||
+              canStageIndependentContactPatchPastUnrelatedOwners(
+                row.data(),scopedRows,school)))) &&
           (parallelAdmission?.call(row.data()) ?? false);
       if (!independent(first)) {
         await process(first);
