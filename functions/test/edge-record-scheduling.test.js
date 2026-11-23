@@ -104,3 +104,18 @@ test('three-way canary falls back to serial on an older Worker and caps forged s
  assert.equal(sends,0);
  assert.equal(claims,0);
 });
+
+test('three-way option is school scoped and never becomes a wildcard rollout',async()=>{
+ const limits=[],first=school,other='vs-'+'b'.repeat(32);
+ const edge={rpc:async(s,l,b)=>{
+  assert.equal(l,'records');
+  if(b.command==='capabilities')return {recordSchedulingVersion:1};
+  if(b.command==='pending'){limits.push([s,b.limit]);return [];}
+  throw Error('Unexpected provider command');
+ }};
+ const delivery=createCloudflareDelivery({edge,
+  recordParallelism:s=>s===first?3:1});
+ await delivery.drain(first,'records',async()=>assert.fail('No work admitted'));
+ await delivery.drain(other,'records',async()=>assert.fail('No work admitted'));
+ assert.deepEqual(limits,[[first,3],[other,1]]);
+});
