@@ -15,6 +15,11 @@ test('new live authority is closed by default and normal school authorization is
  assert.equal(commands.length,0);
  assert.equal((await f.call({action:'managed/live/head',liveProtocol:1,command:'backupFinish'})).liveProtocol,1);
  assert.equal(commands[0].b.command,'head');
+ const hourly=await f.call({action:'managed/live/backupHourly',liveProtocol:1});
+ assert.equal(hourly.success,true);
+ assert.equal(hourly.schoolId,A);
+ assert.equal(commands.at(-1).b.command,'backupHourly');
+ await assert.rejects(f.call({action:'managed/live/backupFinish',liveProtocol:1}),e=>e.status===400);
  f.docs.get('school_entitlements/'+A).blocked=true;
  await assert.rejects(f.call({action:'managed/live/head',liveProtocol:1}),e=>e.status===403);
 });
