@@ -5381,6 +5381,8 @@ Future<void> _printIdCard() async {
   }
 
   Widget _buildAdminDrawer() => Drawer(width: WindowsAdminSidebar.width,
+    backgroundColor: WindowsAppearance.presetId == 'midnight-glass'
+        ? Colors.transparent : null,
     child: _windowsSharedAdminSidebar(context,
       onAnalytics: () { Navigator.of(context).pop(); _openAdminAnalyticsGate(); },
       onLogout: () { Navigator.of(context).pop(); _confirmAdminLogoutFromHeader(); },
