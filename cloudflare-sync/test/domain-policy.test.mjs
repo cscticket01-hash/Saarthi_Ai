@@ -89,6 +89,8 @@ test('one-time fee payments require the server-locked student admission month',(
   feeItems:{Admission:150},feeFrequencies:{Admission:'once'},
   feeAdmissionMonth:'2026-04',feeAdmissionPersonId:'generation-one'};
  assert.doesNotThrow(()=>run(valid,{owner}));
+ const unversioned={...valid};delete unversioned.feeBillingPolicyVersion;
+ assert.throws(()=>run(unversioned,{owner}),e=>e.code==='DOMAIN_FEE_BILLING_VERSION_REQUIRED');
  assert.throws(()=>run({...valid,month:'2026-05'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
  assert.throws(()=>run({...valid,feeAdmissionPersonId:'generation-two'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
  assert.throws(()=>run({...valid,feeAdmissionMonth:'2026-03'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
@@ -96,5 +98,5 @@ test('one-time fee payments require the server-locked student admission month',(
  const monthly={...valid,feeFrequencies:{Admission:'monthly'}};
  delete monthly.feeAdmissionMonth;delete monthly.feeAdmissionPersonId;
  assert.doesNotThrow(()=>run(monthly,{owner:student}));
- assert.throws(()=>run({...monthly,expectedAmount:151},{owner:student}),e=>e.code==='DOMAIN_FEE_ITEMS_TOTAL_MISMATCH');
+ assert.throws(()=>run({...monthly,feeItems:{Admission:151}},{owner:student}),e=>e.code==='DOMAIN_FEE_ITEMS_TOTAL_MISMATCH');
 });

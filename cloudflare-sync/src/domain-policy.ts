@@ -27,6 +27,14 @@ function boundedJson(value:unknown,depth=0,budget={left:10000}):void {
  }
 }
 const nonempty=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&value.length<=200;
+function stableJson(value:unknown):string {
+ if(Array.isArray(value))return '['+value.map(stableJson).join(',')+']';
+ if(value&&typeof value==='object'){
+  const object=value as Record<string,unknown>,keys=Object.keys(object).sort();
+  return '{'+keys.map(key=>JSON.stringify(key)+':'+stableJson(object[key])).join(',')+'}';
+ }
+ return JSON.stringify(value)??'null';
+}
 function generation(owner:Json):unknown {return owner.mobileStableId||owner.generation||owner._syncDeletedOwner||owner.id;}
 function owned(school:string,owner:Json|null):Json {
  if(!owner)reject('DOMAIN_PARENT_NOT_READY',412);
@@ -78,41 +86,42 @@ export function validateDomainCandidate(input:DomainCandidate):void {
    if(teacherRole&&nonempty(next.personId)&&generation(owner)!==next.personId)reject('DOMAIN_TEACHER_RETIRED');
   }
  }
+ if(current&&current.feeBillingPolicyVersion===1&&next.feeBillingPolicyVersion!==1)
+  reject('DOMAIN_FEE_BILLING_VERSION_IMMUTABLE');
  if(['fee_payments','fee_ledger'].includes(collection)&&
     (next.feeBillingPolicyVersion===1||next.feeFrequencies!==undefined)){
-  const items=next.feeItems,frequencies=next.feeFrequencies;
-  if(next.feeBillingPolicyVersion!==1)reject('DOMAIN_FEE_BILLING_VERSION_REQUIRED',400);
-  if(!items||typeof items!=='object'||Array.isArray(items)||
-     !frequencies||typeof frequencies!=='object'||Array.isArray(frequencies)||
+  if(next.feeBillingPolicyVersion!==1)
+   reject('DOMAIN_FEE_BILLING_VERSION_REQUIRED',400);
+  const rawItems=next.feeItems,rawFrequencies=next.feeFrequencies;
+  if(!rawItems||typeof rawItems!=='object'||Array.isArray(rawItems)||
+     !rawFrequencies||typeof rawFrequencies!=='object'||Array.isArray(rawFrequencies)||
      !nonempty(next.studentId)||!nonempty(next.personId)||
-     typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
+     typeof next.month!=='string'||!/^\\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
    reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+  const items=rawItems as Record<string,unknown>;
+  const frequencies=rawFrequencies as Record<string,unknown>;
+  if(Object.keys(items).length===0||
+     Object.keys(items).some(head=>!Object.hasOwn(frequencies,head))||
+     Object.keys(frequencies).some(head=>!Object.hasOwn(items,head)))
+   reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+  const paise=(value:unknown):value is number=>typeof value==='number'&&
+   Number.isFinite(value)&&Math.abs(value*100-Math.round(value*100))<=0.000001;
   const expected=next.expectedAmount,totalPaid=next.totalPaid,balance=next.balance;
-  const paise=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)&&
-   Math.abs(value*100-Math.round(value*100))<=0.000001;
   if(!paise(expected)||expected<=0||!paise(totalPaid)||totalPaid<=0||
      !paise(balance)||balance<0||Math.abs(expected-totalPaid-balance)>0.001||
      next.status!==(totalPaid===expected?'PAID':'PARTIAL'))
    reject('DOMAIN_FEE_TOTALS_INVALID',400);
+  const installment=next.installmentAmount;
+  if(collection==='fee_payments'&&(!paise(installment)||installment<=0||installment>totalPaid))
+   reject('DOMAIN_FEE_INSTALLMENT_INVALID',400);
+  if(collection==='fee_ledger'&&!nonempty(next.lastPaymentId))
+   reject('DOMAIN_FEE_LAST_PAYMENT_MISSING',400);
   let itemTotal=0;
   for(const [head,amount] of Object.entries(items)){
    if(!nonempty(head)||!paise(amount)||amount<0)
     reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
    itemTotal+=amount;
-  }
-  if(Math.abs(itemTotal-expected)>0.001)
-   reject('DOMAIN_FEE_ITEMS_TOTAL_MISMATCH',400);
-  if(collection==='fee_payments'&&(!paise(next.installmentAmount)||next.installmentAmount<=0||
-      next.installmentAmount>totalPaid))reject('DOMAIN_FEE_INSTALLMENT_INVALID',400);
-  if(collection==='fee_ledger'&&!nonempty(next.lastPaymentId))
-   reject('DOMAIN_FEE_LAST_PAYMENT_MISSING',400);
-  if(collection==='fee_ledger'&&current&&current.feeBillingPolicyVersion===1&&
-     (current.expectedAmount!==next.expectedAmount||
-      canonical(current.feeItems)!==canonical(next.feeItems)||
-      canonical(current.feeFrequencies)!==canonical(next.feeFrequencies)||
-      totalPaid<(current.totalPaid as number)))
-   reject('DOMAIN_FEE_LEDGER_TERMS_IMMUTABLE');
-   const frequency=frequencies[head]===undefined?'monthly':frequencies[head];
+   const frequency=frequencies[head];
    if(!['monthly','annual','once'].includes(String(frequency)))
     reject('DOMAIN_FEE_BILLING_FREQUENCY_INVALID',400);
    if(frequency==='once'){
@@ -126,8 +135,16 @@ export function validateDomainCandidate(input:DomainCandidate):void {
      reject('DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
    }
   }
-  if(Object.keys(frequencies).some(head=>!Object.hasOwn(items,head)))
-   reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
+  if(Math.abs(itemTotal-expected)>0.001)
+   reject('DOMAIN_FEE_ITEMS_TOTAL_MISMATCH',400);
+  if(collection==='fee_ledger'&&current&&current.feeBillingPolicyVersion===1){
+   const previousPaid=current.totalPaid;
+   if(!paise(previousPaid)||current.expectedAmount!==expected||
+      stableJson(current.feeItems)!==stableJson(items)||
+      stableJson(current.feeFrequencies)!==stableJson(frequencies)||
+      totalPaid<previousPaid)
+    reject('DOMAIN_FEE_LEDGER_TERMS_IMMUTABLE');
+  }
  }
  if(collection==='teacher_salary'&&nonempty(next.staffId)){
   const history=current&&!current._syncDeleted&&['staffId','employeeId','personId','teacherId'].every(key=>current[key]===next[key]);
