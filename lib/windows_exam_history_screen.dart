@@ -248,13 +248,23 @@ class _WindowsExamHistoryScreenState extends State<WindowsExamHistoryScreen> {
                 '${row['totalMarks'] ?? row['total'] ?? '—'} marks • '
                 '${num.tryParse(row['percentage']?.toString() ?? '')?.toStringAsFixed(1) ?? '—'}%',
               ),
-              trailing: row['marksheetDocumentId'] is String
-                ? IconButton(
-                    tooltip:'Open original marksheet',
-                    icon:const Icon(Icons.picture_as_pdf_outlined),
-                    onPressed:()=>_showOriginalMarksheet(row),
-                  )
-                : null,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Preview Report Card',
+                    icon: const Icon(Icons.visibility_outlined),
+                    onPressed: () => WindowsDocumentTemplates.previewReport(
+                      context, {...exam, ...row}),
+                  ),
+                  if (row['marksheetDocumentId'] is String)
+                    IconButton(
+                      tooltip: 'Open archived original marksheet',
+                      icon: const Icon(Icons.history_edu_outlined),
+                      onPressed: () => _showOriginalMarksheet(row),
+                    ),
+                ],
+              ),
             ),
         ],
       ),
