@@ -699,6 +699,8 @@ class SchoolPromotionService {
       'promotionTransactionId': 'promotion:$examId:$studentId',
     };
     final batch = db.batch();
+    // Local serialized compare-and-swap blocks stale/duplicate approvals.
+    batch.requireUnchanged(ref, live);
     batch.set(ref, {
       ...live, ...shared,
       if (nextClass != live['class']) 'previousClass': live['class'],
