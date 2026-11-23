@@ -1913,6 +1913,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       WindowsFirebaseRemote.documentStageSupported = false;
       WindowsFirebaseRemote.documentReplacementStageSupported = false;
       WindowsFirebaseRemote.photoRecordStageSupported = false;
+      WindowsFirebaseRemote.photoReceiptSupported = false;
       _changeFeedSupported = false;
       _remoteFeed.stop();
       _lastIntegrityAttempt = null;
@@ -2422,6 +2423,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
               health['brokerPhotoRecordStageVersion'] == 1 &&
               health['recordSyncVersion'] == 2 &&
               health['uploadResumableVersion'] == 1;
+          WindowsFirebaseRemote.photoReceiptSupported =
+              health['brokerPhotoReceiptVersion'] == 1 &&
+              health['photoReceiptVersion'] == 1;
           WindowsFirebaseRemote.recordWriteBatchSupported =
               health['recordWriteBatchVersion'] == 1 &&
               health['brokerRecordWriteBatchVersion'] == 1;
