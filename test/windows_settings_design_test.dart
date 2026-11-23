@@ -12,6 +12,7 @@ import '../lib/windows_update_service.dart';
 import '../lib/windows_sync_engine.dart';
 import '../lib/windows_sync_control_center.dart';
 import '../lib/school_cloud_state.dart';
+import '../lib/sync_recovery_policy.dart';
 
 class _Routes extends NavigatorObserver {
   Route<dynamic>? latest;
@@ -26,11 +27,13 @@ void main() {
   final originalState = engine.state.value;
   final originalTime = engine.lastSuccessfulSync;
   final originalError = engine.lastError;
+  final originalRecovery = engine.recoveryDecision;
   setUp(() {
     WindowsUpdateService.state.value = const WindowsUpdateRuntimeState(
       phase: WindowsUpdatePhase.upToDate, message: 'App already latest version par hai.');
     engine.lastSuccessfulSync = DateTime(2026, 10, 18, 22, 51, 38, 889, 664);
     engine.lastError = null;
+    engine.recoveryDecision = null;
     engine.details.value = {'pending': 0, 'needsAttention': 0};
     engine.state.value = SchoolCloudState.synced;
   });
@@ -40,6 +43,7 @@ void main() {
     engine.state.value = originalState;
     engine.lastSuccessfulSync = originalTime;
     engine.lastError = originalError;
+    engine.recoveryDecision = originalRecovery;
   });
 
   testWidgets('actual Settings page renders responsive, DPI-scaled review PNGs without overflow', (tester) async {
@@ -139,6 +143,32 @@ void main() {
     expect(find.text('Sync Status • Offline'), findsOneWidget);
     expect(tester.widgetList<WindowsSettingsCard>(find.byType(WindowsSettingsCard)).last.success, false);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('idle Windows device retains 504 diagnostics as cloud retry, not pending upload', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1100, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    engine.details.value={'pending':0,'needsAttention':0,'displayState':'idle'};
+    engine.lastSuccessfulSync=DateTime(2026,11,23,20,7,40);
+    engine.lastError='Central school API failed (HTTP 504) [SCRIPT_TIMEOUT] Ref: synthetic';
+    engine.recoveryDecision=const SyncRecoveryDecision(
+      SyncFailureKind.timeout,retry:true);
+    engine.state.value=SchoolCloudState.syncError;
+    await tester.pumpWidget(const MaterialApp(home:SettingsScreen()));
+    await tester.pumpAndSettle();
+    expect(find.text('Sync Status • Idle · server retry'),findsOneWidget);
+    expect(find.text('Pending: 0'),findsOneWidget);
+    expect(find.textContaining('Google Drive completion requires a separate verified receipt'),findsOneWidget);
+    expect(find.textContaining('SCRIPT_TIMEOUT'),findsOneWidget);
+    expect(tester.widgetList<WindowsSettingsCard>(
+      find.byType(WindowsSettingsCard)).last.success,false,
+      reason:'A cloud timeout must never be presented as Google backup proof');
+    engine.details.value={'pending':1,'needsAttention':0,'displayState':'pending'};
+    await tester.pump();
+    expect(find.text('Sync Status • Sync error'),findsOneWidget);
+    expect(find.textContaining('Google Drive completion requires a separate verified receipt'),findsNothing,
+      reason:'An outstanding local upload remains a real sync error');
     await tester.pumpWidget(const SizedBox());
   });
 
