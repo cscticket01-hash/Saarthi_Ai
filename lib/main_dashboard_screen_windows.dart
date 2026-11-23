@@ -10905,6 +10905,11 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         ? storedFeeIdentity : _feeIdentityForStudent(student, _studentUidConfig);
     final now = DateTime.now();
     final schoolProfile = await _loadSchoolProfileCache();
+    // Snapshot only the receipt layout ID; never prepare PDF during fee Save.
+    Object? receiptTemplateSelection;
+    try {
+      receiptTemplateSelection = (await WindowsDocumentTemplates.selections())['receipt'];
+    } catch (_) { /* Optional local template lookup must not block fee Save. */ }
     final receiptNo =
         'VS-${now.year}${now.month.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch}';
     final totalPaid = ((oldPaid * 100).round() + (amount * 100).round()) / 100;
@@ -10930,6 +10935,8 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       'paidAt': Timestamp.fromDate(now),
       'paymentId': paymentRef.id,
       'receiptNo': receiptNo,
+      if (receiptTemplateSelection is int || receiptTemplateSelection is String)
+        'receiptTemplateSelection': receiptTemplateSelection,
       'studentId': studentDoc.id,
           'personId': student['mobileStableId'] ?? studentDoc.id,
       'feeIdentity': feeIdentity,
@@ -11115,14 +11122,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     return doc.data();
   }
 
-  Future<void> _printLastReceipt(Map<String, dynamic>? ledger) async {
+  Future<void> _previewLastReceipt(Map<String, dynamic>? ledger) async {
     try {
       final id = _sessionReceiptPaymentId;
       if (id == null || _sessionReceiptStudentId != _activeStudentId) return;
       final data = (await FirebaseFirestore.instance.collection('fee_payments').doc(id).get()).data();
       if (data == null) throw StateError('Receipt record not found.');
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _feesOriginProfile) return;
-      await WindowsFeeReceiptPreview.print(context, data);
+      await WindowsFeeReceiptPreview.open(context, data);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Receipt error: $e')));
     }
@@ -11547,9 +11554,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: hasReceipt ? () => _printLastReceipt(ledger) : null,
-                  icon: const Icon(Icons.print_rounded),
-                  label: const Text('Print Receipt'),
+                  onPressed: hasReceipt ? () => _previewLastReceipt(ledger) : null,
+                  icon: const Icon(Icons.receipt_long_rounded),
+                  label: const Text('Preview Receipt'),
                 ),
               ),
               const SizedBox(width: 8),

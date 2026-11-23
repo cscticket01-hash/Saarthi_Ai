@@ -333,7 +333,7 @@ void main() {
     expect(find.byKey(const ValueKey('fees-student-S1')),findsOneWidget);
     expect(find.byKey(const ValueKey('fees-student-S2')),findsOneWidget);
     expect(find.text('WhatsApp Receipt'),findsOneWidget);
-    expect(find.text('Print Receipt'),findsOneWidget);
+    expect(find.text('Preview Receipt'),findsOneWidget);
     expect(tester.takeException(),isNull);
 
     // This is just a local ledger stream update. It must not create/remove
@@ -492,8 +492,12 @@ void main() {
     expect(find.text('Print Receipt'), findsOneWidget);
     expect(find.text('Download PDF'), findsOneWidget);
     // The original PDF has not been fetched, regenerated or queued by preview.
-    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
-    expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
+    final outbox = await tester.runAsync(() =>
+        db.collection('_windows_document_outbox').get());
+    final localDocs = await tester.runAsync(() =>
+        db.collection('_local_student_documents').get());
+    expect(outbox!.docs, isEmpty);
+    expect(localDocs!.docs, isEmpty);
   });
 
 }
