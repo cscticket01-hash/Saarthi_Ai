@@ -310,8 +310,9 @@ class ManagedSchoolSession {
     }
     final cloud = CentralSchoolCloud(
       endpoint:saved['endpoint'],
-      client:ManagedDeviceClient(http.Client(),saved['endpoint'].toString(),
-        accountUid:saved['uid'].toString()),
+      // Firebase Identity Toolkit is not the managed-school broker. Do not
+      // attach school-device proof headers to Google's password endpoint.
+      client:http.Client(),
       expectedSchoolId:saved['schoolId'],
     );
     try {
