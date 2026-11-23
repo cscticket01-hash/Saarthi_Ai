@@ -557,6 +557,12 @@ class SchoolPromotionService {
         throw StateError('School changed during promotion.');
     }
 
+    if(force){
+      final examId=exam['examId']?.toString() ?? '';
+      await WindowsAdminSecurity.requireConsumedAction(
+        scope:'force-promotion',target:'$studentId/$examId');
+      own();
+    }
     if (!await isFinal(exam, allowPreviousSession: force))
       throw StateError(
         'Promotion or retention is available only after a final exam.',
