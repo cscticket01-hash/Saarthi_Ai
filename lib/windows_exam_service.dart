@@ -206,85 +206,7 @@ class WindowsExamService {
       final subjectsRaw = row['subjects'];
       final full = WindowsExamPolicy.finiteNumber(row['fullMarks']);
       final pass = WindowsExamPolicy.finiteNumber(row['passMarks']);
-      if (!RegExp(r'^[A-Za-z0-9_-]{3,128}
-  static Future<void> deleteUnusedExam(String examId) async {
-    if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(examId)) {
-      throw StateError('Invalid exam identifier.');
-    }
-    final profile = FirebaseFirestore.instance.activeProfileId;
-    final identity = FirebaseFirestore.instance.activeProfileIdentity;
-    final schoolId = identity['schoolSyncId']?.toString() ?? '';
-    final managed = await CentralSchoolCloud.saved();
-    _requireProfile(profile);
-    if (managed['managed'] != true || managed['schoolId'] != schoolId) {
-      throw StateError(
-        'Exam deletion requires the verified managed school connection. '
-        'Legacy/offline records were preserved.',
-      );
-    }
-    final local = await WindowsBackendBridge.localExamAction({
-      'action': 'list_exam_center',
-    });
-    _requireProfile(profile);
-    if (local['success'] != true) throw StateError('Exam list not verified.');
-    final exams = (local['exams'] as List? ?? []).whereType<Map>();
-    if (!exams.any((row) => row['examId']?.toString() == examId)) {
-      throw StateError('Exam no longer exists. Refresh the screen.');
-    }
-    final results = (local['results'] as List? ?? []).whereType<Map>();
-    if (results.any((row) => row['examId']?.toString() == examId)) {
-      throw StateError('Saved marks exist. Delete is blocked to protect report cards.');
-    }
-    // Signed remote results must also be empty; offline deletes fail closed.
-    final idToken = await CentralSchoolCloud.firebaseToken();
-    for (final collection in const ['exam_center_results', 'exam_results']) {
-      _requireProfile(profile);
-      final remote = await WindowsFirebaseRemote.readCollection(
-        projectId: platformProjectId, idToken: idToken, collection: collection,
-      );
-      if (remote.values.any((row) => row['examId']?.toString() == examId)) {
-        throw StateError('Cloud marks exist; deleting this exam is not allowed.');
-      }
-    }
-    _requireProfile(profile);
-    final current = await CentralSchoolCloud.saved();
-    if (current['schoolId'] != schoolId || current['uid'] != managed['uid']) {
-      throw StateError('School identity changed. Delete cancelled.');
-    }
-    // Existing sync-tombstone tracking propagates this deletion to peer PCs.
-    final db = FirebaseFirestore.instance;
-    final batch = db.batch();
-    // Atomic local delete avoids half-removed definitions in this PC.
-    // The existing outbox still tracks cloud tombstones for peers.
-    batch.delete(db.collection('exams').doc(examId));
-    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
-    batch.delete(db.collection('school_settings').doc('exam_$examId'));
-    _requireProfile(profile);
-    await batch.commit();
-  }
-
-  static void _requireProfile(String profile) {
-    if (FirebaseFirestore.instance.activeProfileId != profile) {
-      throw StateError(
-        'School changed during exam work. Reopen the exam screen.',
-      );
-    }
-  }
-
-  static Future<Map<String, dynamic>> _remote(
-    String url,
-    Map<String, dynamic> body,
-  ) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(url),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode(body),
-    );
-    if (response.statusCode != 200) throw StateError('Exam sync failed');
-    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-  }
-}
-).hasMatch(id) ||
+      if (!RegExp(r'^[A-Za-z0-9_-]{3,128}$').hasMatch(id) ||
           name.isEmpty || studentClass.isEmpty || session.isEmpty ||
           subjectsRaw is! List || full == null || full <= 0 ||
           pass == null || pass < 0 || pass > full) {
@@ -331,6 +253,7 @@ class WindowsExamService {
     _requireProfile(profile);
     return ids;
   }
+
 
   /// Only unused class exams may be removed. Failed verification keeps data.
   static Future<void> deleteUnusedExam(String examId) async {
