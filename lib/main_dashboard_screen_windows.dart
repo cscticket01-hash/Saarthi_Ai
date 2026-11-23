@@ -890,7 +890,21 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionKey,
   String sectionTitle,
 ) async {
-  if (sectionKey == _windowsAdminSectionLock) return true;
+  if (sectionKey == _windowsAdminSectionLock) {
+    if(!await WindowsAdminSecurity.isManaged) return true;
+    if(await WindowsAdminSecurity.hasPanelSession()) return true;
+    if(!context.mounted)return false;
+    final approval=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'admin_section_access');
+    if(approval==null)return false;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approval,scope:'protected-settings',
+        target:'admin_section_access');
+      await WindowsAdminSecurity.grantPanelSession();
+      return true;
+    } catch (_) { return false; }
+  }
   if (!await WindowsSectionLocks.enabled(sectionKey)) return true;
   if (!context.mounted) return false;
 
