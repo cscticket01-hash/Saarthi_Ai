@@ -891,7 +891,6 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionTitle,
 ) async {
   if (sectionKey == _windowsAdminSectionLock) {
-    if(!await WindowsAdminSecurity.isManaged) return true;
     if(await WindowsAdminSecurity.hasPanelSession()) return true;
     if(!context.mounted)return false;
     final approval=await requestWindowsAdminApproval(context,
@@ -14364,34 +14363,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                           );
 
                           try {
-                            final user =
-                                FirebaseAuth
-                                    .instance
-                                    .currentUser;
-
-                            if (user ==
-                                    null ||
-                                user.email ==
-                                    null) {
-                              throw Exception();
-                            }
-
-                            final credential =
-                                EmailAuthProvider
-                                    .credential(
-                              email:
-                                  user.email!,
-                              password:
-                                  password,
-                            );
-
-                            if(await WindowsAdminSecurity.isManaged) {
-                              adminApprovalToken=await WindowsAdminSecurity.approve(
-                                password:password, scope:'person-delete',
-                                target:'teachers_directory/$docId');
-                            } else {
-                              await user.reauthenticateWithCredential(credential);
-                            }
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:password,scope:'person-delete',
+                              target:'teachers_directory/$docId');
 
                             if (!mounted) {
                               return;
@@ -14448,11 +14422,9 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     if (confirmed != true) return;
 
     try {
-      if(await WindowsAdminSecurity.isManaged) {
-        await WindowsAdminSecurity.consumeApproval(
-          token:adminApprovalToken ?? '',scope:'person-delete',
-          target:'teachers_directory/$docId');
-      }
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'teachers_directory/$docId');
       final result =
           await _callTeacherApi({
         'action': 'delete_teacher',
@@ -17106,7 +17078,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
     if(yes!=true||!mounted)return;
-    if(force && await WindowsAdminSecurity.isManaged) {
+    if(force) {
       final target='$docId/${result['examId'] ?? ''}';
       final approved=await requestWindowsAdminApproval(context,
         scope:'force-promotion',target:target);
@@ -17200,21 +17172,10 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           });
 
                           try {
-                            if(await WindowsAdminSecurity.isManaged) {
-                              adminApprovalToken=await WindowsAdminSecurity.approve(
-                                password:pass, scope:'person-delete',
-                                target:'students_directory/$docId');
-                              if(ctx.mounted) Navigator.pop(ctx,true);
-                            } else {
-                              final user = FirebaseAuth.instance.currentUser;
-                              if (user != null && user.email != null) {
-                                final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
-                                await user.reauthenticateWithCredential(credential);
-                                if(ctx.mounted) Navigator.pop(ctx, true);
-                              } else {
-                                setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
-                              }
-                            }
+                            adminApprovalToken=await WindowsAdminSecurity.approve(
+                              password:pass, scope:'person-delete',
+                              target:'students_directory/$docId');
+                            if(ctx.mounted) Navigator.pop(ctx,true);
                           } catch (e) {
                             setDialogState(() { isLoading = false; errorMessage = 'Galat Admin Password!'; });
                           }
@@ -17233,11 +17194,9 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (confirm != true) return;
 
     try {
-      if(await WindowsAdminSecurity.isManaged) {
-        await WindowsAdminSecurity.consumeApproval(
-          token:adminApprovalToken ?? '',scope:'person-delete',
-          target:'students_directory/$docId');
-      }
+      await WindowsAdminSecurity.consumeApproval(
+        token:adminApprovalToken ?? '',scope:'person-delete',
+        target:'students_directory/$docId');
       final studentsRef =
           FirebaseFirestore.instance.collection('students_directory');
       final studentDoc = await studentsRef.doc(docId).get();
@@ -18430,12 +18389,9 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       return;
     }
 
-    String? adminApprovalToken;
-    if(managedSession['managed']==true) {
-      adminApprovalToken=await requestWindowsAdminApproval(context,
-        scope:'drive-connection', target:url);
-      if(adminApprovalToken==null || !mounted) return;
-    }
+    final adminApprovalToken=await requestWindowsAdminApproval(context,
+      scope:'drive-connection',target:url);
+    if(adminApprovalToken==null || !mounted)return;
     setState(() => _saving = true);
     final origin=FirebaseFirestore.instance.activeProfileId;
     var connectedEmail=email;
@@ -18447,7 +18403,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         connectedEmail=result['googleEmail']?.toString()??'';
         await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
         await WindowsSyncEngine.instance.activateCurrentConnections(allowPairing:false);
-      }else{await WindowsSyncEngine.instance.changeGoogleConnection(email:email,scriptUrl:url);}
+      }else{
+        await WindowsAdminSecurity.consumeApproval(
+          token:adminApprovalToken,scope:'drive-connection',target:url);
+        await WindowsSyncEngine.instance.changeGoogleConnection(
+          email:email,scriptUrl:url);
+      }
       if (!mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
       setState(() {
         _linkedGmail = connectedEmail;
@@ -18840,7 +18801,7 @@ class _WindowsSectionPasswordLocksPanelState
               });
 
               try {
-                if(await WindowsAdminSecurity.isManaged) {
+                {
                   final approved=await requestWindowsAdminApproval(
                     dialogContext,
                     scope:'protected-settings',
@@ -19037,7 +18998,7 @@ class _WindowsSectionPasswordLocksPanelState
 
     setState(() => _busyKey = definition.key);
     try {
-      if(await WindowsAdminSecurity.isManaged) {
+      {
         final approved=await requestWindowsAdminApproval(context,
           scope:'protected-settings',target:'section-lock/${definition.key}');
         if(approved==null) {
