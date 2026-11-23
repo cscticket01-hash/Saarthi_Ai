@@ -9,16 +9,29 @@ class WindowsAdminSecurity {
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static String? _panelSchool;
   static DateTime? _panelUntil;
+  static int? _panelPasswordVersion;
 
   static void clearPanelSession() {
     _panelSchool=null;
     _panelUntil=null;
+    _panelPasswordVersion=null;
   }
 
   static Future<bool> hasPanelSession() async {
     final school=(await CentralSchoolCloud.saved())['schoolId']?.toString();
-    return school!=null && school.isNotEmpty && school==_panelSchool &&
-      _panelUntil!=null && DateTime.now().isBefore(_panelUntil!);
+    if(school==null || school.isEmpty || school!=_panelSchool ||
+        _panelUntil==null || !DateTime.now().isBefore(_panelUntil!)) {
+      clearPanelSession();
+      return false;
+    }
+    // Cross-PC password rotations invalidate cached panel access at the
+    // next administrative navigation. Unreachable verification fails closed.
+    final remote=await _call({'operation':'status'});
+    if(remote['configured'] != true || remote['updatedAt'] != _panelPasswordVersion) {
+      clearPanelSession();
+      return false;
+    }
+    return true;
   }
 
   static Future<void> grantPanelSession() async {
@@ -26,7 +39,12 @@ class WindowsAdminSecurity {
     if(saved['managed'] != true || saved['schoolId'] is! String) {
       throw StateError('Managed school verification required.');
     }
+    final status=await _call({'operation':'status'});
+    if(status['configured']!=true || status['updatedAt'] is! int) {
+      throw StateError('Independent Admin Password status is not verified.');
+    }
     _panelSchool=saved['schoolId'];
+    _panelPasswordVersion=status['updatedAt'];
     _panelUntil=DateTime.now().add(const Duration(minutes:15));
   }
 
