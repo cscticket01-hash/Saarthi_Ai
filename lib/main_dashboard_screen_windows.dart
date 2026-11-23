@@ -20919,8 +20919,8 @@ class ExamCenterScreen extends StatefulWidget {
 }
 
 class _ExamCenterScreenState extends State<ExamCenterScreen> {
-  late final String _originProfile = FirebaseFirestore.instance.activeProfileId;
-  late final String _originSchool = FirebaseFirestore.instance
+  final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  final String _originSchool = FirebaseFirestore.instance
       .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
 
   bool get _sameSchool =>
@@ -21053,17 +21053,19 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       .toList();
 
   List<Map<String, dynamic>> get _visibleExams =>
-      _sessionFilter.isEmpty
-          ? _exams
-          : _exams.where((exam) =>
-              exam['academicSession']?.toString() == _sessionFilter &&
-              exam['deleted'] != true && exam['_syncDeleted'] != true).toList();
+      _exams.where((exam) =>
+          exam['deleted'] != true &&
+          exam['_syncDeleted'] != true &&
+          (_sessionFilter.isEmpty ||
+              exam['academicSession']?.toString() == _sessionFilter)).toList();
 
   List<Map<String, dynamic>> get _visibleResults {
-    if (_sessionFilter.isEmpty) return _results;
     final examIds = _visibleExams.map((exam) => exam['examId']?.toString()).toSet();
     return _results.where((result) =>
-        examIds.contains(result['examId']?.toString())).toList();
+        result['deleted'] != true &&
+        result['_syncDeleted'] != true &&
+        (_sessionFilter.isEmpty ||
+            examIds.contains(result['examId']?.toString()))).toList();
   }
 
   List<List<Map<String, dynamic>>> _examGroups() {
@@ -22371,9 +22373,6 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           else
             ...items.map((result) {
               final passed = result['result'] == 'PASS';
-              final reportUrl =
-                  result['reportCardUrl']?.toString().trim() ?? '';
-
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.all(11),
@@ -22432,7 +22431,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           await WindowsDocumentTemplates.previewReport(context,result);
                         },
                         icon: Icon(
-                          Icons.picture_as_pdf_rounded,
+                          Icons.visibility_rounded,
                           color: WindowsAppearance.foreground(Colors.orangeAccent),
                           size: 18,
                         ),
@@ -22796,8 +22795,8 @@ class ExamMarksEntryScreen extends StatefulWidget {
 
 class _ExamMarksEntryScreenState
     extends State<ExamMarksEntryScreen> {
-  late final String _originProfile = FirebaseFirestore.instance.activeProfileId;
-  late final String _originSchool = FirebaseFirestore.instance
+  final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  final String _originSchool = FirebaseFirestore.instance
       .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
 
   bool get _sameSchool =>
@@ -22908,6 +22907,7 @@ class _ExamMarksEntryScreenState
     bool saving = false;
 
     var savedOffline = false;
+    var promotionPending = false;
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -23073,7 +23073,16 @@ class _ExamMarksEntryScreenState
                         savedOffline = savedResult['windowsLocalFallback'] == true;
                         if(isFinal){
                           try{await SchoolPromotionService.apply(studentId:doc.id,student:student,exam:{...widget.exam,'isFinal':true},result:resultStatus);}
-                          catch(e){doc.reference.requireOriginProfile();if((await doc.reference.get()).exists) await doc.reference.set({'promotionPending':true,'promotionError':'$e'},SetOptions(merge:true));}
+                          catch(e){
+                             promotionPending = true;
+                             doc.reference.requireOriginProfile();
+                             if((await doc.reference.get()).exists) {
+                               await doc.reference.set({
+                                 'promotionPending':true,
+                                 'promotionError':'$e',
+                               },SetOptions(merge:true));
+                             }
+                           }
                         }
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, true);
@@ -23247,9 +23256,6 @@ class _ExamMarksEntryScreenState
                       final doc = students[index];
                       final student = doc.data();
                       final result = _resultFor(doc.id);
-                      final reportUrl =
-                          result?['reportCardUrl']?.toString().trim() ??
-                              '';
                       final passed = result?['result'] == 'PASS';
 
                       return Container(
@@ -23328,7 +23334,7 @@ class _ExamMarksEntryScreenState
                                   await WindowsDocumentTemplates.previewReport(context,result!);
                                 },
                                 icon: Icon(
-                                    Icons.picture_as_pdf_rounded,
+                                    Icons.visibility_rounded,
                                     color: WindowsAppearance.foreground(Colors.orangeAccent)),
                               ),
                             ElevatedButton.icon(
