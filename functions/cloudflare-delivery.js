@@ -415,7 +415,10 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
    ?recordParallelism(school):recordParallelism;
   if(lane==='records'&&(configured===2||configured===3)){
    const capability=await edge.rpc(school,lane,{command:'capabilities'});
-   if(capability?.recordSchedulingVersion===1)limit=configured;
+   // Version-1 Workers can safely schedule two but may reject a 3-job
+   // request. Never assume their existing capability implies a new limit.
+   if(capability?.recordSchedulingVersion===1 &&
+      (configured===2 || capability.recordMaxParallelism===3))limit=configured;
   }
   const jobs=await edge.rpc(school,lane,{command:'pending',limit});
   if(!Array.isArray(jobs)||jobs.length>limit)fail(502,'EDGE_SCHEDULER_UNVERIFIED');
