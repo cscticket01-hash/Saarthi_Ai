@@ -35,6 +35,37 @@ async function setup(t,label,collections){
 function accepted(result){assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.value.cloudState,'committed');assert.equal(result.value.backupState,'pending');return result.value;}
 const dependencyCollections=['students_directory','teachers_directory','fee_payments','documents','attendance_records','exam_results','student_scan_index'];
 
+test('hourly live backup summary separates accepted work and verified original Drive receipts',async t=>{
+ const f=await setup(t,'hourly-backup-proof',['school_expenses']);
+ const first=accepted(await f.commit('school_expenses','a','hourly-first-original-operation',
+  {schoolId:school,title:'Synthetic A',amount:1}));
+ accepted(await f.commit('school_expenses','b','hourly-second-original-operation',
+  {schoolId:school,title:'Synthetic B',amount:2}));
+ const before=(await f.rpc({command:'backupHourly'}));
+ assert.equal(before.status,200);
+ assert.equal(before.value.schoolId,school);
+ assert.equal(before.value.backupHourlyVersion,1);
+ assert.equal(before.value.coverage,'live_native_backup_only');
+ assert.equal(before.value.windowHours,24);
+ assert.equal(before.value.verified.length,0,'Cloudflare acceptance is not Google verification');
+ assert.equal(before.value.accepted.reduce((n,row)=>n+row.count,0),2);
+ assert.deepEqual(before.value.current.map(r=>[r.collection,r.state,r.count]),
+   [['school_expenses','pending',2]]);
+ const job=(await f.rpc({command:'backupClaim'})).value.job;
+ assert.equal(job.request.operationId,first.operationId);
+ const completed=await f.rpc({command:'backupFinish',sequence:job.seq,claim:job.claim,
+  verified:true,driveRevision:'synthetic-original-signed-drive-revision'});
+ assert.equal(completed.status,200);
+ assert.equal(completed.value.accepted,true);
+ const after=(await f.rpc({command:'backupHourly'}));
+ assert.equal(after.status,200);
+ assert.equal(after.value.verified.reduce((n,row)=>n+row.count,0),1);
+ assert.deepEqual(after.value.current.map(r=>[r.collection,r.state,r.count]),
+   [['school_expenses','pending',1],['school_expenses','verified',1]]);
+ assert.equal(after.value.unknown.unverifiedCompletion,0);
+ assert.equal(after.value.unknown.missingAcceptedAt,0);
+});
+
 test('native parent delete atomically tombstones only exact student-owned children before Drive ACK',async t=>{
  const f=await setup(t,'cascade',dependencyCollections);
  const first=accepted(await f.commit('students_directory','student-a','native-parent-create-operation-a',student('student-a','a',1)));
