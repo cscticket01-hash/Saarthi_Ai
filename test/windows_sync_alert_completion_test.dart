@@ -102,6 +102,38 @@ void main() {
       'delivery': {'pendingPartitions': 0, 'needsAttention': 1},
     }), allOf(contains('need school review'), isNot(contains('Cloudflare saved'))));
   });
+  test('records lane pending is shown without reactivating this PC upload', () {
+    final pending = cloudTransferMessage({
+      'enabled': true, 'statusScope': 'records_notices_delivery',
+      'records': {'pending': 3, 'needsAttention': 0},
+      'notices': {'pending': 0, 'needsAttention': 0},
+      'delivery': {'pendingPartitions': 0, 'needsAttention': 0},
+    });
+    expect(pending, contains('Google Drive transfer pending'));
+    expect(pending, isNot(contains('Cloudflare saved')),
+        reason: 'Aggregate record pending never proves this device uploaded');
+    final needsReview = cloudTransferMessage({
+      'enabled': true,
+      'records': {'pending': 0, 'needsAttention': 2},
+      'notices': {'pending': 0, 'needsAttention': 1},
+      'delivery': {'pendingPartitions': 0, 'needsAttention': 1},
+    });
+    expect(needsReview, contains('at least 2 queue items need school review'));
+    expect(needsReview, isNot(contains('Cloudflare saved')));
+    expect(cloudTransferMessage({
+      'enabled': true,
+      'records': {'pending': -1, 'needsAttention': 0},
+      'notices': {'pending': 0, 'needsAttention': 0},
+      'delivery': {'pendingPartitions': 0, 'needsAttention': 0},
+    }), contains('not verified'));
+    expect(cloudTransferMessage({
+      'enabled': true,
+      'records': {'pending': 0},
+      'notices': {'pending': 0, 'needsAttention': 0},
+      'delivery': {'pendingPartitions': 0, 'needsAttention': 0},
+    }), contains('not verified'),
+        reason: 'An incomplete record lane cannot silently become all clear');
+  });
   test('resolved transfers yield no alert when all queues are clear', () {
     expect(cloudTransferMessage({
       'enabled': true,
