@@ -385,6 +385,35 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('three-dot Sync Pause row admits an explicit local pause', (tester) async {
+    final pauses = <Duration>[];
+    await tester.pumpWidget(MaterialApp(
+      home: WindowsSyncControlCenter(
+        refreshOnOpen: () async {},
+        diskProbe: (_) async => {'status': 'Unknown'},
+        pauseRequest: (duration) async { pauses.add(duration); },
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Sync options'));
+    await tester.pumpAndSettle();
+    final pauseRow = find.text('Sync Pause');
+    expect(pauseRow, findsOneWidget);
+    expect(
+      tester.widget<PopupMenuItem<int>>(
+        find.ancestor(of: pauseRow, matching: find.byType(PopupMenuItem<int>)).first,
+      ).enabled,
+      isTrue,
+      reason: 'The whole pause menu row must be selectable, not just the switch',
+    );
+    await tester.tap(pauseRow);
+    await tester.pumpAndSettle();
+    expect(pauses, [const Duration(minutes: 5)]);
+    expect(find.text('Sync Pause'), findsNothing,
+      reason: 'Selecting Pause closes the three-dot popup');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('real widget preview artifact', (tester) async {
     tester.view.physicalSize = const Size(1536, 736);
     tester.view.devicePixelRatio = 1;
