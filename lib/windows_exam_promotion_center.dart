@@ -77,7 +77,12 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
     if (student['promotionExamId'] == _examId && _examId.isNotEmpty) {
       final movement = student['classMovement'];
       if (movement == 'PROMOTED' || movement == 'FORCE_PROMOTED') return 'Promoted';
-      if (movement == 'RETAINED') return 'Retained';
+      if (movement == 'RETAINED') {
+        // A corrected PASS result requires a new explicit approval.
+        if (_result(student['id'].toString())?['result'] == 'PASS')
+          return 'Review';
+        return 'Retained';
+      }
       if (movement == 'GRADUATED') return 'Graduated';
     }
     return _result(student['id'].toString()) == null ? 'Marks missing' : 'Review';
