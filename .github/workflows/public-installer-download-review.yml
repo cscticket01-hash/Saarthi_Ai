@@ -1,0 +1,23 @@
+name: Public website installer proxy review
+on:
+  pull_request:
+    paths:
+      - 'oauth-broker/public-downloads.cjs'
+      - 'oauth-broker/test/public-downloads.test.cjs'
+      - '.github/workflows/public-installer-download-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  downloader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Node source syntax
+        run: node --check oauth-broker/public-downloads.cjs
+      - name: Verify public installer selection, corruption, CORS and cancellation-ready responses
+        run: node --test oauth-broker/test/public-downloads.test.cjs
