@@ -57,7 +57,7 @@ test('three-way rollout drains only the exact scheduler-admitted independent rec
  const calls=[];let inflight=0,peak=0;
  const edge={rpc:async(s,l,b)=>{
   assert.equal(s,school);assert.equal(l,'records');calls.push(b);
-  if(b.command==='capabilities')return {recordSchedulingVersion:1};
+  if(b.command==='capabilities')return {recordSchedulingVersion:1,recordMaxParallelism:3};
   if(b.command==='pending')return jobs.slice(0,b.limit);
   if(b.command==='claim')return true;
   if(b.command==='finish'){
@@ -86,7 +86,7 @@ test('three-way canary falls back to serial on an older Worker and caps forged s
  let limit,claims=0;
  const delivery=createCloudflareDelivery({recordParallelism:3,edge:{rpc:async(_,lane,body)=>{
   assert.equal(lane,'records');
-  if(body.command==='capabilities')return {recordSchedulingVersion:0};
+  if(body.command==='capabilities')return {recordSchedulingVersion:1};
   if(body.command==='pending'){limit=body.limit;return [];}
   claims++;throw Error('Unexpected claim');
  }}});
@@ -95,7 +95,7 @@ test('three-way canary falls back to serial on an older Worker and caps forged s
  assert.equal(claims,0);
  let sends=0;
  const invalid=createCloudflareDelivery({recordParallelism:3,edge:{rpc:async(_,__,body)=>{
-  if(body.command==='capabilities')return {recordSchedulingVersion:1};
+  if(body.command==='capabilities')return {recordSchedulingVersion:1,recordMaxParallelism:3};
   if(body.command==='pending')return [{},{},{},{}];
   claims++;throw Error('Untrusted scheduler rows');
  }}});
@@ -109,7 +109,7 @@ test('three-way option is school scoped and never becomes a wildcard rollout',as
  const limits=[],first=school,other='vs-'+'b'.repeat(32);
  const edge={rpc:async(s,l,b)=>{
   assert.equal(l,'records');
-  if(b.command==='capabilities')return {recordSchedulingVersion:1};
+  if(b.command==='capabilities')return {recordSchedulingVersion:1,recordMaxParallelism:3};
   if(b.command==='pending'){limits.push([s,b.limit]);return [];}
   throw Error('Unexpected provider command');
  }};
