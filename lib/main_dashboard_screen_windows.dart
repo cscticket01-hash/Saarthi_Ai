@@ -16854,7 +16854,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
   List<Map<String, dynamic>> _studentExamResults = <Map<String, dynamic>>[];
   bool _studentExamResultsLoading = true;
-  final Set<String> _movingStudentIds = <String>{};
 
   @override
   void initState() {
@@ -17010,54 +17009,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     }
 
     return null;
-  }
-
-  Future<String> _studentBackendScriptUrl() async {
-    return _windowsDirectoryMutationUrl();
-  }
-
-  Future<Map<String, dynamic>> _postStudentClassChange({
-    required String oldClass,
-    required String newClass,
-    required String rollNo,
-    required String oldStudentId,
-    required String newStudentId,
-    required String movement,
-    Map<String, dynamic>? latestResult,
-  }) async {
-    final response = await WindowsBackendBridge.post(
-      Uri.parse(await _studentBackendScriptUrl()),
-      headers: const {'Content-Type': 'text/plain;charset=utf-8'},
-      body: jsonEncode({
-        'action': 'change_student_class',
-        'oldClass': oldClass,
-        'newClass': newClass,
-        'rollNo': rollNo,
-        'oldStudentId': oldStudentId,
-        'newStudentId': newStudentId,
-        'movement': movement,
-        'examName': latestResult?['examName']?.toString() ?? '',
-        'result': latestResult?['result']?.toString() ?? '',
-        'percentage': latestResult?['percentage'] ?? 0,
-        'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Google class update failed: ${response.statusCode}');
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map) {
-      throw Exception('Google class update response invalid hai.');
-    }
-
-    final result = Map<String, dynamic>.from(decoded);
-    if (result['success'] != true) {
-      throw Exception(result['message'] ?? 'Google class update failed');
-    }
-
-    return result;
   }
 
   Future<void> _deleteStudent(String docId) async {
@@ -17860,8 +17811,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                         latestResult?['examName']?.toString().trim() ?? '';
                     final classNumber =
                         _studentClassNumber(student['class']);
-                    final isMoving = _movingStudentIds.contains(doc.id);
-
+          
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       padding: const EdgeInsets.all(12),
