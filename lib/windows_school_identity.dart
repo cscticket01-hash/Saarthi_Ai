@@ -12,8 +12,6 @@ class SchoolPersonIdentity {
   static bool needsPendingCreatePreparation(Map item, String school) =>
       item['schoolId'] == school &&
       {'students_directory', 'teachers_directory'}.contains(item['collection']) &&
-      item['documentId'] is String &&
-      (item['documentId'] as String).isNotEmpty &&
       item['createIntent'] == true &&
       item['operation'] == 'set' &&
       item['syncState'] == 'pending' &&
