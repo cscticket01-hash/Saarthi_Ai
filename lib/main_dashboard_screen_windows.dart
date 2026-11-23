@@ -21575,23 +21575,40 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
               'in academic session $session.');
         }
       }
-      for (final payload in payloads) {
-        final className = payload['studentClass']?.toString() ?? '';
-        final stableId = '$groupId-${className.replaceAll(' ', '-')}';
-        final savedExam = await _post({
-          'action': 'save_exam',
-          ...payload,
-          'examId': stableId,
-          'examGroupId': groupId,
-          'academicSession': session,
-          'expectedStudentCount': _studentCounts[className] ?? 0,
-          'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-        });
-        if ((savedExam['examId']?.toString() ?? '').isEmpty) {
-          throw StateError('Exam ID missing after local Save.');
-        }
-        created++;
+      // Snapshot the active cohort before Save; new classes have no cache yet.
+      final db = FirebaseFirestore.instance;
+      final profile = db.activeProfileId;
+      final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+      final cohortEntries = await Future.wait(
+        payloads.map((payload) async {
+          final className = payload['studentClass']?.toString() ?? '';
+          final students = await db.collection('students_directory')
+              .where('class', isEqualTo: className).get();
+          return MapEntry(className, students.docs
+              .where((doc) => WindowsExamPolicy.activeStudent(doc.data()))
+              .length);
+        }),
+      );
+      if (db.activeProfileId != profile ||
+          (db.activeProfileIdentity['schoolSyncId']?.toString() ?? '') != school) {
+        throw StateError('School changed before exam creation.');
       }
+      final cohortCounts = Map<String,int>.fromEntries(cohortEntries);
+      final configs = <Map<String,dynamic>>[
+        for (final payload in payloads)
+          {
+            ...payload,
+            'examId': '$groupId-${(payload['studentClass']?.toString() ?? '').replaceAll(' ', '-')}',
+            'examGroupId': groupId,
+            'academicSession': session,
+            'expectedStudentCount':
+                cohortCounts[payload['studentClass']?.toString() ?? ''] ?? 0,
+            'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          },
+      ];
+      // A managed school commits all selected classes atomically locally.
+      // No extra school_settings exam copy and no PDF is produced.
+      created = (await WindowsExamService.createClassExamGroup(configs)).length;
       await _load();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
