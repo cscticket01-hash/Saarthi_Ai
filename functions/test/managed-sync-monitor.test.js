@@ -177,3 +177,38 @@ test('malformed hourly records response is rejected rather than showing fake suc
    observedAt:time,firstHourMillis:time,hours:[{admitted:3,proofStamped:4}],unattributed:0})}});
  await assert.rejects(f.call({action:'managed/cloudflare/backupHourly'}),e=>e.status===502);
 });
+
+test('school-authenticated immutable journal pagination never claims Google completion',async()=>{
+ const calls=[];
+ const cloudflareSync={enabled:school=>school===A,rpc:async(school,lane,req)=>{
+  calls.push({school,lane,req});
+  assert.equal(school,A);
+  assert.equal(lane,'records');
+  assert.deepEqual(req,{command:'auditJournalPage',after:0,limit:2});
+  return {version:1,schoolId:A,scope:'edgeImmutableOwnerJournal',
+   source:'edge-records',lane:'records',coverage:'one-owner-journal-only',
+   partial:true,entries:[{sequence:1,id:'a'.repeat(64),state:'pending',
+    acceptedAt:time-1000,driveOwnerReceiptPresent:false,verifiedAt:null}],
+   nextCursor:null};
+ }};
+ const f=fixture(undefined,{cloudflareSync});
+ const result=await f.call({action:'managed/cloudflare/owner-journal-page',
+  lane:'records',after:0,limit:2});
+ assert.equal(result.success,true);
+ assert.equal(result.partial,true);
+ assert.equal(result.coverage,'one-owner-journal-only');
+ assert.equal(result.entries[0].driveOwnerReceiptPresent,false);
+ assert.equal(result.entries[0].verifiedAt,null);
+ assert.equal(result.driveVerified,undefined);
+ assert.equal(calls.length,1);
+ await assert.rejects(f.call({action:'managed/cloudflare/owner-journal-page',
+  schoolId:B,lane:'records'}),e=>e.status===403);
+ await assert.rejects(f.call({action:'managed/cloudflare/owner-journal-page',
+  lane:'notices/foreign'}),e=>e.status===400);
+ const invalid=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async()=>({version:1,schoolId:B,scope:'edgeImmutableOwnerJournal',
+   source:'edge-records',lane:'records',coverage:'one-owner-journal-only',
+   partial:true,entries:[],nextCursor:null})}});
+ await assert.rejects(invalid.call({action:'managed/cloudflare/owner-journal-page',
+  lane:'records'}),e=>e.status===502);
+});
