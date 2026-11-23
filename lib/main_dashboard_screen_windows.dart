@@ -17083,8 +17083,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       final approved=await requestWindowsAdminApproval(context,
         scope:'force-promotion',target:target);
       if(approved==null || !mounted)return;
-      await WindowsAdminSecurity.consumeApproval(
-        token:approved,scope:'force-promotion',target:target);
+      try {
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'force-promotion',target:target);
+      } catch(error) {
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Force-promotion authorization failed: $error')));
+        return;
+      }
     }
     setState(()=>_movingStudentIds.add(docId));
     try {
@@ -18508,9 +18514,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       builder: (appearanceContext) { WindowsAppearance.watch(appearanceContext); return  const _DriveUnlinkSecurityDialog(); },
     );
     if (verified != true || !mounted || FirebaseFirestore.instance.activeProfileId!=origin) return;
-
-    // Editing does not disconnect or erase the existing school storage.
-    setState(() => _editingDrive=true);
+    final approved=await requestWindowsAdminApproval(context,
+      scope:'protected-settings',target:'school_drive_edit');
+    if(approved==null || !mounted || FirebaseFirestore.instance.activeProfileId!=origin)return;
+    try {
+      await WindowsAdminSecurity.consumeApproval(
+        token:approved,scope:'protected-settings',target:'school_drive_edit');
+      if(!mounted||FirebaseFirestore.instance.activeProfileId!=origin)return;
+      // Editing does not disconnect or erase the existing school storage.
+      setState(() => _editingDrive=true);
+    } catch(error) {
+      if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content:Text('Administrator approval failed: $error')));
+    }
   }
 
   InputDecoration _input(String text, IconData icon) => InputDecoration(
