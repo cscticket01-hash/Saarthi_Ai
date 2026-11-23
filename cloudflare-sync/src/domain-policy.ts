@@ -133,7 +133,9 @@ export function validatePersonCandidate(input:PersonCandidate):void {
   if(current){
    const changed=next.promotionExamId!==current.promotionExamId ||
      next.promotionTransactionId!==current.promotionTransactionId ||
-     next.classMovement!==current.classMovement;
+     next.classMovement!==current.classMovement ||
+     (current.promotionExamId && (current.class!==next.class ||
+       current.studentClass!==next.studentClass));
    if(changed){
     const oldClass=String(current.class??current.studentClass??''),
       newClass=String(next.class??next.studentClass??'');
