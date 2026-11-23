@@ -111,6 +111,28 @@ void main() {
     expect(WindowsFeeStructure.heads(latest),['Tuition','Transport']);
     expect((latest['fees'] as Map)['Tuition'],110);
   });
+  test('fee cadence schedules are school-month and student-generation bound', () async {
+    final session=await WindowsFeeStructure.currentSession();
+    await WindowsFeeStructure.save('Class 1',session,{'Monthly':100,'Annual':300,'Admission':150},
+      replaceHeads:true,feeFrequencies:{'Monthly':'monthly','Annual':'annual','Admission':'once'});
+    final settings=await WindowsFeeStructure.load('Class 1');
+    final owner={'mobileStableId':'p-active','feeAdmissionPersonId':'p-active','feeAdmissionMonth':'2026-04'};
+    final due=WindowsFeeStructure.chargeableAmounts(settings,'2026-04',owner,rolloverMonth:4);
+    expect(due,{'Monthly':100,'Annual':300,'Admission':150});
+    final later=WindowsFeeStructure.chargeableAmounts(settings,'2026-05',owner,rolloverMonth:4);
+    expect(later,{'Monthly':100,'Annual':0,'Admission':0});
+    final recycled=WindowsFeeStructure.chargeableAmounts(settings,'2026-04',
+      {...owner,'mobileStableId':'p-new'},rolloverMonth:4);
+    expect(recycled['Admission'],0);
+    final unknown=WindowsFeeStructure.chargeableAmounts(settings,'2026-04',
+      {'mobileStableId':'p-active'},rolloverMonth:4);
+    expect(unknown['Admission'],0);
+    await expectLater(WindowsFeeStructure.save('Class 1',session,{'Monthly':120},
+      replaceHeads:true,feeFrequencies:{'Monthly':'weekly'}),throwsArgumentError);
+    final after=await WindowsFeeStructure.load('Class 1');
+    expect(WindowsFeeStructure.frequencies(after)['Admission'],'once');
+  });
+
   test('invalid fee names and amounts cannot queue writes', () async {
     final session = await WindowsFeeStructure.currentSession();
     for(final fees in <Map<String,double>>[{' ':1}, {'Fee':1,' fee ':2}, {'Fee':double.nan}, {'Fee':-1}]) {

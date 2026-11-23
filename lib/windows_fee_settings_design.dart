@@ -2,10 +2,13 @@ import 'windows_appearance.dart';
 import 'package:flutter/material.dart';
 
 class WindowsFeeEditorRow {
-  const WindowsFeeEditorRow({required this.id, required this.name, required this.amount, required this.onDelete});
+  const WindowsFeeEditorRow({required this.id, required this.name, required this.amount,
+    required this.onDelete, this.frequency = 'monthly', this.onFrequency});
   final int id;
   final TextEditingController name;
   final TextEditingController amount;
+  final String frequency;
+  final ValueChanged<String>? onFrequency;
   final VoidCallback onDelete;
 }
 
@@ -131,12 +134,13 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
                 if (wide)  Padding(padding: EdgeInsets.only(left: 44, bottom: 12), child: Row(children: [
                   Expanded(flex: 7, child: Text('Fee name', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
                   SizedBox(width: 20), Expanded(flex: 3, child: Text('Amount', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
-                  SizedBox(width: 18), SizedBox(width: 48, child: Text('Action', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
+                  SizedBox(width: 18), SizedBox(width: 150, child: Text('Billing', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
+                  SizedBox(width: 12), SizedBox(width: 48, child: Text('Action', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
                 ])),
                 if (rows.isEmpty)  Padding(padding: EdgeInsets.all(24), child: Text('No fee rows. Use Add fee to create one.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
                 for (var i = 0; i < rows.length; i++) Padding(key: ValueKey('fee-row-${rows[i].id}'),
                   padding: const EdgeInsets.only(bottom: 10), child: _row(rows[i], i, wide)),
-                 Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Blank or zero amounts stay hidden in collection.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
+                 Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Annual fees apply in the academic rollover month. One-time fees require a saved, person-bound admission month. No guessed charges.', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
                  Divider(color: WindowsAppearance.resolve(_border)),
                 const SizedBox(height: 12),
                 Wrap(alignment: WrapAlignment.end, spacing: 16, runSpacing: 12, children: [
@@ -171,6 +175,20 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
       enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
       style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)), onChanged: (_) => onChanged(), decoration: _input('Amount', prefix: '₹ '))
       : Padding(padding: const EdgeInsets.symmetric(vertical: 14), child: Text('₹ ${row.amount.text.isEmpty ? '0' : row.amount.text}', style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white))));
+    final cadence = SizedBox(width: 150, child: DropdownButtonFormField<String>(
+      key: ValueKey('fee-billing-${row.id}'),
+      value: row.frequency,
+      isExpanded: true,
+      decoration: _input('Billing'),
+      items: const [
+        DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+        DropdownMenuItem(value: 'annual', child: Text('Annual')),
+        DropdownMenuItem(value: 'once', child: Text('One-time')),
+      ],
+      onChanged: saving || !editing ? null : (v) {
+        if (v != null) row.onFrequency?.call(v);
+      },
+    ));
     final action = SizedBox(width: 48, child: editing ? IconButton.outlined(key: ValueKey('delete-fee-${row.id}'),
       tooltip: 'Delete fee row ${index + 1}', onPressed: saving ? null : row.onDelete,
       style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), foregroundColor: WindowsAppearance.primary, side: BorderSide(color: WindowsAppearance.outline(Color(0xFFAF4054)))),
@@ -178,11 +196,11 @@ class WindowsFeeSettingsLayout extends StatelessWidget {
     if (!wide) return Container(padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(border: Border.all(color: WindowsAppearance.outline(_border)), borderRadius: BorderRadius.circular(10)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [name, const SizedBox(height: 10),
-        Row(children: [Expanded(child: amount), const SizedBox(width: 12), action]) ]));
+        Row(children: [Expanded(child: amount), const SizedBox(width: 12), Expanded(child: cadence), const SizedBox(width: 12), action]) ]));
     return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
       SizedBox(width: 44, child: Text('${index + 1}'.padLeft(2, '0'), style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.resolve(_muted)))),
       Expanded(flex: 7, child: name), const SizedBox(width: 20), Expanded(flex: 3, child: amount),
-      const SizedBox(width: 18), action,
+      const SizedBox(width: 18), cadence, const SizedBox(width: 12), action,
     ]);
   }
 }

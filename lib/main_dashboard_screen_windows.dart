@@ -14,6 +14,7 @@ import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
 import 'windows_fee_unpaid_filter.dart';
 import 'windows_fee_structure.dart';
+import 'promotion_session_policy.dart';
 import 'windows_fee_receipt_preview.dart';
 import 'fitted_document_preview.dart';
 import 'document_upload_dialog.dart';
@@ -10445,6 +10446,7 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   String? _activeFeeSettingsMessage;
 
   Map<String, double> _activeFeeAmounts = {};
+  Map<String, dynamic> _activeFeeStudent = {};
   Set<String> _selectedFeeHeads = <String>{};
   Map<String, dynamic>? _activeLedger;
 
@@ -10664,18 +10666,14 @@ class _FeesCollectionScreenState extends State<FeesCollectionScreen> {
   }
 
 Future<Map<String, dynamic>> _getClassFeeSettings(
-  String studentClass,
+  String studentClass, {Map<String, dynamic>? student}
 ) async {
   final session = await WindowsFeeStructure.sessionForMonth(_selectedMonth);
   final data = await WindowsFeeStructure.load(studentClass, session: session);
-  final rawFees =
-      Map<String, dynamic>.from(data['fees'] ?? {});
-
-  final fees = <String, double>{};
-
-  for (final head in WindowsFeeStructure.heads(data)) {
-    fees[head] = _toDouble(rawFees[head]);
-  }
+  final rawFees = Map<String, dynamic>.from(data['fees'] ?? {});
+  final fees = WindowsFeeStructure.chargeableAmounts(
+    data, _selectedMonth, student ?? {},
+    rolloverMonth: await PromotionSessionPolicy.rolloverMonth());
 
   final configuredHeads = fees.keys
       .where((head) => (fees[head] ?? 0) > 0)
@@ -10685,6 +10683,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     'fees': fees,
     'configured': configuredHeads.isNotEmpty,
     'configuredHeads': configuredHeads,
+    'scheduleConfigured': rawFees.values.any((v) => _toDouble(v) > 0),
   };
 
   return result;
@@ -10699,6 +10698,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     _activeFeeSettingsReady = false;
     _activeFeeSettingsMessage = null;
     _activeFeeAmounts = {};
+    _activeFeeStudent = {};
     _selectedFeeHeads = <String>{};
     _activeLedger = null;
     _receivedAmountController.clear();
@@ -10754,13 +10754,14 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
       _activeFeeSettingsReady = false;
       _activeFeeSettingsMessage = 'Loading fee settings...';
       _activeFeeAmounts = {};
+      _activeFeeStudent = student;
       _selectedFeeHeads = {};
       _activeLedger = ledger;
       _receivedAmountController.clear();
       _paymentMode = ledger?['paymentMode']?.toString() ?? 'Cash';
     });
     try {
-      final cachedSettings = await _getClassFeeSettings(studentClass);
+      final cachedSettings = await _getClassFeeSettings(studentClass, student: student);
       if (!current()) return;
       final settings = cachedSettings;
       final fees = Map<String, double>.from(settings['fees'] as Map);
@@ -10774,7 +10775,9 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
         setState(() {
           _activeFeeSettingsReady = false;
           _activeFeeSettingsMessage =
-              '$studentClass ke liye fixed fee amount Settings me save nahi hai. Pehle Payment Collection Settings complete karein.';
+              settings['scheduleConfigured'] == true
+                ? 'Is month ke liye koi scheduled fee due nahi. Annual fee sirf session rollover month mein, one-time fee sirf verified admission month mein payable hai.'
+                : '$studentClass ke liye fee amount Settings me save nahi hai. Pehle Payment Collection Settings complete karein.';
           _activeFeeAmounts = fees;
           _selectedFeeHeads = <String>{};
         });
@@ -11234,7 +11237,7 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
                   final currentClass = _activeStudentClass ?? '';
                   final currentStudent = _activeStudentId;
                   try {
-                    final updated = await _getClassFeeSettings(currentClass);
+                    final updated = await _getClassFeeSettings(currentClass, student: _activeFeeStudent);
                     if (!mounted || currentStudent != _activeStudentId || currentClass != _activeStudentClass) return;
                     setState(() {
                       _activeFeeAmounts = Map<String, double>.from(updated['fees'] as Map);
@@ -12614,12 +12617,14 @@ class _FeeCollectionSettingsScreenState
       final heads = data.containsKey('feeHeadOrder')
           ? WindowsFeeStructure.heads(data)
           : {..._standardFeeHeads, ...fees.keys}.toList();
+      final billingByHead = WindowsFeeStructure.frequencies(data);
       _loadedConfiguration = Map<String, dynamic>.from(data);
       _clearRows();
       _nextRowId = 0;
       for (final head in heads) {
         final amount = _toDouble(fees[head]);
         _rows.add(_EditableSchoolFee(_nextRowId++, name: head,
+          frequency: billingByHead[head] ?? 'monthly',
           amount: amount > 0 ? (amount == amount.roundToDouble() ? amount.toStringAsFixed(0) : amount.toString()) : ''));
       }
       _editing = data['feeStructureSaved'] != true && data['configured'] != true && fees.values.every((v) => _toDouble(v) == 0);
@@ -12639,6 +12644,7 @@ class _FeeCollectionSettingsScreenState
     final selected = _selectedClass;
 
     final fees = <String, double>{};
+    final billing = <String, String>{};
     final names = <String>{};
     for (final row in _rows) {
       final head = row.name.text.trim();
@@ -12654,13 +12660,15 @@ class _FeeCollectionSettingsScreenState
         return;
       }
       fees[head] = amount!;
+      billing[head] = row.frequency;
     }
 
     setState(() => _saving = true);
     try {
       await FirebaseFirestore.instance.ensureDurableSchoolRecords();
       if (selected != _selectedClass || FirebaseFirestore.instance.activeProfileId != _profile) throw StateError('School or class changed.');
-      await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true, expectedConfiguration: _loadedConfiguration);
+      await WindowsFeeStructure.save(selected, _academicSession, fees, replaceHeads: true, expectedConfiguration: _loadedConfiguration,
+        feeFrequencies: billing);
       if (!mounted || FirebaseFirestore.instance.activeProfileId != _profile) return;
       setState(() { _editing = false; _dirty = false; });
       await _loadSettings();
@@ -12702,7 +12710,10 @@ class _FeeCollectionSettingsScreenState
       scrollController: _feeScroll, classes: _classes, selectedClass: _selectedClass, session: _academicSession,
       sessions: _sessions, loading: _loading, failed: _loadFailed, saving: _saving, editing: _editing,
       rows: _rows.map((row) => WindowsFeeEditorRow(id: row.id, name: row.name, amount: row.amount,
-        onDelete: () => _deleteFee(row))).toList(),
+        frequency: row.frequency, onFrequency: (newValue) => setState(() {
+          row.frequency = newValue;
+          _dirty = true;
+        }), onDelete: () => _deleteFee(row))).toList(),
       onClass: _selectClass, onSession: _selectSession, onAdd: _addFee,
       onChanged: () { if (!_dirty) setState(() => _dirty = true); },
       onSave: _saveSettings, onEdit: _editSettings,
@@ -12713,11 +12724,12 @@ class _FeeCollectionSettingsScreenState
 }
 
 class _EditableSchoolFee {
-  _EditableSchoolFee(this.id, {String name = '', String amount = ''})
+  _EditableSchoolFee(this.id, {String name = '', String amount = '', this.frequency = 'monthly'})
       : name = TextEditingController(text: name), amount = TextEditingController(text: amount);
   final int id;
   final TextEditingController name;
   final TextEditingController amount;
+  String frequency;
   void dispose() { name.dispose(); amount.dispose(); }
 }
 
