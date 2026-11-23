@@ -424,6 +424,9 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                               if(ctx.mounted)setD(() => saving=false);
                               return;
                             }
+                            await WindowsAdminSecurity.consumeApproval(
+                              token:approved,scope:'protected-settings',
+                              target:'school_settings/staff_payroll_directory/${existing['id']}');
                           }
                           await OtherStaffDirectory.save(profile, {
                             ...?existing,
