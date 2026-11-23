@@ -104,6 +104,40 @@ Set<String> manualConflictReadCollections(Iterable<Map<String,dynamic>> rows, {
       row['collection'] as String,
 };
 
+/// Only one device-upload success notice is eligible for the five-second
+/// overview. A later Drive/provider verification for the SAME Cloudflare-owned
+/// original is not another completed upload on this PC.
+Map<String, dynamic>? windowsLatestForegroundAck(
+  Iterable<Map<String, dynamic>> history, {
+  required String school,
+  required int nowMillis,
+  int visibilityMillis = 5000,
+}) {
+  if (school.isEmpty || visibilityMillis <= 0) return null;
+  final events = history.toList(growable: false);
+  final acceptedIds = <String>{
+    for (final event in events)
+      if (event['schoolId'] == school &&
+          event['stage'] == 'cloudflareAccepted' &&
+          event['operationId'] is String &&
+          (event['operationId'] as String).isNotEmpty)
+        event['operationId'] as String,
+  };
+  for (final event in events.reversed) {
+    if (event['schoolId'] != school) continue;
+    final stage = event['stage'];
+    if (stage != 'cloudflareAccepted' && stage != 'verified') continue;
+    if (stage == 'verified' &&
+        event['operationId'] is String &&
+        acceptedIds.contains(event['operationId'])) continue;
+    final at = event['at'];
+    if (at is! int || at > nowMillis ||
+        nowMillis - at >= visibilityMillis) continue;
+    return event;
+  }
+  return null;
+}
+
 /// Cloud/status polling is read-only and never changes foreground device
 /// state. The only writer of displayState remains the durable queue projection.
 Map<String, dynamic> windowsCloudCheckSnapshot(
