@@ -31,3 +31,25 @@ The school-owned Apps Script must receive the compatible optimized bundle before
 Worker rollout precedes optional two-job broker rollout; deploy the broker serially first. Existing jobs survive a rollback because legacy/unknown dependencies remain serial. New native app code requires a Windows update; shared signed rules cannot invent this new native behavior. School data stays isolated, and all server-authoritative licence/device checks remain enabled.
 
 Physical Android background/battery recovery and 1/2/5-PC hardware acceptance require actual devices. An authoritative Cloudflare database migration, automatic approval of new repair code and unconstrained parallel writes are outside this upgrade.
+
+## Sync Engine 4: explicit per-school three-job canary (not enabled by default)
+
+After the existing two-job resource scheduler has been proven with provider
+readback, an isolated same-school rollout may set both:
+
+- `SAARTHI_EDGE_RECORD_PARALLELISM=3`
+- `SAARTHI_EDGE_RECORD_PARALLEL_SCHOOLS=vs-<exact32hex>` (comma-separated explicit school IDs)
+
+The broker fails closed to serial admission for every school not named in the
+fully valid list. Empty, wildcard, foreign or malformed lists do not enable
+three-way delivery. The current `=2` behavior remains unchanged. The Worker
+must advertise `recordSchedulingVersion:1`, and the Worker alone chooses
+at most three disjoint, independent expense/attendance record keys. A new
+student, teacher, fee/ledger, document, cascade-delete, atomic operation or
+legacy unclassified resource still blocks independent provider overtaking.
+
+This is a **background provider delivery** throughput knob, not Windows
+foreground ACK latency or permission to reupload an already accepted original.
+Do not activate it on the deployed production broker until its source branch,
+Google provider quotas, owner credentials and all-lane Drive readback have been
+verified. CI/synthetic results do not prove a real-school speed improvement.
