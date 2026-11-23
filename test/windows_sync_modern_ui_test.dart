@@ -221,6 +221,32 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('legacy Drive waiting never reopens completed PC upload status', (tester) async {
+    engine.details.value={
+      'pending':0,'needsAttention':0,'displayState':'waiting',
+      'cloudflareOwnedPendingDrive':1,
+      'liveQueue':<Map<String,dynamic>>[
+        {'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+         '_queueCollection':'_windows_google_outbox',
+         'collection':'school_notices','documentId':'old-provider-proof',
+         'syncState':'pending'},
+      ],
+      'items':<Map<String,dynamic>>[],
+      'activity':<Map<String,dynamic>>[],
+    };
+    await tester.pumpWidget(MaterialApp(home:page()));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Idle')),findsOneWidget);
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Waiting')),findsNothing);
+    expect(tester.widget<CircularProgressIndicator>(
+      find.descendant(of:find.byType(WindowsSyncFlow),
+        matching:find.byType(CircularProgressIndicator))).value,0);
+    expect(find.textContaining('Google Drive pending'),findsWidgets);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('zero uploads and one cloud hint show separate honest queue states', (tester) async {
     engine.details.value = {
       'pending':0,
