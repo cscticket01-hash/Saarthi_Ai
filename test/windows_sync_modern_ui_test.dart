@@ -158,6 +158,52 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('Cloudflare ACK shows the last device success; late Drive status stays quiet', (tester) async {
+    final acceptedAt=DateTime.now().millisecondsSinceEpoch;
+    engine.details.value={
+      'pending':0,
+      'needsAttention':0,
+      'displayState':'idle',
+      'cloudflareOwnedPendingDrive':1,
+      'lastCloudAckMillis':acceptedAt,
+      'liveQueue':<Map<String,dynamic>>[],
+      'activity':[{
+        'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'stage':'cloudflareAccepted',
+        'operationId':'server-ack-test-1',
+        'collection':'students_directory',
+        'documentId':'student-cloud-1',
+        'at':acceptedAt,
+      }],
+    };
+    await tester.pumpWidget(MaterialApp(home:page()));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Idle')),findsOneWidget);
+    expect(find.text('School Server ACK verified — device upload complete'),
+      findsOneWidget);
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsOneWidget);
+    expect(find.textContaining('Google Drive pending'),findsWidgets);
+    await tester.pump(const Duration(seconds:6));
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsNothing);
+    engine.details.value={
+      ...engine.details.value,
+      'activity':[
+        ...(engine.details.value['activity'] as List),
+        {
+          'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'stage':'driveVerified','at':DateTime.now().millisecondsSinceEpoch,
+        }
+      ],
+    };
+    await tester.pump();
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsNothing,
+      reason:'late Drive provider status must not reannounce a PC upload');
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Idle')),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('old verified events are never shown again on opening the overview', (tester) async {
     engine.details.value = {
       ...engine.details.value,
