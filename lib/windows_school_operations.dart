@@ -726,12 +726,19 @@ class SchoolPromotionService {
     batch.requireUnchanged(ref, live);
     batch.set(ref, {
       ...live, ...shared,
+      if (school.isNotEmpty) 'schoolId': school,
       if (nextClass != live['class']) 'previousClass': live['class'],
       'class': nextClass,
       if (live.containsKey('studentClass')) 'studentClass': nextClass,
     });
+    final eventRef = db.collection('school_settings')
+        .doc('promotion_event_${examId}_${studentId}_$movement');
+    if (eventRef.id.length > 200) {
+      throw StateError('Promotion audit identity too long; student needs review.');
+    }
+    batch.requireUnchanged(eventRef, null);
     batch.set(
-      db.collection('school_settings').doc('promotion_event_${examId}_${studentId}_$movement'),
+      eventRef,
       {
         'schoolId': school,
         'studentId': studentId, 'personId': stableId,
