@@ -222,6 +222,22 @@ void main(){
     expect(tester.widget<CircularProgressIndicator>(
       find.byType(CircularProgressIndicator)).value,0.2);
   });
+  testWidgets('zero-length or invalid progress never fabricates a percentage', (tester) async {
+    for (final sample in [
+      (offset:0,total:0), (offset:2,total:1), (offset:-1,total:10),
+    ]) {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: WindowsSyncFlow(
+        phase:'syncing',label:'Syncing',local:'Saved',cloud:'Uploading',
+        drive:'Google Drive pending',pending:1,active:{'cloud'},
+        uploadProgress:sample,
+      ))));
+      await tester.pump();
+      expect(tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator)).value,isNull,
+        reason:'unknown/untrusted measurement must use indeterminate progress');
+      expect(find.byType(LinearProgressIndicator),findsNothing);
+    }
+  });
   test('activity is school scoped and subscriptions are not transfer animations',(){
     expect(WindowsSyncEvidence.dataAction('managed/events'),false);
     WindowsSyncEvidence.enter(school,'cloud');WindowsSyncEvidence.enter(school,'cloud');
