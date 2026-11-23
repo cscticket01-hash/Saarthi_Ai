@@ -50,8 +50,11 @@ class WindowsExamService {
     final cloud=await CentralSchoolCloud.saved();
     _requireProfile(profile);
     Map<String,dynamic> local;
+    // Only an explicit legacy atomic-PDF submission enters the old bundle.
+    // New regular Save requests persist marks without generating a document.
     if(action=='save_exam_result' && cloud['managed']==true &&
-       AtomicBundlePilot.buildEnabled) {
+       AtomicBundlePilot.buildEnabled &&
+       (request['pdfBase64']?.toString().trim().isNotEmpty ?? false)) {
       final db=FirebaseFirestore.instance;
       final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
       final examId=request['examId']?.toString().trim()??'';
