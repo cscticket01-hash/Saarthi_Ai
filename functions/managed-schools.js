@@ -1444,13 +1444,14 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
     enabled:false,statusScope:'unavailable'};
   const lane=b.lane,after=b.after??0,limit=b.limit??50;
   if(typeof lane!=='string'||
-     !/^(?:notices|attendance-[a-f0-9]{2})$/.test(lane)||
+     !/^(?:records|notices|attendance-[a-f0-9]{2})$/.test(lane)||
      !Number.isSafeInteger(after)||after<0||
      !Number.isSafeInteger(limit)||limit<1||limit>100)
     fail(400,'Invalid school owner journal page','EDGE_AUDIT_PAGE_INVALID');
   const result=await cloudflareSync.rpc(m.schoolId,lane,{
     command:'auditJournalPage',after,limit});
-  const source=lane==='notices'?'legacy-notices':'legacy-attendance';
+  const source=lane==='records'?'records':lane==='notices'?'legacy-notices':'legacy-attendance';
+  const scope=lane==='records'?'immutableSpoolOwnerJournal':'legacyImmutableOwnerJournal';
   const entries=result?.entries;
   let last=after;
   const valid=Array.isArray(entries)&&entries.length<=limit&&
@@ -1458,7 +1459,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       if(!entry||typeof entry!=='object'||
          !Number.isSafeInteger(entry.sequence)||entry.sequence<=last||
          typeof entry.id!=='string'||!/^[a-f0-9]{64}$/.test(entry.id)||
-         !['pending','retry','processing','completed','needsAttention','staging'].includes(entry.state)||
+         !['pending','retry','processing','completed','needsAttention','staging','superseded'].includes(entry.state)||
          typeof entry.driveOwnerReceiptPresent!=='boolean'||
          !(entry.acceptedAt===null||
            Number.isSafeInteger(entry.acceptedAt)&&entry.acceptedAt>0)||
@@ -1473,7 +1474,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
       return true;
     });
   if(!result||result.version!==1||result.schoolId!==m.schoolId||
-     result.scope!=='legacyImmutableOwnerJournal'||
+     result.scope!==scope||
      result.source!==source||result.lane!==lane||
      result.partial!==true||result.coverage!=='one-owner-journal-only'||
      !valid||
