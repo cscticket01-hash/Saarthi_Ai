@@ -146,3 +146,73 @@ test('legacy teacher lookup prefers permanent ID over an earlier row matching th
  assert.equal(context.withLegacyTeacherWriteLock_(() => true), true);
  assert.deepEqual(trace.slice(2), ['acquire', 'flush', 'release']);
 });
+
+
+// Legacy endpoints coexist with managed school Scripts. Their media replacement
+// cannot delete an already-published photo before durable Sheet confirmation.
+test('legacy photo replacement never erases old student/teacher media before verified Sheet commit',()=>{
+ const fs=require('node:fs'),vm=require('node:vm');
+ const source=fs.readFileSync('../school-backend/SaarthiSchool.gs','utf8');
+ const oldUrl='https://lh3.googleusercontent.com/d/old-photo=w800';
+ const nextUrl='https://lh3.googleusercontent.com/d/new-photo=w800';
+ for(const [kind,method,photoColumn] of [
+   ['student','editStudent',6],['teacher','editTeacher',14],
+ ]) {
+  const start=source.indexOf('function '+method+'(data) {');
+  const end=source.indexOf('\n}\n',start);
+  assert(start>=0&&end>start,'legacy edit function located');
+  const code=source.slice(start,end+2);
+  for(const scenario of ['success','write_failed','flush_failed','readback_mismatch','no_photo']) {
+   const events=[],row=Array(18).fill('');
+   row[photoColumn-1]=oldUrl;row[0]='TCH-1';row[5]='9876543210';
+   let wrote=false;
+   const sheet={getRange:(_row,col)=>({
+     getValue:()=>{
+       if(wrote&&col===photoColumn&&scenario==='readback_mismatch')return oldUrl;
+       return row[col-1];
+     },
+     setValues:values=>{
+       events.push('write');
+       if(scenario==='write_failed')throw Error('Synthetic Sheet write failed');
+       values[0].forEach((v,i)=>{row[i]=v;});wrote=true;
+     },
+   })};
+   const env={
+     STUDENT_SHEET_NAME:'Students',TEACHER_SHEET_NAME:'Teachers',
+     STUDENT_HEADERS:Array(14).fill(''),TEACHER_HEADERS:Array(16).fill(''),
+     getOrCreateDatabaseSheet:()=>sheet,
+     findStudentRow:()=>2,findTeacherRow:()=>2,
+     normalizeClass:v=>v,normalizeRoll:v=>v,normalizePhone:v=>v,
+     uploadStudentPhoto:()=>({url:nextUrl}),
+     uploadTeacherPhoto:()=>({url:nextUrl}),
+     deleteDrivePhotoByUrl:()=>{
+       events.push('trash');
+       return true;
+     },
+     SpreadsheetApp:{flush:()=>{
+       events.push('flush');
+       if(scenario==='flush_failed')throw Error('Synthetic flush failed');
+     }},
+     jsonResponse:x=>x,console:{log:()=>{}},
+   };
+   vm.createContext(env);
+   vm.runInContext(code,env,{filename:'SaarthiSchool.gs'});
+   const input=kind==='student'
+     ?{studentClass:'1',roll:'3',...(scenario==='no_photo'?{}:{photoBase64:'synthetic'})}
+     :{teacherId:'TCH-1',...(scenario==='no_photo'?{}:{photoBase64:'synthetic'})};
+   if(['write_failed','flush_failed','readback_mismatch'].includes(scenario)) {
+     assert.throws(()=>env[method](input),/failed|unverified/i,kind+'/'+scenario);
+     assert.equal(events.includes('trash'),false,kind+'/'+scenario+' retains old photo');
+   } else {
+     const result=env[method](input);
+     assert.equal(result.success,true,kind+'/'+scenario);
+     assert.equal(events.filter(x=>x==='trash').length,scenario==='success'?1:0,kind+'/'+scenario);
+     if(scenario==='success') {
+       assert(events.indexOf('write')<events.indexOf('flush'));
+       assert(events.indexOf('flush')<events.indexOf('trash'));
+       assert.equal(row[photoColumn-1],nextUrl);
+     }else assert.equal(row[photoColumn-1],oldUrl);
+   }
+  }
+ }
+});
