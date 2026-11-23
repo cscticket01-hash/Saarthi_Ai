@@ -823,7 +823,7 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
       'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
     ),
     onChanged: (v) async {
-      if(await WindowsAdminSecurity.isManaged) {
+      {
         final approved=await requestWindowsAdminApproval(context,
           scope:'protected-settings',target:'school_settings/promotion_policy');
         if(approved==null || !mounted)return;
