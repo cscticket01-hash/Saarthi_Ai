@@ -1313,6 +1313,36 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
         icon: const Icon(Icons.build_circle_outlined),
         label: const Text('Run Safe Repair'),
       ),
+      // Keep the approved three-entry ⋮ menu compact. Schedule preferences
+      // live with other diagnostic/administrative controls, not next to Pause.
+      PopupMenuButton<int>(
+        tooltip: 'Automatic sync interval',
+        enabled: !busy && db.activeProfileId == origin,
+        onSelected: (minutes) =>
+            _run(() => engine.setAutoSyncInterval(minutes)),
+        itemBuilder: (_) => [
+          for (final minutes in WindowsSyncEngine.autoSyncIntervals)
+            CheckedPopupMenuItem<int>(
+              value: minutes,
+              checked: minutes == engine.autoSyncIntervalMinutes,
+              child: Text(switch (minutes) {
+                0 => 'Off',
+                60 => 'Every 1 Hour',
+                _ => 'Every $minutes Minutes',
+              }),
+            ),
+        ],
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.schedule),
+            SizedBox(width: 8),
+            Text('Auto Sync (Interval)'),
+            SizedBox(width: 4),
+            Icon(Icons.arrow_drop_down),
+          ]),
+        ),
+      ),
       OutlinedButton(
         onPressed: () => _jump(_backupKey),
         child: const Text('Measured Status'),
@@ -1600,8 +1630,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     return const WindowsRecycleBin();
                   },
                 ));
-              } else if (choice >= 100) {
-                _run(() => engine.setAutoSyncInterval(choice - 100));
               } else if (choice == 0) {
                 _run(engine.resumeAutomaticSync);
               } else {
@@ -1622,27 +1650,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     onChanged: (paused) => Navigator.pop(menuContext, paused ? 1 : 0),
                   ),
                 ]),
-              ),
-              PopupMenuItem<int>(
-                enabled: false,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: SubmenuButton(
-                  leadingIcon: const Icon(Icons.sync),
-                  menuChildren: [
-                    for (final minutes in WindowsSyncEngine.autoSyncIntervals)
-                      MenuItemButton(
-                        leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
-                            ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                        onPressed: () => Navigator.pop(menuContext, 100 + minutes),
-                        child: Text(switch (minutes) {
-                          0 => 'Off',
-                          60 => 'Every 1 Hour',
-                          _ => 'Every $minutes Minutes',
-                        }),
-                      ),
-                  ],
-                  child: const Text('Auto Sync (Interval)'),
-                ),
               ),
               const PopupMenuItem(value: -1, child: Row(children: [
                 Icon(Icons.build_outlined), SizedBox(width: 10), Text('Troubleshoot'),
