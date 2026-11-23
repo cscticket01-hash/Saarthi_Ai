@@ -177,3 +177,81 @@ test('malformed hourly records response is rejected rather than showing fake suc
    observedAt:time,firstHourMillis:time,hours:[{admitted:3,proofStamped:4}],unattributed:0})}});
  await assert.rejects(f.call({action:'managed/cloudflare/backupHourly'}),e=>e.status===502);
 });
+
+test('notice and attendance owner journals are bounded to authenticated school and original page',async()=>{
+ const id='a'.repeat(64),calls=[];
+ const cloudflareSync={enabled:school=>school===A,
+  rpc:async(school,lane,request)=>{
+   calls.push({school,lane,request});
+   assert.equal(school,A);
+   return {version:1,schoolId:A,scope:'legacyImmutableOwnerJournal',
+    source:lane==='notices'?'legacy-notices':'legacy-attendance',
+    lane,coverage:'one-owner-journal-only',partial:true,
+    entries:[{sequence:4,id,state:'completed',acceptedAt:time-100000,
+      driveOwnerReceiptPresent:true,verifiedAt:time-20000}],
+    nextCursor:4};
+  }};
+ const f=fixture(undefined,{cloudflareSync});
+ const a=await f.call({action:'managed/cloudflare/auditJournalPage',
+  lane:'notices',after:3,limit:1});
+ assert.equal(a.success,true);
+ assert.equal(a.schoolId,A);
+ assert.equal(a.source,'legacy-notices');
+ assert.equal(a.statusScope,'one-owner-journal-only');
+ assert.equal(a.partial,true);
+ assert.equal(a.driveVerified,undefined,
+  'An original owner receipt is not an independent Google byte readback');
+ assert.equal(a.entries[0].driveOwnerReceiptPresent,true);
+ assert.equal(a.nextCursor,4);
+ const b=await f.call({action:'managed/cloudflare/auditJournalPage',
+  lane:'attendance-a0',after:3,limit:1});
+ assert.equal(b.source,'legacy-attendance');
+ assert.equal(calls.length,2);
+ assert.deepEqual(calls.map(x=>x.request),[
+  {command:'auditJournalPage',after:3,limit:1},
+  {command:'auditJournalPage',after:3,limit:1}]);
+ await assert.rejects(f.call({action:'managed/cloudflare/auditJournalPage',
+  schoolId:B,lane:'notices'}),e=>e.status===403);
+ assert.equal(calls.length,2,'Cross-school requests cannot touch the Worker');
+ const disabled=await f.call({action:'managed/cloudflare/auditJournalPage',lane:'notices'},'B');
+ assert.equal(disabled.enabled,false);
+ assert.equal(calls.length,2);
+});
+test('owner journal rejects unrelated lanes, unbounded cursor and malformed provider rows',async()=>{
+ let calls=0;
+ const ok={version:1,schoolId:A,scope:'legacyImmutableOwnerJournal',
+  source:'legacy-notices',lane:'notices',coverage:'one-owner-journal-only',
+  partial:true,nextCursor:null,entries:[{sequence:1,id:'a'.repeat(64),
+   state:'pending',acceptedAt:time-1000,driveOwnerReceiptPresent:false,verifiedAt:null}]};
+ let reply=ok;
+ const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async()=>{calls++;return reply;}}});
+ for(const args of [
+  {lane:'records'}, {lane:'file-'+'f'.repeat(64)},
+  {lane:'attendance-zz'}, {lane:'notices',after:-1},
+  {lane:'notices',limit:0}, {lane:'notices',limit:101},
+  {lane:'notices',after:2.4}, {lane:'notices',limit:1.5}])
+  await assert.rejects(f.call({action:'managed/cloudflare/auditJournalPage',...args}),
+   e=>e.status===400);
+ assert.equal(calls,0,'All invalid pages fail before Worker access');
+ const bad=[
+  {...ok,schoolId:B},
+  {...ok,scope:'all-original-owner-drive-readbacks'},
+  {...ok,partial:false},
+  {...ok,nextCursor:99},
+  {...ok,entries:[{...ok.entries[0],driveOwnerReceiptPresent:false,
+    verifiedAt:time-100}]},
+  {...ok,entries:[{...ok.entries[0],state:'pending',
+    driveOwnerReceiptPresent:true,verifiedAt:time-100}]},
+  {...ok,entries:[{...ok.entries[0],id:'untrusted'}]},
+  {...ok,entries:[{...ok.entries[0],sequence:0}]},
+  {...ok,entries:[{...ok.entries[0],acceptedAt:time,
+    driveOwnerReceiptPresent:true,verifiedAt:time-100,state:'completed'}]}
+ ];
+ for(const value of bad){
+  reply=value;
+  await assert.rejects(f.call({action:'managed/cloudflare/auditJournalPage',lane:'notices'}),
+   e=>e.status===502);
+ }
+ assert.equal(calls,bad.length);
+});
