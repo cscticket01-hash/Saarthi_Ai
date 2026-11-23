@@ -57,6 +57,18 @@ class WindowsExamService {
       final exam = (await FirebaseFirestore.instance
           .collection('exams').doc(examId).get()).data();
       _requireProfile(profile);
+      // A final result that already changed the student's class cannot be
+      // silently rewritten. An explicit audited correction workflow is needed.
+      final pupil = (await FirebaseFirestore.instance
+          .collection('students_directory').doc(studentId).get()).data();
+      _requireProfile(profile);
+      if (pupil?['promotionExamId'] == examId &&
+          {'PROMOTED','FORCE_PROMOTED','GRADUATED'}
+              .contains(pupil?['classMovement'])) {
+        throw StateError(
+          'This Final Exam promotion is already approved. '
+          'Use an audited correction before changing its marks.');
+      }
       if (exam != null && exam['subjects'] is List &&
           request['marks'] is Map) {
         final full = WindowsExamPolicy.finiteNumber(exam['fullMarks']);
