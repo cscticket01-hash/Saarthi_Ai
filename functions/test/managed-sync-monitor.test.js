@@ -86,3 +86,94 @@ test('failed monitoring persistence does not suppress the next verified response
  await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence,null);
  await read();assert.equal((await f.call({action:'managed/sync/status'})).serverEvidence.protocol,2);
 });
+
+test('handoff monitor separates device-owned work from cloud-owned pending backup',async()=>{
+ const f=fixture();const base={pending:0,needsAttention:0,verifiedReceiptCount:7,lastCloudAckMillis:time-1000};
+ const report={...base,cloudflareOwnedPendingDrive:4,lastCloudflareHandoffMicros:2499000};
+ const saved=await f.call({action:'managed/sync/status',report});
+ assert.equal(saved.latestWindowsReport.pending,0);
+ assert.equal(saved.latestWindowsReport.cloudflareOwnedPendingDrive,4);
+ assert.equal(saved.latestWindowsReport.lastCloudflareHandoffMicros,2499000);
+ const developer=await f.call({action:'developer/managed/sync/status',schoolId:A},'developer');
+ assert.equal(developer.latestWindowsReport.cloudflareOwnedPendingDrive,4);
+ for(const extra of [{cloudflareOwnedPendingDrive:-1},{cloudflareOwnedPendingDrive:100001},{lastCloudflareHandoffMicros:86400000001},{lastCloudflareHandoffMicros:'2499000'}])
+  await assert.rejects(f.call({action:'managed/sync/status',report:{...base,...extra}}),e=>e.status===400);
+ assert.equal(f.docs.get('platform_schools/'+B).syncWindowsReport,undefined);
+});
+
+test('Cloudflare status includes exact school record lane without claiming all-lane Drive verification',async()=>{
+ const calls=[];
+ const cloudflareSync={
+  enabled:school=>school===A,
+  rpc:async(school,lane,request)=>{
+   calls.push({school,lane,request});
+   assert.equal(school,A);
+   assert.deepEqual(request,{command:'stats'});
+   return lane==='records'
+    ?{pending:3,needsAttention:1,due:time+10000}
+    :lane==='notices'
+    ?{pending:0,needsAttention:0,due:null}
+    :{pendingPartitions:1,needsAttention:1};
+  }
+ };
+ const f=fixture(undefined,{cloudflareSync});
+ const result=await f.call({action:'managed/cloudflare/status'});
+ assert.equal(result.schoolId,A);
+ assert.equal(result.enabled,true);
+ assert.equal(result.statusScope,'records_notices_delivery');
+ assert.equal(result.observedAt,time);
+ assert.deepEqual(result.records,{pending:3,needsAttention:1,due:time+10000});
+ assert.deepEqual(calls.map(x=>x.lane).sort(),['delivery','notices','records']);
+ assert.equal(result.driveVerified,undefined,
+  'A Cloudflare queue count can never attest Google provider ACK');
+ await assert.rejects(f.call({action:'managed/cloudflare/status',schoolId:B}),e=>e.status===403);
+ assert.equal((await f.call({action:'managed/cloudflare/status'},'B')).enabled,false);
+ assert.equal(calls.length,3,'A disabled school cannot read another tenant queue');
+});
+test('malformed or unavailable record statistics fail closed, not as successful backup',async()=>{
+ const cloudflareSync={
+  enabled:school=>school===A,
+  rpc:async(_,lane)=>{
+   if(lane==='records')return {pending:0,needsAttention:-1};
+   return lane==='notices'?{pending:0,needsAttention:0}
+    :{pendingPartitions:0,needsAttention:0};
+  }
+ };
+ const f=fixture(undefined,{cloudflareSync});
+ await assert.rejects(f.call({action:'managed/cloudflare/status'}),e=>e.status===502);
+});
+
+test('school scoped hourly records inventory is read-only and never reports school-wide Drive completion',async()=>{
+ const hourMs=3600000,observedAt=time,firstHourMillis=Math.floor(time/hourMs)*hourMs-23*hourMs;
+ const hours=Array.from({length:24},(_,i)=>({hourStartMillis:firstHourMillis+i*hourMs,
+  admitted:i===23?2:0,proofStamped:0,completedWithoutProofTimestamp:i===23?1:0,
+  pending:i===23?1:0,retry:0,processing:0,needsAttention:0}));
+ let calls=0;
+ const cloudflareSync={enabled:school=>school===A,rpc:async(school,lane,request)=>{
+  calls++;assert.equal(school,A);assert.equal(lane,'records');
+  assert.deepEqual(request,{command:'backupHourly'});
+  return {version:1,schoolId:A,scope:'records_spool_only',
+   countUnit:'original_spool_entries_batches_count_as_one',
+   observedAt,firstHourMillis,hours,unattributed:0};
+ }};
+ const f=fixture(undefined,{cloudflareSync});
+ const result=await f.call({action:'managed/cloudflare/backupHourly'});
+ assert.equal(result.enabled,true);
+ assert.equal(result.statusScope,'records_spool_only');
+ assert.equal(result.hours.length,24);
+ assert.equal(result.hours[23].admitted,2);
+ assert.equal(result.hours[23].proofStamped,0);
+ assert.equal(result.driveVerified,undefined);
+ assert.equal(result.googleDriveComplete,undefined);
+ assert.equal(calls,1);
+ await assert.rejects(f.call({action:'managed/cloudflare/backupHourly',schoolId:B}),e=>e.status===403);
+ assert.equal((await f.call({action:'managed/cloudflare/backupHourly'},'B')).enabled,false);
+ assert.equal(calls,1);
+});
+test('malformed hourly records response is rejected rather than showing fake success',async()=>{
+ const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async()=>({version:1,schoolId:A,scope:'records_spool_only',
+   countUnit:'original_spool_entries_batches_count_as_one',
+   observedAt:time,firstHourMillis:time,hours:[{admitted:3,proofStamped:4}],unattributed:0})}});
+ await assert.rejects(f.call({action:'managed/cloudflare/backupHourly'}),e=>e.status===502);
+});
