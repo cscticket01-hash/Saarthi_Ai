@@ -103,6 +103,36 @@ void main() {
     pdfBytes: bytes ?? pdf,
   );
 
+  test('record-only Save commits fee and ledger without queued PDF', () async {
+    final p = payment('record-only')..remove('receiptDocumentId');
+    await WindowsBackendBridge.collectFeePayment(
+      profileId: db.activeProfileId,
+      paymentId: p['paymentId'] as String,
+      payment: p,
+      ledgerId: 'ledger-S1',
+      ledger: ledger(p),
+      previousPaid: 0,
+    );
+    expect((await db.collection('fee_payments').doc('record-only').get())
+        .data()?['totalPaid'], 100);
+    expect((await db.collection('fee_ledger').doc('ledger-S1').get())
+        .data()?['lastPaymentId'], 'record-only');
+    expect((await db.collection('_local_student_documents').get()).docs,
+        isEmpty);
+    expect((await db.collection('_windows_document_outbox').get()).docs,
+        isEmpty);
+    await WindowsBackendBridge.collectFeePayment(
+      profileId: db.activeProfileId,
+      paymentId: p['paymentId'] as String,
+      payment: p,
+      ledgerId: 'ledger-S1',
+      ledger: ledger(p),
+      previousPaid: 0,
+    );
+    expect((await db.collection('fee_payments').get()).docs
+        .where((d) => d.id == 'record-only'), hasLength(1));
+  });
+
   test('offline save atomically retains original PDF, ledger and separate verified sync queues', () async {
     final p = payment('one');
     await save(p);
