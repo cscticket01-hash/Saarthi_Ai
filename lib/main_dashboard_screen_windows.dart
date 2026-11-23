@@ -9,6 +9,7 @@ import 'windows_appearance.dart';
 import 'liquid_glass_theme.dart';
 import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
+import 'windows_admin_security.dart';
 import 'windows_settings_design.dart';
 import 'school_profile_policy.dart';
 import 'student_inventory_policy.dart';
@@ -322,7 +323,7 @@ List<_WindowsSectionLockDefinition> get _windowsSectionLockDefinitions => [
 class WindowsAdminAccessGate extends StatelessWidget {
   const WindowsAdminAccessGate({super.key,required this.child});
   final Widget child;
-  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return child; }
+  @override Widget build(BuildContext context){ WindowsAppearance.watch(context); return WindowsAdminSecurityGate(child:child); }
 }
 
 class WindowsSectionLocks {
@@ -14185,7 +14186,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                   ),
                   const SizedBox(height: 16),
                    Text(
-                    'App Lock Password daalein:',
+                    'Admin Password daalein:',
                     style: TextStyle(fontFamily: 'Segoe UI', 
                       color: WindowsAppearance.foreground(Colors.white),
                       fontSize: 12,
@@ -14203,7 +14204,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                     decoration:
                         InputDecoration(
                       hintText:
-                          'App Lock Password',
+                          'Admin Password',
                       hintStyle:
                            TextStyle(fontFamily: 'Segoe UI', 
                         color:
@@ -14302,7 +14303,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             setDialogState(
                               () {
                                 errorText =
-                                    'App Lock Password daalein.';
+                                    'Admin Password daalein.';
                               },
                             );
                             return;
@@ -14339,10 +14340,13 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                   password,
                             );
 
-                            await user
-                                .reauthenticateWithCredential(
-                              credential,
-                            );
+                            if(await WindowsAdminSecurity.isManaged) {
+                              await WindowsAdminSecurity.approve(
+                                password:password, scope:'person-delete',
+                                target:'teachers_directory/$docId');
+                            } else {
+                              await user.reauthenticateWithCredential(credential);
+                            }
 
                             if (!mounted) {
                               return;
@@ -14358,7 +14362,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                                 deleting =
                                     false;
                                 errorText =
-                                    'Galat App Lock Password!';
+                                    'Galat Admin Password!';
                               },
                             );
                           }
@@ -17052,6 +17056,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
         if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
     if(yes!=true||!mounted)return;
+    if(force && await WindowsAdminSecurity.isManaged) {
+      final approved=await requestWindowsAdminApproval(context,
+        scope:'force-promotion',
+        target:'$docId/${result['examId'] ?? ''}');
+      if(approved==null || !mounted)return;
+    }
     setState(()=>_movingStudentIds.add(docId));
     try {
       if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
@@ -17092,14 +17102,14 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                     style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white70), fontSize: 13),
                   ),
                   const SizedBox(height: 18),
-                   Text('App Lock Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
+                   Text('Admin Password daalein:', style: TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white), fontSize: 12)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: passwordController,
                     obscureText: obscureText,
                     style:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.white)),
                     decoration: InputDecoration(
-                      hintText: 'Enter App Lock Password',
+                      hintText: 'Enter Admin Password',
                       hintStyle:  TextStyle(fontFamily: 'Segoe UI', color: WindowsAppearance.foreground(Colors.grey), fontSize: 13),
                       filled: true,
                       fillColor: WindowsAppearance.background(const Color(0xFF121B22)),
@@ -17137,16 +17147,23 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
                           });
 
                           try {
-                            final user = FirebaseAuth.instance.currentUser;
-                            if (user != null && user.email != null) {
-                              final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
-                              await user.reauthenticateWithCredential(credential);
-                              Navigator.pop(ctx, true);
+                            if(await WindowsAdminSecurity.isManaged) {
+                              await WindowsAdminSecurity.approve(
+                                password:pass, scope:'person-delete',
+                                target:'students_directory/$docId');
+                              if(ctx.mounted) Navigator.pop(ctx,true);
                             } else {
-                              setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
+                              final user = FirebaseAuth.instance.currentUser;
+                              if (user != null && user.email != null) {
+                                final credential = EmailAuthProvider.credential(email: user.email!, password: pass);
+                                await user.reauthenticateWithCredential(credential);
+                                if(ctx.mounted) Navigator.pop(ctx, true);
+                              } else {
+                                setDialogState(() { isLoading = false; errorMessage = 'Admin user nahi mila.'; });
+                              }
                             }
                           } catch (e) {
-                            setDialogState(() { isLoading = false; errorMessage = 'Galat Password!'; });
+                            setDialogState(() { isLoading = false; errorMessage = 'Galat Admin Password!'; });
                           }
                         },
                   child: isLoading
@@ -18225,6 +18242,8 @@ class PasswordManagementScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
               children: const [
+                WindowsAdminPasswordCard(),
+                SizedBox(height:14),
                 _WindowsSectionPasswordLocksPanel(),
               ],
             ),
@@ -18353,13 +18372,19 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       return;
     }
 
+    String? adminApprovalToken;
+    if(managedSession['managed']==true) {
+      adminApprovalToken=await requestWindowsAdminApproval(context,
+        scope:'drive-connection', target:url);
+      if(adminApprovalToken==null || !mounted) return;
+    }
     setState(() => _saving = true);
     final origin=FirebaseFirestore.instance.activeProfileId;
     var connectedEmail=email;
     try {
       final managed=await CentralSchoolCloud.saved();
       if(managed['managed']==true){
-        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
+        final result=await ManagedSchoolSession.call('managed/storage/connect',{'scriptUrl':url,if(adminApprovalToken!=null)'adminApprovalToken':adminApprovalToken,if(_editingDrive)'replace':true,if(_editingDrive)'expectedScriptUrl':_linkedScript});
         if(result['googleEmail'] is String) await CentralSchoolCloud.updateSession(managed['schoolId'],{'googleEmail':result['googleEmail']},expectedUid:managed['uid']);
         connectedEmail=result['googleEmail']?.toString()??'';
         await CentralSchoolCloud.updateSession(managed['schoolId'],{'scriptUrl':url},expectedUid:managed['uid']);
