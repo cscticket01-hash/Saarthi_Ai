@@ -58,6 +58,11 @@ class WindowsFeeReceiptPreview {
     if (saved['schoolId'] != null && saved['schoolId'] != school) {
       throw StateError('Another school receipt cannot be printed.');
     }
+    // New record-only saves must not produce a PDF on Print: they show the
+    // existing preview and allow PDF generation only on Download PDF.
+    if ((saved['receiptDocumentId']?.toString() ?? '').isEmpty) {
+      return open(context, saved);
+    }
     return showDialog<void>(context: context,
       builder: (_) => WindowsReceiptPrintDialog(
         receipt: bytes(saved),
@@ -138,16 +143,6 @@ class WindowsFeeReceiptPreview {
       actions: [
         TextButton(onPressed: () => Navigator.pop(dialog),
           child: const Text('Close')),
-        TextButton.icon(
-          onPressed: () async {
-            Navigator.pop(dialog);
-            if (db.activeProfileId != origin ||
-                db.activeProfileIdentity['schoolSyncId'] != school) return;
-            await print(context, saved);
-          },
-          icon: const Icon(Icons.print_outlined),
-          label: const Text('Print Receipt'),
-        ),
         FilledButton.icon(
           onPressed: () async {
             if (db.activeProfileId != origin ||
