@@ -1,0 +1,21 @@
+name: Sync4 explicit platform release safety gates
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-windows.yml'
+      - '.github/workflows/build-apk.yml'
+      - '.github/workflows/web.yml'
+      - '.github/scripts/test_explicit_platform_release_gates.cjs'
+      - '.github/workflows/sync4-release-gate-review.yml'
+permissions:
+  contents: read
+jobs:
+  no-implicit-production:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require explicit release instructions for each platform
+        run: node --test .github/scripts/test_explicit_platform_release_gates.cjs
