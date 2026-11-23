@@ -1652,7 +1652,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             },
             itemBuilder: (menuContext) => [
               PopupMenuItem<int>(
-                enabled: false,
+                // A disabled PopupMenuItem prevents the entire pause row from
+                // being selected. Make both the row and its Switch usable.
+                value: engine.isPaused ? 0 : 1,
                 child: Row(children: [
                   const Icon(Icons.pause),
                   const SizedBox(width: 10),
