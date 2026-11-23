@@ -388,6 +388,91 @@ void main(){
     ],school),false);
   });
 
+  test('independent notices never bypass unsafe global or foreign queue barriers', () {
+    final plain=<String,dynamic>{
+      'schoolId':school,'collection':'school_notices','documentId':'notice-a',
+      'operation':'set','operationId':'notice-operation-00001',
+      'syncState':'pending','baseCloudRevision':'',
+      'data':{'schoolId':school,'message':'Public school notice'},
+    };
+    final backlog=<Map<String,dynamic>>[
+      plain,
+      {'schoolId':school,'collection':'fee_payments',
+       'documentId':'fee-b','operationId':'fee-operation-00001',
+       'operation':'set','syncState':'pending'},
+      {'schoolId':school,'collection':'documents',
+       'documentId':'file-b','operationId':'file-operation-00001',
+       'operation':'set','syncState':'pending'},
+    ];
+    bool allow(Map value,List<Map<String,dynamic>> rows)=>
+        canStageStandaloneSchoolMessagePastUnrelatedOwners(value,rows,school);
+    expect(allow(plain,backlog),true);
+    expect(allow({...plain,'collection':'school_calendar'},backlog),true);
+    for(final blocked in <Map<String,dynamic>>[
+      {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+       'collection':'school_notices','operation':'set'},
+      {'schoolId':school,'collection':'school_settings','operation':'set'},
+      {'schoolId':school,'collection':'school_config','operation':'set'},
+      {'schoolId':school,'collection':'fee_settings','operation':'set'},
+      {'schoolId':school,'collection':'attendance_records','operation':'delete'},
+      {'schoolId':school,'collection':'school_expenses','operation':'set',
+       'atomicBundleId':'atomic-1'},
+      {'schoolId':school,'collection':'students_directory','operation':'set',
+       'priorCloudWrite':{'operationId':'prior'}},
+      {'schoolId':school,'collection':'school_notices','documentId':'notice-a',
+       'operationId':'newer-operation','operation':'set'},
+    ]) {
+      expect(allow(plain,[...backlog,blocked]),false,reason:'Barrier: ${blocked['collection']}');
+    }
+    for(final key in ['studentId','teacherId','classId','feeId',
+      'paymentId','audienceStudentIds','targetPerson','documentId','photoFileId']) {
+      expect(allow({...plain,'data':{...plain['data'] as Map,key:'linked'}},
+        backlog),false,reason:'Targeted notice: $key');
+    }
+    expect(allow({...plain,'operation':'delete'},backlog),false);
+    expect(allow({...plain,'schoolId':'foreign'},backlog),false);
+    expect(allow({...plain,'data':{...plain['data'] as Map,
+      'metadata':{'recipientId':'student-a'}}},backlog),false);
+    expect(allow({...plain,'data':{...plain['data'] as Map,
+      'schoolId':'foreign'}},backlog),false);
+    expect(allow({...plain,'priorDeletion':{'id':'old'}},backlog),false);
+  });
+
+  test('established contact-only patch may bypass unrelated fee but not owner barriers', () {
+    final patch={'version':1,'identity':{'teacherId':'teacher-a'},
+      'set':{'phone':'1234567890'},'remove':[]};
+    final teacher=<String,dynamic>{
+      'schoolId':school,'collection':'teachers_directory','documentId':'teacher-a',
+      'operation':'set','operationId':'teacher-patch-00001',
+      'syncState':'pending','baseCloudRevision':'provider-rev-01',
+      'updateIntent':true,
+      'fieldPatch':patch,
+      'data':{'schoolId':school,'teacherId':'teacher-a'},
+    };
+    final rows=<Map<String,dynamic>>[
+      teacher,{'schoolId':school,'collection':'fee_ledger','documentId':'ledger-b',
+        'operationId':'ledger-op-00000001','operation':'set'},
+      {'schoolId':school,'collection':'documents','documentId':'document-b',
+        'operationId':'doc-op-00000001','operation':'set'},
+    ];
+    bool allow(List<Map<String,dynamic>> all)=>
+      canStageIndependentContactPatchPastUnrelatedOwners(teacher,all,school);
+    expect(independentExistingPersonPatch(teacher),true);
+    expect(allow(rows),true);
+    expect(allow([...rows,{'schoolId':school,'collection':'teachers_directory',
+      'documentId':'teacher-a','operationId':'earlier-patch','operation':'set'}]),false);
+    expect(allow([...rows,{'schoolId':school,'collection':'students_directory',
+      'operation':'delete'}]),false);
+    expect(allow([...rows,{'schoolId':school,'collection':'school_settings',
+      'operation':'set'}]),false);
+    expect(allow([...rows,{'schoolId':'foreign','collection':'school_notices',
+      'operation':'set'}]),false);
+    expect(canStageIndependentContactPatchPastUnrelatedOwners(
+      {...teacher,'fieldPatch':{...patch,'set':{'salary':'100'}}},rows,school),false);
+    expect(canStageIndependentContactPatchPastUnrelatedOwners(
+      {...teacher,'atomicBundleId':'bundle'},rows,school),false);
+  });
+
   test('prepared new person creates share a bounded Cloudflare window only with safe originals',(){
     for(final collection in ['students_directory','teachers_directory']){
       final original=<String,dynamic>{
