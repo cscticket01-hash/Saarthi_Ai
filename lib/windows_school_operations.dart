@@ -785,15 +785,47 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
       'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
     ),
     onChanged: (v) async {
-      await FirebaseFirestore.instance
-          .collection('school_settings')
-          .doc('promotion_policy')
-          .set({
-            'allowForcedPromotion': v,
-            'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      if (mounted) setState(() => _enabled = v);
+      if (!WindowsLocalSecurity.configured) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Configure Administrator Settings Lock before changing promotion policy.')));
+        return;
+      }
+      final secret = TextEditingController();
+      try {
+        final accepted = await showDialog<bool>(context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Confirm promotion policy change'),
+            content: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(v ? 'Enable exceptional promotion after a failed Final Exam?'
+                  : 'Disable exceptional promotion?'),
+              const SizedBox(height: 12),
+              TextField(controller: secret, obscureText: true,
+                decoration: const InputDecoration(labelText: 'Administrator lock password')),
+            ]),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Confirm')),
+            ],
+          ));
+        if (!mounted) return;
+        if (accepted != true || !WindowsLocalSecurity.verifyPassword(secret.text)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Administrator approval required. Policy unchanged.')));
+          return;
+        }
+        final db = FirebaseFirestore.instance;
+        final profile = db.activeProfileId;
+        await db.collection('school_settings').doc('promotion_policy').set({
+          'allowForcedPromotion': v,
+          'updatedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (mounted && db.activeProfileId == profile) setState(() => _enabled = v);
+      } finally {
+        secret.dispose();
+      }
     },
   ); }
 }
