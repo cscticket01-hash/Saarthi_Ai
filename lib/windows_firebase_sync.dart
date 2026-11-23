@@ -644,6 +644,8 @@ class WindowsFirebaseRemote {
             'documents',
             'backups',
             'school_config',
+            'fee_payments',
+            'fee_ledger',
           }.contains(item['collection']) ||
           (edgeDeliverySupported && item['collection'] == 'school_notices') ||
           item['priorDeletion'] != null ||
