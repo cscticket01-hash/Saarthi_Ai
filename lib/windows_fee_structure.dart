@@ -8,6 +8,19 @@ class WindowsFeeStructure {
   static Future<String> currentSession() async => PromotionSessionPolicy.label(
       DateTime.now(), await PromotionSessionPolicy.rolloverMonth());
 
+  /// Never charge the current session for an older selected month.
+  static Future<String> sessionForMonth(String month) async {
+    final match = RegExp(r'^(\d{4})-(\d{2})$').firstMatch(month);
+    if (match == null) throw FormatException('Invalid fee month');
+    final year = int.parse(match.group(1)!);
+    final number = int.parse(match.group(2)!);
+    if (year < 2000 || year > 2100 || number < 1 || number > 12) {
+      throw FormatException('Invalid fee month');
+    }
+    return PromotionSessionPolicy.label(
+        DateTime(year, number, 1), await PromotionSessionPolicy.rolloverMonth());
+  }
+
   static String documentId(String className, String session) =>
       '${className.replaceAll(' ', '_')}__${session.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}';
 
@@ -37,7 +50,8 @@ class WindowsFeeStructure {
     final names = <String>{};
     for (final entry in fees.entries) {
       final name = entry.key.trim();
-      if (name.isEmpty || name.length > 100 || !names.add(name.toLowerCase()) || !entry.value.isFinite || entry.value < 0) {
+      if (name.isEmpty || name.length > 100 || !names.add(name.toLowerCase()) || !entry.value.isFinite || entry.value < 0 ||
+          (entry.value * 100 - (entry.value * 100).round()).abs() > .000001) {
         throw ArgumentError('Fee names must be unique and amounts must be finite and non-negative.');
       }
       normalized[name] = entry.value;
