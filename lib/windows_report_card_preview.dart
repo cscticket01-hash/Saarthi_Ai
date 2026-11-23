@@ -30,6 +30,10 @@ class WindowsReportCardPreview extends StatefulWidget {
     final db = FirebaseFirestore.instance;
     final profile = db.activeProfileId;
     final school = db.activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+    if (record['schoolId'] != null &&
+        record['schoolId']?.toString() != school) {
+      throw StateError('Report Card belongs to another school.');
+    }
     Map<String, dynamic> branding = {};
     try {
       branding = (await db.collection('school_config')
