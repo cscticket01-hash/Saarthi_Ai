@@ -195,12 +195,16 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       denied(403, 'ADMIN_APPROVAL_REQUIRED', 'Verify the independent Admin Password for this action');
     const ref = approvalRef(identity.schoolId, identity.uid, token);
     await db.runTransaction(async tx => {
+      // Re-read the active credential together with this grant. A password
+      // rotation on another PC must invalidate pending approvals atomically.
+      const currentCredential = await tx.get(credentialRef(identity.schoolId));
       const existing = await tx.get(ref);
-      const record = existing.data();
-      if (!existing.exists || record.schoolId !== identity.schoolId ||
+      const record = existing.exists ? existing.data() : null;
+      if (!currentCredential.exists || !record ||
+          record.schoolId !== identity.schoolId ||
           record.uid !== identity.uid || record.scope !== scope ||
           record.targetHash !== hash(target) ||
-          record.credentialFingerprint !== credential.data().passwordHash ||
+          record.credentialFingerprint !== currentCredential.data().passwordHash ||
           record.usedAt !== 0 || record.expiresAt <= now())
         denied(403, 'ADMIN_APPROVAL_EXPIRED', 'Admin approval expired or does not match this action');
       tx.update(ref, {usedAt:now()});
