@@ -7,6 +7,28 @@ import 'windows_connect/managed_school_session.dart';
 class WindowsAdminSecurity {
   WindowsAdminSecurity._();
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+  static String? _panelSchool;
+  static DateTime? _panelUntil;
+
+  static void clearPanelSession() {
+    _panelSchool=null;
+    _panelUntil=null;
+  }
+
+  static Future<bool> hasPanelSession() async {
+    final school=(await CentralSchoolCloud.saved())['schoolId']?.toString();
+    return school!=null && school.isNotEmpty && school==_panelSchool &&
+      _panelUntil!=null && DateTime.now().isBefore(_panelUntil!);
+  }
+
+  static Future<void> grantPanelSession() async {
+    final saved=await CentralSchoolCloud.saved();
+    if(saved['managed'] != true || saved['schoolId'] is! String) {
+      throw StateError('Managed school verification required.');
+    }
+    _panelSchool=saved['schoolId'];
+    _panelUntil=DateTime.now().add(const Duration(minutes:15));
+  }
 
   static Future<bool> get isManaged async =>
       (await CentralSchoolCloud.saved())['managed'] == true;
@@ -33,6 +55,7 @@ class WindowsAdminSecurity {
     if(result['configured'] != true) {
       throw StateError('The school Admin Password was not registered.');
     }
+    clearPanelSession();
     revision.value++;
   }
 
@@ -66,6 +89,7 @@ class WindowsAdminSecurity {
     await _call({
       'operation':'change','password':currentPassword,'newPassword':newPassword,
     });
+    clearPanelSession();
     revision.value++;
   }
 
@@ -77,6 +101,7 @@ class WindowsAdminSecurity {
     await _call({
       'operation':'recover','freshIdToken':fresh,'newPassword':newPassword,
     });
+    clearPanelSession();
     revision.value++;
   }
 }
@@ -107,6 +132,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
 
   void _credentialChanged() {
     if(!mounted) return;
+    WindowsAdminSecurity.clearPanelSession();
     setState(() { _opened = false; _password.clear(); _confirm.clear(); });
   }
 
@@ -118,6 +144,10 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
         // Historical standalone profiles keep their previous local workflow.
         // The server-owned Admin Password applies to managed schools only.
         if(mounted) setState(() { _legacy=true; _opened=true; _loading=false; });
+        return;
+      }
+      if(await WindowsAdminSecurity.hasPanelSession()) {
+        if(mounted)setState(() { _configured=true;_opened=true;_loading=false; });
         return;
       }
       final configured = await WindowsAdminSecurity.configured();
@@ -149,6 +179,7 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
         await WindowsAdminSecurity.enroll(
           schoolPassword:_schoolPassword.text, newPassword:pass);
       }
+      await WindowsAdminSecurity.grantPanelSession();
       _password.clear();
       _confirm.clear();
       _schoolPassword.clear();
