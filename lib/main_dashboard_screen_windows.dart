@@ -18477,6 +18477,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   Future<void> _unlink() async {
     final origin=FirebaseFirestore.instance.activeProfileId;
+    if(await WindowsAdminSecurity.isManaged) {
+      if(!mounted)return;
+      final approved=await requestWindowsAdminApproval(context,
+        scope:'protected-settings',target:'school_drive_edit');
+      if(approved==null || !mounted ||
+          FirebaseFirestore.instance.activeProfileId!=origin)return;
+      try {
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'school_drive_edit');
+        if(mounted && FirebaseFirestore.instance.activeProfileId==origin)
+          setState(() => _editingDrive=true);
+      } catch (error) {
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content:Text('Admin permission failed: $error')));
+      }
+      return;
+    }
     if(!WindowsLocalSecurity.configured){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Set App Lock in Password Management before changing Drive.')));return;}
     final sure = await showDialog<bool>(
       context: context,
