@@ -1633,7 +1633,7 @@ class _ExamCenterDataCache {
       snapshot = value;
       return value;
     } finally {
-      if (_profile == profile) _inFlight = null;
+      if (_profile == profile && _school == school) _inFlight = null;
     }
   }
 
@@ -20919,6 +20919,15 @@ class ExamCenterScreen extends StatefulWidget {
 }
 
 class _ExamCenterScreenState extends State<ExamCenterScreen> {
+  late final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  late final String _originSchool = FirebaseFirestore.instance
+      .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+
+  bool get _sameSchool =>
+      FirebaseFirestore.instance.activeProfileId == _originProfile &&
+      (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '') == _originSchool;
+
   bool _loading = false;
   bool _saving = false;
   String? _error;
@@ -21047,7 +21056,8 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
       _sessionFilter.isEmpty
           ? _exams
           : _exams.where((exam) =>
-              exam['academicSession']?.toString() == _sessionFilter).toList();
+              exam['academicSession']?.toString() == _sessionFilter &&
+              exam['deleted'] != true && exam['_syncDeleted'] != true).toList();
 
   List<Map<String, dynamic>> get _visibleResults {
     if (_sessionFilter.isEmpty) return _results;
@@ -22482,6 +22492,11 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
+    if (!_sameSchool) {
+      return const Scaffold(
+        body: Center(child: Text('School changed. Reopen Exam Center.')),
+      );
+    }
     final groups = _examGroups();
     final visibleResults = _visibleResults;
     final sessions = _exams.map((e) => e['academicSession']?.toString() ?? '')
@@ -22781,6 +22796,15 @@ class ExamMarksEntryScreen extends StatefulWidget {
 
 class _ExamMarksEntryScreenState
     extends State<ExamMarksEntryScreen> {
+  late final String _originProfile = FirebaseFirestore.instance.activeProfileId;
+  late final String _originSchool = FirebaseFirestore.instance
+      .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
+
+  bool get _sameSchool =>
+      FirebaseFirestore.instance.activeProfileId == _originProfile &&
+      (FirebaseFirestore.instance.activeProfileIdentity['schoolSyncId']
+          ?.toString() ?? '') == _originSchool;
+
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _results = [];
@@ -23114,6 +23138,11 @@ class _ExamMarksEntryScreenState
 
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
+    if (!_sameSchool) {
+      return const Scaffold(
+        body: Center(child: Text('School changed. Reopen marks entry.')),
+      );
+    }
     final pass =
         _results.where((e) => e['result'] == 'PASS').length;
     final fail =
