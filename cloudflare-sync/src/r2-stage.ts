@@ -111,7 +111,12 @@ export function acceptR2Original(storage:DurableObjectStorage,school:string,lane
      at,verified,verified?verifiedR2PurgeDue(at,verified):0,row.key);
   }
  });
- return {accepted:true};
+ // An earlier verification can arrive before final acceptance. Re-read the
+ // deadline on replay too, in case the prior alarm write was interrupted.
+ const next=storage.sql.exec<{due:number|null}>(
+  "SELECT min(purge_due) AS due FROM r2_staged WHERE school=? AND lane=? AND receipt_id=? AND state='verified' AND purge_due>0",
+  school,lane,receiptId).toArray()[0]?.due??null;
+ return {accepted:true,nextCleanupAt:next};
 }
 export async function markR2Verified(storage:DurableObjectStorage,school:string,lane:string,receiptId:string,verifiedAt=Date.now()){
  demand(schoolPattern.test(school)&&lanePattern.test(lane)&&hex.test(receiptId)&&

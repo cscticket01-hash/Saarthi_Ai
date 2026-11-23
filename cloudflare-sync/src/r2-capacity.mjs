@@ -29,5 +29,5 @@ export function r2MayPurge(row,now){
     Number.isSafeInteger(row.accepted_at)&&row.accepted_at>0&&
     Number.isSafeInteger(row.verified_at)&&row.verified_at>=row.accepted_at&&
     Number.isSafeInteger(row.purge_due)&&row.purge_due>=row.accepted_at+R2_VERIFIED_RETENTION_MS&&
-    row.purge_due<=now;
+    row.purge_due>=row.verified_at&&row.purge_due<=now;
 }

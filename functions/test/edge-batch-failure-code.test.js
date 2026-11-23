@@ -220,3 +220,14 @@ test('malformed historical empty batch cannot produce a verified Google ACK',asy
  await assert.rejects(delivery.status(school,'records',row.id),e=>
   e.status===502&&e.code==='ACK_UNVERIFIED');
 });
+
+test('malformed historical members cannot hide a later rejection',async()=>{
+ for(const invalid of [null,false,0,{},'']){
+  const {row,delivery}=fixture();
+  row.state='completed';
+  row.response={result:{success:true,schoolId:school,syncProtocol:2,
+   recordWriteBatchVersion:1,acknowledgements:[invalid,{success:false}]}};
+  await assert.rejects(delivery.status(school,'records',row.id),error=>
+   error.status===502&&error.code==='ACK_UNVERIFIED');
+ }
+});
