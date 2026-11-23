@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {readFile,writeFile,unlink} from 'node:fs/promises';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const school='vs-'+'a'.repeat(32);
@@ -78,8 +78,9 @@ test('new R2 admissions bypass HEAD; crashed reservations use HEAD before recove
  assert.equal(wrongManifest.ok,true);
  assert.equal(wrongManifest.head,1);
  assert.equal(wrongManifest.put,1);
- assert.notEqual((await bucket.head(originalKey)).customMetadata.sha256,
-   '0'.repeat(64),'Corrupted metadata must be replaced');
+ assert.equal((await bucket.head(originalKey)).customMetadata.sha256,
+   createHash('sha256').update(Buffer.from(firstBytes)).digest('hex'),
+   'Corrupted metadata must be replaced by the immutable original digest');
  assert.equal((await actor.r2CapacityStatus()).schoolBytes,firstBytes.length,
    'Repair must not charge the same school bytes twice');
  const failedId='b'.repeat(64),failedBytes=[7,8,9];
