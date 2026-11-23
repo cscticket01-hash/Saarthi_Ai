@@ -95,6 +95,48 @@ jobs:
           if expected and evidence['match_expected_commit'] is not True:
               sys.exit('Public installer source is NOT the expected commit')
           PY
+      - name: Verify live public downloader with bounded HEAD request
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          proof = Path('build/release-audit/public-windows-release.json')
+          evidence = json.loads(proof.read_text(encoding='utf-8'))
+          url = 'https://saarthi-oauth-staging.onrender.com/downloads/windows.exe'
+          origin = 'https://vidyasaarthi.web.app'
+          request = urllib.request.Request(
+              url,
+              headers={
+                  'Origin': origin,
+                  'User-Agent': 'Saarthi-Installer-Release-Audit',
+              },
+              method='HEAD')
+          # HEAD is intentionally zero-body. The backend verifies and caches
+          # exact upstream bytes/hash before reporting a success response.
+          with urllib.request.urlopen(request, timeout=180) as response:
+              status = response.status
+              tag = response.headers.get('X-Saarthi-Release', '')
+              size = int(response.headers.get('Content-Length', '0'))
+              allow_origin = response.headers.get('Access-Control-Allow-Origin', '')
+              attachment = response.headers.get('Content-Disposition', '')
+          evidence['live_downloader'] = {
+              'url': url,
+              'http_status': status,
+              'release_tag': tag,
+              'content_length': size,
+              'cors_origin': allow_origin,
+              'attachment': attachment,
+          }
+          proof.write_text(json.dumps(evidence, indent=2) + '\\n', encoding='utf-8')
+          assert status == 200, f'Public download HEAD returned {status}'
+          assert tag == evidence['tag'], f'Download version {tag} != {evidence["tag"]}'
+          assert size == evidence['installer']['size'], 'Public downloader byte count differs'
+          assert allow_origin == origin, 'Expected website XHR origin not allowed'
+          assert 'attachment' in attachment.lower(), 'Missing download disposition'
+          print('Live verified public download metadata:', json.dumps(evidence['live_downloader']))
+          PY
       - name: Upload source and installer proof
         if: always()
         uses: actions/upload-artifact@v4
