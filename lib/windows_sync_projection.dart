@@ -104,6 +104,36 @@ Set<String> manualConflictReadCollections(Iterable<Map<String,dynamic>> rows, {
       row['collection'] as String,
 };
 
+/// Cloud/status polling is read-only and never changes foreground device
+/// state. The only writer of displayState remains the durable queue projection.
+Map<String, dynamic> windowsCloudCheckSnapshot(
+  Map<String, dynamic> current, {
+  required bool checkingCloud,
+}) => {...current, 'checkingCloud': checkingCloud};
+
+/// A Drive receipt can unblock a NEW, separately retained local mutation.
+/// Only then may its settlement ask the existing foreground dispatcher to run.
+/// Staged Cloudflare-owned rows, legacy Drive-only queues, remote hints, and
+/// provider polling must never create another PC upload for the old operation.
+bool windowsHasDueForegroundUpload(
+  Iterable<Map<String, dynamic>> liveQueue, {
+  required String school,
+  required int nowMillis,
+}) {
+  if (school.isEmpty) return false;
+  return liveQueue.any((row) {
+    if (row['schoolId'] != school ||
+        !{'_windows_firebase_outbox', '_windows_document_outbox',
+          '_windows_recycle_requests'}.contains(row['_queueCollection'])) {
+      return false;
+    }
+    final state = row['syncState'] ?? row['state'] ?? 'pending';
+    if (!{'pending', 'retry'}.contains(state)) return false;
+    final retryAt = row['retryAtMillis'];
+    return retryAt is! num || retryAt.toInt() <= nowMillis;
+  });
+}
+
 /// Derive display state from durable queue rows. An ACK event alone never
 /// removes a row: only its version-checked durable completion can do that.
 String projectWindowsSyncState(
