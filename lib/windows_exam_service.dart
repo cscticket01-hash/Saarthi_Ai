@@ -9,10 +9,7 @@ import 'windows_firebase_sync.dart';
 import 'platform/platform_config.dart';
 import 'windows_connection_center.dart';
 import 'windows_local_firestore.dart';
-import 'windows_document_templates.dart';
-import 'windows_connect/atomic_bundle_pilot.dart';
-import 'school_media_budgets.dart';
-import 'dart:typed_data';
+import 'windows_exam_policy.dart';
 
 /// Local exam definitions/marks remain usable while school services are offline.
 /// Pending edits belong to the current profile; they never migrate to another.
@@ -47,67 +44,54 @@ class WindowsExamService {
           );
       _requireProfile(profile);
     }
-    final cloud=await CentralSchoolCloud.saved();
-    _requireProfile(profile);
-    Map<String,dynamic> local;
-    // Only an explicit legacy atomic-PDF submission enters the old bundle.
-    // New regular Save requests persist marks without generating a document.
-    if(action=='save_exam_result' && cloud['managed']==true &&
-       AtomicBundlePilot.buildEnabled &&
-       (request['pdfBase64']?.toString().trim().isNotEmpty ?? false)) {
-      final db=FirebaseFirestore.instance;
-      final school=db.activeProfileIdentity['schoolSyncId']?.toString()??'';
-      final examId=request['examId']?.toString().trim()??'';
-      final studentId=request['studentId']?.toString().trim()??'';
-      final marks=request['marks'];
-      if(cloud['schoolId']!=school||
-         (request['schoolId']!=null&&request['schoolId']!=school))
-        throw StateError('Exam Save belongs to another school.');
-      final student=studentId.isEmpty?null:
-        (await db.collection('students_directory').doc(studentId).get()).data();
-      final exam=examId.isEmpty?null:
-        (await db.collection('exams').doc(examId).get()).data();
-      _requireProfile(profile);
-      if(student!=null&&exam!=null&&marks is Map&&marks.isNotEmpty&&
-         student['mobileStableId'] is String&&
-         (student['mobileStableId'] as String).isNotEmpty&&
-         student['deleted']!=true&&student['_syncDeleted']!=true&&
-         (student['schoolId']==null||student['schoolId']==school)&&
-         (exam['schoolId']==null||exam['schoolId']==school)) {
-        final raw=request['pdfBase64']?.toString().trim()??'';
-        Uint8List? pdf;
-        if(raw.isNotEmpty) {
-          // Caller supplied one exact school-generated PDF; its digest and
-          // immutable bytes are validated again by the original local owner.
-          if(raw.length>220000)throw StateError('Marksheet is too large.');
-          pdf=Uint8List.fromList(base64Decode(
-            raw.startsWith('data:application/pdf;base64,')?
-              raw.substring('data:application/pdf;base64,'.length):raw));
-        } else {
-          pdf=await WindowsDocumentTemplates.selected('reportCard',{
-            ...student,...exam,...request,
-            'schoolId':school,'examId':examId,'studentId':studentId,
-            'personId':student['mobileStableId'],
-            'studentName':request['studentName']??student['name'],
-            'examName':request['examName']??exam['examName'],
-          });
-        }
-        _requireProfile(profile);
-        if(pdf==null)throw StateError('Marksheet template unavailable.');
-        SchoolMediaBudgets.verifyGeneratedPdf('marksheet',pdf);
-        local={
-          ...await WindowsBackendBridge.saveExamResultWithMarksheet(
-            profileId:profile,result:request,pdfBytes:pdf),
-          'windowsLocalFallback':true,'sessionOnly':false,
-        };
-      } else {
-        // Old/offline/legacy records are never rewritten under a second
-        // exam collection just to satisfy the isolated new-bundle pilot.
-        local=await WindowsBackendBridge.localExamAction(request);
+    // A normal Save is a record-only operation, even if a legacy caller
+    // supplies old PDF bytes. Historical documents remain readable, but no
+    // marks-save path is allowed to render, upload, or enqueue a PDF.
+    if (action == 'save_exam_result') {
+      request.remove('pdfBase64');
+      final examId = request['examId']?.toString() ?? '';
+      final studentId = request['studentId']?.toString() ?? '';
+      if (examId.isEmpty || studentId.isEmpty) {
+        throw StateError('Exam and student IDs are required.');
       }
-    }else{
-      local=await WindowsBackendBridge.localExamAction(request);
+      final exam = (await FirebaseFirestore.instance
+          .collection('exams').doc(examId).get()).data();
+      _requireProfile(profile);
+      if (exam != null && exam['subjects'] is List &&
+          request['marks'] is Map) {
+        final full = WindowsExamPolicy.finiteNumber(exam['fullMarks']);
+        final pass = WindowsExamPolicy.finiteNumber(exam['passMarks']);
+        if (full == null || pass == null) {
+          throw StateError('Invalid saved exam marks configuration.');
+        }
+        final subjects = WindowsExamPolicy.subjects(exam['subjects'] as List);
+        final marks = WindowsExamPolicy.validateMarks(
+          request['marks'] as Map,
+          subjects: subjects,
+          fullMarks: full,
+          passMarks: pass,
+        );
+        final decision = WindowsExamPolicy.decision(marks, pass);
+        if (request['result'] != null && request['result'] != decision) {
+          throw StateError('Result does not match the subject marks.');
+        }
+        final maximum = WindowsExamPolicy.maximum(subjects.length, full);
+        final total = WindowsExamPolicy.total(marks);
+        request.addAll({
+          'marks': marks,
+          'result': decision,
+          'fullMarks': full,
+          'passMarks': pass,
+          'totalMarks': total,
+          'maximum': maximum,
+          'percentage': maximum > 0 ? total / maximum * 100 : 0,
+          'academicSession': exam['academicSession'],
+        });
+      }
     }
+    final cloud = await CentralSchoolCloud.saved();
+    _requireProfile(profile);
+    final local = await WindowsBackendBridge.localExamAction(request);
     _requireProfile(profile);
     if (local['success'] != true) return local;
     // Managed saves use the original durable record/document queues.
@@ -226,13 +210,15 @@ class WindowsExamService {
       throw StateError('School identity changed. Delete cancelled.');
     }
     // Existing sync-tombstone tracking propagates this deletion to peer PCs.
-    await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    // Atomic local delete avoids half-removed definitions in this PC.
+    // The existing outbox still tracks cloud tombstones for peers.
+    batch.delete(db.collection('exams').doc(examId));
+    batch.delete(db.collection('_local_exam_center_exams').doc(examId));
+    batch.delete(db.collection('school_settings').doc('exam_$examId'));
     _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('_local_exam_center_exams')
-        .doc(examId).delete();
-    _requireProfile(profile);
-    await FirebaseFirestore.instance.collection('school_settings')
-        .doc('exam_$examId').delete();
+    await batch.commit();
   }
 
   static void _requireProfile(String profile) {
