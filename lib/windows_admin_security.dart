@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
+import 'windows_local_settings.dart';
 
 /// Independent school-wide administrator credential. App Lock remains local.
 class WindowsAdminSecurity {
@@ -183,6 +184,10 @@ class _WindowsAdminSecurityGateState extends State<WindowsAdminSecurityGate> {
     final pass = _password.text;
     if ((!_configured || _recover) && (pass.length < 12 || pass.length > 128 || pass != _confirm.text)) {
       setState(() => _error='Use a matching Admin Password of 12–128 characters.');
+      return;
+    }
+    if((!_configured || _recover) && WindowsLocalSecurity.verifyPassword(pass)) {
+      setState(() => _error='Admin Password must be different from App Lock.');
       return;
     }
     setState(() { _busy=true; _error=null; });
@@ -374,6 +379,10 @@ class _WindowsAdminPasswordCardState extends State<WindowsAdminPasswordCard> {
     if(_busy)return;
     if(_next.text.length<12 || _next.text.length>128 || _next.text != _confirm.text) {
       setState(() => _message='Use 12–128 characters and matching passwords.');
+      return;
+    }
+    if(WindowsLocalSecurity.verifyPassword(_next.text)) {
+      setState(() => _message='Admin Password must be different from App Lock.');
       return;
     }
     setState(() { _busy=true;_message=null; });
