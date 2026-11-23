@@ -1382,8 +1382,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     CentralSchoolCloud.edgeDeliveryProfile = () => FirebaseFirestore.instance.activeProfileId;
     CentralSchoolCloud.onEdgeDelivery = (notice) async {
+      // Durable local retention is the ACK boundary. A provider status read
+      // starts immediately afterward but runs independently of the Save flow.
+      // The existing 15-second timer remains a fallback for missed callbacks.
       await WindowsDriveDeliveryQueue.retainEdge(notice);
       _transferReadAfter = null;
+      unawaited(_refreshDriveDeliveries());
     };
 
     WindowsLocalFirestoreSyncControl.onTrackedMutation = () async {
