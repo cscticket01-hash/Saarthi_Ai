@@ -24,6 +24,7 @@ import 'windows_pdf_generation_policy.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'school_cloud_engine.dart';
 import 'windows_pending_school_sync.dart';
+import 'windows_sync_parallel_admission.dart';
 import 'platform/platform_config.dart';
 import 'windows_connect/central_school_cloud.dart';
 
@@ -3388,6 +3389,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   Future<void> _pushManagedOutbox({
     String? onlyQueueId,
     String? onlyOperationId,
+    bool excludeNotices = false,
     bool Function()? canAdmit,
   }) async {
     final profile = _activeProfileId, school = _activeSchoolSyncId;
@@ -3404,11 +3406,47 @@ class WindowsSyncEngine with WidgetsBindingObserver {
         canParallelStageRecord(item, school,
           edgeDeliverySupported: WindowsFirebaseRemote.edgeDeliverySupported);
     if (!admit()) return;
+    // Cloudflare can independently accept a standalone school notice while
+    // preparing a student/teacher original. The exact existing dependency
+    // policy selects only safe, same-school messages; no Google ACK is inferred.
+    if (onlyQueueId == null && !excludeNotices &&
+        WindowsFirebaseRemote.edgeDeliverySupported) {
+      final db = FirebaseFirestore.instance;
+      final snapshot = await db.collection('_windows_firebase_outbox').get();
+      if (!admit() || db.activeProfileId != profile ||
+          db.activeProfileIdentity['schoolSyncId'] != school)
+        throw StateError('School changed before parallel Cloudflare admission.');
+      final rows = <Map<String, dynamic>>[];
+      for (final row in snapshot.docs) {
+        final item = row.data();
+        final queued = item['queuedAt'];
+        rows.add({...item, 'queueId': row.id,
+          'queuedAtMillis': queued is Timestamp
+              ? queued.millisecondsSinceEpoch
+              : queued is num ? queued.toInt() : 0});
+      }
+      final notice = oldestIndependentNotice(rows,
+          schoolId: school, nowMillis: DateTime.now().millisecondsSinceEpoch);
+      if (notice != null) {
+        // Both original local CAS attempts are joined, even on errors.
+        await runIndependentCloudAdmissions(
+          () => _pushManagedOutbox(
+              excludeNotices: true, canAdmit: canAdmit),
+          () => _pushManagedOutbox(
+              onlyQueueId: notice['queueId'] as String,
+              onlyOperationId: notice['operationId'] as String,
+              canAdmit: canAdmit),
+        );
+        return;
+      }
+    }
     if (onlyOperationId == null) {
       await SchoolPersonIdentity.preparePendingCreates(_activeSchoolSyncId,
         canAdmit: admit);
     }
-    final batchReplies = onlyOperationId == null
+    // A preflight batch may contain notices: never pre-send them from the
+    // people lane while the dedicated notice attempt is in flight.
+    final batchReplies = onlyOperationId == null && !excludeNotices
         ? await WindowsFirebaseRemote.prepareManagedBatch(
             _activeSchoolSyncId,
             canAdmit: admit,
@@ -3421,6 +3459,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       profileId: _activeProfileId,
       onlyQueueId: onlyQueueId,
       onlyOperationId: onlyOperationId,
+      excludeCollection: excludeNotices ? 'school_notices' : null,
       respectBackoff: onlyOperationId == null,
       diagnoseUnclassified: _manualSync,
       parallelAdmission: independent,
@@ -3437,7 +3476,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       sendVersioned: (item) async {
         // Refill only after this bounded batch has been consumed. Dedicated
         // parent/file/delete paths retain the original serial admission rules.
-        if (onlyOperationId == null &&
+        if (onlyOperationId == null && !excludeNotices &&
             !independent(item) &&
             batchReplies.isEmpty &&
             WindowsFirebaseRemote.recordWriteBatchSupported &&

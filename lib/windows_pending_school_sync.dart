@@ -645,6 +645,7 @@ class WindowsPendingSchoolSync {
     bool Function()? canAdmit,
     String? onlyQueueId,
     String? onlyOperationId,
+    String? excludeCollection,
     bool respectBackoff = false,
     bool diagnoseUnclassified = false,
     bool Function(Map<String, dynamic>)? parallelAdmission,
@@ -744,6 +745,10 @@ class WindowsPendingSchoolSync {
       unchanged();
       queued.reference.requireOriginProfile();
       if (onlyQueueId != null && queued.id != onlyQueueId) return;
+      // Another joined foreground Cloudflare request owns this notice.
+      // Do not submit its original twice even when the other lane is slow.
+      if (excludeCollection != null &&
+          queued.data()['collection'] == excludeCollection) return;
       if (canAdmit?.call() == false) return;
       var item = queued.data();
       // Cloudflare owns this immutable original. The device never submits a
