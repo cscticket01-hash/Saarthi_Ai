@@ -95,6 +95,43 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  }
  if(action==='capabilities')return {edgeDeliveryVersion:1,recordSchedulingVersion:1,recordMaxParallelism:3,maxFileBytes:20*1024*1024,chunkBytes:512*1024};
  if(action==='stats')return {...storage.sql.exec<{pending:number;due:number}>("SELECT count(*) AS pending,min(due) AS due FROM edge_ops WHERE state IN ('pending','retry','processing')").toArray()[0],...(lane==='records'?{due:schedule(storage,512,Date.now()).due}:{}),...storage.sql.exec<{needsAttention:number}>("SELECT count(*) AS needsAttention FROM edge_ops WHERE state='needsAttention'").toArray()[0]};
+ // Read-only 24-hour *original spool entry* inventory. A batch occupies one
+ // original entry, not N people. Only already proof-stamped rows count in the
+ // conservative provider-verified column. No school bodies, IDs or revisions
+ // leave the existing authenticated Worker/broker boundary.
+ if(action==='backupHourly'){
+  demand(lane==='records','Hourly record inventory is records-lane only',400);
+  const observedAt=Date.now(),hourMs=60*60*1000;
+  const firstHour=Math.floor(observedAt/hourMs)*hourMs-23*hourMs;
+  type Hour={hourStartMillis:number;admitted:number;proofStamped:number;completedWithoutProofTimestamp:number;pending:number;retry:number;processing:number;needsAttention:number};
+  const result=storage.sql.exec<{
+    hour:number;admitted:number;proofStamped:number;completedWithoutProofTimestamp:number;
+    pending:number;retry:number;processing:number;needsAttention:number
+  }>(`SELECT CAST(created / ? AS INTEGER) * ? AS hour,
+    count(*) AS admitted,
+    sum(CASE WHEN state='completed' AND verified_at>=created AND verified_at>0 THEN 1 ELSE 0 END) AS proofStamped,
+    sum(CASE WHEN state='completed' AND (verified_at=0 OR verified_at<created) THEN 1 ELSE 0 END) AS completedWithoutProofTimestamp,
+    sum(CASE WHEN state='pending' THEN 1 ELSE 0 END) AS pending,
+    sum(CASE WHEN state='retry' THEN 1 ELSE 0 END) AS retry,
+    sum(CASE WHEN state='processing' THEN 1 ELSE 0 END) AS processing,
+    sum(CASE WHEN state='needsAttention' THEN 1 ELSE 0 END) AS needsAttention
+    FROM edge_ops WHERE created>=? AND created<=? GROUP BY hour ORDER BY hour`,
+    hourMs,hourMs,firstHour,observedAt).toArray();
+  const byHour=new Map(result.map(row=>[Number(row.hour),row]));
+  const hours:Hour[]=Array.from({length:24},(_,i)=>{
+   const hourStartMillis=firstHour+i*hourMs,row=byHour.get(hourStartMillis);
+   return {hourStartMillis,admitted:Number(row?.admitted??0),
+    proofStamped:Number(row?.proofStamped??0),
+    completedWithoutProofTimestamp:Number(row?.completedWithoutProofTimestamp??0),
+    pending:Number(row?.pending??0),retry:Number(row?.retry??0),
+    processing:Number(row?.processing??0),needsAttention:Number(row?.needsAttention??0)};
+  });
+  const unattributed=storage.sql.exec<{n:number}>('SELECT count(*) AS n FROM edge_ops WHERE created<=0 OR created>?',observedAt).toArray()[0]?.n??0;
+  return {version:1,schoolId:school,scope:'records_spool_only',
+   countUnit:'original_spool_entries_batches_count_as_one',observedAt,
+   firstHourMillis:firstHour,hours,unattributed};
+ }
+
  if(action==='settleTestStudentSlotReview'){
   const successorId=String(b.successorId||'');
   demand(lane==='records'&&operationPattern.test(id)&&operationPattern.test(successorId)&&id!==successorId,

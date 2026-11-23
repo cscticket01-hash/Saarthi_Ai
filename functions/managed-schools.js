@@ -1436,6 +1436,36 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
   return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
+ if(action==='managed/cloudflare/backupHourly'){
+  if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false,
+   statusScope:'unavailable'};
+  // Records-only inventory; cannot certify notices, files, attendance, mobile
+  // or authenticated Google Drive readback for the entire school.
+  const report=await cloudflareSync.rpc(m.schoolId,'records',{command:'backupHourly'});
+  const safeCount=value=>Number.isSafeInteger(value)&&value>=0&&value<=1000000000;
+  const fields=['admitted','proofStamped','completedWithoutProofTimestamp',
+   'pending','retry','processing','needsAttention'];
+  const hourMs=60*60*1000;
+  if(!report||report.version!==1||report.schoolId!==m.schoolId||
+    report.scope!=='records_spool_only'||
+    report.countUnit!=='original_spool_entries_batches_count_as_one'||
+    !Number.isSafeInteger(report.observedAt)||report.observedAt<=0||
+    !Number.isSafeInteger(report.firstHourMillis)||report.firstHourMillis<=0||
+    !safeCount(report.unattributed)||!Array.isArray(report.hours)||
+    report.hours.length!==24||
+    Math.floor(report.observedAt/hourMs)*hourMs-23*hourMs!==report.firstHourMillis||
+    !report.hours.every((h,i)=>h&&h.hourStartMillis===report.firstHourMillis+i*hourMs&&
+      fields.every(k=>safeCount(h[k]))&&
+      h.proofStamped+h.completedWithoutProofTimestamp<=h.admitted&&
+      h.pending+h.retry+h.processing+h.needsAttention<=h.admitted))
+   fail(502,'Cloudflare hourly record inventory unverified','EDGE_HOURLY_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,enabled:true,
+   statusScope:'records_spool_only',countUnit:report.countUnit,
+   observedAt:report.observedAt,firstHourMillis:report.firstHourMillis,
+   hours:report.hours.map(h=>({hourStartMillis:h.hourStartMillis,
+    ...Object.fromEntries(fields.map(k=>[k,h[k]]))})),
+   unattributed:report.unattributed};
+ }
  if(action==='managed/cloudflare/status'){
   if(!edgeEnabled(m.schoolId))return {success:true,schoolId:m.schoolId,enabled:false};
   // The device has already finished its upload at the durable edge ACK.

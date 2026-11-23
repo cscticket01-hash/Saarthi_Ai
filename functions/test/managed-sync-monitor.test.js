@@ -142,3 +142,38 @@ test('malformed or unavailable record statistics fail closed, not as successful 
  const f=fixture(undefined,{cloudflareSync});
  await assert.rejects(f.call({action:'managed/cloudflare/status'}),e=>e.status===502);
 });
+
+test('school scoped hourly records inventory is read-only and never reports school-wide Drive completion',async()=>{
+ const hourMs=3600000,observedAt=time,firstHourMillis=Math.floor(time/hourMs)*hourMs-23*hourMs;
+ const hours=Array.from({length:24},(_,i)=>({hourStartMillis:firstHourMillis+i*hourMs,
+  admitted:i===23?2:0,proofStamped:0,completedWithoutProofTimestamp:i===23?1:0,
+  pending:i===23?1:0,retry:0,processing:0,needsAttention:0}));
+ let calls=0;
+ const cloudflareSync={enabled:school=>school===A,rpc:async(school,lane,request)=>{
+  calls++;assert.equal(school,A);assert.equal(lane,'records');
+  assert.deepEqual(request,{command:'backupHourly'});
+  return {version:1,schoolId:A,scope:'records_spool_only',
+   countUnit:'original_spool_entries_batches_count_as_one',
+   observedAt,firstHourMillis,hours,unattributed:0};
+ }};
+ const f=fixture(undefined,{cloudflareSync});
+ const result=await f.call({action:'managed/cloudflare/backupHourly'});
+ assert.equal(result.enabled,true);
+ assert.equal(result.statusScope,'records_spool_only');
+ assert.equal(result.hours.length,24);
+ assert.equal(result.hours[23].admitted,2);
+ assert.equal(result.hours[23].proofStamped,0);
+ assert.equal(result.driveVerified,undefined);
+ assert.equal(result.googleDriveComplete,undefined);
+ assert.equal(calls,1);
+ await assert.rejects(f.call({action:'managed/cloudflare/backupHourly',schoolId:B}),e=>e.status===403);
+ assert.equal((await f.call({action:'managed/cloudflare/backupHourly'},'B')).enabled,false);
+ assert.equal(calls,1);
+});
+test('malformed hourly records response is rejected rather than showing fake success',async()=>{
+ const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async()=>({version:1,schoolId:A,scope:'records_spool_only',
+   countUnit:'original_spool_entries_batches_count_as_one',
+   observedAt:time,firstHourMillis:time,hours:[{admitted:3,proofStamped:4}],unattributed:0})}});
+ await assert.rejects(f.call({action:'managed/cloudflare/backupHourly'}),e=>e.status===502);
+});
