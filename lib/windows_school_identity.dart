@@ -5,6 +5,25 @@ import 'windows_local_firestore.dart';
 
 /// A class/roll ID can be reused. Mobile identity must belong to the person.
 class SchoolPersonIdentity {
+  /// A cheap snapshot filter only. Every candidate is still reopened by
+  /// original durable reference immediately before its identity write.
+  /// Established people, fee/ledger rows and Cloudflare-owned operations
+  /// must never pay an extra local point read for unused QR preparation.
+  static bool needsPendingCreatePreparation(Map item, String school) =>
+      item['schoolId'] == school &&
+      {'students_directory', 'teachers_directory'}.contains(item['collection']) &&
+      item['documentId'] is String &&
+      (item['documentId'] as String).isNotEmpty &&
+      item['createIntent'] == true &&
+      item['operation'] == 'set' &&
+      item['syncState'] == 'pending' &&
+      item['wireData'] is! Map &&
+      item['priorDeletion'] == null &&
+      (item['baseCloudRevision'] ?? '') == '' &&
+      (item['retryCount'] as num? ?? 0) == 0 &&
+      item['failureCategory'] == null &&
+      item['lastError'] == null;
+
   /// Prepare only never-bound local creates, before their first wire snapshot.
   /// Retries, conflicts and already-bound operations keep their original IDs.
   static Future<void> preparePendingCreates(String school, {bool Function()? canAdmit}) async {
@@ -14,13 +33,11 @@ class SchoolPersonIdentity {
       if (canAdmit?.call() == false) return;
       if (db.activeProfileId != origin || db.activeProfileIdentity['schoolSyncId'] != school)
         throw StateError('School changed before person identity preparation.');
+      if (!needsPendingCreatePreparation(row.data(), school)) continue;
+      // The row may have changed while another owner submitted its ACK.
+      // Never trust the snapshot alone to generate a person's identity.
       final item = (await row.reference.get()).data();
-      if (item == null || item['schoolId'] != school || item['createIntent'] != true ||
-          item['operation'] != 'set' || item['syncState'] != 'pending' ||
-          item['wireData'] is Map || item['priorDeletion'] != null ||
-          (item['baseCloudRevision'] ?? '') != '' || (item['retryCount'] as num? ?? 0) != 0 ||
-          item['failureCategory'] != null || item['lastError'] != null ||
-          !{'students_directory', 'teachers_directory'}.contains(item['collection'])) continue;
+      if (item == null || !needsPendingCreatePreparation(item, school)) continue;
       await ensure(item['collection'] as String, item['documentId'] as String);
     }
   }
