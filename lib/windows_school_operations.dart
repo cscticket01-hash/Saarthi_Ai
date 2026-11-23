@@ -1,6 +1,7 @@
 import 'windows_support_history.dart';
 import 'windows_appearance.dart';
 import 'promotion_session_policy.dart';
+import 'windows_admin_security.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_ui_localization.dart';
 
@@ -822,6 +823,11 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
       'Final-exam FAIL normally keeps a student in the same class. This switch enables an administrator override.',
     ),
     onChanged: (v) async {
+      if(await WindowsAdminSecurity.isManaged) {
+        final approved=await requestWindowsAdminApproval(context,
+          scope:'protected-settings',target:'school_settings/promotion_policy');
+        if(approved==null || !mounted)return;
+      }
       await FirebaseFirestore.instance
           .collection('school_settings')
           .doc('promotion_policy')
