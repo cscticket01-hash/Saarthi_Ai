@@ -129,7 +129,7 @@ jobs:
               'cors_origin': allow_origin,
               'attachment': attachment,
           }
-          proof.write_text(json.dumps(evidence, indent=2) + '\\n', encoding='utf-8')
+          proof.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
           assert status == 200, f'Public download HEAD returned {status}'
           assert tag == evidence['tag'], f'Download version {tag} != {evidence["tag"]}'
           assert size == evidence['installer']['size'], 'Public downloader byte count differs'
