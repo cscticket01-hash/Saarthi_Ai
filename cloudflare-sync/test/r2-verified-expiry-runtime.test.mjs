@@ -37,6 +37,8 @@ export class R2VerifiedTimeLane extends SyncLane {
     return Response.json({configured:true});
    }
    if(b.mode==='pending_verification')return Response.json({pending:sql.exec('SELECT count(*) AS n FROM r2_verification_pending').toArray()[0].n});
+   if(b.mode==='clear_alarm'){await this.ctx.storage.deleteAlarm();return Response.json({cleared:true});}
+   if(b.mode==='alarm_time')return Response.json({at:await this.ctx.storage.getAlarm()});
    if(b.mode==='inspect') {
     const rows=sql.exec("SELECT key,state,accepted_at,accepted_final,verified_at,purge_due FROM r2_staged WHERE key=?",
       b.key).toArray();
@@ -191,5 +193,20 @@ export class R2VerifiedTimeLane extends SyncLane {
  const originalKey='saarthi-v1/'+school+'/'+attendanceLane+'/'+attendanceId+'/0';
  assert.deepEqual(JSON.parse(await (await bucket.get(originalKey)).text()),firstCapture,
   'Recovery stages the pinned original, never a regenerated retry envelope');
+
+ const lateId=hash('verification-before-seal');
+ await quota.stageR2Object(school,'records',lateId,0,new Uint8Array([7]).buffer);
+ const earlyVerification=await quota.r2OriginalVerified(school,'records',lateId);
+ assert.equal(earlyVerification.nextCleanupAt,null);
+ await quota.fetch('https://quota.test/__private_retention_clock',{
+  method:'POST',body:JSON.stringify({mode:'clear_alarm'})});
+ const lateSeal=await quota.r2OriginalAccepted(school,'records',lateId);
+ assert.ok(lateSeal.nextCleanupAt>=Date.now()+day-5000);
+ const lateReplay=await quota.r2OriginalAccepted(school,'records',lateId);
+ assert.equal(lateReplay.nextCleanupAt,lateSeal.nextCleanupAt);
+ const alarm=await quota.fetch('https://quota.test/__private_retention_clock',{
+  method:'POST',body:JSON.stringify({mode:'alarm_time'})});
+ const {at}=await alarm.json();
+ assert.ok(Number.isSafeInteger(at)&&at<=lateSeal.nextCleanupAt);
 
 });

@@ -47,7 +47,9 @@ export class SyncLane extends DurableObject<Env>{
  async r2OriginalAccepted(school:string,lane:string,id:string){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
   this.setMeta('r2BudgetActor','v1');
-  return acceptR2Original(this.ctx.storage,school,lane,id);
+  const result=acceptR2Original(this.ctx.storage,school,lane,id);
+  if(result.nextCleanupAt!==null)await this.wake(result.nextCleanupAt);
+  return result;
  }
  async r2OriginalVerified(school:string,lane:string,id:string){
   demand(!this.meta('identity'),'R2 budget actor is unavailable',403);
