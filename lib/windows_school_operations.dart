@@ -827,6 +827,9 @@ class _PromotionPolicySwitchState extends State<PromotionPolicySwitch> {
         final approved=await requestWindowsAdminApproval(context,
           scope:'protected-settings',target:'school_settings/promotion_policy');
         if(approved==null || !mounted)return;
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'school_settings/promotion_policy');
       }
       await FirebaseFirestore.instance
           .collection('school_settings')
