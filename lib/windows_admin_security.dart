@@ -1,8 +1,11 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_connect/managed_school_session.dart';
 import 'windows_local_settings.dart';
+import 'windows_local_admin_security.dart';
+import 'windows_local_firestore.dart';
 
 /// Independent school-wide administrator credential. App Lock remains local.
 class WindowsAdminSecurity {
@@ -11,24 +14,40 @@ class WindowsAdminSecurity {
   static String? _panelSchool;
   static DateTime? _panelUntil;
   static int? _panelPasswordVersion;
+  static String? _panelLocalFingerprint;
+  static final Map<String,Map<String,String>> _localApprovalTickets={};
 
   static void clearPanelSession() {
     _panelSchool=null;
     _panelUntil=null;
     _panelPasswordVersion=null;
+    _panelLocalFingerprint=null;
+    _localApprovalTickets.clear();
   }
 
+  static String _standaloneScope() =>
+    'local:${FirebaseFirestore.instance.activeProfileId}';
+
   static Future<bool> hasPanelSession() async {
-    final school=(await CentralSchoolCloud.saved())['schoolId']?.toString();
-    if(school==null || school.isEmpty || school!=_panelSchool ||
-        _panelUntil==null || !DateTime.now().isBefore(_panelUntil!)) {
+    final saved=await CentralSchoolCloud.saved();
+    final managed=saved['managed']==true;
+    final scope=managed?saved['schoolId']?.toString():_standaloneScope();
+    if(scope==null||scope.isEmpty||scope!=_panelSchool||
+        _panelUntil==null||!DateTime.now().isBefore(_panelUntil!)){
       clearPanelSession();
       return false;
     }
-    // Cross-PC password rotations invalidate cached panel access at the
-    // next administrative navigation. Unreachable verification fails closed.
+    if(!managed){
+      final fingerprint=await WindowsLocalAdminSecurity.fingerprint();
+      if(fingerprint==null||fingerprint!=_panelLocalFingerprint) {
+        clearPanelSession();
+        return false;
+      }
+      return true;
+    }
+    // Verify again at every new Admin navigation; another PC can rotate it.
     final remote=await _call({'operation':'status'});
-    if(remote['configured'] != true || remote['updatedAt'] != _panelPasswordVersion) {
+    if(remote['configured']!=true||remote['updatedAt']!=_panelPasswordVersion){
       clearPanelSession();
       return false;
     }
@@ -37,13 +56,19 @@ class WindowsAdminSecurity {
 
   static Future<void> grantPanelSession() async {
     final saved=await CentralSchoolCloud.saved();
-    if(saved['managed'] != true || saved['schoolId'] is! String) {
-      throw StateError('Managed school verification required.');
+    if(saved['managed']!=true){
+      final fingerprint=await WindowsLocalAdminSecurity.fingerprint();
+      if(fingerprint==null)throw StateError('Set local Admin Password first.');
+      _panelSchool=_standaloneScope();
+      _panelLocalFingerprint=fingerprint;
+      _panelUntil=DateTime.now().add(const Duration(minutes:15));
+      return;
     }
+    if(saved['schoolId'] is! String)
+      throw StateError('Managed school identity is missing.');
     final status=await _call({'operation':'status'});
-    if(status['configured']!=true || status['updatedAt'] is! int) {
+    if(status['configured']!=true||status['updatedAt'] is! int)
       throw StateError('Independent Admin Password status is not verified.');
-    }
     _panelSchool=saved['schoolId'];
     _panelPasswordVersion=status['updatedAt'];
     _panelUntil=DateTime.now().add(const Duration(minutes:15));
@@ -60,13 +85,21 @@ class WindowsAdminSecurity {
     return result;
   }
 
-  static Future<bool> configured() async =>
-      (await _call({'operation':'status'}))['configured'] == true;
+  static Future<bool> configured() async {
+    if(!await isManaged)return WindowsLocalAdminSecurity.configured();
+    return (await _call({'operation':'status'}))['configured']==true;
+  }
 
   static Future<void> enroll({
     required String schoolPassword,
     required String newPassword,
   }) async {
+    if(!await isManaged){
+      await WindowsLocalAdminSecurity.enroll(newPassword);
+      clearPanelSession();
+      revision.value++;
+      return;
+    }
     final fresh = await ManagedSchoolSession.freshSchoolPasswordProof(schoolPassword);
     final result = await _call({
       'operation':'enroll', 'freshIdToken':fresh, 'newPassword':newPassword,
@@ -79,6 +112,10 @@ class WindowsAdminSecurity {
   }
 
   static Future<void> unlock(String password) async {
+    if(!await isManaged){
+      await WindowsLocalAdminSecurity.verify(password);
+      return;
+    }
     final result = await _call({'operation':'unlock','password':password});
     if(result['verified'] != true || result['scope'] != 'admin-panel') {
       throw StateError('Admin Panel verification was not confirmed.');
@@ -90,6 +127,19 @@ class WindowsAdminSecurity {
     required String scope,
     required String target,
   }) async {
+    if(!await isManaged){
+      if(!const {'drive-connection','person-delete','force-promotion','protected-settings'}.contains(scope)||
+          target.isEmpty||target.length>1000)
+        throw StateError('Invalid protected school action.');
+      await WindowsLocalAdminSecurity.verify(password);
+      final rng=Random.secure();
+      final token=List<String>.generate(32,
+        (_)=>rng.nextInt(256).toRadixString(16).padLeft(2,'0')).join();
+      _localApprovalTickets[token]={
+        'scope':scope,'target':target,'school':_standaloneScope(),
+      };
+      return token;
+    }
     final result = await _call({
       'operation':'authorize','password':password,'scope':scope,'target':target,
     });
@@ -107,6 +157,13 @@ class WindowsAdminSecurity {
     required String scope,
     required String target,
   }) async {
+    if(!await isManaged){
+      final ticket=_localApprovalTickets.remove(token);
+      if(ticket==null||ticket['scope']!=scope||
+         ticket['target']!=target||ticket['school']!=_standaloneScope())
+        throw StateError('Local Admin Password approval is missing or invalid.');
+      return;
+    }
     if(token.length != 64 || !RegExp(r'^[a-f0-9]+').hasMatch(token)) {
       throw StateError('Missing school administrator authorization.');
     }
@@ -123,9 +180,13 @@ class WindowsAdminSecurity {
     required String currentPassword,
     required String newPassword,
   }) async {
-    await _call({
-      'operation':'change','password':currentPassword,'newPassword':newPassword,
-    });
+    if(!await isManaged){
+      await WindowsLocalAdminSecurity.change(currentPassword,newPassword);
+    }else{
+      await _call({
+        'operation':'change','password':currentPassword,'newPassword':newPassword,
+      });
+    }
     clearPanelSession();
     revision.value++;
   }
@@ -134,6 +195,8 @@ class WindowsAdminSecurity {
     required String schoolPassword,
     required String newPassword,
   }) async {
+    if(!await isManaged)
+      throw StateError('Standalone Admin Password recovery requires school owner verification; no App Lock reset bypass is available.');
     final fresh = await ManagedSchoolSession.freshSchoolPasswordProof(schoolPassword);
     await _call({
       'operation':'recover','freshIdToken':fresh,'newPassword':newPassword,
