@@ -1641,9 +1641,6 @@ function editStudent(data) {
     photoUrl =
       newPhoto.url || "";
     if (!photoUrl) throw new Error("Student photo upload returned no usable URL");
-
-
-    }
   }
 
 
@@ -2528,9 +2525,6 @@ function editTeacher(data) {
     photoUrl =
       newPhoto.url || "";
     if (!photoUrl) throw new Error("Teacher photo upload returned no usable URL");
-
-
-    }
   }
 
 
