@@ -32,5 +32,6 @@ test('24h cache may be purged only after actual Drive verification',()=>{
  assert.equal(r2MayPurge(record,due),true);
  assert.equal(r2MayPurge({...record,purge_due:accepted},due),false);
  assert.equal(r2MayPurge({...record,verified_at:0},due),false);
+ assert.equal(r2MayPurge({...record,verified_at:due+1},due),false);
  assert.throws(()=>verifiedR2PurgeDue(accepted,accepted-1));
 });

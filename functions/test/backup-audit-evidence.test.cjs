@@ -106,3 +106,11 @@ test('immutable hash conflicts cannot contribute to certified hourly count',asyn
  assert.equal(r.verifiedCount,0);
  assert.equal(r.verifiedOriginals,0);
 });
+
+test('a future provider timestamp cannot certify an original',async()=>{
+ const result=await reconcileBackupCoverage({schoolId:school,now,
+  sourceInventory:sources([base]),readOwnerProof:proof({verifiedAt:now+1})});
+ assert.equal(result.complete,false);
+ assert.equal(result.verifiedOriginals,0);
+ assert.equal(result.unverifiedCount,1);
+});

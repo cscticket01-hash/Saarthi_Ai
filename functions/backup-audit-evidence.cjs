@@ -87,7 +87,7 @@ async function reconcileBackupCoverage({schoolId,now=Date.now(),
       receipt.originalSha256!==row.originalSha256||
       receipt.driveVerified!==true||
       typeof receipt.providerReceiptId!=='string'||
-      !OP.test(receipt.providerReceiptId)||!stamp(receipt.verifiedAt)){
+      !OP.test(receipt.providerReceiptId)||!stamp(receipt.verifiedAt)||receipt.verifiedAt>now){
       unverified.push(originalId);continue;
     }
     // A file's signed provider response must prove the original bytes,
