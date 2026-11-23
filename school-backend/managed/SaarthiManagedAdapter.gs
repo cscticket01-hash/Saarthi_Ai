@@ -503,6 +503,79 @@ function VS_studentSlot(data) {
 /** Called while existing school ScriptLock is held, including normal app writes.
  * Legacy unmeasured slots are reported; never rewrite them merely for import.
  */
+/**
+ * A signed school record write that changes promotion state must be backed
+ * by the existing authoritative Final Exam and its saved result. This guard
+ * runs inside the same managed ScriptLock as the student slot/revision check.
+ * A class transition cannot be simulated by deleting/recreating the pupil.
+ */
+function VS_guardFinalPromotion(b,existing,school){
+  if(!b||b.collection!=='students_directory'||b.operation!=='write'||!b.data)return;
+  const next=b.data,old=existing&&existing.data;
+  const changed=old&&(next.promotionTransactionId!==old.promotionTransactionId||
+    next.promotionExamId!==old.promotionExamId||next.classMovement!==old.classMovement);
+  if(!changed){
+    if(!old&&(next.promotionTransactionId||next.promotionExamId||next.classMovement))
+      throw new Error('New student cannot claim an approved promotion');
+    return;
+  }
+  if(!old||old._syncDeleted||old.deleted||next.schoolId!==school||
+      old.schoolId!==school||next.mobileStableId!==old.mobileStableId||
+      next.rollNo!==old.rollNo||String(next.section||'')!==String(old.section||''))
+    throw new Error('Promotion student identity must stay unchanged');
+  const examId=String(next.promotionExamId||''),operation='promotion:'+examId+':'+b.id;
+  if(!examId||next.promotionTransactionId!==operation)
+    throw new Error('Promotion transaction identity mismatch');
+  const examRow=VS_sheetItem(VS_managedSheet('exams'),examId),
+    canonical=VS_sheetItem(VS_managedSheet('exam_center_results'),examId+'_'+b.id),
+    legacy=canonical?null:VS_sheetItem(VS_managedSheet('exam_results'),examId+'_'+b.id),
+    exam=examRow&&examRow.data,resultRow=canonical||legacy,result=resultRow&&resultRow.data;
+  if(!exam||!result||exam._syncDeleted||result._syncDeleted||
+      exam.schoolId!==school||result.schoolId!==school||exam.isFinal!==true||
+      result.studentId!==b.id||result.examId!==undefined&&result.examId!==examId||
+      !['PASS','FAIL'].includes(result.result)||result.result!==next.lastExamResult)
+    throw new Error('Verified Final Exam result is required for promotion');
+  const classOf=value=>{const match=/^Class ([1-9]|1[0-2])$/.exec(String(value||''));return match?Number(match[1]):0;};
+  const before=classOf(old.class||old.studentClass),after=classOf(next.class||next.studentClass);
+  if(!before||!after||classOf(exam.studentClass)!==before||
+     result.studentClass&&classOf(result.studentClass)!==before||
+     next.studentClass!==undefined&&next.studentClass!==next.class||
+     exam.academicSession&&result.academicSession&&exam.academicSession!==result.academicSession||
+     next.previousClass&&next.previousClass!==old.class)
+    throw new Error('Promotion class/session verification failed');
+  if(result.personId!=null&&result.personId!==(old.mobileStableId||b.id))
+    throw new Error('Final result belongs to another student generation');
+  const subjects=exam.subjects;
+  if(!Array.isArray(subjects)||!subjects.length||new Set(subjects).size!==subjects.length||
+     !result.marks||typeof result.marks!=='object'||Array.isArray(result.marks)||
+     Object.keys(result.marks).length!==subjects.length||
+     !Number.isFinite(Number(exam.fullMarks))||Number(exam.fullMarks)<=0||
+     !Number.isFinite(Number(exam.passMarks))||Number(exam.passMarks)<0||
+     Number(exam.passMarks)>Number(exam.fullMarks))
+    throw new Error('Complete saved subject marks are required');
+  const values=subjects.map(subject=>result.marks[subject]),full=Number(exam.fullMarks),pass=Number(exam.passMarks);
+  if(values.some(value=>typeof value!=='number'||!Number.isFinite(value)||value<0||value>full)||
+     (values.every(value=>value>=pass)?'PASS':'FAIL')!==result.result)
+    throw new Error('Final marks and result disagree');
+  const movement=next.classMovement,prior=old.classMovement;
+  if(movement==='RETAINED'){
+    if(after!==before||result.result!=='FAIL')throw new Error('Retention requires a failed exam');
+  }else if(movement==='GRADUATED'){
+    if(before!==12||after!==12||result.result!=='PASS')throw new Error('Graduation requires Class 12 pass');
+  }else if(movement==='PROMOTED'){
+    if(before>=12||after!==before+1||result.result!=='PASS')throw new Error('Promotion requires a pass and next class');
+  }else if(movement==='FORCE_PROMOTED'){
+    const policy=VS_sheetItem(VS_managedSheet('school_settings'),'promotion_policy');
+    if(before>=12||after!==before+1||result.result!=='FAIL'||
+       prior!=='RETAINED'||old.promotionExamId!==examId||
+       !policy||policy.data.allowForcedPromotion!==true||
+       typeof next.promotionOverrideReason!=='string'||
+       !next.promotionOverrideReason.trim()||next.promotionOverrideReason.length>500)
+      throw new Error('Force promotion needs prior retention, policy and audit reason');
+  }else throw new Error('Invalid promotion movement');
+  if(next.promotionPending!==true||next.promotionSyncState!=='Pending')
+    throw new Error('Promotion must retain pending acknowledgement state');
+}
 function VS_studentUnique(store,id,data,existing) {
   const slot=VS_studentSlot(data),oldSlot=existing?VS_studentSlot(existing.data):null,all=VS_sheetRecords(store);let partial=slot===null;
   Object.keys(all).forEach(other=>{
@@ -766,6 +839,7 @@ function VS_managedRecordUnlocked(b,readContext) {
     if(known&&known._syncDeleted){if(b.data.personId===known._syncDeletedOwner||(known._syncRetiredStudentGenerations||[]).indexOf(b.data.personId)>=0)throw new Error('Student generation was deleted; stale child rejected');throw new Error('New student parent must sync first');}
     if(known&&known.mobileStableId&&known.mobileStableId!==b.data.personId)throw new Error('Student generation was deleted; stale child rejected');
   }
+  if(b.collection==='students_directory')VS_guardFinalPromotion(b,existing,school);
   const studentUniquenessScope=b.collection==='students_directory'?VS_studentUnique(store,b.id,b.data,existing):undefined;
   const generation=b.collection!=='students_directory'&&existing&&!existing.data._syncDeleted&&existing.data._syncRecreatesDeletedRevision;
   if(generation&&b.data._syncRecreatesDeletedRevision&&b.data._syncRecreatesDeletedRevision!==generation)throw new Error('Record revision conflict');
@@ -1072,6 +1146,51 @@ function VS_managedBackupSnapshot(b) {
  return {success:true,schoolId:school,snapshotProtocol:1,collections:collections,records:records,collectionRevisions:heads,missingData:missing,recordsComplete:missing.length===0,documentBinariesIncluded:false,createdAt:Date.now()};
 }
 
+// An upload may have reached Drive even when its signed HTTP ACK was lost.
+// Read-only owner probe; never creates a file, changes its marker, clears an
+// upload queue or calls the broker. An unknown result is NOT an absence proof.
+function VS_managedPhotoReceipt(b) {
+ if(!b||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey||'')||
+    !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+    !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>512*1024||
+    typeof b.name!=='string'||!b.name||b.name.length>200||
+    ['image/jpeg','image/png','image/webp'].indexOf(b.mime)<0)
+  throw new Error('Invalid original photo receipt inquiry');
+ const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID'),
+   root=VS_managedRoot(),
+   marker='VIDYA_UPLOAD:'+school+':'+b.uploadKey+':'+b.sha256;
+ const unknown=()=>({photoReceiptVersion:1,uploadKey:b.uploadKey,
+   sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime,
+   verified:false,status:'unknown'});
+ let file=VS_cachedOriginalUpload(school,root.getId(),b,marker,b.sizeBytes,b.sha256);
+ if(!file) {
+  const started=Date.now();let matched=0,scanned=0;
+  // Existing folder lookup only: NEVER create a new Drive root or folder
+  // to satisfy a receipt probe for an unconfirmed upload.
+  for(const folder of VS_layoutUploadFolders(root,root)) {
+   if(++scanned>20||Date.now()-started>5000)return unknown();
+   const matches=folder.getFilesByName(b.name);
+   while(matches.hasNext()) {
+    if(++matched>40||Date.now()-started>5000)return unknown();
+    const candidate=matches.next();
+    if(candidate.getDescription()!==marker)continue;
+    if(file&&file.getId()!==candidate.getId())
+     throw new Error('Original upload identity collision');
+    file=candidate;
+   }
+  }
+ }
+ if(!file||file.isTrashed())return unknown();
+ const proof=VS_binaryMetadata(VS_binaryFile(file.getId()),false);
+ if(proof.fileId!==file.getId()||proof.name!==b.name||
+    proof.mime!==b.mime||proof.sizeBytes!==b.sizeBytes||
+    proof.sha256!==b.sha256||file.getDescription()!==marker)
+  throw new Error('Original photo bytes or Drive marker require review');
+ return {photoReceiptVersion:1,uploadKey:b.uploadKey,
+   sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime,
+   verified:true,fileId:proof.fileId};
+}
+
 function VS_managedHandle(e) {
   VS_BACKUP_READ_CACHE=null;
   const school=PropertiesService.getScriptProperties().getProperty('VS_MANAGED_SCHOOL_ID');
@@ -1094,7 +1213,7 @@ function VS_managedHandle(e) {
       }
       result={storageReady:true,driveRootVerified:true,sheetsAccessVerified:sheetsVerified,documentVersions:1,recordSyncVersion:2,deleteEverywhereVersion:1,deleteEverywhereArchiveFastPathVersion:1,recordFieldPatchVersion:1,recordPointReadVersion:1,recordWriteBatchVersion:1,recordDeltaBatchVersion:1,recordChangeHeadsVersion:1,recordStorageVersion:VS_jsonEnabled()?2:1,recordJsonBackupVersion:VS_sheetLifecycleEnabled()?0:1,jsonSchemaVersion:VS_jsonEnabled()?1:0,organizedStorageVersion:2,managedViewVersion:1,recycleVersion:VS_recycleEnabled()?1:0,
         binaryInventoryVersion:1,binaryDownloadVersion:1,uploadResumableVersion:p.getProperty('VS_NATIVE_RESUMABLE_UPLOAD')==='1'?1:0,recordBackupVersion:VS_testBackupRecoveryEnabled()?4:0,disasterRehearsalVersion:VS_testBackupRecoveryEnabled()?5:0,disasterReadbackVersion:VS_testBackupRecoveryEnabled()?1:0,lastVerifiedRecordBackupAt:Number(p.getProperty('VS_LAST_VERIFIED_RECORD_BACKUP_AT')||0),
-        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
+        studentImportSheetVersion:1,studentSlotUniquenessVersion:1,studentReadableViewVersion:1,studentReadableViewStatus:PropertiesService.getScriptProperties().getProperty('VS_STUDENT_READABLE_STATUS')||'not yet measured',sheetLifecycleVersion:1,teacherRetirementVersion:VS_sheetLifecycleEnabled()?1:0,staffRetirementVersion:VS_sheetLifecycleEnabled()?1:0,recordStorageMode:VS_sheetLifecycleEnabled()?'sheets':VS_jsonEnabled()?'json':'sheets',attendanceScheduleVersion:1,attendanceBatchVersion:2,attendanceBatchMaxOperations:25,attendanceBatchBudgetMillis:45000,recordDeltaRecordsVersion:1,sheetIntegrityAuditVersion:1,recordLookupReuseVersion:1,photoReceiptVersion:1,scriptBundleVersion:'2026-11-04.4',googleEmail:'',...(b.profilePhoto===true?VS_managedOwnerProfilePhoto(root):{})};
     }
     else if(b.action==='managed_integrity_audit'){result=VS_managedIntegrityAudit(b);}
     else if(b.action==='managed_delta'){result=VS_managedDelta(b);}
@@ -1106,6 +1225,7 @@ function VS_managedHandle(e) {
     else if(b.action==='managed_records_batch'){result=VS_managedRecordBatch(b);}
     else if(b.action==='managed_records'){result=VS_managedRecord(b);}
     else if(b.action==='managed_upload_resumable'){result=VS_managedResumableUpload(b);}
+    else if(b.action==='managed_upload_receipt'){result=VS_managedPhotoReceipt(b);}
     else if(b.action==='managed_upload'){
       if(!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)throw new Error('Invalid file');const bytes=Utilities.base64Decode(b.base64);if(!bytes.length||bytes.length>20*1024*1024)throw new Error('File limit exceeded');
       const lock=LockService.getScriptLock();lock.waitLock(30000);
