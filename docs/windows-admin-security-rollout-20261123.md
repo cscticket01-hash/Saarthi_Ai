@@ -23,7 +23,9 @@ Legacy section passwords migrate on verified unlock from locally encrypted plain
 
 Managed and standalone passwords are checked again before a section-lock preference can be changed or disabled, Drive editing is enabled, a person is deleted, force promotion is requested, or staff is deactivated. The managed Drive connect broker consumes its own one-use approval.
 
-A draft, **unexecuted** Node test suite exists in `functions/test/school-admin-security.test.js`. Tests and Flutter builds have not been run.
+Force promotion now also checks for the one-use, two-minute authorization inside `SchoolPromotionService.apply(force:true)`, in addition to its confirmation UI. This protects against internal Windows callers that bypass the prompt. **It still does not replace broker/Cloudflare authorization over eventual background sync.** The legacy browser portal keeps its historical Firebase login and does not invoke Windows-only secure storage; this Windows security patch is not a separate web-portal MFA rollout.
+
+A draft, **unexecuted** Node test suite exists in `functions/test/school-admin-security.test.js`. Tests, Flutter builds, deployment and workflows have not been run.
 
 ## Important safety boundary — not yet complete
 
