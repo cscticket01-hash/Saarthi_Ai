@@ -21,6 +21,37 @@ void main() {
     await db.switchProfile(dir.path, identity: {'schoolSyncId': school, 'schoolId': school});
   });
   tearDown(() async => db.resetVolatileSession());
+  test('identity preflight opens only unbound first-create originals', () {
+    final original=<String,dynamic>{
+      'schoolId':school,'collection':'students_directory',
+      'documentId':'synthetic-person','createIntent':true,
+      'operation':'set','syncState':'pending','baseCloudRevision':'',
+      'retryCount':0,'data':{'schoolId':school,'name':'Synthetic'},
+    };
+    bool candidate(Map row)=>SchoolPersonIdentity.needsPendingCreatePreparation(row,school);
+    expect(candidate(original),true);
+    expect(candidate({...original,'collection':'teachers_directory'}),true);
+    final unrelated=<Map<String,dynamic>>[
+      for (var i=0;i<100;i++)
+        {...original,'collection':i.isEven?'fee_payments':'school_notices',
+          'documentId':'unrelated-$i'},
+      {...original,'syncState':'cloudAccepted'},
+      {...original,'createIntent':false},
+      {...original,'wireData':{'version':2}},
+      {...original,'priorDeletion':{'operationId':'prior'}},
+      {...original,'baseCloudRevision':'provider-version-1'},
+      {...original,'retryCount':1},
+      {...original,'failureCategory':'timeout'},
+      {...original,'lastError':'unverified'},
+      {...original,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+    ];
+    expect(unrelated.where(candidate),isEmpty,
+      reason:'unrelated queued work must not acquire a redundant per-row read');
+    expect([...unrelated,original].where(candidate).length,1);
+    // An invalid original must still reach the re-read/type guard rather than
+    // vanish into a successful-looking identity preparation.
+    expect(candidate({...original,'documentId':null}),true);
+  });
   test('record-local priority failure defers without losing its original error or dependency', () async {
     await WindowsSyncDependencies.retain(school, 'teachers_directory', 'held', 'revision');
     const original = MissingSyncAcknowledgement();
