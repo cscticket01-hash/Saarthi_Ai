@@ -1065,9 +1065,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     // A remote change hint / inbound download is NEVER a device upload.
     // Only the exact original operation's durable queue settlement can
     // reduce uploadCount, so an unverified document stays pending.
-    final deviceIdle = details['displayState'] == 'idle' && !hasUploads;
-    final checking = !engine.isPaused && !deviceIdle &&
-        !hasUploads && engine.isCheckingCloud;
     final transferActive = engine.isSyncing && !engine.isPaused &&
         hasUploads && ManagedSchoolSession.activeTransfers.value > 0;
     final phase = projectWindowsDevicePhase(
@@ -1078,6 +1075,12 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       paused: engine.isPaused,
       stalled: stalled,
     );
+    // Derive the ring and stage indicators from the SAME queue-owned phase.
+    // Legacy Drive receipts or cloud-only status checks never re-open a PC
+    // upload once its last durable original has reached Cloudflare.
+    final deviceIdle = phase == 'idle';
+    final checking = !engine.isPaused && !deviceIdle &&
+        !hasUploads && engine.isCheckingCloud;
     final phaseLabels = {
       'checking': 'Checking cloud',
       'preparing': 'Preparing changed data',
