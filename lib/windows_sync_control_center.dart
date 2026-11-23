@@ -8,6 +8,7 @@ import 'windows_sync_performance.dart';
 import 'sync_pending_diagnostics.dart';
 import 'cloud_transfer_status.dart';
 import 'windows_appearance.dart';
+import 'liquid_glass_theme.dart';
 import 'sync_recovery_policy.dart' as failure_policy;
 
 import 'dart:convert';
@@ -793,22 +794,36 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
 
   bool _darkDashboard(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
 
-  Widget _panelBox(Widget child) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      gradient:  LinearGradient(
-        colors: _darkDashboard(context)
-            ? const [Color(0xFF1B1C20), Color(0xFF111216)]
-            : [WindowsAppearance.resolve(const Color(0xFF132D46)), WindowsAppearance.resolve(const Color(0xFF0C1F34))],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
+  Widget _panelBox(Widget child) => LiquidGlassSurface(
+    enabled: WindowsAppearance.presetId == 'midnight-glass',
+    radius: 20,
+    child: Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          // Keep the approved compact Sync 4 layout. Glass changes paint only.
+          colors: WindowsAppearance.presetId == 'midnight-glass'
+              ? const [Color(0x9C25405B), Color(0x78243A50)]
+              : _darkDashboard(context)
+                  ? const [Color(0xFF1B1C20), Color(0xFF111216)]
+                  : [
+                      WindowsAppearance.resolve(const Color(0xFF132D46)),
+                      WindowsAppearance.resolve(const Color(0xFF0C1F34)),
+                    ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: WindowsAppearance.presetId == 'midnight-glass'
+              ? const Color(0x779BD4FF)
+              : _darkDashboard(context)
+                  ? const Color(0xFF77797E)
+                  : WindowsAppearance.outline(const Color(0xFF21475D)),
+        ),
       ),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: _darkDashboard(context)
-          ? const Color(0xFF77797E)
-          : WindowsAppearance.outline(const Color(0xFF21475D))),
+      child: child,
     ),
-    child: child,
   );
 
   Widget metric(String name, String value) => SizedBox(
