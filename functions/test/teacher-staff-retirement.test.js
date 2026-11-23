@@ -164,7 +164,8 @@ test('legacy photo replacement never erases old student/teacher media before ver
   const code=source.slice(start,end+2);
   for(const scenario of ['success','write_failed','flush_failed','readback_mismatch','no_photo']) {
    const events=[],row=Array(18).fill('');
-   row[photoColumn-1]=oldUrl;row[0]='TCH-1';row[5]='9876543210';
+   row[photoColumn-1]=oldUrl;row[0]='TCH-1';
+   if(kind==='teacher')row[5]='9876543210';
    let wrote=false;
    const sheet={getRange:(_row,col)=>({
      getValue:()=>{
