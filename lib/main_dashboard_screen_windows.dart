@@ -20923,6 +20923,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   bool _saving = false;
   String? _error;
   int _academicYearRolloverMonth = 1;
+  String _sessionFilter = '';
 
   List<Map<String, dynamic>> _exams = [];
   List<Map<String, dynamic>> _results = [];
@@ -21042,9 +21043,22 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           e['_syncDeleted'] != true)
       .toList();
 
+  List<Map<String, dynamic>> get _visibleExams =>
+      _sessionFilter.isEmpty
+          ? _exams
+          : _exams.where((exam) =>
+              exam['academicSession']?.toString() == _sessionFilter).toList();
+
+  List<Map<String, dynamic>> get _visibleResults {
+    if (_sessionFilter.isEmpty) return _results;
+    final examIds = _visibleExams.map((exam) => exam['examId']?.toString()).toSet();
+    return _results.where((result) =>
+        examIds.contains(result['examId']?.toString())).toList();
+  }
+
   List<List<Map<String, dynamic>>> _examGroups() {
     final grouped = <String, List<Map<String, dynamic>>>{};
-    for (final exam in _exams) {
+    for (final exam in _visibleExams) {
       final key = WindowsExamPolicy.groupKey(exam);
       grouped.putIfAbsent(key, () => <Map<String, dynamic>>[]);
       grouped[key]!.add(exam);
@@ -22206,7 +22220,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
   Widget _performanceOverview() {
     final byClass = <String, List<double>>{};
-    for (final result in _results) {
+    for (final result in _visibleResults) {
       final className = result['studentClass']?.toString().trim() ?? '';
       if (className.isEmpty) continue;
       byClass.putIfAbsent(className, () => <double>[]);
@@ -22313,7 +22327,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   }
 
   Widget _recentResults() {
-    final recent = List<Map<String, dynamic>>.from(_results)
+    final recent = List<Map<String, dynamic>>.from(_visibleResults)
       ..sort((a, b) =>
           _timestamp(b['timestamp']).compareTo(_timestamp(a['timestamp'])));
     final items = recent.take(6).toList();
@@ -22469,12 +22483,16 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
   @override
   Widget build(BuildContext context) {WindowsAppearance.watch(context);
     final groups = _examGroups();
-    final passTotal = _results.where((e) => e['result'] == 'PASS').length;
-    final failTotal = _results.where((e) => e['result'] == 'FAIL').length;
+    final visibleResults = _visibleResults;
+    final sessions = _exams.map((e) => e['academicSession']?.toString() ?? '')
+        .where((session) => session.isNotEmpty).toSet().toList()
+      ..sort((a, b) => b.compareTo(a));
+    final passTotal = visibleResults.where((e) => e['result'] == 'PASS').length;
+    final failTotal = visibleResults.where((e) => e['result'] == 'FAIL').length;
     final totalResults = passTotal + failTotal;
     final passRate = totalResults == 0 ? 0.0 : passTotal / totalResults * 100;
     final pendingMarks =
-        _exams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
+        _visibleExams.fold<int>(0, (sum, exam) => sum + _pendingForExam(exam));
 
     return Scaffold(
       backgroundColor: WindowsAppearance.background(const Color(0xFF0B141A)),
@@ -22486,6 +22504,21 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
           style: TextStyle(fontFamily: 'Segoe UI', fontWeight: FontWeight.w800),
         ),
         actions: [
+          DropdownButton<String>(
+            value: sessions.contains(_sessionFilter) ? _sessionFilter : '',
+            underline: const SizedBox.shrink(),
+            hint: const Text('Academic session'),
+            items: [
+              const DropdownMenuItem<String>(
+                value: '', child: Text('All sessions')),
+              for (final session in sessions)
+                DropdownMenuItem<String>(
+                  value: session, child: Text(session)),
+            ],
+            onChanged: (value) =>
+                setState(() => _sessionFilter = value ?? ''),
+          ),
+          const SizedBox(width: 12),
           TextButton.icon(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
               builder: (_) => const WindowsExamHistoryScreen(),
@@ -22611,7 +22644,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                           ),
                           _metricCard(
                             title: 'Results Entered',
-                            value: '${_results.length}',
+                            value: '${visibleResults.length}',
                             subtitle: 'Student result records',
                             icon: Icons.edit_note_rounded,
                             color: WindowsAppearance.foreground(const Color(0xFF38A8FF)),
