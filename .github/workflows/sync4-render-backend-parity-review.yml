@@ -34,6 +34,7 @@ jobs:
           node --check functions/backup-drive-file-proof.cjs
           node --check staging-school-cloud/server.cjs
       - name: Verify signed school and immutable Drive boundaries without live school writes
-        run: node --test functions/test/cloudflare-delivery-compatibility.test.js functions/test/delete-everywhere-firebase.test.js functions/test/managed-sync-monitor.test.js functions/test/backup-audit-evidence.test.cjs functions/test/backup-drive-file-proof.test.cjs functions/test/live-sync.test.js functions/test/live-person-lifecycle.test.js
+        working-directory: functions
+        run: node --test test/cloudflare-delivery-compatibility.test.js test/delete-everywhere-firebase.test.js test/managed-sync-monitor.test.js test/backup-audit-evidence.test.cjs test/backup-drive-file-proof.test.cjs test/live-sync.test.js test/live-person-lifecycle.test.js
       - name: Verify entire existing broker unit suite
         run: npm test --prefix functions
