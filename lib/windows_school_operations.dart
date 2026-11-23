@@ -733,6 +733,7 @@ class SchoolPromotionService {
     batch.set(
       db.collection('school_settings').doc('promotion_event_${examId}_${studentId}_$movement'),
       {
+        'schoolId': school,
         'studentId': studentId, 'personId': stableId,
         'examId': examId, 'academicSession': session,
         'fromClass': live['class'], 'toClass': nextClass,
@@ -744,6 +745,7 @@ class SchoolPromotionService {
     batch.set(
       db.collection('school_settings').doc('promotion_audit_${examId}_$studentId'),
       {
+        'schoolId': school,
         'studentId': studentId,
         'personId': stableId,
         'fromClass': live['class'],
