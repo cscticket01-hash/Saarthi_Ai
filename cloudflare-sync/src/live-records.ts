@@ -903,32 +903,6 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    sql.exec("UPDATE live_backup SET state=?,due=?,claim='',claim_until=0 WHERE seq=?",b.review===true?'review':'retry',b.review===true?Number.MAX_SAFE_INTEGER:Number(b.retryAt),job.seq);
   }return {accepted:true};
  });
- if(command==='auditJournalPage'){
-  const after=b.after??0,limit=b.limit??50;
-  demand(Number.isSafeInteger(after)&&Number(after)>=0&&
-    Number.isSafeInteger(limit)&&Number(limit)>=1&&Number(limit)<=100,
-    'Invalid immutable live-backup journal page',400);
-  // Paginate the entire persistent owner journal, NEVER the truncated
-  // backupHistory UI view. No record content or other-school data is exposed.
-  const rows=sql.exec<{seq:number;operation_id:string;collection:string;
-    state:string;accepted_at:number;verified_at:number;drive_revision:string|null}>(
-    'SELECT seq,operation_id,collection,state,accepted_at,verified_at,drive_revision FROM live_backup WHERE seq>? ORDER BY seq LIMIT ?',
-    Number(after),Number(limit)+1).toArray();
-  const page=rows.slice(0,Number(limit));
-  return {version:1,schoolId:school,scope:'liveImmutableOwnerJournal',
-    source:'live',lane:'live',coverage:'one-owner-journal-only',partial:true,
-    entries:page.map(row=>({
-      sequence:row.seq,id:row.operation_id,collection:row.collection,state:row.state,
-      acceptedAt:row.accepted_at>0?row.accepted_at:null,
-      driveOwnerReceiptPresent:row.state==='verified'&&
-        typeof row.drive_revision==='string'&&row.drive_revision.length>0&&
-        !/^(cf-|live-)/.test(row.drive_revision),
-      verifiedAt:row.state==='verified'&&row.verified_at>0&&
-        typeof row.drive_revision==='string'&&row.drive_revision.length>0&&
-        !/^(cf-|live-)/.test(row.drive_revision)?row.verified_at:null
-    })),
-    nextCursor:rows.length>Number(limit)?page[page.length-1].seq:null};
- }
  if(command==='backupHourly'){
   // Read only: count original, server-held live backup receipts. A Cloudflare
   // admission is never counted as a Google Drive verification.
