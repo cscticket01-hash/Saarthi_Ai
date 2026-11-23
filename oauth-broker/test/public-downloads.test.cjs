@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createHash}=require('node:crypto'),{mkdtemp,rm}=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),http=require('node:http');
 const {createInstallerHandler,selectInstaller}=require('../public-downloads.cjs');
-const make=(version='2.1.165')=>({tag_name:'windows-v'+version,assets:[{name:'Setup.exe',browser_download_url:`https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v${version}/Setup.exe`}]});
+const make=(version='2.1.165')=>({tag_name:'windows-v'+version,assets:[{name:`Vidya_Saarthi_Setup_${version}.exe`,browser_download_url:`https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v${version}/Vidya_Saarthi_Setup_${version}.exe`}]});
 test('rate-limited release lookup uses only verified fallback and still rejects corrupt bytes',async()=>{
  for(const status of [403,429]){
   const directory=await mkdtemp(path.join(os.tmpdir(),'saarthi-fallback-test-'));const urls=[];
@@ -12,6 +12,14 @@ test('rate-limited release lookup uses only verified fallback and still rejects 
  }
 });
 test('numeric selection rejects foreign URLs and drafts',()=>{const bad=make('9.0.0');bad.assets[0].browser_download_url='https://example.com/setup.exe';assert.equal(selectInstaller([make('2.1.99'),make(),{...make('3.0.0'),draft:true},bad],'windows').tag,'windows-v2.1.165');});
+test('Windows download ignores unrelated EXE and mismatched release version',()=>{
+ const unrelated=make('2.1.999');
+ unrelated.assets[0].name='other.exe';
+ unrelated.assets[0].browser_download_url='https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.999/other.exe';
+ const mismatched=make('2.1.998');
+ mismatched.assets[0].browser_download_url=mismatched.assets[0].browser_download_url.replace('windows-v2.1.998/','windows-v2.1.997/');
+ assert.equal(selectInstaller([unrelated,mismatched,make('2.1.269')],'windows').tag,'windows-v2.1.269');
+});
 async function serve(corrupt,fn){
  const bytes=Buffer.alloc(12000);bytes.write('MZ');const release=make();release.assets[0].size=bytes.length;release.assets[0].digest='sha256:'+createHash('sha256').update(bytes).digest('hex');
  const directory=await mkdtemp(path.join(os.tmpdir(),'saarthi-download-test-'));let reads=0;
