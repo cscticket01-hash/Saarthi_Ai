@@ -1047,6 +1047,7 @@ void _touchPortalSession({Duration? remaining}) {
 }
 
 void _clearPortalSession() {
+  WindowsAdminSecurity.clearPanelSession();
   try {
     final storage = html.window.localStorage;
     storage.remove(_portalSessionRoleKey);
