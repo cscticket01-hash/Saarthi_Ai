@@ -158,6 +158,53 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('Cloudflare ACK shows the last device success; late Drive status stays quiet', (tester) async {
+    final acceptedAt=DateTime.now().millisecondsSinceEpoch;
+    engine.details.value={
+      'pending':0,
+      'needsAttention':0,
+      'displayState':'idle',
+      'cloudflareOwnedPendingDrive':1,
+      'lastCloudAckMillis':acceptedAt,
+      'liveQueue':<Map<String,dynamic>>[],
+      'activity':[{
+        'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'stage':'cloudflareAccepted',
+        'operationId':'server-ack-test-1',
+        'collection':'students_directory',
+        'documentId':'student-cloud-1',
+        'at':acceptedAt,
+      }],
+    };
+    await tester.pumpWidget(MaterialApp(home:page()));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Idle')),findsOneWidget);
+    expect(find.text('School Server ACK verified — device upload complete'),
+      findsOneWidget);
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsOneWidget);
+    expect(find.textContaining('Google Drive pending'),findsWidgets);
+    await tester.pump(const Duration(seconds:6));
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsNothing);
+    engine.details.value={
+      ...engine.details.value,
+      'activity':[
+        ...(engine.details.value['activity'] as List),
+        {
+          'schoolId':'vs-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          'stage':'verified','operationId':'server-ack-test-1',
+          'at':DateTime.now().millisecondsSinceEpoch,
+        }
+      ],
+    };
+    await tester.pump();
+    expect(find.byKey(const ValueKey('recent-verified-sync')),findsNothing,
+      reason:'late Drive provider status must not reannounce a PC upload');
+    expect(find.descendant(of:find.byType(WindowsSyncFlow),
+      matching:find.text('Idle')),findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('old verified events are never shown again on opening the overview', (tester) async {
     engine.details.value = {
       ...engine.details.value,
@@ -291,7 +338,7 @@ void main() {
     expect(find.text('Backup Now'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
-  testWidgets('sync options show the pause switch and interval submenu', (tester) async {
+  testWidgets('three sync options; auto interval stays in Troubleshoot', (tester) async {
     await tester.pumpWidget(MaterialApp(home: page()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Sync options'));
@@ -300,6 +347,10 @@ void main() {
     expect(find.byType(Switch), findsOneWidget);
     expect(find.text('Troubleshoot'), findsOneWidget);
     expect(find.text('Recycle Bin'), findsOneWidget);
+    expect(find.text('Auto Sync (Interval)'), findsNothing,
+      reason:'approved top-level menu has only three entries');
+    await tester.tap(find.text('Troubleshoot'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Auto Sync (Interval)'));
     await tester.pumpAndSettle();
     for (final label in ['Off', 'Every 5 Minutes', 'Every 30 Minutes', 'Every 1 Hour']) {

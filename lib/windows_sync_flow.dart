@@ -27,11 +27,21 @@ class WindowsSyncFlow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = uploadProgress;
+    // A partially reported or corrupt transfer measurement must never
+    // produce NaN, division by zero or a made-up upload percentage.
+    final raw = uploadProgress;
+    final bytes = raw != null && raw.total > 0 && raw.offset >= 0 &&
+            raw.offset <= raw.total
+        ? raw
+        : null;
     final fraction = bytes == null ? null : bytes.offset / bytes.total;
     final percent = bytes == null ? null : bytes.offset * 100 ~/ bytes.total;
     final theme = Theme.of(context);
-    final running = phase != 'paused' && active.isNotEmpty;
+    // Drive is a server-owned background lane. Once this device is Idle, a
+    // late Google receipt (or even a lingering drive activity signal) must
+    // never restart the outgoing transfer ring.
+    final running = phase != 'paused' && phase != 'idle' &&
+        (active.contains('local') || active.contains('cloud'));
     final ringColor = phase == 'idle' || running
         ? theme.colorScheme.tertiary
         : theme.colorScheme.primary;

@@ -90,7 +90,16 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           unawaited(refreshDetails().then<void>((_) {
             if (FirebaseFirestore.instance.activeProfileId==profile &&
                 _activeSchoolSyncId==school &&
-                (details.value['pending'] as num? ?? 0)>0) {
+                windowsHasDueForegroundUpload(
+                  (details.value['liveQueue'] as List? ?? const [])
+                      .whereType<Map>()
+                      .map((row) => Map<String, dynamic>.from(row)),
+                  school: school,
+                  nowMillis: DateTime.now().millisecondsSinceEpoch,
+                )) {
+              // A newly unblocked original may upload. A historical Drive
+              // receipt, Cloudflare-owned ticket or remote status poll cannot
+              // resurrect the already completed PC transfer.
               scheduleSoon(localMutation:true,delay:Duration.zero);
             }
           },onError:(Object _,StackTrace __) {}));
@@ -336,11 +345,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
   bool get isCheckingCloud => _syncing && _checkingCloud;
   void _setCheckingCloud(bool value) {
     _checkingCloud = value;
-    details.value = {
-      ...details.value,
-      'checkingCloud': isCheckingCloud,
-      if (_syncing && !isPaused) 'displayState': 'syncing',
-    };
+    // Read-only Cloudflare/Google status checks must not overwrite the
+    // durable foreground queue projection (especially after edge ACK).
+    details.value = windowsCloudCheckSnapshot(
+      details.value, checkingCloud: isCheckingCloud,
+    );
   }
 
   bool _resetPaused = false;
@@ -1532,7 +1541,11 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       return;
     }
 
-    if (lastError == null) state.value = SchoolCloudState.syncPending;
+    if (lastError == null && (localMutation || _hasAutomaticWork)) {
+      state.value = SchoolCloudState.syncPending;
+    }
+    // Remote hints and Google receipt polls are background observations,
+    // never a fresh PC upload after its Cloudflare handoff.
     // Durable local mutations start immediately; provider admission still wins.
     if (localMutation) delay = Duration.zero;
     if (_nextRetry != null && _nextRetry!.isAfter(DateTime.now()))
@@ -2313,8 +2326,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _lastIntegrityAttempt = now;
       _schedule.armCheckpoint(_lastIntegrityAttempt);
     }
+    final foregroundUploadDue = _automaticMutationPending || _hasAutomaticWork;
     _automaticMutationPending = false;
-    state.value = SchoolCloudState.syncing;
+    // The sync lane may reconcile remote changes for an already Idle device.
+    // Only genuine unsent local work may make the device show Syncing.
+    state.value = foregroundUploadDue
+        ? SchoolCloudState.syncing
+        : SchoolCloudState.synced;
     final syncOrigin = _activeProfileId;
     final watch = Stopwatch()..start();
     final transferSequenceAtStart=verifiedTransferTiming.sequence;
@@ -2477,6 +2495,12 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           // incoming reconciliation and read-only Drive receipt polling are
           // independent, so they must not prolong the outgoing sync display.
           await refreshDetails();
+          if (details.value['displayState'] == 'idle' &&
+              _activeProfileId == syncOrigin && !isPaused) {
+            // Device responsibility ended at the durable Cloudflare ACK.
+            // Subsequent Google Drive delivery belongs to the server.
+            state.value = SchoolCloudState.synced;
+          }
           unawaited(_refreshDriveDeliveries());
         } catch (e) {
           if (!windowsSyncRecovery(e).independentRecords &&
@@ -2894,7 +2918,13 @@ class WindowsSyncEngine with WidgetsBindingObserver {
             (details.value['needsAttention'] as num).toInt(),
             (details.value['conflictCount'] as num? ?? 0).toInt(),
           );
-        if ((details.value['pending'] as num? ?? 0) > 0 || (details.value['incomingPending'] as num? ?? 0)>0) {
+        final deviceUploadPending = (details.value['pending'] as num? ?? 0) > 0;
+        final inboundReconciliationPending =
+            (details.value['incomingPending'] as num? ?? 0) > 0;
+        if (deviceUploadPending || inboundReconciliationPending) {
+          // Incoming cloud changes/Drive receipts are NOT outgoing PC writes.
+          // Preserve their reconciliation evidence without reactivating an
+          // already ACKed device's foreground Syncing/Pending state.
           // Legacy Drive requests are visible for review but are not serviced
           // by the managed protocol. Their presence must not spin this engine.
           // Queue presence is not a new mutation. Re-dispatching unchanged
@@ -2911,7 +2941,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           if(verifiedTransferTiming.sequence>transferSequenceAtStart &&
               (details.value['liveQueue'] as List).any((r)=>r is Map&&r['_queueCollection']=='_windows_firebase_outbox'&&
                 {'pending','retry',null}.contains(r['syncState'])&&(r['retryAtMillis'] as num? ?? 0)<=DateTime.now().millisecondsSinceEpoch))_rerunRequested=true;
-          state.value = SchoolCloudState.syncPending;
+          state.value = deviceUploadPending
+              ? SchoolCloudState.syncPending
+              : SchoolCloudState.synced;
           return;
         }
         await WindowsLocalFirestoreSyncControl.runWithoutSyncTracking(

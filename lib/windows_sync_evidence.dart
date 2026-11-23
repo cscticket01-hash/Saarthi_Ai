@@ -15,10 +15,20 @@ class WindowsSyncEvidence {
   }
 
   static ({int offset, int total})? measuredUpload(String school) {
-    final matches = uploads.value.values.where((upload) => upload.school == school);
-    if (matches.length != 1) return null;
-    final upload = matches.single;
-    return (offset: upload.offset, total: upload.total);
+    // Parallel uploads must have one REAL aggregate byte progress, rather
+    // than hiding the bar whenever a second independent upload starts.
+    // A missing/invalid measurement cannot become a fabricated percentage.
+    final matches = uploads.value.values
+        .where((upload) => upload.school == school).toList(growable: false);
+    if (matches.isEmpty || matches.any((upload) =>
+        upload.total <= 0 || upload.offset < 0 ||
+        upload.offset > upload.total)) return null;
+    var offset = 0, total = 0;
+    for (final upload in matches) {
+      offset += upload.offset;
+      total += upload.total;
+    }
+    return (offset: offset, total: total);
   }
 
   static bool dataAction(String action)=>action.startsWith('managed/file/')||

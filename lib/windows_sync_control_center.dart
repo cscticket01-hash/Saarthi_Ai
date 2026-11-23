@@ -882,6 +882,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'cloudRequest': 'Cloud request',
       'waitingForAck': 'Waiting for authoritative ACK',
       'verified': 'Verified sync',
+      'cloudflareAccepted': 'School Server ACK verified — device upload complete',
       'retry': 'Retry scheduled',
       'conflict': 'Conflict — administrator review',
       'duplicateReconciled': 'Duplicate reconciled — original cloud record retained',
@@ -913,8 +914,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(
-        stage == 'verified' ? Icons.check_circle_outline : Icons.sync,
-        color: stage == 'verified' ? Colors.greenAccent : _cyan,
+        {'verified','cloudflareAccepted'}.contains(stage)
+            ? Icons.check_circle_outline : Icons.sync,
+        color: {'verified','cloudflareAccepted'}.contains(stage)
+            ? Colors.greenAccent : _cyan,
       ),
       title: Text(labels[stage] ?? 'Unrecognized diagnostic event (no verified result)'),
       subtitle: Text(
@@ -1101,14 +1104,21 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final today = details['todayVerifiedReceipts'];
     final activeSchool = db.activeProfileIdentity['schoolSyncId'];
     final nowMillis = DateTime.now().millisecondsSinceEpoch;
-    final activityEvents = (details['activity'] as List? ?? const [])
-        .whereType<Map>().toList().reversed
-        .where((row) => activeSchool is String &&
-            activeSchool.isNotEmpty && row['schoolId'] == activeSchool &&
-            row['stage'] == 'verified' && row['at'] is int &&
-            (row['at'] as int) <= nowMillis &&
-            nowMillis - (row['at'] as int) < 5000)
-        .take(1).toList();
+    final lastDeviceAckAt = ack is num && ack > 0 ? ack.toInt() : 0;
+    final lastProviderVerifiedAt =
+        lastSync is num && lastSync > 0 ? lastSync.toInt() : 0;
+    final newestDeviceAckAt = lastDeviceAckAt > lastProviderVerifiedAt
+        ? lastDeviceAckAt : lastProviderVerifiedAt;
+    final latestAckEvent = windowsLatestForegroundAck(
+      (details['activity'] as List? ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row)),
+      school: activeSchool is String ? activeSchool : '',
+      nowMillis: nowMillis,
+    );
+    final activityEvents = latestAckEvent == null
+        ? <Map<String, dynamic>>[]
+        : <Map<String, dynamic>>[latestAckEvent];
     final retryCount = rows.where((row) => row['syncState'] == 'retry' ||
         row['state'] == 'retry' || row['retryAtMillis'] is int &&
         (row['retryAtMillis'] as int) > DateTime.now().millisecondsSinceEpoch).length;
@@ -1123,9 +1133,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             transferActive ? '$uploadCount pending uploads' : 'No active upload',
             Icons.upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Last Synced',
-            lastSync is num && transfers is num
-                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(lastSync.toInt())))} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
-                : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
+            newestDeviceAckAt > 0
+                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(newestDeviceAckAt)))} · ${lastProviderVerifiedAt >= lastDeviceAckAt && transfers is num ? '${(transfers / 1000000).toStringAsFixed(2)} sec' : 'School Server ACK'}'
+                : 'No verified ACK yet',
+            Icons.cloud_done_outlined, Colors.greenAccent),
           _syncSummary('System Health', cloudHealth,
             Icons.health_and_safety_outlined, Colors.tealAccent),
         ]),
@@ -1156,7 +1167,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
                         : '0 pending',
-                    lastMicros:details['lastVerifiedTransferMicros'] as int?,
+                    lastMicros:lastProviderVerifiedAt >= lastDeviceAckAt
+                        ? details['lastVerifiedTransferMicros'] as int?
+                        : null,
                     active:engine.isPaused || deviceIdle
                       ? const {}
                       : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
@@ -1312,6 +1325,32 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             ? null : () => _tool(_runSafeRepair),
         icon: const Icon(Icons.build_circle_outlined),
         label: const Text('Run Safe Repair'),
+      ),
+      // Keep the approved three-entry ⋮ menu compact. Schedule preferences
+      // live with other diagnostic/administrative controls, not next to Pause.
+      MenuAnchor(
+        menuChildren: [
+          for (final minutes in WindowsSyncEngine.autoSyncIntervals)
+            MenuItemButton(
+              leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked),
+              onPressed: () =>
+                  _run(() => engine.setAutoSyncInterval(minutes)),
+              child: Text(switch (minutes) {
+                0 => 'Off',
+                60 => 'Every 1 Hour',
+                _ => 'Every $minutes Minutes',
+              }),
+            ),
+        ],
+        builder: (menuContext, controller, child) => TextButton.icon(
+          onPressed: busy || db.activeProfileId != origin
+              ? null
+              : () => controller.isOpen ? controller.close() : controller.open(),
+          icon: const Icon(Icons.schedule),
+          label: const Text('Auto Sync (Interval)'),
+        ),
       ),
       OutlinedButton(
         onPressed: () => _jump(_backupKey),
@@ -1600,8 +1639,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     return const WindowsRecycleBin();
                   },
                 ));
-              } else if (choice >= 100) {
-                _run(() => engine.setAutoSyncInterval(choice - 100));
               } else if (choice == 0) {
                 _run(engine.resumeAutomaticSync);
               } else {
@@ -1622,27 +1659,6 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     onChanged: (paused) => Navigator.pop(menuContext, paused ? 1 : 0),
                   ),
                 ]),
-              ),
-              PopupMenuItem<int>(
-                enabled: false,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: SubmenuButton(
-                  leadingIcon: const Icon(Icons.sync),
-                  menuChildren: [
-                    for (final minutes in WindowsSyncEngine.autoSyncIntervals)
-                      MenuItemButton(
-                        leadingIcon: Icon(minutes == engine.autoSyncIntervalMinutes
-                            ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                        onPressed: () => Navigator.pop(menuContext, 100 + minutes),
-                        child: Text(switch (minutes) {
-                          0 => 'Off',
-                          60 => 'Every 1 Hour',
-                          _ => 'Every $minutes Minutes',
-                        }),
-                      ),
-                  ],
-                  child: const Text('Auto Sync (Interval)'),
-                ),
               ),
               const PopupMenuItem(value: -1, child: Row(children: [
                 Icon(Icons.build_outlined), SizedBox(width: 10), Text('Troubleshoot'),

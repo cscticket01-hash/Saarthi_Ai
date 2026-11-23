@@ -20,7 +20,11 @@ void main(){
     'queueCollection':'_windows_firebase_outbox','operationId':op,
     'failureCategory':category,'stage':stage,
   };
-  setUp((){ui.WindowsUiLanguage.change('en');WindowsSyncEvidence.active.value={};});
+  setUp(() {
+    ui.WindowsUiLanguage.change('en');
+    WindowsSyncEvidence.active.value={};
+    WindowsSyncEvidence.uploads.value={};
+  });
   tearDown(()=>ui.WindowsUiLanguage.change('en'));
   test('24 hour expiry removes display events but preserves persistent successful rules',(){
     final rules=WindowsLearnedSyncRules();
@@ -136,6 +140,131 @@ void main(){
     expect(windowsIncomingPendingBreakdown(schoolId:school,
       downloads:[],remoteChangeQueued:false)['total'],0);
     expect(windowsSyncFlowPendingText(0,{}),'0 pending');
+  });
+  test('only latest original device ACK is shown, not a later Drive proof', () {
+    const now=100000;
+    final cloud={
+      'schoolId':school,'stage':'cloudflareAccepted',
+      'operationId':'receipt-1','at':now-1500,
+    };
+    expect(windowsLatestForegroundAck([cloud],school:school,nowMillis:now),cloud);
+    final provider={
+      'schoolId':school,'stage':'verified',
+      'operationId':'receipt-1','at':now-100,
+    };
+    expect(windowsLatestForegroundAck([cloud,provider],
+      school:school,nowMillis:now),cloud,
+      reason:'old provider verification may never trigger a second PC success');
+    expect(windowsLatestForegroundAck([cloud,provider],
+      school:school,nowMillis:now+6000),isNull);
+    expect(windowsLatestForegroundAck([{
+      ...cloud,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }],school:school,nowMillis:now),isNull);
+    final nextCloud={...cloud,'operationId':'receipt-2','at':now-300};
+    expect(windowsLatestForegroundAck([cloud,provider,nextCloud],
+      school:school,nowMillis:now),nextCloud,
+      reason:'genuinely new same-school original replaces prior success');
+    final legacy={'schoolId':school,'stage':'verified',
+      'operationId':'legacy-1','at':now-250};
+    expect(windowsLatestForegroundAck([cloud,legacy],
+      school:school,nowMillis:now),legacy);
+  });
+  test('Drive status and read-only cloud checks cannot wake completed device upload', () {
+    final idle = <String,dynamic>{
+      'displayState':'idle','pending':0,'cloudflareOwnedPendingDrive':2,
+    };
+    final checking = windowsCloudCheckSnapshot(idle, checkingCloud:true);
+    expect(checking['displayState'],'idle');
+    expect(checking['pending'],0);
+    expect(checking['checkingCloud'],true);
+    expect(windowsCloudCheckSnapshot(checking,checkingCloud:false)['displayState'],'idle');
+
+    const now=10000;
+    final cloudOwned=<String,dynamic>{
+      'schoolId':school, 'collection':'students_directory',
+      '_queueCollection':'_windows_firebase_outbox','syncState':'cloudAccepted',
+    };
+    final legacy=<String,dynamic>{
+      'schoolId':school,'_queueCollection':'_windows_google_outbox',
+      'syncState':'pending',
+    };
+    expect(windowsHasDueForegroundUpload([cloudOwned,legacy],
+      school:school,nowMillis:now),false,
+      reason:'Google Drive completion is not a new PC mutation');
+    final retry=<String,dynamic>{
+      'schoolId':school,'_queueCollection':'_windows_firebase_outbox',
+      'syncState':'retry','retryAtMillis':now+2000,
+    };
+    expect(windowsHasDueForegroundUpload([retry],school:school,nowMillis:now),false);
+    expect(windowsHasDueForegroundUpload([
+      {...retry,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+    ],school:school,nowMillis:now),false);
+    final newEdit={...retry,'syncState':'pending','retryAtMillis':0};
+    expect(windowsHasDueForegroundUpload([cloudOwned,newEdit],
+      school:school,nowMillis:now),true,
+      reason:'a separately saved new operation may upload after earlier Drive proof');
+    expect(windowsHasDueForegroundUpload([
+      {...newEdit,'_queueCollection':'_windows_document_outbox'},
+    ],school:school,nowMillis:now),true);
+    expect(windowsHasDueForegroundUpload([
+      {...newEdit,'syncState':'conflict'},
+    ],school:school,nowMillis:now),false);
+  });
+  test('parallel progress aggregates only measured own-school upload bytes', () {
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull);
+    WindowsSyncEvidence.reportUpload('fileA',school,200,1000);
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:200,total:1000));
+    WindowsSyncEvidence.reportUpload('fileB',school,450,900);
+    WindowsSyncEvidence.reportUpload('foreign','vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',8,8);
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:650,total:1900));
+    WindowsSyncEvidence.endUpload('fileA');
+    expect(WindowsSyncEvidence.measuredUpload(school),(offset:450,total:900));
+    WindowsSyncEvidence.reportUpload('fileB',school,901,900);
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull,
+      reason:'invalid measurement must never invent percent');
+    WindowsSyncEvidence.endUpload('fileB');
+    expect(WindowsSyncEvidence.measuredUpload(school),isNull);
+  });
+  testWidgets('background Drive-only activity cannot restart the Idle ring', (tester) async {
+    Future<void> pump(String phase, Set<String> active) async {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: WindowsSyncFlow(
+          phase:phase,label:phase=='idle'?'Idle':'Syncing',
+          local:'Saved',cloud:'Last ACK verified',
+          drive:'Google Drive pending',pending:0,
+          active:active,uploadProgress:(offset:200,total:1000),
+        ),
+      )));
+      await tester.pump();
+    }
+    await pump('idle',{'drive'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('idle',{'cloud'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('syncing',{'drive'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('syncing',{'cloud'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0.2);
+  });
+  testWidgets('zero-length or invalid progress never fabricates a percentage', (tester) async {
+    for (final sample in [
+      (offset:0,total:0), (offset:2,total:1), (offset:-1,total:10),
+    ]) {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: WindowsSyncFlow(
+        phase:'syncing',label:'Syncing',local:'Saved',cloud:'Uploading',
+        drive:'Google Drive pending',pending:1,active:{'cloud'},
+        uploadProgress:sample,
+      ))));
+      await tester.pump();
+      expect(tester.widget<CircularProgressIndicator>(
+        find.byType(CircularProgressIndicator)).value,isNull,
+        reason:'unknown/untrusted measurement must use indeterminate progress');
+      expect(find.byType(LinearProgressIndicator),findsNothing);
+    }
   });
   test('activity is school scoped and subscriptions are not transfer animations',(){
     expect(WindowsSyncEvidence.dataAction('managed/events'),false);
