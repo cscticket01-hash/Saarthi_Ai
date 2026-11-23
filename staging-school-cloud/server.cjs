@@ -8,6 +8,18 @@ function isolatedTestSchool(env) {
   if(env.SAARTHI_ISOLATED_TEST_MODE!=='true'||!/^vs-[a-f0-9]{32}$/.test(env.SAARTHI_ISOLATED_TEST_SCHOOL_ID||''))throw Error('Isolated TEST school configuration required');
   return env.SAARTHI_ISOLATED_TEST_SCHOOL_ID;
 }
+// This optional speed canary is school-scoped. No existing school can enter
+// three-way provider delivery through a malformed or broad environment flag.
+function edgeRecordParallelismForSchool(env,school){
+ const level=env.SAARTHI_EDGE_RECORD_PARALLELISM;
+ if(level==='2')return 2; // Preserve existing bounded rollout semantics.
+ if(level!=='3')return 1;
+ const raw=env.SAARTHI_EDGE_RECORD_PARALLEL_SCHOOLS;
+ if(typeof raw!=='string'||!raw.trim())return 1;
+ const allowed=raw.split(',').map(value=>value.trim());
+ return allowed.every(value=>/^vs-[a-f0-9]{32}$/.test(value))&&
+   allowed.includes(school)?3:1;
+}
 function createHandler({handle,health,allowedOrigins=[],testSchoolId=null,runtimeCommit=null,adminCredentialFingerprint=null,wrappingPublicKey=null,wrappingKeyFingerprint=null,logger=entry=>console.info(JSON.stringify(entry))}) {
   if(testSchoolId!==null&&!/^vs-[a-f0-9]{32}$/.test(testSchoolId))throw Error('Invalid isolated TEST school');
   let windowStart=Date.now(), requests=0,anonymousRequests=0;
@@ -156,7 +168,7 @@ function fromEnvironment(env) {
   const providerPressureJournal=env.SAARTHI_SHARED_QUOTA_ENABLED==='true'
     ?require('../functions/provider-pressure-journal').createProviderPressureJournal({db,projectId:PROJECT}):null;
   const cloudflareSync=require('../functions/cloudflare-sync').createCloudflareSync({providerPressureJournal,url:env.SAARTHI_CF_SYNC_URL,key:env.SAARTHI_CF_SYNC_KEY,schools:(env.SAARTHI_CF_SYNC_SCHOOLS||'').split(',').filter(Boolean)});
-  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:env.SAARTHI_EDGE_RECORD_PARALLELISM==='2'?2:1,repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
+  const managed=require('../functions/managed-schools').createManagedSchools({...managedFeatures,firebaseCredentialFingerprint:adminCredentialFingerprint,liveSyncSchools:require('../functions/live-sync-rollout').liveSyncSchools(env),atomicBundleTestSchools:testSchoolId&&env.SAARTHI_ATOMIC_BUNDLE_TEST_ENABLED==='true'?[testSchoolId]:[],edgeRecordParallelism:school=>edgeRecordParallelismForSchool(env,school),repairKnowledgeOptions:{enabled:env.SAARTHI_REPAIR_KNOWLEDGE_ENABLED==='true',privateKey:env.SAARTHI_REPAIR_KNOWLEDGE_PRIVATE_KEY,keyId:env.SAARTHI_REPAIR_KNOWLEDGE_KEY_ID||'repair-v1',reportSalt:env.SAARTHI_REPAIR_KNOWLEDGE_REPORT_SALT},cloudflareAllDataEnabled:env.SAARTHI_CF_ALL_DATA_ENABLED==='true',cloudflareAtomicSmallFiles:env.SAARTHI_CF_ATOMIC_SMALL_FILES==='true'&&env.SAARTHI_CF_ALL_DATA_ENABLED==='true',providerPressureJournal,googleQuotaScopes:JSON.parse(env.SAARTHI_GOOGLE_QUOTA_SCOPES||'{}'),cloudflareSync,changeFeedIdleGraceMillis:30000,auth,db,messaging:getMessaging(app),projectId:PROJECT,encryptionKey:env.SAARTHI_MANAGED_STORAGE_KEY,
     ...(testSchoolId?{attendanceCollection:'attendance_test_outbox',attendanceStore:require('../functions/attendance-queue').firestoreAttendanceStore(db,{schoolId:testSchoolId,collectionName:'attendance_test_outbox'})}:{}),
     monitor:require('../functions/managed-monitor').createMonitor({credential:app.options.credential,projectId:PROJECT}),
     cloudflareMonitor:require('../functions/cloudflare-monitor').createCloudflareMonitor({
@@ -186,4 +198,4 @@ function fromEnvironment(env) {
     try{await auth.getUser('__saarthi_staging_health__');}catch(e){if(e.code!=='auth/user-not-found')throw e;}
   }});
 }
-module.exports={createHandler,fromEnvironment,isolatedTestSchool,managedFeatureOptions};
+module.exports={createHandler,fromEnvironment,isolatedTestSchool,managedFeatureOptions,edgeRecordParallelismForSchool};

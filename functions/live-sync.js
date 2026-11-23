@@ -23,7 +23,27 @@ function createLiveSync({edge,schools=[],now=Date.now}){
  async function read(school,collection,id,readDrive){return (await resolve(school,collection,id,readDrive)).result;}
  async function commit(school,body,readDrive){
   const {cachedBaseline,...wire}=body;
-  const {baseline}=await resolve(school,body.collection,body.id,readDrive,cachedBaseline);
+  const {result,baseline}=await resolve(school,body.collection,body.id,readDrive,cachedBaseline);
+  if(body.collection==='teachers_directory'&&result.teacherPhoneBackfillPending===true){
+   const changesPhone=body.operation==='write'?body.data?.phone:
+    body.operation==='patch'?body.data?.set?.phone:null;
+   if(changesPhone!=null&&String(changesPhone).replace(/\D/g,'')!==String(result.record?.phone??'').replace(/\D/g,'')){
+    const batch=await command(school,{command:'teacherPhoneBackfillList',collection:'teachers_directory'});
+    if(batch?.schoolId!==school||batch.liveProtocol!==1||!Array.isArray(batch.ids)||batch.ids.length>12)
+     refuse(503,'TEACHER_PHONE_BACKFILL_UNVERIFIED');
+    for(let offset=0;offset<batch.ids.length;offset+=4){
+     await Promise.all(batch.ids.slice(offset,offset+4).map(async id=>{
+      const peer=await resolve(school,'teachers_directory',id,readDrive);
+      const record=peer.baseline??peer.result.record;
+      if(!record||typeof peer.result.recordRevision!=='string')refuse(503,'TEACHER_PHONE_BACKFILL_UNVERIFIED');
+      const saved=await command(school,{command:'teacherPhoneBackfillApply',
+       collection:'teachers_directory',id,expectedRevision:peer.result.recordRevision,record});
+      if(saved?.schoolId!==school||saved.id!==id||saved.indexed!==true)
+       refuse(503,'TEACHER_PHONE_BACKFILL_UNVERIFIED');
+     }));
+    }
+   }
+  }
   return command(school,{...wire,command:'commit',...(baseline?{baseline}:{})});
  }
  async function replay(school,body,readDrive){

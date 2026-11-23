@@ -66,16 +66,22 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
     retiring=!!parent&&!parent._syncDeleted&&body.data.active===false;
    }else{
     if(!Array.isArray(body.data.staff)||body.data.staff.length>1000)fail(400,'STAFF_DIRECTORY_INVALID');
-    const ids=new Set(),employees=new Set(),teachers=await read(school,'teachers_directory');
+    const ids=new Set(),employees=new Set(),generations=new Set(),teachers=await read(school,'teachers_directory');
     const teacherIds=new Set(Object.entries(teachers).map(([id,r])=>String(r.teacherId||r._syncRetiredTeacherId||id).trim().toLowerCase()));
     for(const row of body.data.staff){
      const employee=String(row?.employeeId||'').trim().toLowerCase();
      if(!row||!validId(row.id)||ids.has(row.id)||employee&&(employee.length>60||employees.has(employee)||teacherIds.has(employee)))fail(409,'STAFF_EMPLOYEE_ID_CONFLICT');
+     const generation=row.mobileStableId;
+     if(generation!==undefined){
+      if(typeof generation!=='string'||!/^p-[a-f0-9]{32,64}$/.test(generation)||generations.has(generation))fail(409,'STAFF_GENERATION_CONFLICT');
+      generations.add(generation);
+     }
      ids.add(row.id);if(employee)employees.add(employee);
     }
     for(const previous of parent?.staff||[]){
      const current=body.data.staff.find(row=>row.id===previous.id);
      if(!current||String(previous.employeeId||'').trim()&&current.employeeId!==previous.employeeId)fail(409,'STAFF_IDENTITY_RETIREMENT_REQUIRES_REVIEW');
+     if(previous.mobileStableId!=null&&current.mobileStableId!==previous.mobileStableId)fail(409,'STAFF_GENERATION_CONFLICT');
     }
    }
   }else{
@@ -184,6 +190,6 @@ function createLivePersonLifecycle({db,rpc,now=Date.now,maxChildren=1000}){
   const parent=await read(school,'students_directory',parentId);
   if(!parent||parent._syncDeleted||parent.mobileStableId!==generation)fail(409,'PERSON_GENERATION_RETIRED');
  }
- return {handled,validate,execute,assertDependency};
+ return {handled,validate,execute,assertDependency,read};
 }
 module.exports={createLivePersonLifecycle,studentOwns,STUDENT_CHILDREN};

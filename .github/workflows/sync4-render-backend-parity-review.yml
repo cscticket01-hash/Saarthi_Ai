@@ -1,0 +1,40 @@
+name: Sync4 Render backend source parity canary (no deploy)
+on:
+  pull_request:
+    paths:
+      - 'functions/cloudflare-delivery.js'
+      - 'functions/delete-everywhere.js'
+      - 'functions/live-sync.js'
+      - 'functions/live-person-lifecycle.js'
+      - 'functions/managed-schools.js'
+      - 'functions/backup-*.cjs'
+      - 'functions/test/cloudflare-delivery-compatibility.test.js'
+      - 'functions/test/delete-everywhere-firebase.test.js'
+      - 'functions/test/managed-sync-monitor.test.js'
+      - 'functions/test/backup-*.test.cjs'
+      - 'staging-school-cloud/server.cjs'
+      - '.github/workflows/sync4-render-backend-parity-review.yml'
+permissions:
+  contents: read
+jobs:
+  canary-no-deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --prefix functions --ignore-scripts
+      - name: Compile reconciled broker, source and proof-only adapters
+        run: |
+          node --check functions/managed-schools.js
+          node --check functions/cloudflare-delivery.js
+          node --check functions/delete-everywhere.js
+          node --check functions/backup-audit-evidence.cjs
+          node --check functions/backup-drive-file-proof.cjs
+          node --check staging-school-cloud/server.cjs
+      - name: Verify signed school and immutable Drive boundaries without live school writes
+        working-directory: functions
+        run: node --test test/cloudflare-delivery-compatibility.test.js test/delete-everywhere-firebase.test.js test/managed-sync-monitor.test.js test/backup-audit-evidence.test.cjs test/backup-drive-file-proof.test.cjs test/live-sync.test.js test/live-person-lifecycle.test.js
+      - name: Verify entire existing broker unit suite
+        run: npm test --prefix functions
