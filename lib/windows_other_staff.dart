@@ -1,4 +1,5 @@
 import 'windows_person_fields.dart';
+import 'windows_admin_security.dart';
 import 'windows_school_identity.dart';
 import 'windows_appearance.dart';
 import 'india_address_fields.dart';
@@ -414,6 +415,16 @@ class _SchoolStaffDirectoryState extends State<SchoolStaffDirectory> {
                     : () async {
                         setD(() => saving = true);
                         try {
+                          if(existing != null && existing['active'] != false && !active &&
+                              await WindowsAdminSecurity.isManaged) {
+                            final approved=await requestWindowsAdminApproval(ctx,
+                              scope:'protected-settings',
+                              target:'school_settings/staff_payroll_directory/${existing['id']}');
+                            if(approved==null) {
+                              if(ctx.mounted)setD(() => saving=false);
+                              return;
+                            }
+                          }
                           await OtherStaffDirectory.save(profile, {
                             ...?existing,
                             'name': name.text,
