@@ -291,7 +291,7 @@ void main() {
     expect(find.text('Backup Now'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
-  testWidgets('sync options show the pause switch and interval submenu', (tester) async {
+  testWidgets('three sync options; auto interval stays in Troubleshoot', (tester) async {
     await tester.pumpWidget(MaterialApp(home: page()));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Sync options'));
@@ -300,6 +300,10 @@ void main() {
     expect(find.byType(Switch), findsOneWidget);
     expect(find.text('Troubleshoot'), findsOneWidget);
     expect(find.text('Recycle Bin'), findsOneWidget);
+    expect(find.text('Auto Sync (Interval)'), findsNothing,
+      reason:'approved top-level menu has only three entries');
+    await tester.tap(find.text('Troubleshoot'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Auto Sync (Interval)'));
     await tester.pumpAndSettle();
     for (final label in ['Off', 'Every 5 Minutes', 'Every 30 Minutes', 'Every 1 Hour']) {
