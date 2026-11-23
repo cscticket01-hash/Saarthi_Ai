@@ -18770,6 +18770,16 @@ class _WindowsSectionPasswordLocksPanelState
               });
 
               try {
+                if(await WindowsAdminSecurity.isManaged) {
+                  final approved=await requestWindowsAdminApproval(
+                    dialogContext,
+                    scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
+                  if(approved==null) {
+                    if(dialogContext.mounted)setDialogState(() => saving=false);
+                    return;
+                  }
+                }
                 if (isChange) {
                   await WindowsSectionLocks.changePassword(
                     sectionKey: definition.key,
@@ -18954,6 +18964,14 @@ class _WindowsSectionPasswordLocksPanelState
 
     setState(() => _busyKey = definition.key);
     try {
+      if(await WindowsAdminSecurity.isManaged) {
+        final approved=await requestWindowsAdminApproval(context,
+          scope:'protected-settings',target:'section-lock/${definition.key}');
+        if(approved==null) {
+          if(mounted)setState(() => _busyKey=null);
+          return;
+        }
+      }
       await WindowsSectionLocks.setEnabled(
         sectionKey: definition.key,
         value: value,
