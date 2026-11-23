@@ -595,13 +595,18 @@ class SchoolPromotionService {
     }
     final session = definition['academicSession']?.toString() ?? '';
     final resultSession = verifiedResult['academicSession']?.toString() ?? '';
-    if (session.isNotEmpty && resultSession.isNotEmpty &&
-        session != resultSession) {
+    if (session != resultSession) {
       throw StateError('Result and Final Exam academic sessions differ.');
     }
     final subjects = (definition['subjects'] as List? ?? [])
         .map((s) => s.toString()).toList();
-    if (subjects.isNotEmpty) {
+    if (subjects.isEmpty ||
+        subjects.any((subject) => subject.trim().isEmpty) ||
+        subjects.map((s) => s.toLowerCase().trim()).toSet().length !=
+            subjects.length) {
+      throw StateError('Valid Final Exam subjects are required before promotion.');
+    }
+    {
       final marks = verifiedResult['marks'];
       final maximum = definition['fullMarks'] ?? verifiedResult['fullMarks'];
       final pass = definition['passMarks'] ?? verifiedResult['passMarks'];
@@ -649,6 +654,9 @@ class SchoolPromotionService {
     if (verifiedResult['personId'] != null &&
         verifiedResult['personId'] != stableId) {
       throw StateError('Result belongs to a previous student identity.');
+    }
+    if (live['classMovement'] == 'GRADUATED') {
+      throw StateError('A graduated student cannot be promoted again.');
     }
     if (live['promotionExamId'] == examId) {
       if (live['classMovement'] == 'RETAINED' &&
