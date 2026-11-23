@@ -239,9 +239,12 @@ bool canStageStandaloneSchoolMessagePastUnrelatedOwners(
   final data = candidate['data'] as Map;
   final forbidden = RegExp(
       r'(student|teacher|person|parent|guardian|fee|payment|ledger|file|photo|'
-      r'document|exam|attendance|classid|ownerid|roll)',
+      r'document|exam|attendance|class|owner|roll|audience|target|recipient|'
+      r'group|member)',
       caseSensitive: false);
-  if (data.keys.any((key) => forbidden.hasMatch(key.toString())) ||
+  if (data['schoolId'] != school ||
+      data.keys.any((key) => forbidden.hasMatch(key.toString())) ||
+      data.values.any((value) => value is Map || value is List) ||
       parallelContainsInlineMedia(data)) return false;
 
   for (final row in outbox) {
