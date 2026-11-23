@@ -4,6 +4,8 @@ on:
     paths:
       - 'lib/release_download.dart'
       - 'test/release_download_test.dart'
+      - 'firebase.json'
+      - 'scripts/check_download_redirects.cjs'
       - '.github/workflows/web-windows-release-link-review.yml'
   workflow_dispatch:
 permissions:
@@ -24,3 +26,5 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/release_download.dart
       - name: Test Windows setup link provenance and highest numeric version
         run: flutter test test/release_download_test.dart
+      - name: Validate Windows and Android immutable Firebase download redirects
+        run: node scripts/check_download_redirects.cjs
