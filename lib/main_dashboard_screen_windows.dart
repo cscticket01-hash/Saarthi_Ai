@@ -14159,6 +14159,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     String docId,
     Map<String, dynamic> data,
   ) async {
+    String? adminApprovalToken;
     final passwordController =
         TextEditingController();
 
@@ -14371,7 +14372,7 @@ errorBuilder: (_, __, ___) => _teacherFallback(
                             );
 
                             if(await WindowsAdminSecurity.isManaged) {
-                              await WindowsAdminSecurity.approve(
+                              adminApprovalToken=await WindowsAdminSecurity.approve(
                                 password:password, scope:'person-delete',
                                 target:'teachers_directory/$docId');
                             } else {
@@ -14433,6 +14434,11 @@ errorBuilder: (_, __, ___) => _teacherFallback(
     if (confirmed != true) return;
 
     try {
+      if(await WindowsAdminSecurity.isManaged) {
+        await WindowsAdminSecurity.consumeApproval(
+          token:adminApprovalToken ?? '',scope:'person-delete',
+          target:'teachers_directory/$docId');
+      }
       final result =
           await _callTeacherApi({
         'action': 'delete_teacher',
@@ -17087,10 +17093,12 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
       actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
     if(yes!=true||!mounted)return;
     if(force && await WindowsAdminSecurity.isManaged) {
+      final target='$docId/${result['examId'] ?? ''}';
       final approved=await requestWindowsAdminApproval(context,
-        scope:'force-promotion',
-        target:'$docId/${result['examId'] ?? ''}');
+        scope:'force-promotion',target:target);
       if(approved==null || !mounted)return;
+      await WindowsAdminSecurity.consumeApproval(
+        token:approved,scope:'force-promotion',target:target);
     }
     setState(()=>_movingStudentIds.add(docId));
     try {
@@ -17106,6 +17114,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     bool obscureText = true;
     bool isLoading = false;
     String? errorMessage;
+    String? adminApprovalToken;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -17178,7 +17187,7 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
 
                           try {
                             if(await WindowsAdminSecurity.isManaged) {
-                              await WindowsAdminSecurity.approve(
+                              adminApprovalToken=await WindowsAdminSecurity.approve(
                                 password:pass, scope:'person-delete',
                                 target:'students_directory/$docId');
                               if(ctx.mounted) Navigator.pop(ctx,true);
@@ -17210,6 +17219,11 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     if (confirm != true) return;
 
     try {
+      if(await WindowsAdminSecurity.isManaged) {
+        await WindowsAdminSecurity.consumeApproval(
+          token:adminApprovalToken ?? '',scope:'person-delete',
+          target:'students_directory/$docId');
+      }
       final studentsRef =
           FirebaseFirestore.instance.collection('students_directory');
       final studentDoc = await studentsRef.doc(docId).get();
@@ -18803,6 +18817,9 @@ class _WindowsSectionPasswordLocksPanelState
                     if(dialogContext.mounted)setDialogState(() => saving=false);
                     return;
                   }
+                  await WindowsAdminSecurity.consumeApproval(
+                    token:approved,scope:'protected-settings',
+                    target:'section-lock/${definition.key}');
                 }
                 if (isChange) {
                   await WindowsSectionLocks.changePassword(
@@ -18995,6 +19012,9 @@ class _WindowsSectionPasswordLocksPanelState
           if(mounted)setState(() => _busyKey=null);
           return;
         }
+        await WindowsAdminSecurity.consumeApproval(
+          token:approved,scope:'protected-settings',
+          target:'section-lock/${definition.key}');
       }
       await WindowsSectionLocks.setEnabled(
         sectionKey: definition.key,
