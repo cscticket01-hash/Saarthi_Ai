@@ -656,6 +656,14 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
     }else data={...b.data as Json};
     demand(!Object.keys(b.data as Json).some(k=>k.startsWith('_sync')),'Client cannot set sync metadata');
    }
+   if(col==='school_settings'&&typeof b.id==='string'&&b.id.startsWith('promotion_event_')){
+    demand(b.operation==='write'&&!current&&
+      typeof data.examId==='string'&&typeof data.studentId==='string'&&
+      ['PROMOTED','RETAINED','GRADUATED','FORCE_PROMOTED'].includes(String(data.movement))&&
+      b.id==='promotion_event_'+data.examId+'_'+data.studentId+'_'+data.movement&&
+      typeof data.at==='number'&&Number.isFinite(data.at),
+      'Promotion audit events are immutable and school-bound',409);
+   }
    const readOwner=(collection:string,id:string)=>findOwner(storage,collection,id);
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
    // The signed broker has verified the actual Final Exam/marks (or signed
