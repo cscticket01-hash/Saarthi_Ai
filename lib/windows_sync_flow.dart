@@ -31,7 +31,11 @@ class WindowsSyncFlow extends StatelessWidget {
     final fraction = bytes == null ? null : bytes.offset / bytes.total;
     final percent = bytes == null ? null : bytes.offset * 100 ~/ bytes.total;
     final theme = Theme.of(context);
-    final running = phase != 'paused' && active.isNotEmpty;
+    // Drive is a server-owned background lane. Once this device is Idle, a
+    // late Google receipt (or even a lingering drive activity signal) must
+    // never restart the outgoing transfer ring.
+    final running = phase != 'paused' && phase != 'idle' &&
+        (active.contains('local') || active.contains('cloud'));
     final ringColor = phase == 'idle' || running
         ? theme.colorScheme.tertiary
         : theme.colorScheme.primary;
