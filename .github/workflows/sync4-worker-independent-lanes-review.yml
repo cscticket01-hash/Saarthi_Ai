@@ -1,0 +1,23 @@
+name: Sync4 independent three-way Worker Drive lanes
+on:
+  pull_request:
+    paths:
+      - 'cloudflare-sync/src/worker.ts'
+      - 'cloudflare-sync/test/parallel-delivery-lanes.test.mjs'
+      - '.github/workflows/sync4-worker-independent-lanes-review.yml'
+permissions:
+  contents: read
+jobs:
+  worker-lane-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix cloudflare-sync --ignore-scripts
+      - run: cp cloudflare-sync/.dev.vars.example cloudflare-sync/.dev.vars
+      - run: npm run types --prefix cloudflare-sync
+      - run: npm run build --prefix cloudflare-sync
+      - name: Prove both independent and late notice wakeups during slow Drive
+        run: node --test cloudflare-sync/test/parallel-delivery-lanes.test.mjs
