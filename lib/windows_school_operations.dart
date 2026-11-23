@@ -638,6 +638,13 @@ class SchoolPromotionService {
         live['status']?.toString().toLowerCase() == 'inactive') {
       throw StateError('Inactive/deleted student cannot be promoted.');
     }
+    if (live['schoolId'] != null && live['schoolId'] != school) {
+      throw StateError('This student belongs to another school.');
+    }
+    if (definition['schoolId'] != null && definition['schoolId'] != school ||
+        verifiedResult['schoolId'] != null && verifiedResult['schoolId'] != school) {
+      throw StateError('Foreign final exam or result.');
+    }
     final stableId = live['mobileStableId'] ?? studentId;
     if (verifiedResult['personId'] != null &&
         verifiedResult['personId'] != stableId) {
@@ -661,6 +668,10 @@ class SchoolPromotionService {
     }
     final definedClass = classNo(definition['studentClass']);
     final resultClass = classNo(verifiedResult['studentClass']);
+    if (live['studentClass'] != null &&
+        classNo(live['studentClass']) != currentClass) {
+      throw StateError('Conflicting student class fields; reconcile before promotion.');
+    }
     if ((definedClass != 0 && definedClass != currentClass) ||
         (resultClass != 0 && resultClass != currentClass)) {
       throw StateError('Student class changed since the Final Exam result.');
@@ -679,6 +690,8 @@ class SchoolPromotionService {
           row.id != studentId &&
           row.data()['class'] == nextClass &&
           row.data()['rollNo']?.toString() == roll &&
+          (row.data()['section']?.toString().trim() ?? '') ==
+              (live['section']?.toString().trim() ?? '') &&
           row.data()['deleted'] != true &&
           row.data()['_syncDeleted'] != true)) {
         throw StateError('Roll $roll in $nextClass is occupied. Resolve before promotion.');
@@ -692,11 +705,13 @@ class SchoolPromotionService {
       'lastExamName': definition['examName'] ?? 'Final exam',
       'lastExamTimestamp': now,
       'classChangedBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
-      'promotionPending': false,
+      'promotionPending': true,
+      'promotionSyncState': 'Pending',
       'promotionError': '',
       'classChangedAt': FieldValue.serverTimestamp(),
       'classMovement': movement,
       'promotionTransactionId': 'promotion:$examId:$studentId',
+      if (force) 'promotionOverrideReason': reason.trim(),
     };
     final batch = db.batch();
     // Local serialized compare-and-swap blocks stale/duplicate approvals.
@@ -705,6 +720,7 @@ class SchoolPromotionService {
       ...live, ...shared,
       if (nextClass != live['class']) 'previousClass': live['class'],
       'class': nextClass,
+      if (live.containsKey('studentClass')) 'studentClass': nextClass,
     });
     batch.set(
       db.collection('school_settings').doc('promotion_event_${examId}_${studentId}_$movement'),
@@ -733,6 +749,7 @@ class SchoolPromotionService {
         'manualAdminOverride': force,
         'actor': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
         'syncState': 'Pending',
+        'transactionId': 'promotion:$examId:$studentId',
       },
     );
     own();
