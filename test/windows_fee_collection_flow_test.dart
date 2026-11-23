@@ -456,7 +456,7 @@ void main() {
         .data()?['personId'], 'p-original');
   });
 
-  testWidgets('record-only receipt preview shows saved totals and print action',
+  testWidgets('record-only receipt preview offers print and download without PDF at preview',
       (tester) async {
     final p = payment('preview-payment')..remove('receiptDocumentId');
     p['feeItems'] = {'Tuition': 200.0};
@@ -472,9 +472,28 @@ void main() {
     expect(find.text('Paid to date'), findsOneWidget);
     expect(find.text('Balance due'), findsOneWidget);
     expect(find.text('₹100.00'), findsWidgets);
-    expect(find.text('Print Receipt'), findsNothing,
-        reason: 'Record-only preview must generate PDF only on Download');
+    expect(find.text('Print Receipt'), findsOneWidget,
+        reason: 'PDF generation is allowed only after Print is pressed');
     expect(find.text('Download PDF'), findsOneWidget);
+  });
+
+  testWidgets('original-PDF fee receipt also opens record preview first',
+      (tester) async {
+    final p = payment('original-preview');
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) =>
+      Scaffold(body: TextButton(
+        onPressed: () => WindowsFeeReceiptPreview.open(context, p),
+        child: const Text('Preview original receipt'),
+      )),
+    )));
+    await tester.tap(find.text('Preview original receipt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Received now'), findsOneWidget);
+    expect(find.text('Print Receipt'), findsOneWidget);
+    expect(find.text('Download PDF'), findsOneWidget);
+    // The original PDF has not been fetched, regenerated or queued by preview.
+    expect((await db.collection('_windows_document_outbox').get()).docs, isEmpty);
+    expect((await db.collection('_local_student_documents').get()).docs, isEmpty);
   });
 
 }
