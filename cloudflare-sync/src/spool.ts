@@ -99,6 +99,33 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
  // original entry, not N people. Only already proof-stamped rows count in the
  // conservative provider-verified column. No school bodies, IDs or revisions
  // leave the existing authenticated Worker/broker boundary.
+ if(action==='auditJournalPage'){
+  // The immutable records spool is one owner inventory, NOT an independent
+  // Google Drive readback and NOT complete school-wide backup coverage.
+  // Read-only, school-lane-scoped and contains no payloads or provider secrets.
+  demand(lane==='records','Record owner journal requires records lane',400);
+  const after=Number(b.after??0),limit=Number(b.limit??50);
+  demand(Number.isSafeInteger(after)&&after>=0&&
+    Number.isSafeInteger(limit)&&limit>=1&&limit<=100,
+    'Invalid original record journal cursor',400);
+  const rows=storage.sql.exec<Row>(
+    'SELECT * FROM edge_ops WHERE seq>? ORDER BY seq LIMIT ?',
+    after,limit+1).toArray();
+  const page=rows.slice(0,limit);
+  return {version:1,schoolId:school,scope:'immutableSpoolOwnerJournal',
+    source:'records',lane,coverage:'one-owner-journal-only',partial:true,
+    entries:page.map(row=>{
+      const proof=row.state==='completed'&&
+        Number.isSafeInteger(row.created)&&row.created>0&&
+        Number.isSafeInteger(row.verified_at)&&row.verified_at>=row.created;
+      return {sequence:row.seq,id:row.id,state:row.state,
+        acceptedAt:Number.isSafeInteger(row.created)&&row.created>0?
+          row.created:null,
+        driveOwnerReceiptPresent:proof,
+        verifiedAt:proof?row.verified_at:null};
+    }),
+    nextCursor:rows.length>limit?page[page.length-1].seq:null};
+ }
  if(action==='backupHourly'){
   demand(lane==='records','Hourly record inventory is records-lane only',400);
   const observedAt=Date.now(),hourMs=60*60*1000;
