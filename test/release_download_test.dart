@@ -25,6 +25,19 @@ void main() {
     expect(selected!.path, contains('windows-v2.1.201/'));
   });
 
+  test('Windows download refuses EXE from another Windows release tag', () {
+    final wrong = release('2.1.210');
+    (wrong['assets'] as List)[0] = {
+      'name': 'Vidya_Saarthi_Setup_2.1.210.exe',
+      'browser_download_url':
+          'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.209/Vidya_Saarthi_Setup_2.1.210.exe',
+    };
+    expect(
+      latestReleasedInstaller([wrong, release('2.1.208')], 'windows')!.path,
+      contains('windows-v2.1.208/'),
+    );
+  });
+
   test('does not select Windows for Android or an empty list', () {
     expect(latestReleasedInstaller([release('2.1.100')], 'android'), isNull);
     expect(latestReleasedInstaller([], 'windows'), isNull);
