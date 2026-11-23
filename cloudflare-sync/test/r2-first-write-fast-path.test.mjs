@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {readFile,writeFile,unlink} from 'node:fs/promises';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 const school='vs-'+'a'.repeat(32);
@@ -58,8 +58,31 @@ test('new R2 admissions bypass HEAD; crashed reservations use HEAD before recove
  const again=await stage(firstId,firstBytes);
  assert.equal(again.ok,true);
  assert.equal(again.put,0);
- assert.equal(again.head,0);
+ assert.equal(again.head,1,'Unverified replay rechecks the real R2 object');
  assert.equal((await actor.r2CapacityStatus()).schoolBytes,firstBytes.length);
+ const originalKey='saarthi-v1/'+school+'/records/'+firstId+'/0';
+ const bucket=await mf.getR2Bucket('R2_STAGE');
+ // A bucket-side deletion cannot be treated as a valid Cloudflare ACK just
+ // because the original account-budget SQL reservation says 'stored'.
+ await bucket.delete(originalKey);
+ const restored=await stage(firstId,firstBytes);
+ assert.equal(restored.ok,true);
+ assert.equal(restored.head,1);
+ assert.equal(restored.put,1,'The original exact bytes are repaired before ACK');
+ assert.deepEqual(new Uint8Array(await (await bucket.get(originalKey)).arrayBuffer()),
+   new Uint8Array(firstBytes));
+ // A correct-size object with a changed manifest is not sufficient either.
+ await bucket.put(originalKey,new Uint8Array(firstBytes),{
+   customMetadata:{schema:'saarthi-r2-stage-v1',sha256:'0'.repeat(64)}});
+ const wrongManifest=await stage(firstId,firstBytes);
+ assert.equal(wrongManifest.ok,true);
+ assert.equal(wrongManifest.head,1);
+ assert.equal(wrongManifest.put,1);
+ assert.equal((await bucket.head(originalKey)).customMetadata.sha256,
+   createHash('sha256').update(Buffer.from(firstBytes)).digest('hex'),
+   'Corrupted metadata must be replaced by the immutable original digest');
+ assert.equal((await actor.r2CapacityStatus()).schoolBytes,firstBytes.length,
+   'Repair must not charge the same school bytes twice');
  const failedId='b'.repeat(64),failedBytes=[7,8,9];
  const failed=await stage(failedId,failedBytes,true);
  assert.equal(failed.ok,false);

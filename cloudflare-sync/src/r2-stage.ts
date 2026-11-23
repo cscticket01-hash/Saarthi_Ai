@@ -39,7 +39,27 @@ async function stageR2Unlocked(storage:DurableObjectStorage,bucket:R2Bucket|unde
   demand(existing.school===school&&existing.lane===lane&&existing.receipt_id===receiptId&&
    existing.sha256===sha256&&existing.bytes===bytes.byteLength&&existing.category===category,
    'Immutable R2 operation ID conflict',409);
-  if(['stored','verified','purged'].includes(existing.state))return {accepted:true,receiptId,lane,bytes:bytes.byteLength,alreadyStaged:true,driveVerified:existing.state!=='stored'};
+  if(['verified','purged'].includes(existing.state))
+   return {accepted:true,receiptId,lane,bytes:bytes.byteLength,
+     alreadyStaged:true,driveVerified:true};
+  if(existing.state==='stored'){
+   // A durable SQL row is not proof the original R2 bytes still exist.
+   // Replays must repair a missing/tampered object before another Cloudflare
+   // ACK; otherwise a bucket-side deletion strands an unverified original.
+   // Fresh first writes still bypass HEAD on the fast path below.
+   try{
+    const current=await bucket.head(key);
+    if(!current||current.size!==bytes.byteLength||
+       current.customMetadata?.sha256!==sha256){
+     const repaired=await bucket.put(key,buffer,{
+       customMetadata:{schema:'saarthi-r2-stage-v1',sha256}});
+     if(!repaired||repaired.size!==bytes.byteLength)
+      fail('R2 replay repair did not confirm original bytes');
+    }
+   }catch{fail('Private R2 replay unavailable; original work retained');}
+   return {accepted:true,receiptId,lane,bytes:bytes.byteLength,
+     alreadyStaged:true,driveVerified:false};
+  }
  }else{
   storage.transactionSync(()=>{
    // This global, single Durable Object serializes all staging admissions.
