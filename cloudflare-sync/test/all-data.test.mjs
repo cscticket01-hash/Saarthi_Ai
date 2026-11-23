@@ -387,7 +387,7 @@ test('24-hour records inventory counts original entries without inventing Drive 
 });
 
 test('original record owner journal pages are read-only, paginated, scoped and never independent Google proof',async()=>{
- const school=tenant('7');
+ const school='vs-'+hash('sync4-record-owner-audit-private-school').slice(0,32);
  const empty=await rpc(school,'records',{command:'auditJournalPage',after:0,limit:1});
  assert.equal(empty.status,200);
  assert.equal(empty.value.scope,'immutableSpoolOwnerJournal');
@@ -422,7 +422,8 @@ test('original record owner journal pages are read-only, paginated, scoped and n
  assert(completed.value.entries[0].verifiedAt>=completed.value.entries[0].acceptedAt);
  assert.equal(completed.value.driveVerified,undefined,
   'Owner proof is not an independent signed Google readback');
- const other=await rpc(tenant('8'),'records',
+ const otherSchool='vs-'+hash('sync4-record-owner-foreign-school').slice(0,32);
+ const other=await rpc(otherSchool,'records',
   {command:'auditJournalPage',after:0,limit:1});
  assert.deepEqual(other.value.entries,[]);
  for(const bad of [{after:-1},{limit:0},{limit:101},{after:1.5}]){
