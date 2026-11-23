@@ -21,7 +21,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 
 import 'mobile/school_session.dart';
-import 'mobile/published_id_card.dart';
+import 'mobile/record_id_card.dart';
 import 'mobile/attendance_history.dart';
 import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
@@ -649,7 +649,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           _error = null;
         });
       if (_page == (_teacher ? 0 : 1)) unawaited(_loadAttendance());
-      unawaited(_refreshPublishedCard().catchError((Object _) => null));
+      // Dashboard refresh never prefetches a school PDF for ID preview.
       unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
       if (mounted)
@@ -1428,22 +1428,36 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 textAlign: TextAlign.center,
               )
             else
-              PublishedIdCard(
-                automatic: true,
-                key: ValueKey(
-                  jsonEncode([
-                    _s.link?.projectId,
-                    _s.link?.role,
-                    _s.link?.personId,
-                    _data['idCardPackage'],
-                    _data['atomicIdCardBundle'],
-                  ]),
-                ),
-                load: _refreshPublishedCard,
-                refresh: () => _load(afterSignal: true),
-                open: (bytes) =>
-                    _previewPdf(bytes, 'School ID card • Front & back'),
-                openExternally: _openIdPdfExternally,
+              MobileRecordIdCard(
+                key: ValueKey(jsonEncode([
+                  _s.link?.schoolId, _s.link?.role, _s.link?.personId,
+                  _s.person['_syncRevision'], _data['revision'],
+                ])),
+                schoolName: _s.schoolName,
+                schoolId: _s.link?.schoolId ?? '',
+                role: _s.link?.role ?? '',
+                personId: _s.link?.personId ?? '',
+                person: Map<String, dynamic>.from(_s.person),
+                verified: !_blocked && _s.lastDashboardVerifiedAt != null,
+                portrait: _data['atomicPortraitBundle'] is Map
+                    ? FutureBuilder<Uint8List?>(
+                        future: _schoolPortrait(),
+                        builder: (_, snapshot) {
+                          final bytes = snapshot.data;
+                          return bytes == null || bytes.isEmpty
+                              ? const CircleAvatar(radius: 34,
+                                  child: Icon(Icons.person_outline, size: 38))
+                              : ClipOval(child: Image.memory(bytes,
+                                  width: 70, height: 70, fit: BoxFit.cover));
+                        },
+                      )
+                    : null,
+                // Existing historical PDF may be opened on explicit tap only.
+                onOpenHistoricalPdf: _data['idCardPackage'] is Map ||
+                        _data['atomicIdCardBundle'] is Map
+                    ? () => _showPdf(_s.link?.role == 'teacher'
+                        ? 'teacherId' : 'studentId', _s.person)
+                    : null,
               ),
           ],
         ),
