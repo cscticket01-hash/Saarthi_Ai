@@ -1,0 +1,25 @@
+name: Sync4 independent original Google backup proof review
+on:
+  pull_request:
+    paths:
+      - 'functions/backup-audit-evidence.cjs'
+      - 'functions/backup-drive-file-proof.cjs'
+      - 'functions/test/backup-audit-evidence.test.cjs'
+      - 'functions/test/backup-drive-file-proof.test.cjs'
+      - 'docs/full-backup-owner-audit.md'
+      - '.github/workflows/sync4-independent-backup-proof-review.yml'
+permissions:
+  contents: read
+jobs:
+  immutable-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify fail-closed original backup audit and provider byte readback
+        run: |
+          node --check functions/backup-audit-evidence.cjs
+          node --check functions/backup-drive-file-proof.cjs
+          node --test functions/test/backup-audit-evidence.test.cjs functions/test/backup-drive-file-proof.test.cjs
