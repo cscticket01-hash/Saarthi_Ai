@@ -27,7 +27,13 @@ class WindowsSyncFlow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = uploadProgress;
+    // A partially reported or corrupt transfer measurement must never
+    // produce NaN, division by zero or a made-up upload percentage.
+    final raw = uploadProgress;
+    final bytes = raw != null && raw.total > 0 && raw.offset >= 0 &&
+            raw.offset <= raw.total
+        ? raw
+        : null;
     final fraction = bytes == null ? null : bytes.offset / bytes.total;
     final percent = bytes == null ? null : bytes.offset * 100 ~/ bytes.total;
     final theme = Theme.of(context);
