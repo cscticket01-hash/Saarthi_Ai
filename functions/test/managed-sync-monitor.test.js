@@ -227,7 +227,7 @@ test('owner journal rejects unrelated lanes, unbounded cursor and malformed prov
  const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
   rpc:async()=>{calls++;return reply;}}});
  for(const args of [
-  {lane:'records'}, {lane:'file-'+'f'.repeat(64)},
+  {lane:'file-'+'f'.repeat(64)},
   {lane:'attendance-zz'}, {lane:'notices',after:-1},
   {lane:'notices',limit:0}, {lane:'notices',limit:101},
   {lane:'notices',after:2.4}, {lane:'notices',limit:1.5}])
@@ -254,4 +254,56 @@ test('owner journal rejects unrelated lanes, unbounded cursor and malformed prov
    e=>e.status===502);
  }
  assert.equal(calls,bad.length);
+});
+
+test('signed school record journal pages do not masquerade as complete Drive backup',async()=>{
+ const id='b'.repeat(64);let incoming=null;
+ const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async(school,lane,command)=>{
+   incoming={school,lane,command};
+   return {version:1,schoolId:A,scope:'immutableSpoolOwnerJournal',
+    source:'records',lane:'records',
+    coverage:'one-owner-journal-only',partial:true,
+    entries:[{sequence:8,id,state:'completed',acceptedAt:time-5000,
+      driveOwnerReceiptPresent:true,verifiedAt:time-1000}],
+    nextCursor:null};
+  }}});
+ const r=await f.call({action:'managed/cloudflare/auditJournalPage',
+  lane:'records',after:7,limit:2});
+ assert.deepEqual(incoming,{school:A,lane:'records',
+  command:{command:'auditJournalPage',after:7,limit:2}});
+ assert.equal(r.enabled,true);
+ assert.equal(r.source,'records');
+ assert.equal(r.statusScope,'one-owner-journal-only');
+ assert.equal(r.partial,true);
+ assert.equal(r.driveVerified,undefined);
+ assert.equal(r.googleDriveComplete,undefined);
+ assert.equal(r.entries.length,1);
+ assert.equal(r.entries[0].id,id);
+ await assert.rejects(f.call({action:'managed/cloudflare/auditJournalPage',
+  schoolId:B,lane:'records'}),e=>e.status===403);
+});
+test('record owner journal requires matching immutable spool scope, not legacy or all-lane claims',async()=>{
+ let response={version:1,schoolId:A,scope:'immutableSpoolOwnerJournal',
+  source:'records',lane:'records',coverage:'one-owner-journal-only',
+  partial:true,entries:[],nextCursor:null};
+ const f=fixture(undefined,{cloudflareSync:{enabled:school=>school===A,
+  rpc:async()=>response}});
+ for(const changed of [
+  {scope:'legacyImmutableOwnerJournal'},
+  {scope:'all-original-owner-drive-readbacks'},
+  {source:'legacy-records'},
+  {schoolId:B},
+  {coverage:'complete'},
+  {partial:false},
+  {entries:[{sequence:1,id:'wrong',state:'completed',acceptedAt:time,
+    driveOwnerReceiptPresent:true,verifiedAt:time}]}
+ ]){
+  response={...response,...changed};
+  await assert.rejects(f.call({action:'managed/cloudflare/auditJournalPage',
+   lane:'records'}),e=>e.status===502);
+  response={version:1,schoolId:A,scope:'immutableSpoolOwnerJournal',
+   source:'records',lane:'records',coverage:'one-owner-journal-only',
+   partial:true,entries:[],nextCursor:null};
+ }
 });
