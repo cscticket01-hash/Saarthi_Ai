@@ -59,8 +59,8 @@ class WindowsReportCardPreview extends StatefulWidget {
 
 class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
   final GlobalKey _paperKey = GlobalKey();
-  late final String _profile = FirebaseFirestore.instance.activeProfileId;
-  late final String _school = FirebaseFirestore.instance
+  final String _profile = FirebaseFirestore.instance.activeProfileId;
+  final String _school = FirebaseFirestore.instance
       .activeProfileIdentity['schoolSyncId']?.toString() ?? '';
   bool _busy = false;
 
@@ -104,10 +104,13 @@ class _WindowsReportCardPreviewState extends State<WindowsReportCardPreview> {
     }
     final image = await boundary.toImage(pixelRatio: 2.5);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final width = image.width;
+    final height = image.height;
+    image.dispose();
     if (data == null) throw StateError('Report image could not be rendered.');
     _guardSchool();
     await WindowsBrowserPrint.openImages([
-      (png: data.buffer.asUint8List(), width: image.width, height: image.height),
+      (png: data.buffer.asUint8List(), width: width, height: height),
     ]);
   });
 
@@ -252,7 +255,7 @@ class _ReportCardPaper extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold)),
-                Text(value('schoolAddress', ''),
+                Text(value('schoolAddress', value('address', '')),
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70, fontSize: 12)),
               ]),
@@ -335,12 +338,7 @@ class _ReportCardPaper extends StatelessWidget {
                 Text('Parent / Guardian'),
               ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Record preview. Use Print Report Card for printing or '
-              'Download Report Card to generate the selected PDF template.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, color: Colors.black54)),
+
           ],
         ),
       ),
