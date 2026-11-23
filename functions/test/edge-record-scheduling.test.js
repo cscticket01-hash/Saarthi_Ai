@@ -43,3 +43,64 @@ test('an oversized scheduler response is rejected before any claim or delivery',
  await assert.rejects(delivery.drain(school,'records',async()=>{sends++;}),e=>e.code==='EDGE_SCHEDULER_UNVERIFIED');
  assert.equal(claims,0);assert.equal(sends,0);
 });
+
+test('three-way rollout drains only the exact scheduler-admitted independent records',async()=>{
+ const jobs=['a','b','c'].map((letter,index)=>{
+  const recordId='expense-'+letter;
+  const request={action:'managed_records',collection:'school_expenses',
+   id:recordId,operation:'write',operationId:'original-expense-operation-'+letter,
+   expectedRecordRevision:'',syncProtocol:2,
+   data:{schoolId:school,amount:index+1}};
+  return {id:letter.repeat(64),payload:JSON.stringify(request),
+   response:null,state:'pending'};
+ });
+ const calls=[];let inflight=0,peak=0;
+ const edge={rpc:async(s,l,b)=>{
+  assert.equal(s,school);assert.equal(l,'records');calls.push(b);
+  if(b.command==='capabilities')return {recordSchedulingVersion:1};
+  if(b.command==='pending')return jobs.slice(0,b.limit);
+  if(b.command==='claim')return true;
+  if(b.command==='finish'){
+   const row=jobs.find(r=>r.id===b.id);
+   row.state=b.values.state;
+   row.response=b.values;
+   return true;
+  }
+  throw Error('Unexpected Cloudflare scheduler command');
+ }};
+ const delivery=createCloudflareDelivery({edge,recordParallelism:3});
+ const result=await delivery.drain(school,'records',async request=>{
+  inflight++;peak=Math.max(peak,inflight);
+  await Promise.resolve();
+  inflight--;
+  return {success:true,schoolId:school,syncProtocol:2,
+   recordRevision:'drive-revision-'+request.id,
+   record:{...request.data,id:request.id,_syncOperationId:request.operationId}};
+ });
+ assert.equal(calls.find(c=>c.command==='pending').limit,3);
+ assert.equal(peak,3,'three independent provider jobs can proceed simultaneously');
+ assert.equal(result.processed,3);
+ assert(jobs.every(r=>r.state==='completed'&&r.response.result.recordRevision.startsWith('drive-')));
+});
+test('three-way canary falls back to serial on an older Worker and caps forged scheduler rows',async()=>{
+ let limit,claims=0;
+ const delivery=createCloudflareDelivery({recordParallelism:3,edge:{rpc:async(_,lane,body)=>{
+  assert.equal(lane,'records');
+  if(body.command==='capabilities')return {recordSchedulingVersion:0};
+  if(body.command==='pending'){limit=body.limit;return [];}
+  claims++;throw Error('Unexpected claim');
+ }}});
+ assert.deepEqual(await delivery.drain(school,'records',async()=>assert.fail()),{processed:0});
+ assert.equal(limit,1);
+ assert.equal(claims,0);
+ let sends=0;
+ const invalid=createCloudflareDelivery({recordParallelism:3,edge:{rpc:async(_,__,body)=>{
+  if(body.command==='capabilities')return {recordSchedulingVersion:1};
+  if(body.command==='pending')return [{},{},{},{}];
+  claims++;throw Error('Untrusted scheduler rows');
+ }}});
+ await assert.rejects(invalid.drain(school,'records',async()=>{sends++;}),
+  e=>e.code==='EDGE_SCHEDULER_UNVERIFIED');
+ assert.equal(sends,0);
+ assert.equal(claims,0);
+});
