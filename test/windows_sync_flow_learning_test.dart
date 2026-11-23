@@ -137,6 +137,15 @@ void main(){
     expect(projectWindowsDevicePhase(
       durableState:'needsAttention',uploadPending:1,syncing:true,
       transferActive:false,paused:false,stalled:false),'needsAttention');
+    for(final background in ['waiting','offline','needsAttention','syncing','stalled']) {
+      expect(projectWindowsDevicePhase(
+        durableState:background,uploadPending:0,syncing:true,
+        transferActive:false,paused:false,stalled:true),'idle',
+        reason:'Google-only / inbound $background cannot resurrect a finished PC upload');
+    }
+    expect(projectWindowsDevicePhase(
+      durableState:'waiting',uploadPending:1,syncing:false,
+      transferActive:false,paused:false,stalled:false),'waiting');
     expect(windowsIncomingPendingBreakdown(schoolId:school,
       downloads:[],remoteChangeQueued:false)['total'],0);
     expect(windowsSyncFlowPendingText(0,{}),'0 pending');
