@@ -658,6 +658,37 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    }
    const readOwner=(collection:string,id:string)=>findOwner(storage,collection,id);
    const readPeers=(collection:string)=>storage.sql.exec<{body:string}>('SELECT body FROM live_record_owners WHERE collection=?',collection).toArray().map(row=>JSON.parse(row.body) as Json);
+   // The signed broker has verified the actual Final Exam/marks (or signed
+   // exact Drive readbacks after 24h compaction). Bind those proofs to the
+   // still-current source revisions inside this same Durable Object transaction.
+   // A stale result or a concurrent school's second promotion cannot ACK.
+   const promotionChanged=col==='students_directory'&&current&&
+    (old.promotionTransactionId!==data.promotionTransactionId||
+     old.promotionExamId!==data.promotionExamId||
+     old.classMovement!==data.classMovement);
+   if(promotionChanged){
+    demand(b.operation==='write'&&b.promotionProof&&
+      typeof b.promotionProof==='object'&&!Array.isArray(b.promotionProof),
+      'Verified promotion proof required',412);
+    const proof=b.promotionProof as Json,examId=data.promotionExamId;
+    demand(typeof examId==='string'&&examId.length>0&&
+      proof.examId===examId&&
+      proof.resultId===examId+'_'+String(b.id)&&
+      typeof proof.examRevision==='string'&&proof.examRevision.length>0&&
+      typeof proof.resultRevision==='string'&&proof.resultRevision.length>0,
+      'Promotion proof identity mismatch',409);
+    const revision=(collection:string,id:string)=>
+      sql.exec<{revision:string}>('SELECT revision FROM live_records WHERE collection=? AND id=?',collection,id).toArray()[0]?.revision;
+    demand(revision('exams',examId)===proof.examRevision&&
+      revision('exam_center_results',String(proof.resultId))===proof.resultRevision,
+      'Final Exam or marks changed; refresh and review approval',409);
+    if(data.classMovement==='FORCE_PROMOTED'){
+      demand(typeof proof.policyRevision==='string'&&
+        revision('school_settings','promotion_policy')===proof.policyRevision,
+        'Force-promotion policy changed; admin review required',409);
+    }
+   }else demand(!b.promotionProof,
+      'Unrequested promotion proof; only broker-verified changes are permitted',403);
    if(domainCollections.has(col))validateDomainCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readOwner});
    if(personCollections.has(col))validatePersonCandidate({schoolId:school,collection:col,id:String(b.id),operation:String(b.operation),current:current?old:null,next:data,readPeers});
    if(col==='teachers_directory'&&b.operation!=='delete'){
