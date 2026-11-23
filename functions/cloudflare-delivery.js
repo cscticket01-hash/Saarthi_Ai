@@ -6,7 +6,7 @@ const FILE=/^file-[a-f0-9]{64}$/;
 const OP=/^[A-Za-z0-9_-]{16,100}$/;
 const REV=/^[A-Za-z0-9_-]{1,200}$/;
 const fail=(status,code)=>{throw Object.assign(Error('Cloud delivery pending; original work retained.'),{status,code,publicMessage:true});};
-const terminal=new Set(['DOCUMENT_OWNER_CONFLICT','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
+const terminal=new Set(['DOCUMENT_OWNER_CONFLICT','SCRIPT_STUDENT_SCAN_LIMIT','SCRIPT_STUDENT_SCAN_REVIEW','DELETE_EVERYWHERE_FIREBASE_PERMISSION_DENIED','RECORD_REVISION_CONFLICT','OPERATION_ID_CONFLICT','SCRIPT_RECORD_REVISION_CONFLICT','SCRIPT_OPERATION_ID_CONFLICT','SCRIPT_DOCUMENT_REVISION_CONFLICT','SCRIPT_PERMISSION_DENIED','SCRIPT_INVALID_SYNC_OPERATION','SCRIPT_BLANK_SCHOOL_PROFILE','SCRIPT_EMPTY_PROFILE_OVERWRITE','SCRIPT_STUDENT_GENERATION_DELETED','SCRIPT_EXTERNAL_EDIT_REVIEW_REQUIRED','SCRIPT_STUDENT_SLOT_CONFLICT','STUDENT_SLOT_CONFLICT','SCRIPT_WORKBOOK_IDENTITY_MISMATCH','SCRIPT_RECORD_VERIFY_FAILED']);
 // The original school record and its optimized photo bytes have one
 // immutable Cloudflare file owner; a stage receipt is NEVER a Drive fileId.
 function validatedPhotoRecord(school,record,sha256){
@@ -405,12 +405,20 @@ function createCloudflareDelivery({edge,now=Date.now,recordParallelism=1,payload
   }
  }
  async function drain(school,lane,deliver){
-  // Default remains serial. Two independently eligible jobs are admitted only
-  // with an explicit broker rollout flag and a scheduler-capable Worker.
+  // Default remains serial. A school rollout can opt in to two or three
+  // concurrent jobs ONLY when the existing Worker advertises its durable
+  // resource scheduler; that owner excludes same-record, dependent person,
+  // fee, document, delete, and other globally barred jobs from the window.
+  // The broker never supplies its own unsafe concurrency classification.
   let limit=1;
-  if(lane==='records'&&recordParallelism===2){
+  const configured=typeof recordParallelism==='function'
+   ?recordParallelism(school):recordParallelism;
+  if(lane==='records'&&(configured===2||configured===3)){
    const capability=await edge.rpc(school,lane,{command:'capabilities'});
-   if(capability?.recordSchedulingVersion===1)limit=2;
+   // Version-1 Workers can safely schedule two but may reject a 3-job
+   // request. Never assume their existing capability implies a new limit.
+   if(capability?.recordSchedulingVersion===1 &&
+      (configured===2 || capability.recordMaxParallelism===3))limit=configured;
   }
   const jobs=await edge.rpc(school,lane,{command:'pending',limit});
   if(!Array.isArray(jobs)||jobs.length>limit)fail(502,'EDGE_SCHEDULER_UNVERIFIED');
