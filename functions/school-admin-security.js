@@ -166,6 +166,22 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       return {success:true, schoolId:identity.schoolId, authorized:true,
         approvalToken:token, expiresAt:now()+APPROVAL_WINDOW_MS};
     }
+    if(operation==='consume') {
+      const scope=body.scope, target=body.target;
+      if(!['person-delete','force-promotion','protected-settings'].includes(scope) ||
+          typeof target!=='string'||target.length<1||target.length>1000) {
+        denied(400,'ADMIN_APPROVAL_INVALID','Invalid protected action');
+      }
+      const result=await consumeApproval(identity,body.approvalToken,scope,target);
+      if(result.authorized!==true)
+        denied(403,'ADMIN_APPROVAL_REQUIRED','Verify Admin Password for this action');
+      await db.collection('platform_audit').add({
+        action:'school_admin_action_consumed',
+        schoolId:identity.schoolId,actor:identity.uid,
+        scope,targetHash:hash(target),at:now()
+      });
+      return {success:true,schoolId:identity.schoolId,authorized:true};
+    }
     denied(400, 'ADMIN_SECURITY_OPERATION_INVALID', 'Unknown school Admin Security operation');
   }
 
