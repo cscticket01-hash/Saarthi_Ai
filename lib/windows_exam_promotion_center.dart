@@ -170,7 +170,8 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
     if (matches.isEmpty) return;
     final student = matches.first;
     if (_result(student['id'].toString())?['result'] != 'FAIL' ||
-        _status(student) != 'Retained') {
+        student['classMovement'] != 'RETAINED' ||
+        student['promotionExamId'] != _examId) {
       _notice('Admin override is only for a retained Final Exam FAIL student.');
       return;
     }
