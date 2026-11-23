@@ -408,6 +408,11 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
    }else if(original.action==='managed_records_batch'){
     demand(result.syncProtocol===2&&result.recordWriteBatchVersion===1&&Array.isArray(result.acknowledgements)&&result.acknowledgements.length===(original.operations as Json[]).length,'Unverified batch receipt');
     const seen=new Set();for(const ack of result.acknowledgements as Json[]){demand((original.operations as Json[]).some(op=>op.operationId===ack.operationId)&&!seen.has(ack.operationId)&&typeof ack.success==='boolean'&&(!ack.success||typeof ack.recordRevision==='string'&&!!ack.recordRevision&&!/^(live-|cf-)/.test(ack.recordRevision)),'Unverified operation receipt');seen.add(ack.operationId);}
+    // A failed member can be retained as partial evidence for a retry, but
+    // never turn the immutable whole-batch original into a completed receipt.
+    // This guards against a broken/forged broker finish after a partial Drive ACK.
+    if(values.state==='completed')demand((result.acknowledgements as Json[]).every(ack=>ack.success===true),
+      'Partial Google batch requires retry; original retained',409);
    }else demand(result.syncProtocol===2&&typeof result.recordRevision==='string'&&!!result.recordRevision&&!/^(live-|cf-)/.test(result.recordRevision),'Unverified record receipt');
   }
   if(values.payloadPurged===true){

@@ -326,3 +326,30 @@ test('authenticated notice precondition rejections settle only their exact new a
  const reply=await mf.dispatchFetch('https://worker.invalid/internal',{method:'POST',body:JSON.stringify({schoolId:A,lane:'notices',command:'write',request:original})});
  assert.equal(reply.status,401);assert.equal((await reply.json()).schoolId,undefined);
 });
+
+test('failed member of a provider batch cannot mark the whole original complete',async()=>{
+ const school='vs-'+hash('sync4-batch-completion-guard').slice(0,32);
+ const operations=['first','second'].map(id=>({...write('school_expenses','batch-'+id,
+  'operation-partial-batch-'+id+'-0001'),data:{schoolId:school,amount:1}}));
+ const accepted=await delivery.record(school,{action:'managed_records_batch',operations});
+ assert.equal(accepted.cloudflareAccepted,true);
+ const claim='synthetic-partial-batch-guard';
+ assert.equal((await rpc(school,'records',{command:'claim',id:accepted.delivery.id,
+  claim,expires:Date.now()+30000})).value,true);
+ const partial={success:true,schoolId:school,syncProtocol:2,recordWriteBatchVersion:1,
+  acknowledgements:[
+   {operationId:operations[0].operationId,success:true,recordRevision:'drive-first'},
+   {operationId:operations[1].operationId,success:false,code:'SCRIPT_TIMEOUT'}
+  ]};
+ const unsafe=await rpc(school,'records',{command:'finish',id:accepted.delivery.id,
+  claim,values:{state:'completed',nextAttemptAt:Number.MAX_SAFE_INTEGER,result:partial}});
+ assert.equal(unsafe.status,409,'A partial provider ACK is never a completed original');
+ const still=(await rpc(school,'records',{command:'status',id:accepted.delivery.id})).value;
+ assert.equal(still.state,'processing','Failed finish must leave the durable original intact');
+ const retry=await rpc(school,'records',{command:'finish',id:accepted.delivery.id,
+  claim,values:{state:'retry',nextAttemptAt:Date.now()+60000,result:partial}});
+ assert.equal(retry.status,200);
+ const retained=(await rpc(school,'records',{command:'status',id:accepted.delivery.id})).value;
+ assert.equal(retained.state,'retry');
+ assert.equal(retained.response.result.acknowledgements[1].success,false);
+});
