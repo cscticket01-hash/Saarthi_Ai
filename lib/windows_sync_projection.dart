@@ -228,11 +228,15 @@ String projectWindowsDevicePhase({
 }) {
   assert(uploadPending >= 0);
   if (paused) return 'paused';
+  // A remote Google receipt, failed Drive-only legacy row or incoming cloud
+  // reconciliation may have an operational warning, but no OUTGOING PC work.
+  // Show its warning in health/diagnostics, never resurrect this device's
+  // already completed upload when the durable outgoing count is zero.
+  if (uploadPending == 0) return 'idle';
   if (stalled) return 'stalled';
   if (durableState == 'needsAttention' ||
       durableState == 'offline' ||
       durableState == 'waiting') return durableState!;
-  if (uploadPending == 0) return 'idle';
   if (syncing) return transferActive ? 'syncing' : 'preparing';
   return durableState ?? 'pending';
 }
