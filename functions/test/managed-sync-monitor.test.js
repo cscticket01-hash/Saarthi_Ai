@@ -100,3 +100,45 @@ test('handoff monitor separates device-owned work from cloud-owned pending backu
   await assert.rejects(f.call({action:'managed/sync/status',report:{...base,...extra}}),e=>e.status===400);
  assert.equal(f.docs.get('platform_schools/'+B).syncWindowsReport,undefined);
 });
+
+test('Cloudflare status includes exact school record lane without claiming all-lane Drive verification',async()=>{
+ const calls=[];
+ const cloudflareSync={
+  enabled:school=>school===A,
+  rpc:async(school,lane,request)=>{
+   calls.push({school,lane,request});
+   assert.equal(school,A);
+   assert.deepEqual(request,{command:'stats'});
+   return lane==='records'
+    ?{pending:3,needsAttention:1,due:time+10000}
+    :lane==='notices'
+    ?{pending:0,needsAttention:0,due:null}
+    :{pendingPartitions:1,needsAttention:1};
+  }
+ };
+ const f=fixture(undefined,{cloudflareSync});
+ const result=await f.call({action:'managed/cloudflare/status'});
+ assert.equal(result.schoolId,A);
+ assert.equal(result.enabled,true);
+ assert.equal(result.statusScope,'records_notices_delivery');
+ assert.equal(result.observedAt,time);
+ assert.deepEqual(result.records,{pending:3,needsAttention:1,due:time+10000});
+ assert.deepEqual(calls.map(x=>x.lane).sort(),['delivery','notices','records']);
+ assert.equal(result.driveVerified,undefined,
+  'A Cloudflare queue count can never attest Google provider ACK');
+ await assert.rejects(f.call({action:'managed/cloudflare/status',schoolId:B}),e=>e.status===403);
+ assert.equal((await f.call({action:'managed/cloudflare/status'},'B')).enabled,false);
+ assert.equal(calls.length,3,'A disabled school cannot read another tenant queue');
+});
+test('malformed or unavailable record statistics fail closed, not as successful backup',async()=>{
+ const cloudflareSync={
+  enabled:school=>school===A,
+  rpc:async(_,lane)=>{
+   if(lane==='records')return {pending:0,needsAttention:-1};
+   return lane==='notices'?{pending:0,needsAttention:0}
+    :{pendingPartitions:0,needsAttention:0};
+  }
+ };
+ const f=fixture(undefined,{cloudflareSync});
+ await assert.rejects(f.call({action:'managed/cloudflare/status'}),e=>e.status===502);
+});
