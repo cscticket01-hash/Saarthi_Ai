@@ -1,0 +1,104 @@
+name: Windows public release evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-release-publication-audit.yml'
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: 'Optional exact source commit SHA of Windows installer'
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  verify-public-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify uploaded public Windows release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.expected_commit || '' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          root = 'https://api.github.com/repos/cscticket01-hash/Saarthi_Ai'
+          headers = {
+              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'Saarthi-Windows-Release-Audit',
+              'X-GitHub-Api-Version': '2022-11-28',
+          }
+          request = urllib.request.Request(root + '/releases?per_page=100', headers=headers)
+          with urllib.request.urlopen(request, timeout=20) as response:
+              releases = json.load(response)
+          pattern = re.compile(r'^windows-v(\d+)\.(\d+)\.(\d+)$')
+          valid = []
+          for release in releases:
+              if release.get('draft') or release.get('prerelease'):
+                  continue
+              tag = release.get('tag_name', '')
+              match = pattern.fullmatch(tag)
+              if not match:
+                  continue
+              version = tuple(map(int, match.groups()))
+              name = 'Vidya_Saarthi_Setup_' + '.'.join(map(str, version)) + '.exe'
+              assets = [a for a in release.get('assets', [])
+                        if a.get('name') == name
+                        and a.get('state') == 'uploaded'
+                        and int(a.get('size') or 0) > 0
+                        and a.get('browser_download_url', '').startswith(
+                            'https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/' + tag + '/' + name)]
+              if assets:
+                  valid.append((version, release, assets[0]))
+          valid.sort(key=lambda v: v[0], reverse=True)
+          expected = os.environ.get('EXPECTED_SHA', '').strip()
+          selected = valid[0] if valid else None
+          evidence = {
+              'expected_source_commit': expected or None,
+              'release_count_checked': len(releases),
+              'eligible_windows_releases': len(valid),
+              'verified': bool(selected),
+              'match_expected_commit': None,
+          }
+          if selected:
+              version, release, installer = selected
+              actual = release.get('target_commitish')
+              evidence.update({
+                  'tag': release.get('tag_name'),
+                  'version': '.'.join(map(str, version)),
+                  'source_commit': actual,
+                  'published_at': release.get('published_at'),
+                  'release_page': release.get('html_url'),
+                  'installer': {
+                      'name': installer.get('name'),
+                      'size': installer.get('size'),
+                      'digest': installer.get('digest'),
+                      'url': installer.get('browser_download_url'),
+                      'state': installer.get('state'),
+                  },
+                  'match_expected_commit': actual == expected if expected else None,
+              })
+          Path('build/release-audit').mkdir(parents=True, exist_ok=True)
+          Path('build/release-audit/public-windows-release.json').write_text(
+              json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(evidence, indent=2))
+          if not selected:
+              sys.exit('No uploaded public Windows setup release found')
+          if expected and evidence['match_expected_commit'] is not True:
+              sys.exit('Public installer source is NOT the expected commit')
+          PY
+      - name: Upload source and installer proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-windows-installer-evidence
+          path: build/release-audit/public-windows-release.json
+          if-no-files-found: warn
