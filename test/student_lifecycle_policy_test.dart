@@ -82,6 +82,16 @@ void main() {
       'mobileStableId': old,
     });
   });
+  test('staged student cleanup preserves the original outbox until canonical settlement', () {
+    final queue=<String,dynamic>{'parent':{'schoolId':school,'collection':'students_directory',
+      'documentId':id,'operation':'delete','operationId':'original','deletedStudentGeneration':old}};
+    final root=<String,dynamic>{'_windows_firebase_outbox':queue};
+    purgeStudentGeneration(root,school,id,old,retainOperationId:'original');
+    expect(queue.containsKey('parent'),true);
+    purgeStudentGeneration(root,school,id,old);
+    expect(queue.isEmpty,true);
+  });
+
   test('shared managed paths are retained for other records and pending work', () {
     for (final retained in ['_local_student_documents', '_windows_document_outbox']) {
       final data = <String, dynamic>{

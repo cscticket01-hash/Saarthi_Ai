@@ -418,6 +418,8 @@ class WindowsFirebaseRemote {
       'operationId': item['operationId'],
       'expectedRecordRevision': item['baseCloudRevision'] ?? '',
       if (item['createIntent'] == true) 'createIntent': true,
+      if (personDeleteHandoffSupported && item['deletedTeacherGeneration'] is String)
+        'deletedTeacherGeneration': item['deletedTeacherGeneration'],
       if (item['deletedStudentGeneration'] is String)
         'deletedStudentGeneration': item['deletedStudentGeneration'],
       if (data != null) 'data': migrationJsonValue(data),
@@ -438,7 +440,8 @@ class WindowsFirebaseRemote {
     // remain with the original version-safe owner.
     final cloudHandoff=batchReply==null&&(
       eligibleForRecordHandoff(item,school,edgeDeliverySupported:edgeDeliverySupported) ||
-      eligibleForStagedDelete(item,school,edgeDeliverySupported:edgeDeliverySupported));
+      (eligibleForStagedDelete(item,school,edgeDeliverySupported:edgeDeliverySupported) &&
+       (stagedPersonDeleteGeneration(item)==null || personDeleteHandoffSupported)));
     Future<Map<String, dynamic>> sendPrepared() => batchReply != null
         ? Future.value(batchReply)
         : ManagedSchoolSession.callForSchool(
@@ -551,6 +554,7 @@ class WindowsFirebaseRemote {
 
   static bool recordWriteBatchSupported = false;
   static bool edgeDeliverySupported = false;
+  static bool personDeleteHandoffSupported = false;
   static bool photoRecordStageSupported = false;
   static bool photoReceiptSupported = false;
   // Bound only to the current authenticated school's checked backend and

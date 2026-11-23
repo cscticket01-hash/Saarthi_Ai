@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'cloudflare_record_handoff.dart';
 import 'live_sync_protocol.dart';
+import 'student_lifecycle_policy.dart';
 import 'windows_connect/central_school_cloud.dart';
 import 'windows_local_firestore.dart';
 
@@ -614,6 +615,13 @@ class WindowsDriveDeliveryQueue {
                   }
                   if(!verifiedStagedRecordFinal(original,item,proof,school))
                     throw StateError('Canonical staged record revision unverified; original retained.');
+                  if(original['collection']=='students_directory' && original['operation']=='delete') {
+                    for(final generation in verifiedDeletedStudentGenerations(proof['record'] as Map)) {
+                      await db.applyVerifiedStudentDeletion(school, original['documentId'], generation,
+                          proof['recordRevision'], retainOperationId:original['operationId']);
+                      _scope(school, profile);
+                    }
+                  }
                   await db.acknowledgeOutbox(originals.single.reference,original,
                       revision:proof['recordRevision']);
                   _scope(school, profile);
