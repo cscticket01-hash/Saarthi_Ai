@@ -1,5 +1,6 @@
 import 'windows_appearance.dart';
 import 'windows_verified_update.dart';
+import 'windows_release_selection.dart';
 
 import 'dart:convert';
 import 'dart:io';
@@ -50,8 +51,6 @@ class WindowsUpdateManager {
 
   static const String _githubOwner = 'cscticket01-hash';
   static const String _githubRepo = 'Saarthi_Ai';
-  static const String _windowsReleaseTagPrefix = 'windows-v';
-  static const String _windowsInstallerPrefix = 'Vidya_Saarthi_Setup_';
 
   static const String _tempInstallerPrefix = 'Vidya_Saarthi_Update_';
   static const String _tempInstallerSuffix = '.exe';
@@ -140,7 +139,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
     return 0;
   }
 
-  static Future<Map<String, dynamic>> _fetchLatestWindowsGitHubRelease() async {
+  static Future<PublishedWindowsInstaller> _fetchLatestWindowsGitHubRelease() async {
     HttpClient? client;
 
     try {
@@ -194,16 +193,8 @@ for (\$i = 0; \$i -lt 30; \$i++) {
         throw const FormatException('GitHub releases response invalid hai.');
       }
 
-      for (final raw in decoded) {
-        if (raw is! Map) continue;
-        final release = Map<String, dynamic>.from(raw);
-        final tag = release['tag_name']?.toString().trim() ?? '';
-        final draft = release['draft'] == true;
-        final prerelease = release['prerelease'] == true;
-        if (!draft && !prerelease && tag.startsWith(_windowsReleaseTagPrefix)) {
-          return release;
-        }
-      }
+      final selected = latestPublishedWindowsInstaller(decoded);
+      if (selected != null) return selected;
 
       throw StateError('Koi production windows-v... GitHub Release nahi mila.');
     } finally {
@@ -213,35 +204,7 @@ for (\$i = 0; \$i -lt 30; \$i++) {
 
   static Future<WindowsUpdateCheckResult> checkForUpdate() async {
     final release = await _fetchLatestWindowsGitHubRelease();
-
-    final tag = release['tag_name']?.toString().trim() ?? '';
-    final draft = release['draft'] == true;
-    final prerelease = release['prerelease'] == true;
-
-    if (draft || prerelease) {
-      return const WindowsUpdateCheckResult(
-        configFound: false,
-        message: 'Windows production GitHub release nahi mila.',
-      );
-    }
-
-    if (!tag.startsWith(_windowsReleaseTagPrefix)) {
-      return WindowsUpdateCheckResult(
-        configFound: false,
-        message:
-            'Selected GitHub release Windows tag nahi hai: '
-            '${tag.isEmpty ? 'missing tag' : tag}',
-      );
-    }
-
-    final latest = tag.substring(_windowsReleaseTagPrefix.length).trim();
-
-    if (latest.isEmpty) {
-      return const WindowsUpdateCheckResult(
-        configFound: false,
-        message: 'GitHub Windows release version missing hai.',
-      );
-    }
+    final latest = release.version;
 
     if (compareVersions(latest, windowsAppVersion) <= 0) {
       return WindowsUpdateCheckResult(
@@ -249,51 +212,16 @@ for (\$i = 0; \$i -lt 30; \$i++) {
       );
     }
 
-    String downloadUrl = '';
-    String digest = '';
-    int sizeBytes = 0;
-
-    final assets = release['assets'];
-    if (assets is List) {
-      for (final rawAsset in assets) {
-        if (rawAsset is! Map) continue;
-
-        final asset = Map<String, dynamic>.from(rawAsset);
-        final name = asset['name']?.toString().trim() ?? '';
-        final url = asset['browser_download_url']?.toString().trim() ?? '';
-
-        if (name.startsWith(_windowsInstallerPrefix) &&
-            name.toLowerCase().endsWith('.exe') &&
-            url.isNotEmpty) {
-          downloadUrl = url;
-          digest = asset['digest']?.toString() ?? '';
-          sizeBytes = (asset['size'] as num? ?? 0).toInt();
-          break;
-        }
-      }
-    }
-
-    if (downloadUrl.isEmpty) {
-      return WindowsUpdateCheckResult(
-        configFound: false,
-        message:
-            'Windows v$latest GitHub release mil gaya, '
-            'lekin setup EXE asset nahi mila.',
-      );
-    }
-
-    final releaseNotes = release['body']?.toString().trim() ?? '';
-
     return WindowsUpdateCheckResult(
       message: 'New Windows update available: $latest',
       info: WindowsUpdateInfo(
         latestVersion: latest,
         minimumVersion: '',
-        downloadUrl: downloadUrl,
-        releaseNotes: releaseNotes,
+        downloadUrl: release.url,
+        releaseNotes: release.notes,
         forceUpdate: false,
-        sha256Digest: digest,
-        sizeBytes: sizeBytes,
+        sha256Digest: release.digest,
+        sizeBytes: release.sizeBytes,
       ),
     );
   }
