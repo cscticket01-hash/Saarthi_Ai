@@ -1,21 +1,30 @@
-# Local fee collection and receipt preview
+# Fees Collection — saved payment and on-demand receipt
 
-Fees Collection paints its shell immediately and uses the existing local student/ledger streams. It no longer starts a twelve-class settings preload or waits for a UID-config spinner. Only the selected class is loaded; collection remains disabled until its local ledger and UID configuration are available. A month change retires the earlier month's ledger snapshot.
+Fees Collection continues to use the existing Windows screen, local student stream, school-scoped fee ledger, payment history, and existing Sync Engine. This change updates the current owner; it does not introduce a second fee module or a new synchronizer.
 
-Transaction History subscribes to the same school-scoped `fee_payments` collection that the existing Sync Engine updates. Opening History never waits for an Apps Script list call. Manual refresh schedules the existing engine without hiding the current list.
+## Payment save contract
 
-Collect Payment commits the original PDF, payment, ledger and pending receipt upload in one durable local batch. It displays `Payment collected`; WhatsApp remains an explicit optional button. A serialized local read guard rejects a changed balance before any batch records or queue entries are written. Same-ID retries retain the original; changed retries and stale balances require review. An original receipt hash protects the retained PDF during preview and upload.
+- **Collect Payment** saves only the fee payment record and its matching monthly ledger record in the existing durable local batch.
+- Payment Save does not render a PDF, compress a PDF, create a receipt document, enqueue a receipt upload, open a print dialog, or fetch an older receipt PDF.
+- Partial installments retain the same month ledger, fee identity, fee heads, and original fee amounts. A stale balance or ambiguous student generation fails closed instead of creating another ledger.
+- Fee settings retain per-head Monthly, Annual, and One-time billing. Legacy fee heads default to Monthly. One-time admission month is tied to the immutable student generation; the server rejects attempts to move or clear an already recorded admission month.
 
-The new flow does not directly create a cloud payment and then overwrite it with a second local generation. Payment records and PDF documents retain their separate existing operation IDs, revision/ACK owners and retries. The document outbox publishes the exact original PDF through the existing versioned document protocol. `receiptDocumentId` connects the immutable payment to its receipt; no local filesystem path or PDF base64 is placed in the synced payment record. Legacy `save_fee_payment` callers also strip PDF base64 before writing a record.
+## Receipt preview and user actions
 
-The collection panel retains the most recent receipt action for the selected student. Changing students or search clears that action. The durable history remains. Both collection and history open an in-app PDF preview, with printing through the native system print settings; no Drive URL/browser navigation is used. Older payments without a receipt-document reference are rendered from their saved payment fields and may use the currently selected legacy receipt template. New payments always use their original PDF.
+- **Preview Receipt** reads the saved payment fields and displays the receipt record only. Preview does not render, download, or fetch PDF bytes.
+- **Print Receipt** is the explicit action that prepares or retrieves the receipt bytes and opens the existing Windows print dialog.
+- **Download PDF** is the explicit action that prepares or retrieves the receipt bytes and saves the PDF locally.
+- The new payment stores the selected receipt template identifier, not generated PDF bytes. Existing historical PDF-backed receipts remain supported; their bytes are fetched only after Print or Download is pressed.
 
-No Apps Script contract change is needed by this patch. Existing financial conflicts are retained: a screenshot cannot establish which version is correct. The existing authenticated point-read/review owner must verify those records; no payment is overwritten, acknowledged or discarded based solely on a matching receipt number.
+## Sync and financial safety
+
+- The payment and ledger remain in their existing school-scoped collections and existing Cloudflare/Drive sync ownership. Drive backup is not part of the Save button's foreground work.
+- Cloudflare's student lifecycle policy now validates that feeAdmissionMonth and feeAdmissionPersonId are paired, correctly formatted, bound to mobileStableId, and immutable for that generation.
+- The codebase still needs a production record-only atomic Cloudflare transaction for the payment+ledger pair before cross-PC simultaneous collection can be claimed as verified. The existing PDF-backed atomic coordinator is TEST-only and is not used for this no-PDF Save path.
+- Refund, cancellation, and credit-note behavior is intentionally not inferred. It requires the school's approved accounting policy; existing collected payments are not silently rewritten.
 
 ## Validation status
 
-- Local Dart parser/format validation and `git diff --check` completed.
-- Added regression coverage for offline atomic payment/PDF/outbox saves, identical and changed retries, partial payments, stale balances, retained original bytes, school isolation, profile reopen, invalid PDF/nonfinite amounts, guarded batch rejection, separate verified document completion and local history rendering.
-- Added the new suite to existing Linux/Windows platform review steps, including SQLite runs.
-- Flutter execution on this workstation was blocked by automatic security review after the SDK setup attempted an unrelated cloud metadata request. No bypass was attempted. The user subsequently explicitly authorized repository publishing and release. Hosted test results and exact release identity are tracked in PR #171; initial payment/PDF/ledger owner tests passed, and the widget harness advances both filesystem I/O and its fake clock.
-- Native Windows printer UI, two-PC receipt visibility and the existing real-school conflict still need their respective device/authenticated verification. No production release or live-school data change was performed.
+- No GitHub Actions workflow, CI run, build, or test command was started for this update, as requested.
+- Source and regression-test changes are committed for later validation. They have not been executed in this turn.
+- Real two-PC payment acceptance, authenticated Cloudflare-to-Drive completion, and native printer acceptance remain unverified until separately authorized validation is performed.

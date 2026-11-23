@@ -60,3 +60,22 @@ test('native teacher identities remain reserved after retirement and cannot coll
  assert.throws(()=>check({readPeers:collection=>collection==='staff_payroll_directory'?[{schoolId:school,id:'staff',employeeId:'T1',active:false}]:[]}),e=>e.code==='PERSON_PAYROLL_IDENTITY_CONFLICT');
  assert.throws(()=>check({current:{...next,id:'teacher-new',teacherId:'T2'}}),e=>e.code==='PERSON_TEACHER_REASSIGNMENT_REQUIRES_REVIEW');
 });
+
+
+test('one-time fee admission month is generation-bound and immutable',async()=>{
+ const {validatePersonCandidate}=await import('../src/domain-policy.ts');
+ const g='p-'+'a'.repeat(64),n='p-'+'b'.repeat(64);
+ const original={schoolId:school,id:'student-one',mobileStableId:g,class:'Class 1',section:'A',rollNo:'1'};
+ const check=(next,{current=original,id='student-one'}={})=>validatePersonCandidate({
+  schoolId:school,collection:'students_directory',id,operation:'write',
+  current,next:{...original,...next,schoolId:school},readPeers:()=>[original]});
+ assert.doesNotThrow(()=>check({feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g}));
+ assert.throws(()=>check({feeAdmissionMonth:'2026-13',feeAdmissionPersonId:g}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ assert.throws(()=>check({feeAdmissionMonth:'2026-04'}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ assert.throws(()=>check({feeAdmissionMonth:'2026-04',feeAdmissionPersonId:n}),e=>e.code==='PERSON_FEE_ADMISSION_INVALID');
+ const locked={...original,feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g};
+ assert.doesNotThrow(()=>check({name:'edited',feeAdmissionMonth:'2026-04',feeAdmissionPersonId:g},{current:locked}));
+ assert.throws(()=>check({feeAdmissionMonth:'2026-05',feeAdmissionPersonId:g},{current:locked}),e=>e.code==='PERSON_FEE_ADMISSION_IMMUTABLE');
+ assert.throws(()=>check({},{current:locked}),e=>e.code==='PERSON_FEE_ADMISSION_IMMUTABLE');
+ assert.doesNotThrow(()=>check({mobileStableId:n,replacesStudentGeneration:g},{current:locked}));
+});

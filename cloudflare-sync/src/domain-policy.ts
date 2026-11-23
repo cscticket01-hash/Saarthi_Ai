@@ -118,6 +118,23 @@ export function validatePersonCandidate(input:PersonCandidate):void {
  const oldGeneration=current?(generation(current)||id):null;
  if(collection==='students_directory'){
   if(typeof next.mobileStableId!=='string'||!/^p-[a-f0-9]{32,64}$/.test(next.mobileStableId))reject('PERSON_GENERATION_INVALID',400);
+  const admissionMonth=next.feeAdmissionMonth;
+  const admissionPerson=next.feeAdmissionPersonId;
+  const hasAdmissionMonth=admissionMonth!==undefined&&admissionMonth!==null&&admissionMonth!=='';
+  const hasAdmissionPerson=admissionPerson!==undefined&&admissionPerson!==null&&admissionPerson!=='';
+  if(hasAdmissionMonth!==hasAdmissionPerson||
+     hasAdmissionMonth&&(
+      typeof admissionMonth!=='string'||!/^20\\d{2}-(0[1-9]|1[0-2])$|^2100-(0[1-9]|1[0-2])$/.test(admissionMonth)||
+      admissionPerson!==next.mobileStableId))
+   reject('PERSON_FEE_ADMISSION_INVALID',400);
+  // A first admission month is recorded once for this exact person generation.
+  // Profile edits cannot move, clear, or reassign an already authorized month.
+  if(current&&oldGeneration===next.mobileStableId&&
+     ((current.feeAdmissionMonth!==undefined&&current.feeAdmissionMonth!==null&&current.feeAdmissionMonth!=='')||
+      (current.feeAdmissionPersonId!==undefined&&current.feeAdmissionPersonId!==null&&current.feeAdmissionPersonId!==''))&&
+     (next.feeAdmissionMonth!==current.feeAdmissionMonth||
+      next.feeAdmissionPersonId!==current.feeAdmissionPersonId))
+   reject('PERSON_FEE_ADMISSION_IMMUTABLE');
   if(current&&oldGeneration!==next.mobileStableId&&next.replacesStudentGeneration!==oldGeneration)reject('PERSON_GENERATION_REPLACEMENT_REQUIRED');
   const retired=current?._syncRetiredStudentGenerations||current?.retiredGenerations;
   if(Array.isArray(retired)&&retired.includes(next.mobileStableId))reject('PERSON_GENERATION_RETIRED');
