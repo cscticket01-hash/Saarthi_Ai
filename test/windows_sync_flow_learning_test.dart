@@ -141,6 +141,34 @@ void main(){
       downloads:[],remoteChangeQueued:false)['total'],0);
     expect(windowsSyncFlowPendingText(0,{}),'0 pending');
   });
+  test('only latest original device ACK is shown, not a later Drive proof', () {
+    const now=100000;
+    final cloud={
+      'schoolId':school,'stage':'cloudflareAccepted',
+      'operationId':'receipt-1','at':now-1500,
+    };
+    expect(windowsLatestForegroundAck([cloud],school:school,nowMillis:now),cloud);
+    final provider={
+      'schoolId':school,'stage':'verified',
+      'operationId':'receipt-1','at':now-100,
+    };
+    expect(windowsLatestForegroundAck([cloud,provider],
+      school:school,nowMillis:now),cloud,
+      reason:'old provider verification may never trigger a second PC success');
+    expect(windowsLatestForegroundAck([cloud,provider],
+      school:school,nowMillis:now+6000),isNull);
+    expect(windowsLatestForegroundAck([{
+      ...cloud,'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }],school:school,nowMillis:now),isNull);
+    final nextCloud={...cloud,'operationId':'receipt-2','at':now-300};
+    expect(windowsLatestForegroundAck([cloud,provider,nextCloud],
+      school:school,nowMillis:now),nextCloud,
+      reason:'genuinely new same-school original replaces prior success');
+    final legacy={'schoolId':school,'stage':'verified',
+      'operationId':'legacy-1','at':now-250};
+    expect(windowsLatestForegroundAck([cloud,legacy],
+      school:school,nowMillis:now),legacy);
+  });
   test('Drive status and read-only cloud checks cannot wake completed device upload', () {
     final idle = <String,dynamic>{
       'displayState':'idle','pending':0,'cloudflareOwnedPendingDrive':2,
