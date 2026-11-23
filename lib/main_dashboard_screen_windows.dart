@@ -72,7 +72,7 @@ import 'package:flutter/material.dart' hide Text, InputDecoration;
 import 'windows_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
@@ -891,6 +891,10 @@ Future<bool> _requireWindowsSectionPassword(
   String sectionTitle,
 ) async {
   if (sectionKey == _windowsAdminSectionLock) {
+    // Legacy web portal already signs in through Firebase; Windows App
+    // admin section requires its independent password after the App Lock.
+    // Never call Windows-only secure storage from the web portal.
+    if(kIsWeb)return true;
     if(await WindowsAdminSecurity.hasPanelSession()) return true;
     if(!context.mounted)return false;
     final approval=await requestWindowsAdminApproval(context,
