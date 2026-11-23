@@ -67,3 +67,42 @@ test('missing owner adapter or inventory is not treated as a zero-count success'
    sourceInventory:async()=>({complete:true,rows:[]}),readOwnerProof:proof()});
  assert.equal(r.complete,false);assert.equal(r.missingSourceCount,10);
 });
+
+test('cross-source duplicate must not turn a file into a record-only Drive success',async()=>{
+ const inv=async(_,src,hourEnd)=>({complete:true,coversHistory:true,closedThrough:hourEnd,
+   rows:src==='records'?[base]:src==='files'?[{...base,source:'files',fileBytes:42}]:[]});
+ const noBytes=await reconcileBackupCoverage({schoolId:school,now,sourceInventory:inv,
+   readOwnerProof:proof()});
+ assert.equal(noBytes.complete,false);
+ assert.equal(noBytes.verifiedCount,0);
+ assert.deepEqual(noBytes.conflicts,['operation_test_001:original-file-proof-missing']);
+ const signedBytes=await reconcileBackupCoverage({schoolId:school,now,sourceInventory:inv,
+   readOwnerProof:proof({fileSha256:sha,fileBytes:42,driveFileId:'google_file_001'})});
+ assert.equal(signedBytes.complete,true);
+ assert.equal(signedBytes.verifiedCount,1);
+ assert.equal(signedBytes.breakdown.files,1);
+ assert.equal(signedBytes.breakdown.records,0,
+   'A single immutable original is counted once with its stronger file proof');
+});
+test('disagreeing modern and legacy file manifests cannot count as verified',async()=>{
+ const modern={...base,source:'files',fileBytes:42};
+ const legacy={...modern,source:'legacy-files',fileBytes:43};
+ const inv=async(_,src,hourEnd)=>({complete:true,coversHistory:true,closedThrough:hourEnd,
+   rows:src==='files'?[modern]:src==='legacy-files'?[legacy]:[]});
+ const r=await reconcileBackupCoverage({schoolId:school,now,sourceInventory:inv,
+   readOwnerProof:proof({fileSha256:sha,fileBytes:42,driveFileId:'google_file_001'})});
+ assert.equal(r.complete,false);
+ assert.equal(r.verifiedCount,0);
+ assert.deepEqual(r.conflicts,['operation_test_001:file-manifest-size-conflict']);
+});
+test('immutable hash conflicts cannot contribute to certified hourly count',async()=>{
+ const inv=async(_,src,hourEnd)=>({complete:true,coversHistory:true,closedThrough:hourEnd,
+   rows:src==='records'?[base]:src==='legacy-records'?
+     [{...base,source:'legacy-records',originalSha256:'b'.repeat(64)}]:[]});
+ const r=await reconcileBackupCoverage({schoolId:school,now,sourceInventory:inv,
+   readOwnerProof:proof()});
+ assert.equal(r.complete,false);
+ assert.equal(r.conflictCount,1);
+ assert.equal(r.verifiedCount,0);
+ assert.equal(r.verifiedOriginals,0);
+});
