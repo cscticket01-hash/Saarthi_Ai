@@ -1268,7 +1268,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
    await liveMigration.assertCohortAdmission(m.schoolId);
    return {success:true,...cloudflareSync.liveGrant({schoolId:m.schoolId,uid:m.uid})};
   }
-  const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory']);
+  const allowed=new Set(['commit','read','head','changes','snapshot','received','stats','operationReceipt','backupHistory','backupHourly']);
   if(operation==='operationReceipt'&&!/^[A-Za-z0-9_-]{16,100}$/.test(b.operationId||''))fail(400,'Invalid live operation identity');
   if(!allowed.has(operation))fail(400,'Unknown live sync operation');
   // Explicit fields only; public clients cannot claim/finish backup jobs or seed.
