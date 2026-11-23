@@ -108,7 +108,7 @@ export async function spoolCommand(storage:DurableObjectStorage,school:string,la
   const result=storage.sql.exec<{
     hour:number;admitted:number;proofStamped:number;completedWithoutProofTimestamp:number;
     pending:number;retry:number;processing:number;needsAttention:number
-  }>(`SELECT (created / ?) * ? AS hour,
+  }>(`SELECT CAST(created / ? AS INTEGER) * ? AS hour,
     count(*) AS admitted,
     sum(CASE WHEN state='completed' AND verified_at>=created AND verified_at>0 THEN 1 ELSE 0 END) AS proofStamped,
     sum(CASE WHEN state='completed' AND (verified_at=0 OR verified_at<created) THEN 1 ELSE 0 END) AS completedWithoutProofTimestamp,
