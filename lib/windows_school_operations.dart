@@ -561,18 +561,16 @@ class SchoolPromotionService {
         'Promotion or retention is available only after a final exam.',
       );
     own();
+    // Exam Center is the canonical owner. The legacy exam_results mirror
+    // may lag behind the newer record-only Save; never prefer that stale copy.
     final verifiedResult =
-        (await FirebaseFirestore.instance
-                .collection('exam_results')
-                .doc('${exam['examId']}_$studentId')
-                .get())
-            .data() ??
-        (await FirebaseFirestore.instance.collection('exam_center_results').doc('${exam['examId']}_$studentId').get()).data() ??
+        (await FirebaseFirestore.instance.collection('exam_center_results')
+                .doc('${exam['examId']}_$studentId').get()).data() ??
+        (await FirebaseFirestore.instance.collection('exam_results')
+                .doc('${exam['examId']}_$studentId').get()).data() ??
         (await FirebaseFirestore.instance
                 .collection('_local_exam_center_results')
-                .doc('${exam['examId']}_$studentId')
-                .get())
-            .data();
+                .doc('${exam['examId']}_$studentId').get()).data();
     own();
     if (verifiedResult == null ||
         verifiedResult['result'] != result ||
