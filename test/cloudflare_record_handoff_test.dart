@@ -590,6 +590,36 @@ void main() {
     expect(eligible({...row,'requireCanonicalDeleteReceipt':true}),false);
   });
 
+  test('staged person deletion must prove the same occupant and complete cascade', () {
+    for(final collection in ['students_directory','teachers_directory']) {
+      final generationField = collection == 'students_directory'
+          ? 'deletedStudentGeneration' : 'deletedTeacherGeneration';
+      final intent={'schoolId':school,'collection':collection,'documentId':'slot',
+        'operation':'delete','operationId':'person-delete-original-0001',
+        'baseCloudRevision':'known-live-revision',generationField:'person-old',
+        'personDeleteHandoffVersion':1};
+      bool eligible(Map row) => eligibleForStagedDelete(row,school,edgeDeliverySupported:true);
+      expect(eligible(intent),true);
+      expect(eligible({...intent,generationField:''}),false);
+      expect(eligible({...intent,'recordGeneration':'previous-deletion'}),false);
+      expect(eligible({...intent,'personDeleteHandoffVersion':null}),false);
+      final ticket=exactTicket(intent);
+      final original={...intent,'syncState':'cloudAccepted','cloudTicketLane':'records','cloudTicketId':ticket};
+      final journal={'schoolId':school,'collection':collection,'id':'slot',
+        'operation':'delete','originalOperationId':intent['operationId'],'action':'managed/records','ticketId':ticket};
+      final record={'schoolId':school,'id':'slot','_syncRevision':'deleted-revision',
+        '_syncOperationId':intent['operationId'],'_syncDeleted':true,'_syncDeletedOwner':'person-old',
+        '_syncErasePlan':{'complete':true}};
+      final proof={'success':true,'schoolId':school,'cloudflareAccepted':true,
+        'driveState':'verified','syncProtocol':2,'recordRevision':'deleted-revision',
+        'deleteEverywhereVersion':1,'driveDeletionComplete':true,'firebaseDeletionComplete':true,
+        'record':record};
+      expect(verifiedStagedRecordFinal(original,journal,proof,school),true);
+      expect(verifiedStagedRecordFinal(original,journal,{...proof,'firebaseDeletionComplete':false},school),false);
+      expect(verifiedStagedRecordFinal(original,journal,{...proof,'record':{...record,'_syncDeletedOwner':'new-occupant'}},school),false);
+    }
+  });
+
   test('independent attendance delete requires fully verified provider cleanup',(){
     const op='attendance-delete-original-001',id='attendance-item-001';
     final intent={'schoolId':school,'collection':'attendance_records',

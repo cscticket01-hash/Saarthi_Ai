@@ -222,8 +222,8 @@ class FirebaseFirestore {
     return _database.bindOutboxWireData(ref.id,expected,data,mode);
   }
 
-  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) =>
-      _database.applyVerifiedStudentDeletion(school,id,generation,revision);
+  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision, {String? retainOperationId}) =>
+      _database.applyVerifiedStudentDeletion(school,id,generation,revision,retainOperationId:retainOperationId);
 
   /// Reopen a disconnected document only if the EXACT queued snapshot is
   /// still current. Reconnect callbacks must never rewrite a later Save, an
@@ -2239,6 +2239,17 @@ class _LocalSchoolDatabase {
                 intent['deletedStudentGeneration']=generation;
                 touched.addAll(studentOwnedCollections);
               }
+              final base = (collections['_windows_sync_baselines'] as Map?)?[key];
+              if ({'students_directory','teachers_directory'}.contains(operation.collection) &&
+                  base is Map && base['deleted'] == false &&
+                  base['revision'] == intent['baseCloudRevision'] &&
+                  intent['recordGeneration'] == null) {
+                intent['personDeleteHandoffVersion'] = 1;
+              }
+              if(operation.collection=='teachers_directory') {
+                intent['deletedTeacherGeneration'] =
+                    deletedSnapshot['mobileStableId'] ?? operation.documentId;
+              }
               final personKey=operation.collection=='students_directory'?'mobileStableId':
                 operation.collection=='teachers_directory'?'teacherId':null;
               if(personKey!=null && deletedSnapshot[personKey] is String)
@@ -2297,7 +2308,7 @@ class _LocalSchoolDatabase {
     return completer.future;
   }
 
-  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision) {
+  Future<void> applyVerifiedStudentDeletion(String school,String id,String generation,String revision, {String? retainOperationId}) {
     final origin=_activeProfileId,completion=Completer<void>();
     _writeTail=_writeTail.then((_)async{
       try {
@@ -2305,7 +2316,7 @@ class _LocalSchoolDatabase {
         final root=await _readRoot();
         if(_activeProfileId!=origin)throw StateError('School changed during deletion.');
         final collections=_collections(root);
-        final paths=purgeStudentGeneration(collections,school,id,generation);
+        final paths=purgeStudentGeneration(collections,school,id,generation,retainOperationId:retainOperationId);
         final cleanup=collections.putIfAbsent('_windows_student_file_cleanup',()=> <String,dynamic>{}) as Map;
         final cleanupId=sha256.convert(utf8.encode(jsonEncode([school,id,generation,revision]))).toString();
         final prior=cleanup[cleanupId];

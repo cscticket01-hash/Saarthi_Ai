@@ -1910,6 +1910,7 @@ class WindowsSyncEngine with WidgetsBindingObserver {
       _changeHeadsSupported = false;
       _monitorHandoffSupported = false;
       WindowsFirebaseRemote.edgeDeliverySupported = false;
+      WindowsFirebaseRemote.personDeleteHandoffSupported = false;
       WindowsFirebaseRemote.documentStageSupported = false;
       WindowsFirebaseRemote.documentReplacementStageSupported = false;
       WindowsFirebaseRemote.photoRecordStageSupported = false;
@@ -2412,6 +2413,9 @@ class WindowsSyncEngine with WidgetsBindingObserver {
           _monitorHandoffSupported = health['brokerSyncHandoffMonitorVersion']==1;
           WindowsFirebaseRemote.edgeDeliverySupported =
               health['brokerEdgeDeliveryVersion'] == 1;
+          WindowsFirebaseRemote.personDeleteHandoffSupported =
+              health['brokerPersonDeleteHandoffVersion'] == 1 &&
+              health['deleteEverywhereVersion'] == 1;
           WindowsFirebaseRemote.documentStageSupported =
               health['brokerDocumentStageVersion'] == 1 &&
               health['documentVersions'] == 1 &&

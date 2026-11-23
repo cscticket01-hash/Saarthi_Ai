@@ -307,3 +307,19 @@ test('record owner journal requires matching immutable spool scope, not legacy o
    partial:true,entries:[],nextCursor:null};
  }
 });
+
+test('person delete handoff forwards the exact teacher generation and rejects a foreign collection',async()=>{
+ const f=fixture(async(_,opt)=>{
+  const body=JSON.parse(JSON.parse(opt.body).payload);
+  const result=body.action==='managed_health'?{deleteEverywhereVersion:1}:
+    {syncProtocol:2,recordRevision:'canonical-revision'};
+  return {ok:true,status:200,text:async()=>JSON.stringify({success:true,schoolId:A,...result})};
+ });
+ const request={action:'managed/records',operation:'delete',collection:'teachers_directory',
+  id:'teacher-slot',syncProtocol:2,operationId:'teacher-delete-original-01',
+  expectedRecordRevision:'original-revision',deletedTeacherGeneration:'teacher-generation'};
+ await f.call(request);
+ const sent=f.sent.map(({opt})=>JSON.parse(JSON.parse(opt.body).payload));
+ assert.equal(sent.find(row=>row.action==='managed_records').deletedTeacherGeneration,'teacher-generation');
+ await assert.rejects(f.call({...request,collection:'students_directory'}),error=>error.status===400);
+});

@@ -49,22 +49,28 @@ bool eligibleForRecordHandoff(
 }
 
 
-/// Calendar, school-expense and individual attendance deletions have no
-/// person, document or exam cascade owner in the existing GS erase planner.
-/// Parent/person deletion itself remains with the separate lifecycle owner.
-/// Google
-/// file/Firebase retirement still runs to verified completion in the Worker;
-/// Cloudflare acceptance NEVER deletes this original local CAS operation.
-/// Require an already verified base and a first-class outbox operation.
-/// A recreate's nested deletion must wait for canonical proof before its write.
+/// A person deletion identifies the original occupant as well as the slot.
+String? stagedPersonDeleteGeneration(Map item) {
+  final generation = switch (item['collection']) {
+    'students_directory' => item['deletedStudentGeneration'],
+    'teachers_directory' => item['deletedTeacherGeneration'],
+    _ => null,
+  };
+  return generation is String && generation.isNotEmpty && generation.length <= 200
+      ? generation : null;
+}
+
+/// Recreates and dependent operations still require canonical provider proof.
 bool eligibleForStagedDelete(Map item, String school, {
   required bool edgeDeliverySupported,
 }) =>
     edgeDeliverySupported &&
     RegExp(r'^vs-[a-f0-9]{32}$').hasMatch(school) &&
     item['schoolId'] == school &&
-    {'school_calendar','school_expenses','attendance_records',
-      'attendance_logs','teacher_attendance'}.contains(item['collection']) &&
+    ({'school_calendar','school_expenses','attendance_records',
+      'attendance_logs','teacher_attendance'}.contains(item['collection']) ||
+     (item['personDeleteHandoffVersion'] == 1 &&
+      item['recordGeneration'] == null && stagedPersonDeleteGeneration(item) != null)) &&
     item['operation'] == 'delete' &&
     item['documentId'] is String &&
     (item['documentId'] as String).isNotEmpty &&
@@ -279,6 +285,8 @@ bool verifiedStagedRecordFinal(Map original, Map journal, Map proof,
         record is Map &&
         record['schoolId'] == school &&
         record['_syncDeleted'] == true &&
+        (stagedPersonDeleteGeneration(original) == null ||
+         record['_syncDeletedOwner'] == stagedPersonDeleteGeneration(original)) &&
         record['_syncRevision'] == proof['recordRevision'] &&
         record['_syncOperationId'] == original['operationId'] &&
         (record['id'] == null || record['id'] == original['documentId']) &&

@@ -61,7 +61,7 @@ Set<String> purgeStudentGeneration(
   Map<String, dynamic> collections,
   String school,
   String studentId,
-  String generation,
+  String generation, {String? retainOperationId}
 ) {
   final paths = <String>{};
   final mediaIds = <String>{};
@@ -130,6 +130,7 @@ Set<String> purgeStudentGeneration(
     queue.removeWhere(
       (id, row) =>
           row is Map &&
+          (retainOperationId == null || row['operationId'] != retainOperationId) &&
           (row['collection'] == 'students_directory' &&
                   row['documentId'] == studentId &&
                   (row['operation'] == 'delete' &&
