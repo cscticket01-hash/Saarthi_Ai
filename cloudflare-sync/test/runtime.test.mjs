@@ -146,3 +146,52 @@ test('a rejected attendance receipt remains visible to school transfer status in
  assert.equal(summary.needsAttention,1);assert.equal(summary.pendingPartitions,1);
  assert.equal((await rpc('get',{id},lane,tenant)).value.state,'needsAttention');
 });
+
+
+
+test('read-only full owner journal pages enumerate existing Edge, notice and attendance originals without claiming full school Drive proof',async()=>{
+ const request={action:'managed_records',operation:'write',syncProtocol:2,
+  collection:'school_calendar',id:'journal-page-unique-record',
+  operationId:'audit-journal-record-20261119',
+  expectedRecordRevision:'',data:{schoolId:school,title:'Synthetic owner-journal fixture'}};
+ const identity=[request.collection,request.id,request.operationId];
+ const id=sha(JSON.stringify([school,request.action,identity]));
+ const staged=await rpc('enqueue',{id,request},'records');
+ assert.equal(staged.status,200,JSON.stringify(staged));
+ const entries=await rpc('auditJournalPage',{after:0,limit:100},'records');
+ assert.equal(entries.status,200,JSON.stringify(entries));
+ assert.equal(entries.value.schoolId,school);
+ assert.equal(entries.value.scope,'edgeImmutableOwnerJournal');
+ assert.equal(entries.value.coverage,'one-owner-journal-only');
+ assert.equal(entries.value.partial,true);
+ const entry=entries.value.entries.find(row=>row.id===id);
+ assert.equal(entry.state,'pending');
+ assert.equal(entry.driveOwnerReceiptPresent,false);
+ assert.equal(entry.verifiedAt,null);
+ const foreign=await rpc('auditJournalPage',{after:0,limit:100},'records',other);
+ assert.ok(!foreign.value.entries.some(row=>row.id===id),'another school sees no original');
+
+ await rpc('seed',{records:{},revision:'legacy'},'notices');
+ const noticeRequest={action:'managed_records',collection:'school_notices',
+  operation:'write',syncProtocol:2,id:'audit-journal-notice-20261119',
+  operationId:'audit-journal-notice-operation-20261119',
+  expectedRecordRevision:'',data:{schoolId:school,title:'Synthetic audit notice'}};
+ const notice=await rpc('write',{request:noticeRequest},'notices');
+ assert.equal(notice.status,200,JSON.stringify(notice));
+ const page=await rpc('auditJournalPage',{after:0,limit:100},'notices');
+ assert.equal(page.value.scope,'legacyImmutableOwnerJournal');
+ assert.ok(page.value.entries.length>=1);
+ assert.equal(page.value.partial,true);
+
+ const attendanceId='b7'+'a'.repeat(62),lane='attendance-b7';
+ const attendance={schoolId:school,operationId:attendanceId,
+  day:'2026-11-19',mode:'entry',createdAt:Date.now(),
+  payload:{encrypted:'synthetic-audit-payload'}};
+ assert.equal((await rpc('create',{id:attendanceId,row:attendance},lane)).status,200);
+ const attendancePage=await rpc('auditJournalPage',{after:0,limit:100},lane);
+ assert.equal(attendancePage.status,200);
+ assert.equal(attendancePage.value.scope,'legacyImmutableOwnerJournal');
+ assert.equal(attendancePage.value.entries.find(row=>row.id===attendanceId).verifiedAt,null);
+ assert.equal((await rpc('auditJournalPage',{limit:101},lane)).status,400);
+ assert.equal((await rpc('auditJournalPage',{after:-1},'records')).status,400);
+});
