@@ -495,9 +495,26 @@ void main() {
     await db.collection('students_directory').doc('failed').set({'name':'Retained pupil','class':'Class 1','rollNo':'2'});
     await db.collection('exam_results').doc('final-local_passed').set({'studentId':'passed','result':'PASS'});
     await db.collection('exam_results').doc('final-local_failed').set({'studentId':'failed','result':'FAIL'});
+    await db.collection('fee_payments').doc('fee-link').set({
+      'studentId':'passed','amount':250,'receipt':'original',
+    });
+    await db.collection('attendance_records').doc('attendance-link').set({
+      'studentId':'passed','status':'Present',
+    });
+    await db.collection('documents').doc('document-link').set({
+      'studentId':'passed','documentRevision':'unchanged',
+    });
     await SchoolPromotionService.apply(studentId:'passed',student:{},exam:exam,result:'PASS');
-    expect((await db.collection('students_directory').doc('Class 2_Roll_1').get()).data()?['classMovement'],'PROMOTED');
-    expect((await db.collection('students_directory').doc('passed').get()).exists,false);
+    final promoted=(await db.collection('students_directory').doc('passed').get()).data()!;
+    expect(promoted['classMovement'],'PROMOTED');
+    expect(promoted['class'],'Class 2');
+    expect((await db.collection('students_directory').doc('Class 2_Roll_1').get()).exists,false);
+    expect((await db.collection('students_directory').doc('passed').get()).exists,true);
+    expect((await db.collection('fee_payments').doc('fee-link').get()).data()?['studentId'],'passed');
+    expect((await db.collection('attendance_records').doc('attendance-link').get()).data()?['status'],'Present');
+    expect((await db.collection('documents').doc('document-link').get()).data()?['documentRevision'],'unchanged');
+    expect((await db.collection('exam_results').doc('final-local_passed').get()).exists,true);
+    expect((await db.collection('school_settings').doc('promotion_event_final-local_passed_PROMOTED').get()).exists,true);
     await SchoolPromotionService.apply(studentId:'failed',student:{},exam:exam,result:'FAIL');
     expect((await db.collection('students_directory').doc('failed').get()).data()?['class'],'Class 1');
     expect((await db.collection('students_directory').doc('failed').get()).data()?['classMovement'],'RETAINED');
@@ -509,7 +526,11 @@ void main() {
     expect(audit['fromClass'],'Class 1');expect(audit['toClass'],'Class 2');
     expect(audit['reason'],'Approved remedial review');
     expect(audit['at'],isA<int>());
-    expect((await db.collection('students_directory').doc('Class 2_Roll_2').get()).data()?['classMovement'],'FORCE_PROMOTED');
+    final forcePromoted=(await db.collection('students_directory').doc('failed').get()).data()!;
+    expect(forcePromoted['class'],'Class 2');
+    expect(forcePromoted['classMovement'],'FORCE_PROMOTED');
+    expect((await db.collection('school_settings').doc('promotion_event_final-local_failed_RETAINED').get()).exists,true);
+    expect((await db.collection('school_settings').doc('promotion_event_final-local_failed_FORCE_PROMOTED').get()).exists,true);
   });
 
   test('nested photo preparation leaves exam marks and payment structures unchanged', () async {
