@@ -7,14 +7,24 @@ const path=require('node:path');
 const {pipeline}=require('node:stream/promises');
 const repo='cscticket01-hash/Saarthi_Ai';
 // Verified release fallback keeps downloads available when GitHub rate-limits shared hosting IPs.
-const verifiedReleases=[{"tag_name":"windows-v2.1.197","assets":[{"name":"Vidya_Saarthi_Setup_2.1.197.exe","size":19469490,"digest":"sha256:a7272f222c32ef92052ee08434a7e94b9163e81b93d9f3a874b1e30d1ee94a32","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.197/Vidya_Saarthi_Setup_2.1.197.exe"}]},{"tag_name":"android-v1.0.634","assets":[{"name":"Vidya-Saarthi-v1.0.634.apk","size":70962001,"digest":"sha256:bcb55c6ccae14b5059473bb289158dc2815a8d42135d2655b6bbaf571a7257ce","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.634/Vidya-Saarthi-v1.0.634.apk"}]}];
+const verifiedReleases=[{"tag_name":"windows-v2.1.269","assets":[{"name":"Vidya_Saarthi_Setup_2.1.269.exe","size":53797277,"digest":"sha256:9916dadcec6c2cd71518be9f7d04327eb255131036783ffb35a090cdb610742f","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/windows-v2.1.269/Vidya_Saarthi_Setup_2.1.269.exe"}]},{"tag_name":"android-v1.0.634","assets":[{"name":"Vidya-Saarthi-v1.0.634.apk","size":70962001,"digest":"sha256:bcb55c6ccae14b5059473bb289158dc2815a8d42135d2655b6bbaf571a7257ce","browser_download_url":"https://github.com/cscticket01-hash/Saarthi_Ai/releases/download/android-v1.0.634/Vidya-Saarthi-v1.0.634.apk"}]}];
 function selectInstaller(releases,platform){
  const re=new RegExp(`^${platform}-v(\\d+)\\.(\\d+)\\.(\\d+)$`);
  return releases.filter(r=>!r.draft&&!r.prerelease&&re.test(r.tag_name)).sort((a,b)=>{
   const x=a.tag_name.match(re).slice(1).map(Number),y=b.tag_name.match(re).slice(1).map(Number);
   for(let i=0;i<3;i++)if(x[i]!==y[i])return y[i]-x[i];return 0;
- }).flatMap(r=>(r.assets||[]).filter(a=>a.name.endsWith(platform==='windows'?'.exe':'.apk')).map(a=>({...a,tag:r.tag_name})))
- .find(a=>{try{const u=new URL(a.browser_download_url);return u.protocol==='https:'&&u.host==='github.com'&&u.pathname.startsWith(`/${repo}/releases/download/${a.tag}/`);}catch{return false;}});
+ }).flatMap(r=>{
+  const version=r.tag_name.substring(platform.length+2);
+  return (r.assets||[]).filter(a=>platform==='windows'
+   ? a.name===`Vidya_Saarthi_Setup_${version}.exe`
+   : a.name.endsWith('.apk')).map(a=>({...a,tag:r.tag_name}));
+ }).find(a=>{
+  try{
+   const u=new URL(a.browser_download_url);
+   return u.protocol==='https:'&&u.host==='github.com'&&
+    u.pathname===`/${repo}/releases/download/${a.tag}/${a.name}`;
+  }catch{return false;}
+ });
 }
 function createInstallerHandler({fetchImpl=fetch,directory=path.join(os.tmpdir(),'saarthi-public-installers'),now=Date.now}={}){
  let releaseCache,releaseUntil=0,lookup;
