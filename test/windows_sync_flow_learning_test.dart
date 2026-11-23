@@ -431,6 +431,10 @@ void main(){
     }
     expect(allow({...plain,'operation':'delete'},backlog),false);
     expect(allow({...plain,'schoolId':'foreign'},backlog),false);
+    expect(allow({...plain,'data':{...plain['data'] as Map,
+      'metadata':{'recipientId':'student-a'}}},backlog),false);
+    expect(allow({...plain,'data':{...plain['data'] as Map,
+      'schoolId':'foreign'}},backlog),false);
     expect(allow({...plain,'priorDeletion':{'id':'old'}},backlog),false);
   });
 
