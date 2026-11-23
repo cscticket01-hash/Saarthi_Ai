@@ -7525,7 +7525,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
       try {
         final localExams=await WindowsBackendBridge.localExamAction({'action':'list_exam_center'});
         examSnapshot=_ExamCenterSnapshot(exams:(localExams['exams'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),results:(localExams['results'] as List? ?? []).whereType<Map>().map((e)=>Map<String,dynamic>.from(e)).toList(),studentCounts:const {},loadedAt:DateTime.now());
-        WindowsSyncEngine.instance.scheduleSoon();
+        // Analytics is a read-only snapshot. Only the original actual Save/
+        // Delete outbox owner may schedule upload, never a dashboard refresh.
       } catch (e) {
         debugPrint('Analytics exam data skipped: $e');
       }
