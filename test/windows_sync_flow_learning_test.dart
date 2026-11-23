@@ -197,6 +197,31 @@ void main(){
     WindowsSyncEvidence.endUpload('fileB');
     expect(WindowsSyncEvidence.measuredUpload(school),isNull);
   });
+  testWidgets('background Drive-only activity cannot restart the Idle ring', (tester) async {
+    Future<void> pump(String phase, Set<String> active) async {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: WindowsSyncFlow(
+          phase:phase,label:phase=='idle'?'Idle':'Syncing',
+          local:'Saved',cloud:'Last ACK verified',
+          drive:'Google Drive pending',pending:0,
+          active:active,uploadProgress:(offset:200,total:1000),
+        ),
+      )));
+      await tester.pump();
+    }
+    await pump('idle',{'drive'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('idle',{'cloud'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('syncing',{'drive'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0);
+    await pump('syncing',{'cloud'});
+    expect(tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator)).value,0.2);
+  });
   test('activity is school scoped and subscriptions are not transfer animations',(){
     expect(WindowsSyncEvidence.dataAction('managed/events'),false);
     WindowsSyncEvidence.enter(school,'cloud');WindowsSyncEvidence.enter(school,'cloud');
