@@ -10958,7 +10958,15 @@ Future<Map<String, dynamic>> _getClassFeeSettings(
     setState(() => _isSavingPayment = true);
     try {
 
-    final student = studentDoc.data();
+    final student = Map<String, dynamic>.from(studentDoc.data());
+    if (_activeStudentId == studentDoc.id &&
+        _activeFeeStudent['mobileStableId'] == student['mobileStableId']) {
+      for (final key in ['feeAdmissionMonth', 'feeAdmissionPersonId']) {
+        if (_activeFeeStudent.containsKey(key)) {
+          student[key] = _activeFeeStudent[key];
+        }
+      }
+    }
     final studentName = student['name']?.toString().trim() ?? 'Student';
     final studentClass = student['class']?.toString().trim() ?? '';
     final roll = student['rollNo']?.toString().trim() ?? '';

@@ -7,7 +7,7 @@ Fees Collection continues to use the existing Windows screen, local student stre
 - **Collect Payment** saves only the fee payment record and its matching monthly ledger record in the existing durable local batch.
 - Payment Save does not render a PDF, compress a PDF, create a receipt document, enqueue a receipt upload, open a print dialog, or fetch an older receipt PDF.
 - Partial installments retain the same month ledger, fee identity, fee heads, and original fee amounts. A stale balance or ambiguous student generation fails closed instead of creating another ledger.
-- Fee settings retain per-head Monthly, Annual, and One-time billing. Legacy fee heads default to Monthly. One-time admission month is tied to the immutable student generation; the server rejects attempts to move or clear an already recorded admission month.
+- Fee settings retain per-head Monthly, Annual, and One-time billing. Legacy fee heads default to Monthly. One-time admission month is tied to the immutable student generation; the server rejects attempts to move or clear an already recorded admission month. Annual rollover selection still depends on the Windows school setting and needs cross-PC consistency verification.
 
 ## Receipt preview and user actions
 

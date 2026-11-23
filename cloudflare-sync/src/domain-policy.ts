@@ -83,7 +83,7 @@ export function validateDomainCandidate(input:DomainCandidate):void {
   if(!items||typeof items!=='object'||Array.isArray(items)||
      !frequencies||typeof frequencies!=='object'||Array.isArray(frequencies)||
      !nonempty(next.studentId)||!nonempty(next.personId)||
-     typeof next.month!=='string'||!/^\\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
+     typeof next.month!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.month))
    reject('DOMAIN_FEE_BILLING_SNAPSHOT_INVALID',400);
   for(const [head,amount] of Object.entries(items)){
    if(!nonempty(head)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0)
@@ -151,7 +151,7 @@ export function validatePersonCandidate(input:PersonCandidate):void {
   const hasAdmissionPerson=admissionPerson!==undefined&&admissionPerson!==null&&admissionPerson!=='';
   if(hasAdmissionMonth!==hasAdmissionPerson||
      hasAdmissionMonth&&(
-      typeof admissionMonth!=='string'||!/^20\\d{2}-(0[1-9]|1[0-2])$|^2100-(0[1-9]|1[0-2])$/.test(admissionMonth)||
+      typeof admissionMonth!=='string'||!/^20\d{2}-(0[1-9]|1[0-2])$|^2100-(0[1-9]|1[0-2])$/.test(admissionMonth)||
       admissionPerson!==next.mobileStableId))
    reject('PERSON_FEE_ADMISSION_INVALID',400);
   // A first admission month is recorded once for this exact person generation.

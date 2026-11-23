@@ -91,5 +91,7 @@ test('one-time fee payments require the server-locked student admission month',(
  assert.throws(()=>run({...valid,feeAdmissionPersonId:'generation-two'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
  assert.throws(()=>run({...valid,feeAdmissionMonth:'2026-03'},{owner}),e=>e.code==='DOMAIN_FEE_ONCE_NOT_AUTHORIZED');
  assert.throws(()=>run({...valid,feeFrequencies:{Admission:'weekly'}},{owner}),e=>e.code==='DOMAIN_FEE_BILLING_FREQUENCY_INVALID');
- assert.doesNotThrow(()=>run({...valid,feeFrequencies:{Admission:'monthly'},feeAdmissionMonth:undefined,feeAdmissionPersonId:undefined},{owner:student}));
+ const monthly={...valid,feeFrequencies:{Admission:'monthly'}};
+ delete monthly.feeAdmissionMonth;delete monthly.feeAdmissionPersonId;
+ assert.doesNotThrow(()=>run(monthly,{owner:student}));
 });
