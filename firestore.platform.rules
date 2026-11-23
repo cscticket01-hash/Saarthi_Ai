@@ -129,10 +129,25 @@ service cloud.firestore {
         (audience == 'all' || audience == get(/databases/$(database)/documents/school_memberships/$(request.auth.uid)).data.schoolId);
       // Publishing remains developer-only under the rule below.
     }
+    // Purchase receipts are append-only to browser clients; Admin SDK writes bypass rules.
+    match /platform_licence_receipts/{receipt} {
+      allow get, list: if developer();
+      allow create: if developer() &&
+        receipt.matches('^([a-f0-9]{32}|[a-f0-9]{64})$') &&
+        request.resource.data.keys().hasOnly(['type','schoolId','licenseId','days','amount','paid','at','expiresAt','actor']) &&
+        request.resource.data.keys().hasAll(['type','schoolId','licenseId','days','amount','paid','at','expiresAt','actor']) &&
+        request.resource.data.type in ['issue','renew'] &&
+        request.resource.data.schoolId is string &&
+        request.resource.data.licenseId is string && request.resource.data.licenseId.matches('^[a-f0-9]{64}$') &&
+        request.resource.data.days is int && request.resource.data.days >= 1 && request.resource.data.days <= 3650 &&
+        request.resource.data.amount is number && request.resource.data.amount >= 0 && request.resource.data.amount <= 100000000 &&
+        request.resource.data.paid is bool && request.resource.data.at is timestamp &&
+        request.resource.data.expiresAt is timestamp && request.resource.data.actor == request.auth.uid;
+    }
     // Developer-only enumeration, keys, renewal, support and legacy collections.
     match /{root}/{document=**} {
       allow read, write: if developer() &&
-        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources']);
+        !(root in ['repair_knowledge','repair_knowledge_evidence','repair_knowledge_sources','developer_password_otp','platform_licence_receipts']);
     }
   }
 }
