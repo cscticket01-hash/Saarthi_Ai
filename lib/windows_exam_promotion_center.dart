@@ -218,6 +218,62 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
     } finally { reason.dispose(); password.dispose(); }
   }
 
+  Future<void> _history() async {
+    if (!_sameSchool || _examId.isEmpty || _working) return;
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('school_settings')
+          .where('examId', isEqualTo: _examId).get();
+      if (!mounted || !_sameSchool) return;
+      final records = snapshot.docs
+          .where((doc) => doc.id.startsWith('promotion_event_') &&
+              doc.data()['movement'] is String &&
+              doc.data()['studentId'] is String)
+          .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
+          .toList()
+        ..sort((a, b) => (b['at'] as num? ?? 0)
+            .compareTo(a['at'] as num? ?? 0));
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Local Promotion Audit History'),
+          content: SizedBox(width: 650, height: 430,
+            child: records.isEmpty
+                ? const Center(child: Text('No promotion approvals recorded for this exam.'))
+                : ListView.separated(
+                    itemCount: records.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final item = records[i];
+                      final ms = (item['at'] as num?)?.toInt() ?? 0;
+                      final at = ms > 0
+                          ? DateTime.fromMillisecondsSinceEpoch(ms).toLocal().toString()
+                          : 'Time unavailable';
+                      return ListTile(
+                        leading: const Icon(Icons.history_edu_outlined),
+                        title: Text((item['movement']?.toString() ?? 'Action') +
+                            ' • ' + (item['studentId']?.toString() ?? 'Student')),
+                        subtitle: Text(
+                          (item['fromClass']?.toString() ?? '—') + ' → ' +
+                          (item['toClass']?.toString() ?? '—') +
+                          '\n' + at +
+                          ' • ' + (item['actor']?.toString() ?? 'School Admin') +
+                          ((item['reason']?.toString().trim().isNotEmpty ?? false)
+                              ? '\nReason: ' + item['reason'].toString() : ''),
+                        ),
+                      );
+                    }),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) _notice('Promotion history needs review: ' + error.toString());
+    }
+  }
+
   Future<void> _preview() async {
     if (!_sameSchool || _selected.length != 1) {
       _notice('Select one student to preview a report card.'); return;
@@ -389,6 +445,9 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
           OutlinedButton.icon(onPressed:_working?null:_preview,
             icon:const Icon(Icons.visibility_outlined,size:17),
             label:const Text('Preview Report Card')),
+          OutlinedButton.icon(onPressed:_working?null:_history,
+            icon:const Icon(Icons.history_edu_rounded,size:17),
+            label:const Text('Promotion History')),
           TextButton.icon(onPressed:_working?null:_override,
             icon:const Icon(Icons.admin_panel_settings_outlined,size:17),
             label:const Text('Admin Override')),
