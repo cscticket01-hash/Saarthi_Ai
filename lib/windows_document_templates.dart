@@ -777,7 +777,9 @@ class WindowsDocumentTemplates {
     final templateSettings=await selections();
     final v = kind == 'studentId'
         ? studentCardSelection(templateSettings[kind])
-        : templateSettings[kind] ?? 0;
+        : kind == 'receipt' && data['receiptTemplateSelection'] != null
+            ? data['receiptTemplateSelection']
+            : templateSettings[kind] ?? 0;
     final profile =
         (await FirebaseFirestore.instance
                 .collection('school_config')
@@ -787,8 +789,10 @@ class WindowsDocumentTemplates {
         {};
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
-    final schoolName=[profile['schoolName'],profile['name'],data['schoolName']]
-      .map((v)=>v?.toString().trim()??'')
+    final schoolName=[
+      if (kind == 'receipt') data['schoolName'],
+      profile['schoolName'], profile['name'], data['schoolName'],
+    ].map((v)=>v?.toString().trim()??'')
       .firstWhere((v)=>v.isNotEmpty,orElse:()=> '');
     if(v is String && v.startsWith('imported:')){
       final manifest=importedAsset(templateSettings,kind,templateId:v.substring(9));
@@ -798,7 +802,9 @@ class WindowsDocumentTemplates {
       final record={
         ...profile,...data,
         'schoolName':schoolName,
-        'schoolAddress':profile['address']??data['schoolAddress']??'',
+        'schoolAddress': kind == 'receipt'
+            ? (data['schoolAddress'] ?? profile['address'] ?? '')
+            : (profile['address'] ?? data['schoolAddress'] ?? ''),
         'schoolEmail':profile['schoolEmail']??profile['email']??data['schoolEmail']??'',
         if(qr.isNotEmpty)'qr':qr,
         if(kind=='reportCard' && (data['dateText']?.toString().trim().isEmpty??true))
@@ -819,7 +825,7 @@ class WindowsDocumentTemplates {
       _personPhoto(data),
       _image(data['schoolLogoUrl'] ?? profile['logoUrl']),
       _image(data['principalSignatureUrl'] ?? profile['principalSignatureUrl']),
-      _image(profile['sealUrl']),
+      _image(kind == 'receipt' ? (data['schoolSealUrl'] ?? profile['sealUrl']) : profile['sealUrl']),
     ]);
     if (FirebaseFirestore.instance.activeProfileId != origin)
       throw StateError('School changed during document preview.');
@@ -899,7 +905,9 @@ class WindowsDocumentTemplates {
         ...data,
         if ((profile['schoolName']?.toString().trim() ?? '').isNotEmpty)
           'schoolName': profile['schoolName'],
-        'schoolAddress': profile['address'] ?? '',
+        'schoolAddress': kind == 'receipt'
+            ? (data['schoolAddress'] ?? profile['address'] ?? '')
+            : (profile['address'] ?? ''),
         'schoolEmail': profile['schoolEmail'] ?? profile['email'] ?? '',
         if (kind == 'reportCard' &&
             (data['dateText']?.toString().trim().isEmpty ?? true))
