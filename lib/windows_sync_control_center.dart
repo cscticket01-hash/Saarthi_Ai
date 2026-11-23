@@ -945,10 +945,19 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
   }
 
   Widget _alerts({required bool ownSchool}) {
+    final current=engine.details.value;
+    final idleTimeout=windowsIdleServerTimeoutWarning(
+      retryableTimeout:engine.recoveryDecision?.kind==
+          failure_policy.SyncFailureKind.timeout,
+      displayState:current['displayState']?.toString(),
+      pending:(current['pending'] as num? ?? 0).toInt(),
+      needsAttention:(current['needsAttention'] as num? ?? 0).toInt());
     final messages = <String>{
       if (!ownSchool) 'School changed. Close and reopen this page.',
       if (ownSchool && notice.isNotEmpty) notice,
-      if (ownSchool && engine.recoveryDecision != null)
+      if (ownSchool && idleTimeout)
+        windowsIdleServerTimeoutMessage,
+      if (ownSchool && !idleTimeout && engine.recoveryDecision != null)
         engine.recoveryDecision!.message,
       if (ownSchool && engine.lastError != null && engine.recoveryDecision == null)
         windowsSyncRecovery(engine.lastError!).message,
