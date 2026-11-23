@@ -77,14 +77,14 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
   String _status(Map<String,dynamic> student) {
     if (student['promotionExamId'] == _examId && _examId.isNotEmpty) {
       final movement = student['classMovement'];
-      if (movement == 'PROMOTED' || movement == 'FORCE_PROMOTED') return 'Sync pending';
+      if (movement == 'PROMOTED' || movement == 'FORCE_PROMOTED') return 'Approved locally';
       if (movement == 'RETAINED') {
         // A corrected PASS result requires a new explicit approval.
         if (_result(student['id'].toString())?['result'] == 'PASS')
           return 'Review';
-        return 'Sync pending';
+        return 'Retained locally';
       }
-      if (movement == 'GRADUATED') return 'Sync pending';
+      if (movement == 'GRADUATED') return 'Graduated locally';
     }
     return _result(student['id'].toString()) == null ? 'Marks missing' : 'Review';
   }
@@ -453,7 +453,7 @@ class _PromotionPanelState extends State<WindowsExamPromotionCenter> {
             label:const Text('Admin Override')),
         ]),
         const SizedBox(height:4),
-        Text('Permanent student ID unchanged • Cloudflare-first sync • PDF only on Download',
+        Text('Student ID unchanged • Check Sync Center for verified Cloudflare status • PDF only on Download',
           style:TextStyle(color:WindowsAppearance.foreground(Colors.white54),fontSize:10)),
       ]));
   }
