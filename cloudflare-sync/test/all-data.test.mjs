@@ -356,5 +356,5 @@ test('24-hour records inventory counts original entries without inventing Drive 
  assert.equal(after.unattributed,0);
  const foreign=(await rpc(tenant('3'),'records',{command:'backupHourly'})).value;
  assert.equal(foreign.hours.reduce((n,h)=>n+h.admitted,0),0,
-  'A different school never inherits this school's original counts');
+  "Another school must not inherit the original counts");
 });
