@@ -21,7 +21,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 
 import 'mobile/school_session.dart';
-import 'mobile/published_id_card.dart';
+import 'mobile/record_id_card.dart';
 import 'mobile/attendance_history.dart';
 import 'platform/github_updates.dart';
 import 'mobile/settings_screen.dart';
@@ -521,6 +521,8 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
   final _s = SchoolSession.instance;
   int _page = 0;
   bool _loading = true, _busy = false, _blocked = false;
+  // Actual pending dashboard HTTP requests; never a fake progress timer.
+  int _dashboardRefreshInFlight = 0;
   String? _error;
   Map<String, dynamic> _data = {};
   late final _history = AttendanceHistoryController(
@@ -639,7 +641,10 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
 
   Future<void> _load({bool afterSignal = false}) async {
     if (!mounted || _s.syncPaused) return;
-    setState(() => _loading = _data.isEmpty);
+    setState(() {
+      _dashboardRefreshInFlight++;
+      _loading = _data.isEmpty;
+    });
     try {
       final d = await _s.refreshDashboard(afterSignal: afterSignal);
       if (mounted)
@@ -649,7 +654,7 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
           _error = null;
         });
       if (_page == (_teacher ? 0 : 1)) unawaited(_loadAttendance());
-      unawaited(_refreshPublishedCard().catchError((Object _) => null));
+      // Dashboard refresh never prefetches a school PDF for ID preview.
       unawaited(_registerManagedNotifications().catchError((_) {}));
     } on SchoolAccessDenied catch (e) {
       if (mounted)
@@ -668,12 +673,11 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
               : null;
         });
     } finally {
+      _dashboardRefreshInFlight--;
       if (mounted)
-        setState(
-          () => _loading =
-              _data.isEmpty &&
-              _s.connectionState == SchoolConnectionState.syncing,
-        );
+        setState(() => _loading =
+            _data.isEmpty &&
+            _s.connectionState == SchoolConnectionState.syncing);
     }
   }
 
@@ -1428,22 +1432,36 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
                 textAlign: TextAlign.center,
               )
             else
-              PublishedIdCard(
-                automatic: true,
-                key: ValueKey(
-                  jsonEncode([
-                    _s.link?.projectId,
-                    _s.link?.role,
-                    _s.link?.personId,
-                    _data['idCardPackage'],
-                    _data['atomicIdCardBundle'],
-                  ]),
-                ),
-                load: _refreshPublishedCard,
-                refresh: () => _load(afterSignal: true),
-                open: (bytes) =>
-                    _previewPdf(bytes, 'School ID card • Front & back'),
-                openExternally: _openIdPdfExternally,
+              MobileRecordIdCard(
+                key: ValueKey(jsonEncode([
+                  _s.link?.schoolId, _s.link?.role, _s.link?.personId,
+                  _s.person['_syncRevision'], _data['revision'],
+                ])),
+                schoolName: _s.schoolName,
+                schoolId: _s.link?.schoolId ?? '',
+                role: _s.link?.role ?? '',
+                personId: _s.link?.personId ?? '',
+                person: Map<String, dynamic>.from(_s.person),
+                verified: !_blocked && _s.lastDashboardVerifiedAt != null,
+                portrait: _data['atomicPortraitBundle'] is Map
+                    ? FutureBuilder<Uint8List?>(
+                        future: _schoolPortrait(),
+                        builder: (_, snapshot) {
+                          final bytes = snapshot.data;
+                          return bytes == null || bytes.isEmpty
+                              ? const CircleAvatar(radius: 34,
+                                  child: Icon(Icons.person_outline, size: 38))
+                              : ClipOval(child: Image.memory(bytes,
+                                  width: 70, height: 70, fit: BoxFit.cover));
+                        },
+                      )
+                    : null,
+                // Existing historical PDF may be opened on explicit tap only.
+                onOpenHistoricalPdf: _data['idCardPackage'] is Map ||
+                        _data['atomicIdCardBundle'] is Map
+                    ? () => _showPdf(_s.link?.role == 'teacher'
+                        ? 'teacherId' : 'studentId', _s.person)
+                    : null,
               ),
           ],
         ),
@@ -1673,6 +1691,19 @@ class _SchoolDashboardState extends State<_SchoolDashboard>
       appBar: AppBar(
         title: const VidyaSaarthiBrand(),
         actions: [
+          IconButton(
+            tooltip: _dashboardRefreshInFlight > 0
+                ? 'Refreshing school data' : 'Refresh school data',
+            onPressed: _dashboardRefreshInFlight > 0 || _blocked
+                ? null
+                : () => unawaited(_load(afterSignal: true)),
+            icon: _dashboardRefreshInFlight > 0
+                ? const SizedBox(
+                    height: 20, width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'complaint') _complaint();
