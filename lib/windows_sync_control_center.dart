@@ -882,6 +882,7 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
       'cloudRequest': 'Cloud request',
       'waitingForAck': 'Waiting for authoritative ACK',
       'verified': 'Verified sync',
+      'cloudflareAccepted': 'School Server ACK verified — device upload complete',
       'retry': 'Retry scheduled',
       'conflict': 'Conflict — administrator review',
       'duplicateReconciled': 'Duplicate reconciled — original cloud record retained',
@@ -913,8 +914,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(
-        stage == 'verified' ? Icons.check_circle_outline : Icons.sync,
-        color: stage == 'verified' ? Colors.greenAccent : _cyan,
+        {'verified','cloudflareAccepted'}.contains(stage)
+            ? Icons.check_circle_outline : Icons.sync,
+        color: {'verified','cloudflareAccepted'}.contains(stage)
+            ? Colors.greenAccent : _cyan,
       ),
       title: Text(labels[stage] ?? 'Unrecognized diagnostic event (no verified result)'),
       subtitle: Text(
@@ -1101,11 +1104,17 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
     final today = details['todayVerifiedReceipts'];
     final activeSchool = db.activeProfileIdentity['schoolSyncId'];
     final nowMillis = DateTime.now().millisecondsSinceEpoch;
+    final lastDeviceAckAt = ack is num && ack > 0 ? ack.toInt() : 0;
+    final lastProviderVerifiedAt =
+        lastSync is num && lastSync > 0 ? lastSync.toInt() : 0;
+    final newestDeviceAckAt = lastDeviceAckAt > lastProviderVerifiedAt
+        ? lastDeviceAckAt : lastProviderVerifiedAt;
     final activityEvents = (details['activity'] as List? ?? const [])
         .whereType<Map>().toList().reversed
         .where((row) => activeSchool is String &&
             activeSchool.isNotEmpty && row['schoolId'] == activeSchool &&
-            row['stage'] == 'verified' && row['at'] is int &&
+            {'verified','cloudflareAccepted'}.contains(row['stage']) &&
+            row['at'] is int &&
             (row['at'] as int) <= nowMillis &&
             nowMillis - (row['at'] as int) < 5000)
         .take(1).toList();
@@ -1123,9 +1132,10 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
             transferActive ? '$uploadCount pending uploads' : 'No active upload',
             Icons.upload_outlined, Colors.lightBlueAccent),
           _syncSummary('Last Synced',
-            lastSync is num && transfers is num
-                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(lastSync.toInt())))} · ${(transfers / 1000000).toStringAsFixed(2)} sec'
-                : 'No verified sync yet', Icons.cloud_done_outlined, Colors.greenAccent),
+            newestDeviceAckAt > 0
+                ? '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(newestDeviceAckAt)))} · ${lastProviderVerifiedAt >= lastDeviceAckAt && transfers is num ? '${(transfers / 1000000).toStringAsFixed(2)} sec' : 'School Server ACK'}'
+                : 'No verified ACK yet',
+            Icons.cloud_done_outlined, Colors.greenAccent),
           _syncSummary('System Health', cloudHealth,
             Icons.health_and_safety_outlined, Colors.tealAccent),
         ]),
@@ -1156,7 +1166,9 @@ class _WindowsSyncControlCenterState extends State<WindowsSyncControlCenter> {
                     pendingText:uploadCount > 0
                         ? '$uploadCount uploads'
                         : '0 pending',
-                    lastMicros:details['lastVerifiedTransferMicros'] as int?,
+                    lastMicros:lastProviderVerifiedAt >= lastDeviceAckAt
+                        ? details['lastVerifiedTransferMicros'] as int?
+                        : null,
                     active:engine.isPaused || deviceIdle
                       ? const {}
                       : WindowsSyncEvidence.lanes(db.activeProfileIdentity['schoolSyncId']?.toString()??'')
