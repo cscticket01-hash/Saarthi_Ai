@@ -154,7 +154,10 @@ function createSchoolAdminSecurity({db, auth, now=Date.now}) {
       await approvalRef(identity.schoolId, identity.uid, token).create({
         schoolId:identity.schoolId, uid:identity.uid, scope, targetHash:hash(target),
         credentialFingerprint:verifiedHash,
-        issuedAt:now(), expiresAt:now()+APPROVAL_WINDOW_MS, usedAt:0
+        issuedAt:now(), expiresAt:now()+APPROVAL_WINDOW_MS,
+        // Firestore TTL can later be enabled on ttlAt; expiration is enforced
+        // by the handler even without a configured TTL deletion policy.
+        ttlAt:new Date(now()+APPROVAL_WINDOW_MS), usedAt:0
       });
       await db.collection('platform_audit').add({
         action:'school_admin_action_authorized', scope, targetHash:hash(target),
