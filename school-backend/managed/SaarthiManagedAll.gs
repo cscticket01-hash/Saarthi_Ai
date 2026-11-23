@@ -1641,27 +1641,9 @@ function editStudent(data) {
 
     photoUrl =
       newPhoto.url || "";
+    if (!photoUrl) throw new Error("Student photo upload returned no usable URL");
 
 
-    if (
-      oldPhotoUrl &&
-      oldPhotoUrl !==
-      photoUrl
-    ) {
-
-      try {
-
-        deleteDrivePhotoByUrl(
-          oldPhotoUrl
-        );
-
-      } catch (error) {
-
-        console.log(
-          "Old student photo delete warning: " +
-          error
-        );
-      }
     }
   }
 
@@ -1772,6 +1754,21 @@ function editStudent(data) {
 
       new Date()
     ]]);
+
+
+  // Never trash a previously published photo before the replacement
+  // has been written, flushed and read back from this exact Sheet row.
+  // A failed/uncertain write retains the old file for safe recovery.
+  if (photoUrl !== oldPhotoUrl) {
+    SpreadsheetApp.flush();
+    const storedPhotoUrl = String(sheet.getRange(rowNumber, 6).getValue() || "").trim();
+    if (storedPhotoUrl !== photoUrl)
+      throw new Error("Student photo replacement readback unverified; old photo retained");
+    if (oldPhotoUrl) {
+      try { deleteDrivePhotoByUrl(oldPhotoUrl); }
+      catch (error) { console.log("Old student photo cleanup deferred: " + error); }
+    }
+  }
 
 
   return jsonResponse({
@@ -2531,27 +2528,9 @@ function editTeacher(data) {
 
     photoUrl =
       newPhoto.url || "";
+    if (!photoUrl) throw new Error("Teacher photo upload returned no usable URL");
 
 
-    if (
-      oldPhotoUrl &&
-      oldPhotoUrl !==
-      photoUrl
-    ) {
-
-      try {
-
-        deleteDrivePhotoByUrl(
-          oldPhotoUrl
-        );
-
-      } catch (error) {
-
-        console.log(
-          "Old teacher photo delete warning: " +
-          error
-        );
-      }
     }
   }
 
@@ -2701,6 +2680,21 @@ function editTeacher(data) {
 
       new Date()
     ]]);
+
+
+  // Never trash a previously published photo before the replacement
+  // has been written, flushed and read back from this exact Sheet row.
+  // A failed/uncertain write retains the old file for safe recovery.
+  if (photoUrl !== oldPhotoUrl) {
+    SpreadsheetApp.flush();
+    const storedPhotoUrl = String(sheet.getRange(rowNumber, 14).getValue() || "").trim();
+    if (storedPhotoUrl !== photoUrl)
+      throw new Error("Teacher photo replacement readback unverified; old photo retained");
+    if (oldPhotoUrl) {
+      try { deleteDrivePhotoByUrl(oldPhotoUrl); }
+      catch (error) { console.log("Old teacher photo cleanup deferred: " + error); }
+    }
+  }
 
 
   return jsonResponse({
