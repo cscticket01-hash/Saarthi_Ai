@@ -1,0 +1,19 @@
+name: Sync4 read-only exam analytics no duplicate upload
+on:
+  pull_request:
+    paths:
+      - 'lib/main_dashboard_screen_windows.dart'
+      - 'test/windows_exam_analytics_no_spurious_sync.test.cjs'
+      - '.github/workflows/sync4-analytics-no-spurious-sync.yml'
+permissions:
+  contents: read
+jobs:
+  exam-analytics-read-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Audit read-only analytics does not call outbound sync engine
+        run: node --test test/windows_exam_analytics_no_spurious_sync.test.cjs
