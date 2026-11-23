@@ -6,6 +6,7 @@ import 'windows_inactivity_timer.dart';
 import 'windows_student_excel.dart';
 import 'package:file_selector/file_selector.dart' as excel_file;
 import 'windows_appearance.dart';
+import 'liquid_glass_theme.dart';
 import 'windows_fee_settings_design.dart';
 import 'windows_admin_settings_design.dart';
 import 'windows_settings_design.dart';
@@ -6159,14 +6160,19 @@ Widget _buildOverviewCards() {
       ),
     );
 
-    if (onTap == null) return card;
+    final frostedCard = LiquidGlassSurface(
+      enabled: WindowsAppearance.presetId == 'midnight-glass',
+      radius: 17,
+      child: card,
+    );
+    if (onTap == null) return frostedCard;
 
     return Material(
       color: WindowsAppearance.background(Colors.transparent),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(17),
-        child: card,
+        child: frostedCard,
       ),
     );
   }
@@ -6774,7 +6780,10 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
     required Widget child,
     Widget? trailing,
   }) {
-    return Container(
+    return LiquidGlassSurface(
+      enabled: WindowsAppearance.presetId == 'midnight-glass',
+      radius: 19,
+      child: Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -6849,7 +6858,7 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
           child,
         ],
       ),
-    );
+    ));
   }
 
   Widget _dashboardActionButton({
