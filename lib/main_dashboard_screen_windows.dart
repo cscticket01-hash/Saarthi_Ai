@@ -17060,33 +17060,6 @@ class _AllStudentsListScreenState extends State<AllStudentsListScreen> {
     return result;
   }
 
-  Future<void> _changeStudentClass(String docId, Map<String,dynamic> student, int direction) async {
-    if (_movingStudentIds.contains(docId)) return;
-    final result = _latestExamResultForStudent(docId, student);
-    if (result == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enter the final exam result before promotion or retention.')));
-      return;
-    }
-    if(result['isFinal']!=true)return;
-    final status = result['result']?.toString().toUpperCase() ?? '';
-    final force = direction > 0 && status == 'FAIL';
-    final decision = direction < 0 ? 'FAIL' : status;
-    var overrideReason='';
-    final yes = await showDialog<bool>(context:context,builder:(ctx){ WindowsAppearance.watch(ctx); return StatefulBuilder(builder:(ctx,setDialog){ WindowsAppearance.watch(ctx); return AlertDialog(
-      title:Text(direction < 0 ? 'Retain in the same class?' : force ? 'Force promote this student?' : 'Apply final exam decision?'),
-      content:Column(mainAxisSize:MainAxisSize.min,children:[Text('${student['name']} • ${student['class']}\nFinal result: $status'),
-        if(force)TextField(maxLength:500,onChanged:(v)=>setDialog(()=>overrideReason=v.trim()),decoration:const InputDecoration(labelText:'Required reason for administrator override'))]),
-      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:force&&overrideReason.isEmpty?null:()=>Navigator.pop(ctx,true),child:const Text('Confirm'))]); }); });
-    if(yes!=true||!mounted)return;
-    setState(()=>_movingStudentIds.add(docId));
-    try {
-      if(direction < 0 && status != 'FAIL')throw StateError('Retention is only for a final-exam FAIL result.');
-      final message=await SchoolPromotionService.apply(studentId:docId,student:student,exam:result,result:decision,force:force,reason:overrideReason);
-      if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(message)));
-    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$e')));}
-    finally{if(mounted)setState(()=>_movingStudentIds.remove(docId));}
-  }
-
   Future<void> _deleteStudent(String docId) async {
     final passwordController = TextEditingController();
     bool obscureText = true;
@@ -18040,80 +18013,19 @@ errorBuilder: (_, __, ___) =>  ColoredBox(
                                     ),
                                     OutlinedButton.icon(
                                       style: OutlinedButton.styleFrom(
-                                        foregroundColor:
-                                            WindowsAppearance.primary,
-                                        side: BorderSide(
-                                          color: WindowsAppearance.outline(const Color(0xFF00A884))
-                                              .withOpacity(0.38),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 8,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(9),
-                                        ),
-                                      ),
-                                      onPressed: isMoving || classNumber >= 12 || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL' || student['classMovement']!='RETAINED'
-                                          ? null
-                                          : () => _changeStudentClass(
-                                                doc.id,
-                                                Map<String, dynamic>.from(student),
-                                                1,
-                                              ),
-                                      icon: isMoving
-                                          ? const SizedBox(
-                                              width: 14,
-                                              height: 14,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.trending_up_rounded,
-                                              size: 16,
-                                            ),
-                                      label: const Text(
-                                        'Promote',
-                                        style: TextStyle(fontFamily: 'Segoe UI', 
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                                    OutlinedButton.icon(
-                                      style: OutlinedButton.styleFrom(
                                         foregroundColor: WindowsAppearance.primary,
-                                        side: BorderSide(
-                                          color: WindowsAppearance.outline(Colors.orangeAccent)
-                                              .withOpacity(0.34),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 8,
-                                        ),
+                                        side: BorderSide(color: WindowsAppearance.outline(
+                                          const Color(0xFF86D6E4).withOpacity(.38))),
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(9),
-                                        ),
+                                          borderRadius: BorderRadius.circular(9)),
                                       ),
-                                      onPressed: isMoving || latestResult?['isFinal']!=true || resultStatus.toUpperCase()!='FAIL'
-                                          ? null
-                                          : () => _changeStudentClass(
-                                                doc.id,
-                                                Map<String, dynamic>.from(student),
-                                                -1,
-                                              ),
-                                      icon: const Icon(
-                                        Icons.trending_down_rounded,
-                                        size: 16,
-                                      ),
-                                      label: const Text(
-                                        'Retain',
-                                        style: TextStyle(fontFamily: 'Segoe UI', 
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
+                                      onPressed: () => Navigator.push(context,
+                                        MaterialPageRoute<void>(builder: (_) => const ExamCenterScreen())),
+                                      icon: const Icon(Icons.school_outlined, size: 16),
+                                      label: const Text('Promotion in Exam Center',
+                                        style: TextStyle(fontFamily: 'Segoe UI',
+                                          fontSize: 10.5, fontWeight: FontWeight.w800)),
                                     ),
                                   ],
                                 ),
@@ -22763,7 +22675,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     const SizedBox(height:10),
                     SizedBox(height:560,child:WindowsExamPromotionCenter(
                       key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
-                      onOpenMarks:()=>selectedExam==null?null:_openMarks(selectedExam),
+                      onOpenMarks: () { if (selectedExam != null) _openMarks(selectedExam); },
                       onRefresh:_load)),
                   ]))
                 : Row(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -22772,7 +22684,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                     const SizedBox(width:12),
                     Expanded(child:WindowsExamPromotionCenter(
                       key:ValueKey(selectedId),exam:selectedExam,results:panelResults,
-                      onOpenMarks:()=>selectedExam==null?null:_openMarks(selectedExam),
+                      onOpenMarks: () { if (selectedExam != null) _openMarks(selectedExam); },
                       onRefresh:_load)),
                   ])),
             ]));
