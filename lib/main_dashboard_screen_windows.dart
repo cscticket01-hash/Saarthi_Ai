@@ -22929,7 +22929,7 @@ class _ExamMarksEntryScreenState
                   : () async {
                       final marks = <String, double>{};
                       for (final subject in _subjects) {
-                        final value = double.tryParse(
+                        final value = WindowsExamPolicy.finiteNumber(
                             controllers[subject]!.text.trim());
                         if (value == null ||
                             value < 0 ||
@@ -22948,10 +22948,32 @@ class _ExamMarksEntryScreenState
 
                       try {
                         doc.reference.requireOriginProfile();
-                        final resultStatus=marks.values.every((m)=>m>=_passMarks)?'PASS':'FAIL';
+                        final validated = WindowsExamPolicy.validateMarks(
+                           marks,
+                           subjects: _subjects,
+                           fullMarks: _fullMarks,
+                           passMarks: _passMarks,
+                         );
+                         final resultStatus =
+                             WindowsExamPolicy.decision(validated, _passMarks);
                         final isFinal=await SchoolPromotionService.isFinal(widget.exam);
                         final total=marks.values.fold<double>(0,(a,b)=>a+b);
-                        final resultData={'examId':_examId,'examName':_examName,'studentId':doc.id,'personId':student['mobileStableId'] ?? doc.id,'studentName':student['name'] ?? '', 'studentClass':_studentClass,'rollNo':student['rollNo'] ?? '', 'marks':marks,'fullMarks':_fullMarks,'passMarks':_passMarks,'totalMarks':total,'percentage':_subjects.isEmpty?0:total/(_subjects.length*_fullMarks)*100,'result':resultStatus,'isFinal':isFinal,'timestamp':DateTime.now().millisecondsSinceEpoch};
+                        final maximum = _subjects.length * _fullMarks;
+                         final resultData={
+                           'examId':_examId,'examName':_examName,
+                           'studentId':doc.id,
+                           'personId':student['mobileStableId'] ?? doc.id,
+                           'studentName':student['name'] ?? '',
+                           'studentClass':_studentClass,
+                           'academicSession':widget.exam['academicSession'],
+                           'rollNo':student['rollNo'] ?? '',
+                           'marks':validated,'fullMarks':_fullMarks,
+                           'passMarks':_passMarks,'totalMarks':total,
+                           'maximum':maximum,
+                           'percentage':maximum<=0 ? 0 : total/maximum*100,
+                           'result':resultStatus,'isFinal':isFinal,
+                           'timestamp':DateTime.now().millisecondsSinceEpoch
+                         };
                         // Record-only Save: PDF is an explicit Download action.
                         doc.reference.requireOriginProfile();
                         final savedResult = await _post({
@@ -22995,7 +23017,7 @@ class _ExamMarksEntryScreenState
                   :  Icon(Icons.save_rounded,
                       color: null, size: 17),
               label: Text(
-                saving ? 'Saving...' : 'Save & Generate Report Card',
+                saving ? 'Saving...' : 'Save Marks',
                 style:  TextStyle(fontFamily: 'Segoe UI', color: null),
               ),
             ),
