@@ -86,4 +86,58 @@ void main() {
         'photoUrl':inline,'sealUrl':inline},
     },school,request:forbidden),isNull);
   });
+
+  test('retry probes only signed original Drive photo proof, not a Cloudflare pending ticket', () async {
+    const key='original-photo-upload-key',sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      name='photo_optimized_test.jpg',mime='image/jpeg',size=123;
+    var reads=0;
+    Future<Map<String,dynamic>> read(String action,Map<String,dynamic> args) async {
+      reads++;
+      expect(action,'managed/file/receipt');
+      expect(args['uploadKey'],key);
+      expect(args['sha256'],sha);
+      expect(args['sizeBytes'],size);
+      expect(args['name'],name);
+      expect(args['mime'],mime);
+      return {'success':true,'schoolId':school,'photoReceiptVersion':1,
+        'uploadKey':key,'sha256':sha,'sizeBytes':size,'name':name,'mime':mime,
+        'verified':true,'fileId':'verified-photo-id',
+        'fileUrl':'https://drive.google.com/file/d/verified-photo-id/view'};
+    }
+    final proof=await verifyRetriedOriginalPhoto(school:school,uploadKey:key,
+      sha256Hex:sha,sizeBytes:size,name:name,mime:mime,call:read);
+    expect(proof?['fileId'],'verified-photo-id');
+    expect(reads,1);
+    final unknown=await verifyRetriedOriginalPhoto(school:school,uploadKey:key,
+      sha256Hex:sha,sizeBytes:size,name:name,mime:mime,
+      call:(_,__)async{'success':true,'schoolId':school,'photoReceiptVersion':1,
+        'uploadKey':key,'sha256':sha,'sizeBytes':size,'name':name,'mime':mime,
+        'verified':false,'status':'unknown'});
+    expect(unknown,isNull,'Unknown must fall through to exact-key retry, never ACK');
+  });
+
+  test('retry receipt rejects wrong school, digest, Drive ID, or unverified proof',() async {
+    const key='key',sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      name='photo.png',mime='image/png',size=10;
+    final base={'success':true,'schoolId':school,'photoReceiptVersion':1,
+      'uploadKey':key,'sha256':sha,'sizeBytes':size,'name':name,'mime':mime,
+      'verified':true,'fileId':'photo-id',
+      'fileUrl':'https://drive.google.com/file/d/photo-id/view'};
+    for(final wrong in [
+      {'schoolId':'vs-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+      {'sha256':'b'*64}, {'sizeBytes':9},
+      {'verified':true,'fileId':'../outside'},
+      {'verified':false,'status':'unknown'},
+      {'fileUrl':'https://drive.google.com/file/d/wrong/view'},
+      {'photoReceiptVersion':0},
+    ]) {
+      await expectLater(verifyRetriedOriginalPhoto(school:school,uploadKey:key,
+        sha256Hex:sha,sizeBytes:size,name:name,mime:mime,
+        call:(_,__)async=>{...base,...wrong}),throwsStateError);
+    }
+    await expectLater(verifyRetriedOriginalPhoto(school:school,uploadKey:key,
+      sha256Hex:sha,sizeBytes:size,name:name,mime:mime,
+      call:(_,__)async=>throw StateError('Original Google timeout')),
+      throwsStateError,reason:'Provider timeout must retain durable original, never reupload blindly');
+  });
 }
