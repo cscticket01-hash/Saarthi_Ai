@@ -351,7 +351,7 @@ test('24-hour records inventory counts original entries without inventing Drive 
  const after=(await rpc(school,'records',{command:'backupHourly'})).value;
  assert.equal(after.hours.reduce((n,h)=>n+h.admitted,0),1);
  assert.equal(after.hours.reduce((n,h)=>n+h.pending+h.retry+h.processing,0),0);
- assert.equal(after.hours.reduce((n,h)=>n+h.proofStamped+n.completedWithoutProofTimestamp,0),1);
+ assert.equal(after.hours.reduce((n,h)=>n+h.proofStamped+h.completedWithoutProofTimestamp,0),1);
  assert(after.hours.every((h,i)=>i===0||h.hourStartMillis-after.hours[i-1].hourStartMillis===3600000));
  assert.equal(after.unattributed,0);
  const foreign=(await rpc(tenant('3'),'records',{command:'backupHourly'})).value;
