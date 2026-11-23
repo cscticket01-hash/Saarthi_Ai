@@ -22629,7 +22629,7 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
                       onRefresh:_load)),
                   ]))
                 : Row(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-                    SizedBox(width:(outer.maxWidth*.27).clamp(275.0,345.0),
+                    SizedBox(width:(outer.maxWidth*.27).clamp(275.0,345.0).toDouble(),
                       child:_examListPanel(candidates,selectedId,groups)),
                     const SizedBox(width:12),
                     Expanded(child:WindowsExamPromotionCenter(
