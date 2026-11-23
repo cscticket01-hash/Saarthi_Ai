@@ -313,7 +313,6 @@ class ManagedSchoolSession {
       client:ManagedDeviceClient(http.Client(),saved['endpoint'].toString(),
         accountUid:saved['uid'].toString()),
       expectedSchoolId:saved['schoolId'],
-      closeClient:false,
     );
     try {
       final reply = await cloud.send('POST',
