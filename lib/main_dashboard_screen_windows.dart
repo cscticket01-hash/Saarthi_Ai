@@ -21496,16 +21496,19 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
                   final configs = <Map<String, dynamic>>[];
                   for (final className in selectedSorted) {
-                    final subjectList = subjectsByClass[className]!
-                        .text
-                        .split(',')
-                        .map((e) => e.trim())
-                        .where((e) => e.isNotEmpty)
-                        .toList();
-                    final fullMarks = double.tryParse(
+                    List<String> subjectList;
+                    try {
+                      subjectList = WindowsExamPolicy.subjects(
+                        subjectsByClass[className]!.text.split(','),
+                      );
+                    } catch (error) {
+                      setDialogState(() => dialogError = '$className: $error');
+                      return;
+                    }
+                    final fullMarks = WindowsExamPolicy.finiteNumber(
                       fullByClass[className]!.text.trim(),
                     );
-                    final passMarks = double.tryParse(
+                    final passMarks = WindowsExamPolicy.finiteNumber(
                       passByClass[className]!.text.trim(),
                     );
 
@@ -21553,16 +21556,40 @@ class _ExamCenterScreenState extends State<ExamCenterScreen> {
 
     setState(() => _saving = true);
     var created = 0;
+    final session = _academicYear();
+    final groupId = 'EXGRP-${DateTime.now().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(1 << 30)}';
 
     try {
+      // A second exam/class with the same title in this academic session
+      // would make the report history and final-promotion decision ambiguous.
       for (final payload in payloads) {
+        final duplicate = _exams.any((exam) =>
+            (exam['examName']?.toString().trim().toLowerCase() ?? '') ==
+                (payload['examName']?.toString().trim().toLowerCase() ?? '') &&
+            exam['studentClass'] == payload['studentClass'] &&
+            exam['academicSession'] == session &&
+            exam['deleted'] != true && exam['_syncDeleted'] != true);
+        if (duplicate) {
+          throw StateError('Exam already exists for ${payload['studentClass']} '
+              'in academic session $session.');
+        }
+      }
+      for (final payload in payloads) {
+        final className = payload['studentClass']?.toString() ?? '';
+        final stableId = '$groupId-${className.replaceAll(' ', '-')}';
         final savedExam = await _post({
           'action': 'save_exam',
           ...payload,
+          'examId': stableId,
+          'examGroupId': groupId,
+          'academicSession': session,
+          'expectedStudentCount': _studentCounts[className] ?? 0,
           'createdBy': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
         });
-        final savedId=savedExam['examId']?.toString() ?? '';
-        if(savedId.isNotEmpty)await FirebaseFirestore.instance.collection('school_settings').doc('exam_$savedId').set({...payload,'examId':savedId});
+        if ((savedExam['examId']?.toString() ?? '').isEmpty) {
+          throw StateError('Exam ID missing after local Save.');
+        }
         created++;
       }
       await _load();
