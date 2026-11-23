@@ -27,6 +27,8 @@ Uri? latestReleasedInstaller(List releases, String platform) {
       final uri = Uri.tryParse(asset['browser_download_url'].toString());
       if (uri == null || uri.scheme != 'https' || uri.host != 'github.com' ||
           !uri.path.startsWith('/cscticket01-hash/Saarthi_Ai/releases/download/')) continue;
+      if (platform == 'windows' &&
+          uri.path != '/cscticket01-hash/Saarthi_Ai/releases/download/${release['tag_name']}/$assetName') continue;
       best = version;
       selected = uri;
       break;
