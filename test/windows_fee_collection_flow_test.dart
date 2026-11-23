@@ -472,7 +472,8 @@ void main() {
     expect(find.text('Paid to date'), findsOneWidget);
     expect(find.text('Balance due'), findsOneWidget);
     expect(find.text('₹100.00'), findsWidgets);
-    expect(find.text('Print Receipt'), findsOneWidget);
+    expect(find.text('Print Receipt'), findsNothing,
+        reason: 'Record-only preview must generate PDF only on Download');
     expect(find.text('Download PDF'), findsOneWidget);
   });
 
