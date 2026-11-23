@@ -418,8 +418,10 @@ test('original record owner journal pages are read-only, paginated, scoped and n
  }));
  const completed=await rpc(school,'records',{command:'auditJournalPage',after:0,limit:1});
  assert.equal(completed.value.entries[0].state,'completed');
- assert.equal(completed.value.entries[0].driveOwnerReceiptPresent,true);
- assert(completed.value.entries[0].verifiedAt>=completed.value.entries[0].acceptedAt);
+ // A legacy completed record without the original verified-at timestamp
+ // is NOT sufficient proof of a signed provider owner readback.
+ assert.equal(completed.value.entries[0].driveOwnerReceiptPresent,false);
+ assert.equal(completed.value.entries[0].verifiedAt,null);
  assert.equal(completed.value.driveVerified,undefined,
   'Owner proof is not an independent signed Google readback');
  const otherSchool='vs-'+hash('sync4-record-owner-foreign-school').slice(0,32);
