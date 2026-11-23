@@ -630,9 +630,9 @@ class SchoolPromotionService {
     own();
 
     final ref = db.collection('students_directory').doc(studentId);
-    final live = await SchoolPersonIdentity.ensure(
-      'students_directory', studentId);
+    final live = (await ref.get()).data();
     own();
+    if (live == null) throw StateError('Student changed. Refresh Exam Center.');
     if (live['deleted'] == true || live['_syncDeleted'] == true ||
         live['active'] == false ||
         live['status']?.toString().toLowerCase() == 'inactive') {
@@ -704,6 +704,17 @@ class SchoolPromotionService {
       if (nextClass != live['class']) 'previousClass': live['class'],
       'class': nextClass,
     });
+    batch.set(
+      db.collection('school_settings').doc('promotion_event_${examId}_${studentId}_$movement'),
+      {
+        'studentId': studentId, 'personId': stableId,
+        'examId': examId, 'academicSession': session,
+        'fromClass': live['class'], 'toClass': nextClass,
+        'result': result, 'movement': movement, 'at': now,
+        'reason': reason.trim(), 'manualAdminOverride': force,
+        'actor': FirebaseAuth.instance.currentUser?.email ?? 'Admin',
+      },
+    );
     batch.set(
       db.collection('school_settings').doc('promotion_audit_${examId}_$studentId'),
       {
