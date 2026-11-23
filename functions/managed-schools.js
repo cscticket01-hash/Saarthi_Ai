@@ -15,6 +15,7 @@ const {firestoreManagedDeviceStore}=require('./managed-device-registry');
 const {planStudentImport,canonicalHash}=require('./student-import-plan');
 const {createAttendanceQueue,firestoreAttendanceStore}=require('./attendance-queue');
 const {randomUUID,randomBytes,createHash,createHmac,timingSafeEqual,createCipheriv,createDecipheriv}=require('node:crypto');
+const {createSchoolDeltaSingleflight}=require('./school-delta-singleflight');
 const SCHOOL=/^vs-[a-f0-9]{32}$/;
 const COLLECTIONS=new Set(['students_directory','teachers_directory','attendance_logs','teacher_attendance','attendance_records','teacher_schedules','school_notices','school_calendar','exam_results','teacher_salary','school_config','school_settings','fee_settings','fee_ledger','fee_payments','school_expenses','student_scan_index','scanner_devices','documents','backups','exams','exam_center_results']);
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -24,6 +25,7 @@ function unprotect(v,key){if(!/^[a-f0-9]{64}$/i.test(key||''))fail(503,'Managed 
 function scriptUrl(value){try{const u=new URL(value);if(u.protocol==='https:'&&u.hostname==='script.google.com'&&!u.username&&!u.password&&!u.port&&!u.search&&!u.hash&&/^\/macros\/s\/[A-Za-z0-9_-]{10,300}\/exec$/.test(u.pathname))return u.href;}catch{}fail(400,'Use the exact school Apps Script /exec URL');}
 function clean(value,depth=0){if(depth>12)fail(400,'Record is too deeply nested');if(Array.isArray(value))return value.map(v=>clean(v,depth+1));if(value&&typeof value==='object'){const out={};for(const [k,v]of Object.entries(value)){if(['__proto__','prototype','constructor'].includes(k)||(/password|token|secret|private_key|base64|localpath/i.test(k)&&k!=='mobileLinkToken'))fail(400,'Secrets and media cannot be stored in school records');out[k]=clean(v,depth+1);}return out;}if(typeof value==='string'&&value.startsWith('data:'))fail(400,'Media belongs in Drive files');return value;}
 function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edgeRecordParallelism=1,cloudflareAtomicSmallFiles=false,repairKnowledgeOptions={},firebaseCredentialFingerprint=null,cloudflareAllDataEnabled=false,providerPressureJournal=null,googleQuotaScopes={},changeFeedIdleGraceMillis=0,deviceAccessEnforced=false,deviceManagementEnabled=false,deviceEnrollmentEnabled=false,deviceOfflinePrivateKey,deviceOfflineWindowMs,deviceStore,studentImportEnabled=false,cardIssueEnabled=false,cardReaderEnforced=false,cardReaderPrivateKey,auth,db,projectId,encryptionKey,fetchImpl=fetch,now=Date.now,cloudflareSync=null,attendanceStore,attendanceCollection='attendance_outbox',messaging,scheduleHint=callback=>setTimeout(callback,250),pushDiagnostics=entry=>console.info(JSON.stringify(entry)),monitor=async()=>({available:false,reason:'Monitoring access has not been configured'}),cloudflareMonitor=async()=>({available:false,reason:'Cloudflare analytics not configured'})}){
+ const schoolDeltaSingleflight=createSchoolDeltaSingleflight();
  const windowsTheme=createWindowsTheme({db,now});
  const developerPasswordOtp=createDeveloperPasswordOtp({auth,db,now,fetchImpl});
  const repairKnowledge=createRepairKnowledge({...repairKnowledgeOptions,db,now});
@@ -1434,7 +1436,7 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
  if(action==='managed/storage/quota')return signed(m,{action:'managed_storage_quota',schoolId:m.schoolId});
  if(action==='managed/storage/check'){
   const liveSyncCollections=[];if(liveSync.enabled(m.schoolId))for(const collection of require('./live-sync').COLLECTIONS)if(await liveMigration.state(m.schoolId,collection)==='active')liveSyncCollections.push(collection);
-  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
+  return {...(liveSyncCollections.length?{brokerLiveSyncVersion:1,liveSyncCollections}:{}),...await signed(m,{action:'managed_health',...(b.profilePhoto===true?{profilePhoto:true}:{})}),brokerEdgeDeliveryVersion:allEdge(m.schoolId)?1:0,brokerSyncHandoffMonitorVersion:1,brokerDocumentStageVersion:allEdge(m.schoolId)?1:0,brokerDocumentReplacementStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoRecordStageVersion:allEdge(m.schoolId)?1:0,brokerPhotoReceiptVersion:1,brokerAtomicSmallFilesVersion:cloudflareAtomicSmallFiles===true&&allEdge(m.schoolId)?1:0,brokerUploadResumableVersion:1,brokerSheetIntegrityAuditVersion:1,brokerRecordSyncVersion:2,brokerRecordWriteBatchVersion:1,brokerRecordDeltaRecordsVersion:1,brokerChangeHeadsVersion:1,brokerChangeFeedVersion:changeFeed.enabled?1:0,brokerChangeFeedReplayVersion:changeFeed.enabled?1:0,brokerDisasterRehearsalVersion:5,brokerDisasterReadbackVersion:1};
  }
  if(action==='managed/cloudflare/auditJournalPage'){
   // School-authenticated, paginated OWNER inventory. Never expose job bodies,
@@ -1582,7 +1584,10 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   const cfNotices=edgeEnabled(m.schoolId)&&collections.includes('school_notices')&&!liveCollections.includes('school_notices')&&!(liveSync.enabled(m.schoolId)&&await liveMigration.rolledBack(m.schoolId,'school_notices'));
   const excluded=new Set([...liveCollections,...(cfNotices?['school_notices']:[])]);
   const driveBody=excluded.size?{...body,collections:collections.filter(c=>!excluded.has(c)),knownRevisions:Object.fromEntries(Object.entries(known).filter(([k])=>!excluded.has(k))),...(recordCheckpoints?{knownRecordRevisions:Object.fromEntries(Object.entries(recordCheckpoints).filter(([k])=>!excluded.has(k)))}:{})}:body;
-  const result=driveBody.collections.length?(b.headOnly===true?await readView(m.schoolId,driveBody,()=>signed(m,driveBody)):await signed(m,driveBody)):{success:true,schoolId:m.schoolId,syncProtocol:2,...(b.headOnly===true?{headOnly:true,revisions:{}}:{changes:{}})};
+  const provider=driveBody.collections.length?(b.headOnly===true?await readView(m.schoolId,driveBody,()=>signed(m,driveBody)):await schoolDeltaSingleflight(m.schoolId,driveBody,()=>signed(m,driveBody))):{success:true,schoolId:m.schoolId,syncProtocol:2,...(b.headOnly===true?{headOnly:true,revisions:{}}:{changes:{}})};
+  // Each caller adds its own Cloudflare/live lanes, never mutating an in-flight
+  // provider snapshot shared with a concurrent same-school authenticated read.
+  const result={...provider,...(provider.changes?{changes:{...provider.changes}}:{}),...(provider.revisions?{revisions:{...provider.revisions}}:{})};
   if(cfNotices){const state=await cloudflareSync.notices(m.schoolId,()=>noticeBaseline(m.schoolId));if(b.headOnly===true)result.revisions={...result.revisions,school_notices:state.revision};else {const checkpoint=recordCheckpoints?.school_notices;const unchanged=known.school_notices===state.revision;const records=unchanged?{}:checkpoint?Object.fromEntries(Object.entries(state.records).filter(([id,r])=>checkpoint[id]!==r._syncRevision)):state.records;result.changes={...result.changes,school_notices:{syncProtocol:2,collectionRevision:state.revision,records,unchanged,...(checkpoint?{partialRecords:true}:{})}};}}
   if(liveCollections.length){
    const head=await liveSync.command(m.schoolId,{command:'head'});
@@ -1973,6 +1978,33 @@ function createManagedSchools({liveSyncSchools=[],atomicBundleTestSchools=[],edg
   if(out.edgeDeliveryVersion===1&&out.delivery)return out;
   if(out.uploadResumableVersion!==1||out.uploadKey!==b.uploadKey||out.sha256!==b.sha256||out.sizeBytes!==b.sizeBytes||typeof out.committed!=='boolean'||!Number.isSafeInteger(out.offset)||out.offset<0||out.offset>b.sizeBytes||out.committed&&out.offset!==b.sizeBytes||!out.committed&&out.offset===b.sizeBytes||out.committed&&!/^[A-Za-z0-9_-]{1,200}$/.test(out.fileId||''))fail(502,'Upload progress or completion is unverified','UPLOAD_ACK_UNVERIFIED');
   return {success:true,schoolId:m.schoolId,uploadResumableVersion:1,uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,offset:out.offset,committed:out.committed,...(out.cloudflareAccepted===true&&!out.committed&&out.driveState==='receiving'?{cloudflareAccepted:true,driveState:'receiving'}:{}),...(out.committed?{fileId:out.fileId,fileUrl:'https://drive.google.com/file/d/'+out.fileId+'/view'}:{})};
+ }
+ if(action==='managed/file/receipt'){
+  // Read-only recovery for an original photo whose Apps Script reply timed
+  // out. Only the signed school owner may certify the original Drive bytes.
+  if(typeof b.uploadKey!=='string'||!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey)||
+    !/^[a-f0-9]{64}$/.test(b.sha256||'')||
+    !Number.isSafeInteger(b.sizeBytes)||b.sizeBytes<1||b.sizeBytes>512*1024||
+    typeof b.name!=='string'||!b.name||b.name.length>200||
+    !['image/jpeg','image/png','image/webp'].includes(b.mime))
+   fail(400,'Invalid original photo receipt inquiry','PHOTO_RECEIPT_INVALID');
+  const result=await signed(m,{action:'managed_upload_receipt',uploadKey:b.uploadKey,
+    sha256:b.sha256,sizeBytes:b.sizeBytes,name:b.name,mime:b.mime});
+  if(result?.success!==true||result.schoolId!==m.schoolId||
+    result.photoReceiptVersion!==1||result.uploadKey!==b.uploadKey||
+    result.sha256!==b.sha256||result.sizeBytes!==b.sizeBytes||
+    result.name!==b.name||result.mime!==b.mime||
+    typeof result.verified!=='boolean'||
+    (result.verified===true&&!/^[A-Za-z0-9_-]{1,200}$/.test(result.fileId||''))||
+    (result.verified===false&&(result.fileId!==undefined||
+      result.fileUrl!==undefined||result.status!=='unknown')))
+   fail(502,'Original photo Drive receipt is unverified','PHOTO_RECEIPT_UNVERIFIED');
+  return {success:true,schoolId:m.schoolId,photoReceiptVersion:1,
+    uploadKey:b.uploadKey,sha256:b.sha256,sizeBytes:b.sizeBytes,
+    name:b.name,mime:b.mime,verified:result.verified,
+    ...(result.verified===true?{fileId:result.fileId,
+      fileUrl:'https://drive.google.com/file/d/'+result.fileId+'/view'}:
+      {status:'unknown'})};
  }
  if(action==='managed/file/upload'){
   if(typeof b.base64!=='string'||b.base64.length>28*1024*1024||!b.base64.length||!/^[-\w.+]+\/[-\w.+]+$/.test(b.mime||'')||typeof b.name!=='string'||b.name.length>200)fail(400,'Invalid school file');if(b.uploadKey!==undefined&&!/^[A-Za-z0-9_-]{1,150}$/.test(b.uploadKey))fail(400,'Invalid upload key');return signed(m,{action:'managed_upload',name:b.name,mime:b.mime,base64:b.base64,...(b.uploadKey?{uploadKey:b.uploadKey}:{})});

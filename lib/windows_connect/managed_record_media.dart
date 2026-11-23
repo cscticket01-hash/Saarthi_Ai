@@ -119,17 +119,63 @@ Future<Map<String,dynamic>?> stageManagedOriginalPhotoRecord(
   };
 }
 
+
+/// Independently check the original Drive object after an unknown photo ACK.
+/// A Cloudflare ticket or an "unknown" reply cannot become a Google fileId.
+/// The caller itself decides whether to retry the same immutable upload key.
+Future<Map<String, dynamic>?> verifyRetriedOriginalPhoto({
+  required String school,
+  required String uploadKey,
+  required String sha256Hex,
+  required int sizeBytes,
+  required String name,
+  required String mime,
+  required Future<Map<String, dynamic>> Function(
+      String, Map<String, dynamic>) call,
+}) async {
+  if (sizeBytes < 1 || sizeBytes > 512 * 1024 ||
+      !{'image/jpeg', 'image/png', 'image/webp'}.contains(mime)) {
+    throw StateError('Original photo receipt scope invalid.');
+  }
+  final reply = await call('managed/file/receipt', {
+    'uploadKey': uploadKey, 'sha256': sha256Hex,
+    'sizeBytes': sizeBytes, 'name': name, 'mime': mime,
+  });
+  if (reply['success'] != true || reply['schoolId'] != school ||
+      reply['photoReceiptVersion'] != 1 ||
+      reply['uploadKey'] != uploadKey || reply['sha256'] != sha256Hex ||
+      reply['sizeBytes'] != sizeBytes || reply['name'] != name ||
+      reply['mime'] != mime) {
+    throw StateError('Original school photo receipt identity changed.');
+  }
+  if (reply['verified'] == false &&
+      reply['status'] == 'unknown' && reply['fileId'] == null &&
+      reply['fileUrl'] == null) {
+    return null; // Original may still be committing at Google Drive.
+  }
+  final fileId = reply['fileId'], fileUrl = reply['fileUrl'];
+  if (reply['verified'] != true || fileId is! String ||
+      !RegExp(r'^[A-Za-z0-9_-]{1,200}$').hasMatch(fileId) ||
+      fileUrl is! String || schoolDriveFileId(fileUrl) != fileId) {
+    throw StateError('Original photo Drive bytes are not independently verified.');
+  }
+  return {'success': true, 'schoolId': school,
+    'fileId': fileId, 'fileUrl': fileUrl};
+}
+
 /// Upload images to this school's Drive before publishing a text-only record.
 Future<Map<String, dynamic>> prepareManagedRecord(
   Map<String, dynamic> data,
   String school,
-  Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call,
-) => _prepareManagedRecord(
+  Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call, {
+  bool verifyRetriedPhoto = false,
+}) => _prepareManagedRecord(
   data,
   school,
   call,
   FirebaseFirestore.instance.activeProfileId,
   0,
+  verifyRetriedPhoto,
 );
 
 Future<Map<String, dynamic>> _prepareManagedRecord(
@@ -138,6 +184,7 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
   Future<Map<String, dynamic>> Function(String, Map<String, dynamic>) call,
   String profile,
   int depth,
+  bool verifyRetriedPhoto,
 ) async {
   void own() {
     if (FirebaseFirestore.instance.activeProfileId != profile)
@@ -187,16 +234,26 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
       mime = processed['mimeType'] as String;
     }
     final digest = sha256.convert(bytes).toString();
-    final upload = await call('managed/file/upload', {
-      'name': prefix == 'photo'
-          ? '${prefix}_optimized_${originalDigest}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}'
-          : '${prefix}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}',
-      'mime': mime,
-      'uploadKey': sha256
-          .convert(utf8.encode(prefix == 'photo'
-              ? '$school:$prefix:$mime:$originalDigest:$digest'
-              : '$school:$prefix:$mime:$digest'))
-          .toString(),
+    final name = prefix == 'photo'
+        ? '${prefix}_optimized_${originalDigest}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}'
+        : '${prefix}_$digest.${mime == 'image/jpeg' ? 'jpg' : 'png'}';
+    final uploadKey = sha256
+        .convert(utf8.encode(prefix == 'photo'
+            ? '$school:$prefix:$mime:$originalDigest:$digest'
+            : '$school:$prefix:$mime:$digest'))
+        .toString();
+    // A retry may follow a lost Script HTTP ACK even though Drive already
+    // stored the exact bytes. Probe the ORIGINAL upload only on retries and
+    // only when the signed provider+broker capability was negotiated.
+    final recovered = verifyRetriedPhoto && prefix == 'photo' &&
+            bytes.length <= 512 * 1024
+        ? await verifyRetriedOriginalPhoto(
+            school: school, uploadKey: uploadKey, sha256Hex: digest,
+            sizeBytes: bytes.length, name: name, mime: mime, call: call)
+        : null;
+    own();
+    final upload = recovered ?? await call('managed/file/upload', {
+      'name': name, 'mime': mime, 'uploadKey': uploadKey,
       'base64': base64Encode(bytes),
     });
     own();
@@ -239,6 +296,7 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
         call,
         profile,
         depth + 1,
+        verifyRetriedPhoto,
       );
     if (value is List) {
       final items = <dynamic>[];
@@ -251,6 +309,7 @@ Future<Map<String, dynamic>> _prepareManagedRecord(
                   call,
                   profile,
                   depth + 1,
+                  verifyRetriedPhoto,
                 )
               : item,
         );
