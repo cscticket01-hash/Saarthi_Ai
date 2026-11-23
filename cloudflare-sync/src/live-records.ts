@@ -673,7 +673,9 @@ export function liveCommand(storage:DurableObjectStorage,school:string,b:Json,no
    const promotionChanged=col==='students_directory'&&current&&
     (old.promotionTransactionId!==data.promotionTransactionId||
      old.promotionExamId!==data.promotionExamId||
-     old.classMovement!==data.classMovement);
+     old.classMovement!==data.classMovement||
+     (old.promotionExamId&&(
+       old.class!==data.class||old.studentClass!==data.studentClass)));
    if(promotionChanged){
     demand(b.operation==='write'&&b.promotionProof&&
       typeof b.promotionProof==='object'&&!Array.isArray(b.promotionProof),
